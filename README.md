@@ -73,3 +73,45 @@ python -m gerber2rml         # or the `gerber2rml` launcher after install
 ```bash
 pytest
 ```
+
+## Calibration & presets
+
+### Calibration coupon
+
+A bundled example you can load immediately to validate the whole pipeline and
+your machine setup in a single job. Load it without KiCad:
+
+```bash
+python -m gerber2rml.cli examples/calibration -o out -n calib
+# or in the GUI: File → Open → <repo>/examples/calibration
+```
+
+The coupon is a **40×30 mm PCB** that exercises all operations:
+
+- **Isolation traces:** Three trace pairs at 0.8 mm clearance, checking that
+  the 1/64" isolation bit does not bridge.
+- **Drilling:** A size row (one 0.8 mm and one 1.0 mm hole) to verify tool
+  selection, plus a 10 mm grid of 0.8 mm holes for registration.
+- **Registration grid:** Measure hole-to-hole spacing with calipers to verify
+  steps/mm and alignment with copper features.
+- **Roundness test:** A 6 mm ring/pad to check spindle backlash.
+- **Cutout:** Rectangular board outline with holding tabs.
+
+The coupon Gerber/Excellon files are regenerated from `gerber2rml/examples/calibration.py`
+(call `write_coupon(out_dir)` in Python). Keeping the generator side-by-side with
+the files lets you extend or adapt the coupon for your own validation needs.
+
+### Presets
+
+Reuse a complete bit and feeds/speeds set across all three operations (traces,
+drill, cutout) in one click.
+
+**In the GUI:**
+- Click the **Preset** dropdown to choose a saved preset.
+- Click **Apply** to load it into all three operation tabs at once.
+- Modify as needed, then click **Save** to store under a new name.
+
+**Preset sources** (merged by name; later overrides earlier):
+1. **Built-in default:** `FR-1: 1/64 traces + 0.8/1.0 drill + 1/32 cutout` — embedded in code.
+2. **Repo examples:** `examples/presets.json` — team-shared presets (tracked in git).
+3. **User home:** `~/.gerber2rml/presets.json` — your personal presets, written by Save.
