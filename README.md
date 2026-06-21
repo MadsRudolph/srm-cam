@@ -40,7 +40,7 @@ Gerber/Excellon ─► loader (gerbonara→shapely) ─► engine (traces/drill/
 | `gerber2rml/engine/traces.py` | Copper → multi-pass isolation toolpaths |
 | `gerber2rml/engine/drill.py` | Excellon → grouped peck-drill sequence |
 | `gerber2rml/engine/cutout.py` | Edge.Cuts → outline cut + tabs |
-| `gerber2rml/backends/base.py` | Abstract `MachineBackend` interface |
+| `gerber2rml/backends/base.py` | `RenderFn` callable type (machines registered in `backends/__init__.py` `BACKENDS`) |
 | `gerber2rml/backends/srm20.py` | Toolpaths → RML-1 |
 | `gerber2rml/config.py` | `TraceJob` / `DrillJob` / `CutoutJob` / `BoardConfig` dataclasses + SRM-20 defaults |
 | `gerber2rml/gui/` | PySide6 window, fields, matplotlib preview, export |

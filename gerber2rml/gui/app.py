@@ -1,6 +1,4 @@
 """gerber2rml desktop app: load Gerbers, edit variables, preview, export RML."""
-import os
-from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
@@ -25,6 +23,7 @@ class MainWindow(QMainWindow):
         self.machine_combo = QComboBox()
         self.machine_combo.addItems(list(BACKENDS.keys()))
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
+        self.mirror_chk.toggled.connect(self._on_mirror_toggled)
         top = QHBoxLayout()
         for w in (self.load_btn, QLabel("Name:"), self.name_edit,
                   QLabel("Machine:"), self.machine_combo, self.mirror_chk):
@@ -60,6 +59,14 @@ class MainWindow(QMainWindow):
         self.state.drill = self.forms["drill"].value()
         self.state.cutout = self.forms["cutout"].value()
 
+    def _on_mirror_toggled(self):
+        if self.state.gerber_dir is not None:
+            try:
+                self.load_folder(self.state.gerber_dir)
+                self.generate_preview()
+            except Exception as e:
+                QMessageBox.critical(self, "Reload failed", str(e))
+
     def load_folder(self, folder):
         self._sync_state()
         self.state.load(folder)
@@ -91,7 +98,11 @@ class MainWindow(QMainWindow):
             return
         out = QFileDialog.getExistingDirectory(self, "Select output folder")
         if out:
-            written = self.export_to(out)
+            try:
+                written = self.export_to(out)
+            except Exception as e:
+                QMessageBox.critical(self, "Export failed", str(e))
+                return
             QMessageBox.information(self, "Exported",
                                     "Wrote:\n" + "\n".join(p.name for p in written))
 

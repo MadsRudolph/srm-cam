@@ -21,3 +21,11 @@ def test_load_and_preview_and_export(tmp_path):
     assert len(w.preview.ax.collections) >= 1
     written = w.export_to(tmp_path)
     assert any(p.suffix == ".rml" for p in written)
+
+def test_mirror_toggle_reloads_board():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    first = w.state.board
+    w.mirror_chk.setChecked(False)        # emits toggled -> reload
+    assert w.state.board is not first     # a fresh board was loaded
+    assert w.state.mirror is False        # state tracks the new flag

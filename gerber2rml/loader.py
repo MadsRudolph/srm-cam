@@ -390,6 +390,8 @@ def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
     sits at (margin, margin). Machine coordinates (operator zeroes at the board
     corner) expect positive X/Y."""
     geoms = [g for g in (board.copper, board.outline) if not g.is_empty]
+    if not geoms:
+        return board
     minx = min(g.bounds[0] for g in geoms)
     miny = min(g.bounds[1] for g in geoms)
     dx, dy = margin - minx, margin - miny
