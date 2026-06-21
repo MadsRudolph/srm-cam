@@ -33,5 +33,11 @@ class DataclassForm(QWidget):
         else:
             w.setValue(value)
 
+    def set_instance(self, instance):
+        """Replace the backing instance and push its values into the editors."""
+        self._instance = instance
+        for name in self._editors:
+            self.set_field(name, getattr(instance, name))
+
     def value(self):
         return replace(self._instance, **{n: self._read(n) for n in self._editors})
