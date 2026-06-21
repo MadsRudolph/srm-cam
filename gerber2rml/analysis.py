@@ -34,8 +34,10 @@ def find_narrow_gaps(copper, outline, bit_diameter, min_area: float = 0.1):
     if narrow.is_empty:
         return narrow
 
-    # Filter by minimum area and return valid polygons only.
-    polys = narrow.geoms if isinstance(narrow, MultiPolygon) else [narrow]
+    # Filter by minimum area and return valid polygons only. `.difference()`
+    # can yield a GeometryCollection (polygons mixed with degenerate edges), so
+    # flatten anything with sub-geometries rather than only MultiPolygon.
+    polys = list(narrow.geoms) if hasattr(narrow, "geoms") else [narrow]
     keep = [p for p in polys if isinstance(p, Polygon) and p.area >= min_area]
 
     return MultiPolygon(keep) if keep else Polygon()

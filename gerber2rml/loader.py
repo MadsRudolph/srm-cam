@@ -307,21 +307,6 @@ def _outline_to_shapely(outline_layer) -> object:
     return buffered
 
 
-def _holes_from_drill(drill_layer) -> List[HoleTuple]:
-    """Extract (x, y, diameter) tuples from an ExcellonFile."""
-    holes = []
-    for hit in drill_layer.objects:
-        try:
-            diam = hit.aperture.diameter
-            holes.append((hit.x, hit.y, diam))
-        except AttributeError:
-            warnings.warn(
-                f"Drill hit {hit!r} has no aperture.diameter; skipping.",
-                stacklevel=3,
-            )
-    return holes
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
