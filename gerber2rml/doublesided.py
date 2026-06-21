@@ -5,7 +5,7 @@ centre (invariant under the flip). Top transform = bottom transform reflected
 about that axis, so the sides register after the physical flip. Pins sit beyond
 the 104 mm laser-jig box (or beyond the board if it is wider).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from shapely.affinity import scale, translate
 from gerber2rml.loader import load_board
@@ -59,7 +59,7 @@ def layout_double_sided(folder, pin_diameter: float = 3.0, margin: float = 6.0,
 
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        pin_diameter: float = 3.0, margin: float = 6.0,
-                       box_size: float = 104.0):
+                       box_size: float = 104.0, align_depth: float = 6.0):
     """Build all RML job files for a double-sided board + a text run plan.
 
     Returns a list of Path objects for every file written (5 RML + 1 .txt).
@@ -72,11 +72,14 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     lay = layout_double_sided(folder, pin_diameter=pin_diameter, margin=margin,
                               box_size=box_size)
     top_outline = _reflect_geom(lay.outline, lay.y_axis)
+    # the alignment job drills deeper (through the board AND into the bed) so the
+    # dowel pins anchor; the board's own holes use the normal drill depth.
+    align_drill = replace(drill, total_depth=align_depth)
     jobs = [
         (f"{name}_align.rml",
-         drill_holes(lay.align_holes, drill), drill),
+         drill_holes(lay.align_holes, align_drill), align_drill),
         (f"{name}_bottom_drill.rml",
-         drill_holes(lay.holes + lay.align_holes, drill), drill),
+         drill_holes(lay.holes, drill), drill),
         (f"{name}_bottom_traces.rml",
          isolate(lay.bottom_copper, trace, outline=lay.outline), trace),
         (f"{name}_top_traces.rml",
@@ -92,13 +95,15 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     runplan = out_dir / f"{name}_runplan.txt"
     runplan.write_text(
         f"DOUBLE-SIDED run plan: {name}\n"
-        f"1. {name}_align: drill the two {pin_diameter} mm holes through board AND bed;"
-        f" seat dowel pins.\n"
-        f"2. {name}_bottom_drill, then {name}_bottom_traces (B.Cu).\n"
+        f"0. Set XY zero ONCE (e.g. the stock lower-left corner) and do NOT re-zero "
+        f"between jobs - registration comes from the pins, not from re-zeroing.\n"
+        f"1. {name}_align: drills the two {pin_diameter} mm holes {align_depth} mm deep "
+        f"(through the {1.6} mm board AND into the sacrificial bed); seat dowel pins.\n"
+        f"2. {name}_bottom_drill (board holes only), then {name}_bottom_traces (B.Cu).\n"
         f"3. FLIP the board top-over-bottom about the horizontal pin line;"
         f" drop onto the pins.\n"
         f"4. {name}_top_traces (F.Cu).\n"
-        f"5. {name}_cutout last. Keep XY origin at the left pin throughout.\n",
+        f"5. {name}_cutout last.\n",
         encoding="utf-8")
     written.append(runplan)
     return written

@@ -158,7 +158,9 @@ A double-sided job produces six RML files plus a runplan:
 
 ### Operator sequence
 
-1. **Drill alignment holes:** Run `_align.rml` to create two 3.0 mm holes through the board and into the sacrificial bed. Insert 3.0 mm dowel pins and seat them flush.
+0. **Zero once:** Set the machine XY origin a single time (e.g. the stock lower-left corner) and do **not** re-zero between jobs — registration comes from the pins, not from re-zeroing.
+
+1. **Drill alignment holes:** Run `_align.rml` to create two 3.0 mm holes that go through the board **and ~4–5 mm into the sacrificial bed** (the align job drills deeper than the board holes, default 6 mm total). Insert 3.0 mm dowel pins and seat them.
 
 2. **Mill bottom side:** Run `_bottom_drill.rml` (holes), then `_bottom_traces.rml` (copper traces, B.Cu).
 
@@ -166,7 +168,7 @@ A double-sided job produces six RML files plus a runplan:
 
 4. **Mill top side:** Run `_top_traces.rml` (top copper traces, F.Cu). Geometry is reflected so it aligns correctly after flipping.
 
-5. **Cut out:** Run `_cutout.rml` last to separate the board. Keep the XY origin at the left pin throughout all operations.
+5. **Cut out:** Run `_cutout.rml` last to separate the board.
 
 ### Pin placement
 

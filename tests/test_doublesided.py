@@ -38,3 +38,25 @@ def test_build_double_sided_writes_jobs(tmp_path):
         if p.suffix == ".rml":
             t = p.read_text()
             assert t.startswith("^IN;!MC1;") and t.rstrip().endswith("!MC0;^IN;")
+
+def _deepest_z(path):
+    zs = [int(line.split(",")[2].rstrip(";")) for line in path.read_text().splitlines()
+          if line.startswith("Z")]
+    return min(zs)
+
+def test_align_drills_deeper_than_board_holes(tmp_path):
+    from gerber2rml.doublesided import build_double_sided
+    from gerber2rml.config import DrillJob
+    build_double_sided(FIXT, tmp_path, name="d", drill=DrillJob(), align_depth=6.0)
+    # align holes must go deeper (more negative Z) than the board's own holes,
+    # to anchor the dowel pins in the sacrificial bed
+    assert _deepest_z(tmp_path / "d_align.rml") < _deepest_z(tmp_path / "d_bottom_drill.rml")
+
+def test_bottom_drill_excludes_alignment_holes(tmp_path):
+    from gerber2rml.doublesided import build_double_sided, layout_double_sided
+    lay = layout_double_sided(FIXT)
+    build_double_sided(FIXT, tmp_path, name="d")
+    text = (tmp_path / "d_bottom_drill.rml").read_text()
+    ax, ay, _d = lay.align_holes[0]
+    token = f"Z{round(ax * 40)},{round(ay * 40)},"   # 40 RML units/mm
+    assert token not in text          # pinned alignment hole is NOT re-drilled
