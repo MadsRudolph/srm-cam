@@ -23,4 +23,5 @@ def test_feeds_emitted_for_cut_moves():
 def test_rapid_uses_rapid_feed():
     rml = render([[Move(0, 0, 2.0, rapid=True)]], xy_feed=4.0, plunge_feed=1.0,
                  rapid_feed=15.0)
-    assert "VS15.0;" in rml
+    # rapids set both XY and Z (retract) speed to the rapid feed
+    assert "VS15.0;!VZ15.0;" in rml

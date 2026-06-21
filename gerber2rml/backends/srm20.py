@@ -3,7 +3,6 @@
 Fixes the legacy bugs (docs/design.md §6): spindle ON via !MC1, XY feed via VS
 and plunge via !VZ, clean Z-up header, 40 RML units/mm (SRM-20 = 0.025 mm/unit).
 """
-from gerber2rml.toolpath import Toolpath
 
 SCALE = 40            # RML-1 units per mm
 DEFAULT_RAPID = 15.0  # mm/s travel
