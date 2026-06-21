@@ -45,3 +45,8 @@ def test_holes_are_mirrored():
 def test_copper_is_valid():
     board = load_board(FIXT, mirror=False)
     assert board.copper.is_valid
+
+
+def test_loads_top_copper_field():
+    board = load_board(FIXT, mirror=False)
+    assert hasattr(board, "copper_top")      # present (may be empty if no F.Cu)

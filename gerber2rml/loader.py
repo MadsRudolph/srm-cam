@@ -156,6 +156,7 @@ class Board:
     copper: BaseGeometry    # shapely geometry — union of all B.Cu shapes
     outline: BaseGeometry   # shapely geometry — board perimeter polygon
     holes: list             # drill hits as (x, y, diameter) in mm
+    copper_top: BaseGeometry = None  # shapely geometry — union of all F.Cu shapes (empty if absent)
 
 
 # ---------------------------------------------------------------------------
@@ -412,13 +413,18 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
             stacklevel=2,
         )
 
+    # ---- Top copper (F.Cu) ----
+    t_cu = stack.graphic_layers.get(('top', 'copper'))
+    copper_top = _copper_to_shapely(t_cu) if t_cu is not None else Polygon()
+
     # ---- Mirror if requested ----
     if mirror:
         copper = scale(copper, xfact=-1, yfact=1, origin=(0, 0))
         outline = scale(outline, xfact=-1, yfact=1, origin=(0, 0))
+        copper_top = scale(copper_top, xfact=-1, yfact=1, origin=(0, 0))
         holes = [(-x, y, d) for x, y, d in holes]
 
-    return Board(copper=copper, outline=outline, holes=holes)
+    return Board(copper=copper, outline=outline, holes=holes, copper_top=copper_top)
 
 
 def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
@@ -431,8 +437,10 @@ def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
     minx = min(g.bounds[0] for g in geoms)
     miny = min(g.bounds[1] for g in geoms)
     dx, dy = margin - minx, margin - miny
+    copper_top = board.copper_top if board.copper_top is not None else Polygon()
     return Board(
         copper=_translate(board.copper, xoff=dx, yoff=dy),
         outline=_translate(board.outline, xoff=dx, yoff=dy),
         holes=[(x + dx, y + dy, d) for (x, y, d) in board.holes],
+        copper_top=_translate(copper_top, xoff=dx, yoff=dy),
     )
