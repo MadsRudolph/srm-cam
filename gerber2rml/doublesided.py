@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from shapely.affinity import scale, translate
 from gerber2rml.loader import load_board
+from gerber2rml.engine.traces import isolate
+from gerber2rml.engine.drill import drill_holes
+from gerber2rml.engine.cutout import cut_outline
+from gerber2rml.backends import srm20
+from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
 def reflect_y(holes, y_axis):
     """Reflect (x, y, d) hole tuples about the horizontal line y = y_axis."""
@@ -50,3 +55,50 @@ def layout_double_sided(folder, pin_diameter: float = 3.0, margin: float = 6.0,
     top_copper = _reflect_geom(top_src, y_axis)
     return DoubleSidedLayout(bottom_copper, top_copper, outline, holes,
                              align_holes, y_axis)
+
+
+def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
+                       pin_diameter: float = 3.0, margin: float = 6.0,
+                       box_size: float = 104.0):
+    """Build all RML job files for a double-sided board + a text run plan.
+
+    Returns a list of Path objects for every file written (5 RML + 1 .txt).
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    trace = trace or TraceJob()
+    drill = drill or DrillJob()
+    cutout = cutout or CutoutJob()
+    lay = layout_double_sided(folder, pin_diameter=pin_diameter, margin=margin,
+                              box_size=box_size)
+    top_outline = _reflect_geom(lay.outline, lay.y_axis)
+    jobs = [
+        (f"{name}_align.rml",
+         drill_holes(lay.align_holes, drill), drill),
+        (f"{name}_bottom_drill.rml",
+         drill_holes(lay.holes + lay.align_holes, drill), drill),
+        (f"{name}_bottom_traces.rml",
+         isolate(lay.bottom_copper, trace, outline=lay.outline), trace),
+        (f"{name}_top_traces.rml",
+         isolate(lay.top_copper, trace, outline=top_outline), trace),
+        (f"{name}_cutout.rml",
+         cut_outline(lay.outline, cutout), cutout),
+    ]
+    written = []
+    for fname, paths, job in jobs:
+        (out_dir / fname).write_text(
+            srm20.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+        written.append(out_dir / fname)
+    runplan = out_dir / f"{name}_runplan.txt"
+    runplan.write_text(
+        f"DOUBLE-SIDED run plan: {name}\n"
+        f"1. {name}_align: drill the two {pin_diameter} mm holes through board AND bed;"
+        f" seat dowel pins.\n"
+        f"2. {name}_bottom_drill, then {name}_bottom_traces (B.Cu).\n"
+        f"3. FLIP the board top-over-bottom about the horizontal pin line;"
+        f" drop onto the pins.\n"
+        f"4. {name}_top_traces (F.Cu).\n"
+        f"5. {name}_cutout last. Keep XY origin at the left pin throughout.\n",
+        encoding="utf-8")
+    written.append(runplan)
+    return written

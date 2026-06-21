@@ -23,3 +23,18 @@ def test_through_hole_registers_after_flip():
     (hx, hy, hd) = lay.holes[0]
     assert any(abs(rx - hx) < 1e-6 and abs(ry - (2 * lay.y_axis - hy)) < 1e-6
                for (rx, ry, rd) in reflect_y(lay.holes, lay.y_axis))
+
+
+def test_build_double_sided_writes_jobs(tmp_path):
+    from gerber2rml.doublesided import build_double_sided
+    from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+    written = build_double_sided(FIXT, tmp_path, name="ds",
+                                 trace=TraceJob(), drill=DrillJob(), cutout=CutoutJob())
+    names = {p.name for p in written}
+    for n in ("ds_align.rml", "ds_bottom_drill.rml", "ds_bottom_traces.rml",
+              "ds_top_traces.rml", "ds_cutout.rml"):
+        assert n in names
+    for p in written:
+        if p.suffix == ".rml":
+            t = p.read_text()
+            assert t.startswith("^IN;!MC1;") and t.rstrip().endswith("!MC0;^IN;")
