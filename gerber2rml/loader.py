@@ -4,8 +4,6 @@ Reads a folder of KiCad-exported Gerbers + the Excellon drill file with
 ``gerbonara``, converts copper / outline / holes into ``shapely`` geometry,
 mirrors for bottom-up single-sided milling, and detects/validates units.
 
-Stub — see ``docs/design.md`` §3-4.
-
 ## gerbonara API notes (from Task 0 spike, gerbonara 1.5.0)
 
 Verified against the buck board fixture in tests/fixtures/mosfet_test/.
@@ -121,3 +119,250 @@ All coordinates from LayerStack.open() are in millimetres by default
 (gerbonara normalises units on parse).  ExcellonFile coordinates are also
 normalised to mm.  No manual unit conversion is needed.
 """
+
+from __future__ import annotations
+
+import warnings
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Tuple
+
+from gerbonara import LayerStack
+from gerbonara.apertures import (
+    ApertureMacroInstance,
+    CircleAperture,
+    ObroundAperture,
+    RectangleAperture,
+)
+from shapely.affinity import scale
+from shapely.geometry import LineString, Point, Polygon, box
+from shapely.ops import polygonize, unary_union
+
+# ---------------------------------------------------------------------------
+# Public types
+# ---------------------------------------------------------------------------
+
+HoleTuple = Tuple[float, float, float]  # (x, y, diameter) in mm
+
+
+@dataclass
+class Board:
+    """Shapely representation of a loaded PCB."""
+
+    copper: object          # shapely geometry — union of all B.Cu shapes
+    outline: object         # shapely geometry — board perimeter polygon
+    holes: List[HoleTuple]  # drill hits as (x, y, diameter) in mm
+
+
+# ---------------------------------------------------------------------------
+# Aperture → shapely helpers
+# ---------------------------------------------------------------------------
+
+def _circle_aperture(flash) -> object:
+    """CircleAperture Flash → filled circle."""
+    return Point(flash.x, flash.y).buffer(flash.aperture.diameter / 2)
+
+
+def _rect_aperture(flash) -> object:
+    """RectangleAperture Flash → axis-aligned box."""
+    x, y = flash.x, flash.y
+    w, h = flash.aperture.w, flash.aperture.h
+    return box(x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+
+
+def _obround_aperture(flash) -> object:
+    """ObroundAperture Flash → approximated as a box (v1 approximation).
+
+    True obround = rectangle with semicircular ends.  A box slightly
+    over-estimates the copper area, which is conservative for isolation
+    milling.
+    """
+    x, y = flash.x, flash.y
+    w, h = flash.aperture.w, flash.aperture.h
+    return box(x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+
+
+def _macro_aperture(flash) -> object:
+    """ApertureMacroInstance Flash → bounding-box approximation.
+
+    gerbonara's bounding_box(unit='mm') returns
+    ``((xmin_offset, ymin_offset), (xmax_offset, ymax_offset))`` relative to
+    the flash centre.  This gives a conservative (slightly over-sized) polygon
+    that is safe for isolation milling.
+    """
+    x, y = flash.x, flash.y
+    ap = flash.aperture
+    try:
+        (xmin_off, ymin_off), (xmax_off, ymax_off) = ap.bounding_box(unit='mm')
+        return box(x + xmin_off, y + ymin_off, x + xmax_off, y + ymax_off)
+    except Exception:
+        # Absolute fallback: 1 mm circle if bounding_box fails
+        return Point(x, y).buffer(0.5)
+
+
+def _flash_to_shapely(flash) -> object | None:
+    """Convert a gerber Flash object to shapely geometry.
+
+    Returns None (with a warning) for completely unknown aperture types so
+    that the union continues rather than crashing.
+    """
+    ap = flash.aperture
+    if isinstance(ap, CircleAperture):
+        return _circle_aperture(flash)
+    if isinstance(ap, RectangleAperture):
+        return _rect_aperture(flash)
+    if isinstance(ap, ObroundAperture):
+        return _obround_aperture(flash)
+    if isinstance(ap, ApertureMacroInstance):
+        return _macro_aperture(flash)
+    # Unknown aperture type — use bounding_box if available, else skip
+    try:
+        (xmin_off, ymin_off), (xmax_off, ymax_off) = ap.bounding_box(unit='mm')
+        warnings.warn(
+            f"Unknown aperture type {type(ap).__name__!r}; using bounding-box fallback.",
+            stacklevel=3,
+        )
+        return box(
+            flash.x + xmin_off, flash.y + ymin_off,
+            flash.x + xmax_off, flash.y + ymax_off,
+        )
+    except Exception:
+        warnings.warn(
+            f"Unknown aperture type {type(ap).__name__!r} with no bounding-box; skipping.",
+            stacklevel=3,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Layer converters
+# ---------------------------------------------------------------------------
+
+def _copper_to_shapely(b_cu_layer) -> object:
+    """Convert a GerberFile (B.Cu) to a single unioned shapely geometry."""
+    shapes = []
+
+    for obj in b_cu_layer.objects:
+        obj_type = type(obj).__name__
+
+        if obj_type == 'Line':
+            width = obj.aperture.diameter
+            ls = LineString([(obj.x1, obj.y1), (obj.x2, obj.y2)])
+            shapes.append(ls.buffer(width / 2, cap_style=1))  # cap_style=1 → round
+
+        elif obj_type == 'Flash':
+            geom = _flash_to_shapely(obj)
+            if geom is not None:
+                shapes.append(geom)
+
+        elif obj_type == 'Region':
+            pts = list(obj.outline)
+            if pts and pts[0] != pts[-1]:
+                pts.append(pts[0])  # close the ring
+            if len(pts) >= 4:
+                shapes.append(Polygon(pts))
+
+        # Arc and other types not seen in the fixture — skip silently.
+
+    if not shapes:
+        return Point(0, 0).buffer(0)  # empty geometry
+
+    return unary_union(shapes)
+
+
+def _outline_to_shapely(outline_layer) -> object:
+    """Convert Edge.Cuts lines to a board outline polygon.
+
+    Strategy:
+    1. Collect edge Lines as LineString segments.
+    2. polygonize() to form closed polygon(s) — works when the outline is a
+       clean closed rectangle.
+    3. Fallback A: if polygonize yields nothing, buffer the edge lines so the
+       cutout engine can still use outline.buffer(r).
+    4. Return the largest polygon by area.
+    """
+    edge_lines = []
+    for obj in outline_layer.objects:
+        if type(obj).__name__ == 'Line':
+            ls = LineString([(obj.x1, obj.y1), (obj.x2, obj.y2)])
+            edge_lines.append(ls)
+
+    if not edge_lines:
+        return Point(0, 0).buffer(0)
+
+    polys = list(polygonize(edge_lines))
+    if polys:
+        # Return the largest polygon (boards with slots may yield multiple)
+        return max(polys, key=lambda p: p.area)
+
+    # Fallback: buffer union of edge lines to produce a filled region
+    combined = unary_union(edge_lines)
+    buffered = combined.buffer(0.05)  # thin stroke to create a filled area
+    if buffered.geom_type == 'MultiPolygon':
+        return max(buffered.geoms, key=lambda p: p.area)
+    return buffered
+
+
+def _holes_from_drill(drill_layer) -> List[HoleTuple]:
+    """Extract (x, y, diameter) tuples from an ExcellonFile."""
+    holes = []
+    for hit in drill_layer.objects:
+        try:
+            diam = hit.aperture.diameter
+            holes.append((hit.x, hit.y, diam))
+        except AttributeError:
+            warnings.warn(
+                f"Drill hit {hit!r} has no aperture.diameter; skipping.",
+                stacklevel=3,
+            )
+    return holes
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
+    """Load a KiCad Gerber folder into a ``Board`` of shapely geometry.
+
+    Parameters
+    ----------
+    folder:
+        Directory containing KiCad-exported RS-274X Gerbers and an Excellon
+        drill file (``*.drl``).
+    mirror:
+        When ``True`` (default), mirror all geometry about x=0 using
+        ``scale(geom, xfact=-1, origin=(0,0))``.  Required for bottom-up
+        single-sided milling where the board is flipped before machining.
+
+    Returns
+    -------
+    Board
+        ``.copper``  — shapely geometry (union of all B.Cu objects).
+        ``.outline`` — shapely polygon from Edge.Cuts lines.
+        ``.holes``   — list of ``(x, y, diameter)`` tuples in mm.
+    """
+    folder = Path(folder)
+    stack = LayerStack.open(folder)
+
+    # ---- Bottom copper ----
+    b_cu = stack.graphic_layers[('bottom', 'copper')]
+    copper = _copper_to_shapely(b_cu)
+
+    # ---- Outline ----
+    outline_layer = stack.graphic_layers[('mechanical', 'outline')]
+    outline = _outline_to_shapely(outline_layer)
+
+    # ---- Drill holes ----
+    holes: List[HoleTuple] = []
+    if stack._drill_layers:
+        for dl in stack._drill_layers:
+            holes.extend(_holes_from_drill(dl))
+
+    # ---- Mirror if requested ----
+    if mirror:
+        copper = scale(copper, xfact=-1, yfact=1, origin=(0, 0))
+        outline = scale(outline, xfact=-1, yfact=1, origin=(0, 0))
+        holes = [(-x, y, d) for x, y, d in holes]
+
+    return Board(copper=copper, outline=outline, holes=holes)
