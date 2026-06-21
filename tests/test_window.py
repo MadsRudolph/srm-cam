@@ -29,3 +29,10 @@ def test_mirror_toggle_reloads_board():
     w.mirror_chk.setChecked(False)        # emits toggled -> reload
     assert w.state.board is not first     # a fresh board was loaded
     assert w.state.mirror is False        # state tracks the new flag
+
+def test_drill_tab_preview_draws_holes():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.tabs.setCurrentIndex(1)             # drill tab
+    w.generate_preview()
+    assert len(w.preview.ax.patches) > 0  # holes drawn as circles, not blank

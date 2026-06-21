@@ -76,8 +76,11 @@ class MainWindow(QMainWindow):
             return
         self._sync_state()
         op = _OPS[self.tabs.currentIndex()]
-        cuts, rapids = toolpath_segments(self.state.toolpaths(op))
-        self.preview.show_segments(cuts, rapids)
+        if op == "drill":
+            self.preview.show_holes(self.state.board.holes)
+        else:
+            cuts, rapids = toolpath_segments(self.state.toolpaths(op))
+            self.preview.show_segments(cuts, rapids)
 
     def export_to(self, out_dir):
         self._sync_state()
