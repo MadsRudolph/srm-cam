@@ -1,6 +1,8 @@
-"""Abstract machine-backend interface.
+"""Abstract machine-backend interface (the pluggable seam)."""
+from typing import Protocol
 
-Defines the ``MachineBackend`` contract (toolpaths + job parameters -> program
-text/bytes) that concrete machines implement. Adding a new CNC = one new
-subclass. Stub — see ``docs/design.md`` §3.
-"""
+
+class MachineBackend(Protocol):
+    def render(self, toolpaths: list, xy_feed: float, plunge_feed: float) -> str:
+        """Return machine program text for the given toolpaths."""
+        ...
