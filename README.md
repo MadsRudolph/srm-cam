@@ -61,7 +61,12 @@ python -m gerber2rml.cli <gerber-folder> -o out -n <boardname>
 # after `pip install`, also available as:  gerber2rml-cli <gerber-folder> -o out -n <boardname>
 ```
 
-The GUI (`python -m gerber2rml`) is a separate later plan (Plan B) and is not implemented yet.
+GUI:
+
+```bash
+pip install -e ".[gui]"
+python -m gerber2rml         # or the `gerber2rml` launcher after install
+```
 
 ## Tests
 

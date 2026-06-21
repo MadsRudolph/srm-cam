@@ -26,5 +26,8 @@ gui = [
 [project.scripts]
 gerber2rml-cli = "gerber2rml.cli:main"
 
+[project.gui-scripts]
+gerber2rml = "gerber2rml.gui.app:main"
+
 [tool.setuptools.packages.find]
 include = ["gerber2rml*"]
