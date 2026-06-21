@@ -39,3 +39,12 @@ def test_drill_tab_preview_overlays_holes_on_traces():
     assert len(w.preview.ax.patches) > 0  # holes drawn as circles, not blank
     assert any(isinstance(c, LineCollection)
                for c in w.preview.ax.collections)  # trace context overlaid behind
+
+def test_apply_preset_updates_forms():
+    from gerber2rml.app.presets import BUILTIN_PRESETS
+    w = MainWindow()
+    name = next(iter(BUILTIN_PRESETS))
+    w.preset_combo.setCurrentText(name)
+    w.apply_selected_preset()
+    assert w.forms["traces"].value().bit_diameter == 0.4
+    assert w.forms["cutout"].value().tabs == 4

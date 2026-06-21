@@ -24,9 +24,20 @@ class MainWindow(QMainWindow):
         self.machine_combo.addItems(list(BACKENDS.keys()))
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
         self.mirror_chk.toggled.connect(self._on_mirror_toggled)
+        from gerber2rml.app.presets import load_presets
+        self._presets = load_presets()
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(list(self._presets.keys()))
+        self.apply_preset_btn = QPushButton("Apply preset")
+        self.apply_preset_btn.clicked.connect(self.apply_selected_preset)
+        self.save_preset_btn = QPushButton("Save preset...")
+        self.save_preset_btn.clicked.connect(self._on_save_preset)
         top = QHBoxLayout()
         for w in (self.load_btn, QLabel("Name:"), self.name_edit,
                   QLabel("Machine:"), self.machine_combo, self.mirror_chk):
+            top.addWidget(w)
+        for w in (QLabel("Preset:"), self.preset_combo,
+                  self.apply_preset_btn, self.save_preset_btn):
             top.addWidget(w)
         top.addStretch(1)
 
@@ -84,6 +95,30 @@ class MainWindow(QMainWindow):
         else:
             cuts, rapids = toolpath_segments(self.state.toolpaths(op))
             self.preview.show_segments(cuts, rapids)
+
+    def apply_selected_preset(self):
+        from gerber2rml.app.presets import apply_preset
+        name = self.preset_combo.currentText()
+        if name not in self._presets:
+            return
+        apply_preset(self.state, self._presets[name])
+        self.forms["traces"].set_instance(self.state.trace)
+        self.forms["drill"].set_instance(self.state.drill)
+        self.forms["cutout"].set_instance(self.state.cutout)
+        if self.state.board is not None:
+            self.generate_preview()
+
+    def _on_save_preset(self):
+        from PySide6.QtWidgets import QInputDialog
+        from gerber2rml.app.presets import save_user_preset, load_presets
+        name, ok = QInputDialog.getText(self, "Save preset", "Preset name:")
+        if ok and name:
+            self._sync_state()
+            save_user_preset(name, self.state)
+            self._presets = load_presets()
+            self.preset_combo.clear()
+            self.preset_combo.addItems(list(self._presets.keys()))
+            self.preset_combo.setCurrentText(name)
 
     def export_to(self, out_dir):
         self._sync_state()
