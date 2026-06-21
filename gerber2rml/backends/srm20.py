@@ -3,6 +3,7 @@
 Fixes the legacy bugs (docs/design.md §6): spindle ON via !MC1, XY feed via VS
 and plunge via !VZ, clean Z-up header, 40 RML units/mm (SRM-20 = 0.025 mm/unit).
 """
+from gerber2rml.toolpath import Move
 
 SCALE = 40            # RML-1 units per mm
 DEFAULT_RAPID = 15.0  # mm/s travel
@@ -12,7 +13,7 @@ def _u(mm: float) -> int:
     return int(round(mm * SCALE))
 
 
-def render(toolpaths: list, xy_feed: float, plunge_feed: float,
+def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID) -> str:
     out = ["^IN;!MC1;"]          # init + spindle ON
     mode = None                  # "cut" | "rapid"
@@ -20,7 +21,7 @@ def render(toolpaths: list, xy_feed: float, plunge_feed: float,
         for m in tp:
             want = "rapid" if m.rapid else "cut"
             if want != mode:
-                if m.rapid:
+                if want == "rapid":
                     out.append(f"VS{rapid_feed};!VZ{rapid_feed};")
                 else:
                     out.append(f"VS{xy_feed};!VZ{plunge_feed};")

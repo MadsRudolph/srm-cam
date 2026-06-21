@@ -25,3 +25,13 @@ def test_rapid_uses_rapid_feed():
                  rapid_feed=15.0)
     # rapids set both XY and Z (retract) speed to the rapid feed
     assert "VS15.0;!VZ15.0;" in rml
+
+
+def test_feed_line_not_repeated_for_consecutive_cuts():
+    rml = render([[Move(1, 1, -0.1), Move(2, 2, -0.1)]], xy_feed=4.0, plunge_feed=1.0)
+    assert rml.count("VS4.0;") == 1
+
+
+def test_empty_toolpaths_produces_safe_header_footer():
+    rml = render([], xy_feed=4.0, plunge_feed=1.0)
+    assert rml == "^IN;!MC1;\n!MC0;^IN;\n"
