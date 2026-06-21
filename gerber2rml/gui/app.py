@@ -77,7 +77,10 @@ class MainWindow(QMainWindow):
         self._sync_state()
         op = _OPS[self.tabs.currentIndex()]
         if op == "drill":
-            self.preview.show_holes(self.state.board.holes)
+            # overlay the holes on the trace context so you can see each hole
+            # sit on its pad (drill toolpaths themselves have no XY extent)
+            cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
+            self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)
         else:
             cuts, rapids = toolpath_segments(self.state.toolpaths(op))
             self.preview.show_segments(cuts, rapids)

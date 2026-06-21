@@ -30,9 +30,12 @@ def test_mirror_toggle_reloads_board():
     assert w.state.board is not first     # a fresh board was loaded
     assert w.state.mirror is False        # state tracks the new flag
 
-def test_drill_tab_preview_draws_holes():
+def test_drill_tab_preview_overlays_holes_on_traces():
+    from matplotlib.collections import LineCollection
     w = MainWindow()
     w.load_folder(str(FIXT))
     w.tabs.setCurrentIndex(1)             # drill tab
     w.generate_preview()
     assert len(w.preview.ax.patches) > 0  # holes drawn as circles, not blank
+    assert any(isinstance(c, LineCollection)
+               for c in w.preview.ax.collections)  # trace context overlaid behind
