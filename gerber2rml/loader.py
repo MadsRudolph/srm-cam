@@ -128,6 +128,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from gerbonara import LayerStack
+from gerbonara.excellon import ExcellonFile
 from gerbonara.apertures import (
     ApertureMacroInstance,
     CircleAperture,
@@ -325,6 +326,57 @@ def _holes_from_drill(drill_layer) -> List[HoleTuple]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def select_drill_holes(
+    folder: Path | str,
+    outline=None,
+    margin: float = 1.0,
+) -> List[HoleTuple]:
+    """Read drill hits from a Gerber folder with robust file selection.
+
+    Preference order:
+    1. KiCad split files (``*-PTH.drl`` / ``*-NPTH.drl`` or ``*_PTH.drl`` /
+       ``*_NPTH.drl``) — avoids the doubled-holes bug when a stale combined
+       ``<name>.drl`` sits alongside freshly-exported split files.
+    2. All ``*.drl`` files when no split files are present.
+
+    After collection, duplicate hits (same x/y/diameter rounded to 3 dp) are
+    removed and holes outside the board outline (plus *margin* mm) are dropped.
+    """
+    folder = Path(folder)
+    drl = sorted(folder.glob("*.drl"))
+    split = [
+        p for p in drl
+        if p.stem.upper().endswith(("-PTH", "-NPTH", "_PTH", "_NPTH"))
+    ]
+    sources = split if split else drl
+
+    holes: List[HoleTuple] = []
+    for p in sources:
+        ex = ExcellonFile.open(str(p))
+        for o in ex.objects:
+            if type(o).__name__ == "Flash":
+                holes.append((o.x, o.y, getattr(o.aperture, "diameter", 0) or 0))
+
+    # Deduplicate
+    seen: set = set()
+    uniq: List[HoleTuple] = []
+    for h in holes:
+        k = (round(h[0], 3), round(h[1], 3), round(h[2], 3))
+        if k not in seen:
+            seen.add(k)
+            uniq.append(h)
+
+    # Filter to outline + margin
+    if outline is not None and not outline.is_empty:
+        x0, y0, x1, y1 = outline.bounds
+        uniq = [
+            (x, y, d) for (x, y, d) in uniq
+            if x0 - margin <= x <= x1 + margin and y0 - margin <= y <= y1 + margin
+        ]
+
+    return uniq
+
+
 def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     """Load a KiCad Gerber folder into a ``Board`` of shapely geometry.
 
@@ -365,16 +417,15 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     outline = _outline_to_shapely(outline_layer)
 
     # ---- Drill holes ----
-    holes: List[HoleTuple] = []
-    drill_files = list(stack.drill_layers)
-    if not drill_files:
+    # select_drill_holes prefers KiCad split (-PTH/-NPTH) files over a stale
+    # combined <name>.drl, deduplicates, and filters to the raw (pre-mirror)
+    # outline so phantom holes from mis-matched origins are dropped.
+    holes: List[HoleTuple] = select_drill_holes(folder, outline=outline)
+    if not holes:
         warnings.warn(
             f"No drill file found in {folder}; holes will be empty.",
             stacklevel=2,
         )
-    else:
-        for dl in drill_files:
-            holes.extend(_holes_from_drill(dl))
 
     # ---- Mirror if requested ----
     if mirror:
