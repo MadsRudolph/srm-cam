@@ -18,3 +18,16 @@ def test_one_path_per_hole():
     job = DrillJob()
     holes = [(1, 1, 0.8), (2, 2, 0.8), (3, 3, 1.0)]
     assert len(drill_holes(holes, job)) == 3
+
+
+def test_peck_count_is_exact():
+    job = DrillJob(cut_depth=0.6, total_depth=1.8, travel_z=2.0)
+    tp = drill_holes([(0.0, 0.0, 0.8)], job)[0]
+    cut_moves = [m for m in tp if not m.rapid]
+    assert len(cut_moves) == 3            # no double-peck at the bottom
+
+def test_single_peck_when_bit_reaches_through():
+    job = DrillJob(cut_depth=2.0, total_depth=1.8, travel_z=2.0)
+    tp = drill_holes([(0.0, 0.0, 0.8)], job)[0]
+    cut_moves = [m for m in tp if not m.rapid]
+    assert len(cut_moves) == 1

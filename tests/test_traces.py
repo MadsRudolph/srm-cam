@@ -23,3 +23,8 @@ def test_ring_radius_grows_by_stepover():
     r0 = max(abs(m.x) for m in paths[0] if not m.rapid)
     r1 = max(abs(m.x) for m in paths[1] if not m.rapid)
     assert r1 > r0                           # second pass is further out
+
+
+def test_empty_copper_returns_empty():
+    from shapely.geometry import Polygon
+    assert isolate(Polygon(), TraceJob()) == []

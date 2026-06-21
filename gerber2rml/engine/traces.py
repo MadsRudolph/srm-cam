@@ -2,6 +2,8 @@
 from shapely.geometry import MultiPolygon, Polygon
 from gerber2rml.toolpath import Move
 
+_CLEAR_ALL_MAX_PASSES = 1000  # safety cap for offsets == -1 (clear-all)
+
 
 def _rings(geom):
     """Yield each exterior + interior ring coordinate list of a (Multi)Polygon."""
@@ -29,6 +31,8 @@ def isolate(copper, job):
     cut_z, travel_z = -job.cut_depth, job.travel_z
     paths = []
     i = 0
+    # NOTE (v1): offsets == -1 ("clear all") simply grows isolation rings outward
+    # until the safety cap; it does not true-pocket the copper-free area. Default is 2.
     while True:
         if n != -1 and i >= n:
             break
@@ -40,7 +44,7 @@ def isolate(copper, job):
             break
         for coords in rings:
             paths.append(_ring_to_toolpath(coords, cut_z, travel_z))
-        if n == -1 and i > 1000:      # safety cap for clear-all mode
+        if n == -1 and i >= _CLEAR_ALL_MAX_PASSES:      # safety cap for clear-all mode
             break
         i += 1
     return paths

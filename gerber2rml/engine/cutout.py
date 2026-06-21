@@ -2,6 +2,8 @@
 from shapely.geometry import MultiPolygon, Polygon, LineString
 from gerber2rml.toolpath import Move
 
+_SEGMENT_STEP_MM = 0.5  # interpolation resolution for cut segments
+
 
 def _largest_ring(geom):
     polys = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
@@ -23,9 +25,14 @@ def _segments_with_tabs(ring, tabs, tab_width):
         if gap_start > prev:
             cut_ranges.append((prev, gap_start))
         prev = c + tab_width / 2.0
+    if not cut_ranges:
+        raise ValueError(
+            f"tabs x tab_width ({tabs} x {tab_width}mm = {tabs * tab_width:.1f}mm) "
+            f">= cut ring length ({L:.1f}mm): no material would be cut"
+        )
     segments = []
     for (a, b) in cut_ranges:
-        n = max(2, int((b - a) / 0.5))
+        n = max(2, int((b - a) / _SEGMENT_STEP_MM))
         pts = [ring.interpolate(a + (b - a) * t / (n - 1)).coords[0] for t in range(n)]
         segments.append(pts)
     return segments
