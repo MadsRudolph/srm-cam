@@ -22,3 +22,9 @@ def test_write_coupon_creates_three_files(tmp_path):
     assert any(n.endswith("B_Cu.gbr") for n in names)
     assert any("Edge_Cuts" in n for n in names)
     assert any(n.endswith(".drl") for n in names)
+
+
+def test_coupon_has_top_copper(tmp_path):
+    folder = write_coupon(tmp_path)
+    fcu = [p for p in folder.iterdir() if p.name.endswith("F_Cu.gbr")]
+    assert fcu and fcu[0].stat().st_size > 200    # real content, not the empty stub

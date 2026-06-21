@@ -5,7 +5,7 @@ calibration coupon:
 
 - ``calib-B_Cu.gbr``         — bottom copper (trace-pair rectangles, round pads)
 - ``calib-Edge_Cuts.gbr``    — board outline rectangle
-- ``calib-F_Cu.gbr``         — empty top copper (required for gerbonara layer detection)
+- ``calib-F_Cu.gbr``         — top copper: ⌀1.6 mm pads on all holes + asymmetric rect
 - ``calib-F_Mask.gbr``       — empty top soldermask (required for gerbonara)
 - ``calib-B_Mask.gbr``       — empty bottom soldermask (required for gerbonara)
 - ``calib-F_Silkscreen.gbr`` — empty top silk (required for gerbonara)
@@ -103,6 +103,34 @@ def _build_edge_cuts() -> str:
     return "\n".join(lines) + "\n"
 
 
+def _build_fcu(holes: list[tuple[float, float, float]]) -> str:
+    """F.Cu Gerber: ⌀1.6 mm pads on every drill hole + asymmetric top-only rectangle.
+
+    The round pads mirror the B.Cu pads so that both sides of each through-hole
+    are ringed — flip-registration quality can be verified by inspecting alignment
+    of the two copper rings under a light.
+
+    The asymmetric rectangle (4 × 2 mm near the top-left corner) is deliberately
+    NOT symmetric with respect to any board axis, so a flip or registration error
+    makes it visually obvious.
+    """
+    regions: list[str] = []
+
+    # --- Round pads on every drill hole (12-gon, ⌀1.6 mm) ---
+    pad_r = 1.6 / 2  # 0.8 mm radius
+    for hx, hy, _diam in holes:
+        pts = _circle_pts(hx, hy, pad_r, 12)
+        regions.append(_region(pts))
+
+    # --- Asymmetric top-only rectangle near top-left corner ---
+    # 4 mm wide × 2 mm tall, placed at x=4..8, y=25..27.
+    # NOT centred on any axis — a flip error will displace it visibly.
+    regions.append(_rect_region(4.0, 25.0, 8.0, 27.0))
+
+    body = "\n".join(regions)
+    return _gbr_header("Copper,L1,Top") + _aperture_block() + body + "\nM02*\n"
+
+
 def _build_bcu(holes: list[tuple[float, float, float]]) -> str:
     """B.Cu Gerber: isolation trace-pairs, pad circles on every drill, roundness pad."""
     regions: list[str] = []
@@ -177,7 +205,7 @@ def write_coupon(out_dir: Path | str) -> Path:
     Creates:
     - ``calib-B_Cu.gbr``         — bottom copper
     - ``calib-Edge_Cuts.gbr``    — board outline
-    - ``calib-F_Cu.gbr``         — empty top copper (needed for layer detection)
+    - ``calib-F_Cu.gbr``         — top copper (pads on all holes + asymmetric rect)
     - ``calib-F_Mask.gbr``       — empty top soldermask
     - ``calib-B_Mask.gbr``       — empty bottom soldermask
     - ``calib-F_Silkscreen.gbr`` — empty top silk
@@ -216,9 +244,11 @@ def write_coupon(out_dir: Path | str) -> Path:
     (out_dir / "calib-Edge_Cuts.gbr").write_text(_build_edge_cuts())
     (out_dir / "calib.drl").write_text(_build_drill(holes))
 
-    # Write dummy layers so gerbonara LayerStack.open() can identify the board
-    # (it requires at least 6 Gerber files in the standard KiCad layer set).
-    (out_dir / "calib-F_Cu.gbr").write_text(_empty_gbr("Copper,L1,Top"))
+    # Write F.Cu with real top-copper content (pads + asymmetric rectangle).
+    (out_dir / "calib-F_Cu.gbr").write_text(_build_fcu(holes))
+
+    # Write remaining dummy layers so gerbonara LayerStack.open() can identify
+    # the board (it requires at least 6 Gerber files in the standard KiCad set).
     (out_dir / "calib-F_Mask.gbr").write_text(_empty_gbr("Soldermask,Top"))
     (out_dir / "calib-B_Mask.gbr").write_text(_empty_gbr("Soldermask,Bot"))
     (out_dir / "calib-F_Silkscreen.gbr").write_text(_empty_gbr("Legend,Top"))
