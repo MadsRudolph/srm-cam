@@ -61,3 +61,10 @@ def test_export_image_writes_png(tmp_path):
     out = w.export_image_to(tmp_path)
     assert out.exists() and out.suffix == ".png"
     assert (tmp_path / (out.stem + "_summary.md")).exists()
+
+def test_double_sided_export(tmp_path):
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    written = w.export_to(tmp_path)
+    assert any(p.name.endswith("_top_traces.rml") for p in written)

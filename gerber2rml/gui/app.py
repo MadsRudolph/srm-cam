@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         self.machine_combo.addItems(list(BACKENDS.keys()))
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
         self.mirror_chk.toggled.connect(self._on_mirror_toggled)
+        self.double_sided_chk = QCheckBox("Double-sided")
         
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("Name:", self.name_edit)
         project_layout.addRow("Machine:", self.machine_combo)
         project_layout.addRow("", self.mirror_chk)
+        project_layout.addRow("", self.double_sided_chk)
         settings_layout.addWidget(project_group)
         
         # Presets Group
@@ -174,6 +176,11 @@ class MainWindow(QMainWindow):
 
     def export_to(self, out_dir):
         self._sync_state()
+        if self.double_sided_chk.isChecked():
+            from gerber2rml.doublesided import build_double_sided
+            return build_double_sided(
+                self.state.gerber_dir, out_dir, self.state.name,
+                trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout)
         return self.state.export(out_dir)
 
     def export_image_to(self, out_dir):
@@ -202,6 +209,10 @@ class MainWindow(QMainWindow):
         if self.state.gerber_dir is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
+        if self.double_sided_chk.isChecked() and self.state.board is not None \
+                and self.state.board.copper_top.is_empty:
+            QMessageBox.warning(self, "No F.Cu",
+                                "Double-sided needs front copper (F.Cu); none found in this export.")
         out = QFileDialog.getExistingDirectory(self, "Select output folder")
         if out:
             try:
