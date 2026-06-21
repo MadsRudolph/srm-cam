@@ -122,3 +122,21 @@ drill, cutout) in one click.
 1. **Built-in:** embedded in code (`FR-4` default, `FR-1`).
 2. **Repo examples:** `examples/presets.json` — team-shared presets (tracked in git).
 3. **User home:** `~/.gerber2rml/presets.json` — your personal presets, written by Save.
+
+## Preflight, reports & clearing
+
+### Isolation preflight
+
+When previewing the **Traces** tab, copper-free gaps narrower than the bit are shown in **red** and a warning appears in the status bar. These are channels the bit physically cannot isolate — potential shorts. Fix the layout or use a smaller bit.
+
+### Robust drilling
+
+The loader prefers KiCad's split `-PTH`/`-NPTH` drill files over a stale combined `<board>.drl`, dedupes, and drops holes outside the board outline. Leftover or mismatched drill files in a gerber folder no longer produce phantom holes.
+
+### Report export
+
+The **Export image** button saves the current preview as `<name>_preview.png` plus a `<name>_preview_summary.md` (board size, copper area, hole table) — handy for documentation.
+
+### True copper clearing
+
+Setting **offsets = -1** on the **Traces** tab now fully clears the background copper (concentric pocketing clipped to the board outline, terminating when done) instead of just cutting isolation channels. This is the laser-equivalent "rubout", useful for ground-pour boards. It is slower (many passes).
