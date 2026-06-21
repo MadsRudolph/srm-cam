@@ -38,3 +38,14 @@ def test_two_separate_pads_each_get_isolated():
     job = TraceJob(bit_diameter=0.4, offsets=1, stepover=0.5)
     paths = isolate(copper, job)
     assert len(paths) == 2                     # one isolation ring per pad
+
+
+def test_clear_all_terminates_and_stays_in_outline():
+    from shapely.geometry import box, Point
+    outline = box(0, 0, 20, 20)
+    copper = Point(10, 10).buffer(2.0)        # one pad in the middle
+    job = TraceJob(bit_diameter=0.8, offsets=-1, stepover=0.5)
+    paths = isolate(copper, job, outline=outline)
+    assert 0 < len(paths) < 200               # terminates, not the 1000+ cap
+    xs = [m.x for tp in paths for m in tp if not m.rapid]
+    assert min(xs) >= -1 and max(xs) <= 21     # clipped to the board, no huge rings

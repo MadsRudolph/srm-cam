@@ -19,7 +19,7 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None, m
 
     written = []
     jobs = [
-        (f"{name}_traces.rml", isolate(board.copper, trace), trace),
+        (f"{name}_traces.rml", isolate(board.copper, trace, outline=board.outline), trace),
         (f"{name}_drill.rml", drill_holes(board.holes, drill), drill),
         (f"{name}_cutout.rml", cut_outline(board.outline, cutout), cutout),
     ]

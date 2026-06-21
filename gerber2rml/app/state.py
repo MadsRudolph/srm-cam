@@ -29,7 +29,7 @@ class ProjectState:
         if self.board is None:
             raise RuntimeError("load a Gerber folder first")
         if op == "traces":
-            return isolate(self.board.copper, self.trace)
+            return isolate(self.board.copper, self.trace, outline=self.board.outline)
         if op == "drill":
             return drill_holes(self.board.holes, self.drill)
         if op == "cutout":
