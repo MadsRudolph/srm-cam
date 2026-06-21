@@ -15,3 +15,10 @@ def test_build_jobs_writes_three_rml(tmp_path):
             text = p.read_text()
             assert text.startswith("^IN;!MC1;")   # spindle on
             assert text.rstrip().endswith("!MC0;^IN;")
+
+
+def test_build_jobs_writes_runplan(tmp_path):
+    written = build_jobs(FIXT, tmp_path, name="m")
+    names = {p.name for p in written}
+    assert "m_runplan.txt" in names
+    assert len(written) == 4                   # 3 rml + 1 runplan

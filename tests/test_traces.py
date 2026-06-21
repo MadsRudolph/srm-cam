@@ -28,3 +28,13 @@ def test_ring_radius_grows_by_stepover():
 def test_empty_copper_returns_empty():
     from shapely.geometry import Polygon
     assert isolate(Polygon(), TraceJob()) == []
+
+
+def test_two_separate_pads_each_get_isolated():
+    from shapely.geometry import MultiPolygon
+    pad_a = Point(0, 0).buffer(1.0)
+    pad_b = Point(10, 0).buffer(1.0)          # far apart -> stay separate after buffer
+    copper = MultiPolygon([pad_a, pad_b])
+    job = TraceJob(bit_diameter=0.4, offsets=1, stepover=0.5)
+    paths = isolate(copper, job)
+    assert len(paths) == 2                     # one isolation ring per pad

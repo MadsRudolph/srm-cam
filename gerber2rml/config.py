@@ -11,7 +11,6 @@ class TraceJob:
     xy_feed: float = 4.0         # mm/s
     plunge_feed: float = 1.0     # mm/s
     travel_z: float = 2.0        # mm
-    mirror: bool = True
 
 
 @dataclass
@@ -21,7 +20,6 @@ class DrillJob:
     xy_feed: float = 4.0
     plunge_feed: float = 1.0
     travel_z: float = 2.0
-    mirror: bool = True
 
 
 @dataclass
@@ -34,7 +32,6 @@ class CutoutJob:
     xy_feed: float = 4.0
     plunge_feed: float = 1.0
     travel_z: float = 2.0
-    mirror: bool = True
 
 
 @dataclass

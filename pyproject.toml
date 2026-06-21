@@ -12,17 +12,19 @@ license = { text = "MIT" }
 dependencies = [
     "gerbonara>=1.0",
     "shapely>=2.0",
-    "PySide6>=6.5",
-    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
 ]
+gui = [
+    "PySide6>=6.5",
+    "matplotlib>=3.7",
+]
 
-[project.gui-scripts]
-gerber2rml = "gerber2rml.gui.app:main"
+[project.scripts]
+gerber2rml-cli = "gerber2rml.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["gerber2rml*"]

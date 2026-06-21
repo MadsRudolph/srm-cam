@@ -42,7 +42,7 @@ Gerber/Excellon ─► loader (gerbonara→shapely) ─► engine (traces/drill/
 | `gerber2rml/engine/cutout.py` | Edge.Cuts → outline cut + tabs |
 | `gerber2rml/backends/base.py` | Abstract `MachineBackend` interface |
 | `gerber2rml/backends/srm20.py` | Toolpaths → RML-1 |
-| `gerber2rml/config.py` | `Job` / `Tool` dataclasses + SRM-20 defaults |
+| `gerber2rml/config.py` | `TraceJob` / `DrillJob` / `CutoutJob` / `BoardConfig` dataclasses + SRM-20 defaults |
 | `gerber2rml/gui/` | PySide6 window, fields, matplotlib preview, export |
 
 ## Install (development)
@@ -54,9 +54,14 @@ pip install -e ".[dev]"
 
 ## Run
 
+Headless CLI (Plan A):
+
 ```bash
-python -m gerber2rml          # launches the GUI (once implemented)
+python -m gerber2rml.cli <gerber-folder> -o out -n <boardname>
+# after `pip install`, also available as:  gerber2rml-cli <gerber-folder> -o out -n <boardname>
 ```
+
+The GUI (`python -m gerber2rml`) is a separate later plan (Plan B) and is not implemented yet.
 
 ## Tests
 

@@ -9,7 +9,6 @@ def test_trace_defaults_match_srm20():
     assert j.offsets == 2
     assert j.xy_feed == 4.0
     assert j.plunge_feed == 1.0
-    assert j.mirror is True
 
 
 def test_cutout_has_tabs():
