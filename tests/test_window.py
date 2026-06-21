@@ -53,3 +53,11 @@ def test_window_opens_with_fr4_preset_applied():
     w = MainWindow()
     assert w.preset_combo.currentText().startswith("FR-4")
     assert w.forms["traces"].value().xy_feed == 1.5   # FR-4 conservative feed
+
+def test_export_image_writes_png(tmp_path):
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    out = w.export_image_to(tmp_path)
+    assert out.exists() and out.suffix == ".png"
+    assert (tmp_path / (out.stem + "_summary.md")).exists()

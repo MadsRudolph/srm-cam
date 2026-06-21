@@ -33,6 +33,10 @@ class MainWindow(QMainWindow):
         self.export_btn.clicked.connect(self._on_export_clicked)
         self.export_btn.setStyleSheet("font-weight: bold; padding: 5px;")
 
+        self.export_img_btn = QPushButton("Export image")
+        self.export_img_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+        self.export_img_btn.clicked.connect(self._on_export_image)
+
         self.name_edit = QLineEdit(self.state.name)
         self.machine_combo = QComboBox()
         self.machine_combo.addItems(list(BACKENDS.keys()))
@@ -57,6 +61,7 @@ class MainWindow(QMainWindow):
         project_group = QGroupBox("Project")
         project_layout = QFormLayout(project_group)
         project_layout.addRow(self.load_btn, self.export_btn)
+        project_layout.addRow("", self.export_img_btn)
         project_layout.addRow("Name:", self.name_edit)
         project_layout.addRow("Machine:", self.machine_combo)
         project_layout.addRow("", self.mirror_chk)
@@ -123,13 +128,25 @@ class MainWindow(QMainWindow):
         self._sync_state()
         t0 = time.time()
         op = _OPS[self.tabs.currentIndex()]
+        gap_warning = False
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)
         else:
             cuts, rapids = toolpath_segments(self.state.toolpaths(op))
             self.preview.show_segments(cuts, rapids)
-        self.statusBar().showMessage(f"Preview updated in {time.time() - t0:.2f}s", 5000)
+            if op == "traces":
+                from gerber2rml.analysis import find_narrow_gaps
+                gaps = find_narrow_gaps(self.state.board.copper,
+                                        self.state.board.outline,
+                                        self.state.trace.bit_diameter)
+                if not gaps.is_empty:
+                    self.preview.show_gaps(gaps)
+                    self.statusBar().showMessage(
+                        "Warning: copper gaps too narrow to isolate (shown red)", 8000)
+                    gap_warning = True
+        if not gap_warning:
+            self.statusBar().showMessage(f"Preview updated in {time.time() - t0:.2f}s", 5000)
 
     def apply_selected_preset(self):
         from gerber2rml.app.presets import apply_preset
@@ -159,6 +176,19 @@ class MainWindow(QMainWindow):
         self._sync_state()
         return self.state.export(out_dir)
 
+    def export_image_to(self, out_dir):
+        from pathlib import Path
+        from gerber2rml.report import board_summary
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        png = out_dir / f"{self.state.name}_preview.png"
+        self.preview.figure.savefig(
+            str(png), facecolor=self.preview.figure.get_facecolor())
+        if self.state.board is not None:
+            (out_dir / f"{png.stem}_summary.md").write_text(
+                board_summary(self.state.board, self.state.name), encoding="utf-8")
+        return png
+
     def _on_load_clicked(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Gerber folder")
         if folder:
@@ -180,6 +210,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Export failed", str(e))
                 return
             self.statusBar().showMessage(f"Exported successfully to: {out}", 10000)
+
+    def _on_export_image(self):
+        if self.state.board is None:
+            QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        if out:
+            try:
+                png = self.export_image_to(out)
+            except Exception as e:
+                QMessageBox.critical(self, "Export failed", str(e))
+                return
+            self.statusBar().showMessage(f"Saved {png.name} + summary", 8000)
 
 def apply_dark_theme(app):
     app.setStyle("Fusion")

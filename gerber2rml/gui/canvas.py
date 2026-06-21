@@ -109,3 +109,13 @@ class PreviewCanvas(QWidget):
     def show_holes(self, holes):
         """Draw drill holes alone (circles + centre marks), no trace context."""
         self.show_segments([], [], holes=holes)
+
+    def show_gaps(self, gaps):
+        """Overlay narrow-gap polygons (isolation preflight) in red."""
+        from shapely.geometry import MultiPolygon
+        polys = gaps.geoms if isinstance(gaps, MultiPolygon) else [gaps]
+        for p in polys:
+            if not p.is_empty and p.geom_type == "Polygon":
+                xs, ys = p.exterior.xy
+                self.ax.fill(list(xs), list(ys), color="#ff0000", alpha=0.5, zorder=5)
+        self.canvas.draw_idle()
