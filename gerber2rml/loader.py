@@ -123,7 +123,7 @@ normalised to mm.  No manual unit conversion is needed.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
@@ -136,6 +136,7 @@ from gerbonara.apertures import (
 )
 from shapely.affinity import scale
 from shapely.geometry import LineString, Point, Polygon, box
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import polygonize, unary_union
 
 # ---------------------------------------------------------------------------
@@ -144,14 +145,16 @@ from shapely.ops import polygonize, unary_union
 
 HoleTuple = Tuple[float, float, float]  # (x, y, diameter) in mm
 
+_OUTLINE_FALLBACK_STROKE_MM = 0.05
+
 
 @dataclass
 class Board:
     """Shapely representation of a loaded PCB."""
 
-    copper: object          # shapely geometry — union of all B.Cu shapes
-    outline: object         # shapely geometry — board perimeter polygon
-    holes: List[HoleTuple]  # drill hits as (x, y, diameter) in mm
+    copper: BaseGeometry    # shapely geometry — union of all B.Cu shapes
+    outline: BaseGeometry   # shapely geometry — board perimeter polygon
+    holes: list             # drill hits as (x, y, diameter) in mm
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +251,7 @@ def _copper_to_shapely(b_cu_layer) -> object:
         if obj_type == 'Line':
             width = obj.aperture.diameter
             ls = LineString([(obj.x1, obj.y1), (obj.x2, obj.y2)])
-            shapes.append(ls.buffer(width / 2, cap_style=1))  # cap_style=1 → round
+            shapes.append(ls.buffer(width / 2, cap_style="round"))
 
         elif obj_type == 'Flash':
             geom = _flash_to_shapely(obj)
@@ -257,10 +260,10 @@ def _copper_to_shapely(b_cu_layer) -> object:
 
         elif obj_type == 'Region':
             pts = list(obj.outline)
-            if pts and pts[0] != pts[-1]:
-                pts.append(pts[0])  # close the ring
-            if len(pts) >= 4:
-                shapes.append(Polygon(pts))
+            if len(pts) < 3:
+                continue
+            poly = Polygon(pts).buffer(0)
+            shapes.append(poly)
 
         # Arc and other types not seen in the fixture — skip silently.
 
@@ -297,7 +300,7 @@ def _outline_to_shapely(outline_layer) -> object:
 
     # Fallback: buffer union of edge lines to produce a filled region
     combined = unary_union(edge_lines)
-    buffered = combined.buffer(0.05)  # thin stroke to create a filled area
+    buffered = combined.buffer(_OUTLINE_FALLBACK_STROKE_MM)  # thin stroke to create a filled area
     if buffered.geom_type == 'MultiPolygon':
         return max(buffered.geoms, key=lambda p: p.area)
     return buffered
@@ -346,17 +349,31 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     stack = LayerStack.open(folder)
 
     # ---- Bottom copper ----
-    b_cu = stack.graphic_layers[('bottom', 'copper')]
+    b_cu = stack.graphic_layers.get(('bottom', 'copper'))
+    if b_cu is None:
+        raise ValueError(
+            f"No bottom-copper layer found in {folder} (expected a B.Cu Gerber)"
+        )
     copper = _copper_to_shapely(b_cu)
 
     # ---- Outline ----
-    outline_layer = stack.graphic_layers[('mechanical', 'outline')]
+    outline_layer = stack.graphic_layers.get(('mechanical', 'outline'))
+    if outline_layer is None:
+        raise ValueError(
+            f"No outline layer found in {folder} (expected an Edge.Cuts / mechanical outline Gerber)"
+        )
     outline = _outline_to_shapely(outline_layer)
 
     # ---- Drill holes ----
     holes: List[HoleTuple] = []
-    if stack._drill_layers:
-        for dl in stack._drill_layers:
+    drill_files = list(stack.drill_layers)
+    if not drill_files:
+        warnings.warn(
+            f"No drill file found in {folder}; holes will be empty.",
+            stacklevel=2,
+        )
+    else:
+        for dl in drill_files:
             holes.extend(_holes_from_drill(dl))
 
     # ---- Mirror if requested ----
