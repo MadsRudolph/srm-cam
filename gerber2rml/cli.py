@@ -1,7 +1,7 @@
 """CLI: gerber folder -> three SRM-20 RML jobs."""
 import argparse
 from pathlib import Path
-from gerber2rml.loader import load_board
+from gerber2rml.loader import load_board, place_in_positive_quadrant
 from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 from gerber2rml.engine.traces import isolate
 from gerber2rml.engine.drill import drill_holes
@@ -15,7 +15,7 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None, m
     trace = trace or TraceJob()
     drill = drill or DrillJob()
     cutout = cutout or CutoutJob()
-    board = load_board(gerber_dir, mirror=mirror)
+    board = place_in_positive_quadrant(load_board(gerber_dir, mirror=mirror))
 
     written = []
     jobs = [

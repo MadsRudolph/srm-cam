@@ -134,7 +134,7 @@ from gerbonara.apertures import (
     ObroundAperture,
     RectangleAperture,
 )
-from shapely.affinity import scale
+from shapely.affinity import scale, translate as _translate
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import polygonize, unary_union
@@ -383,3 +383,18 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
         holes = [(-x, y, d) for x, y, d in holes]
 
     return Board(copper=copper, outline=outline, holes=holes)
+
+
+def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
+    """Translate copper, outline and holes so the board's lower-left corner
+    sits at (margin, margin). Machine coordinates (operator zeroes at the board
+    corner) expect positive X/Y."""
+    geoms = [g for g in (board.copper, board.outline) if not g.is_empty]
+    minx = min(g.bounds[0] for g in geoms)
+    miny = min(g.bounds[1] for g in geoms)
+    dx, dy = margin - minx, margin - miny
+    return Board(
+        copper=_translate(board.copper, xoff=dx, yoff=dy),
+        outline=_translate(board.outline, xoff=dx, yoff=dy),
+        holes=[(x + dx, y + dy, d) for (x, y, d) in board.holes],
+    )
