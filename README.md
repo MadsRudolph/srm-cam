@@ -140,3 +140,44 @@ The **Export image** button saves the current preview as `<name>_preview.png` pl
 ### True copper clearing
 
 Setting **offsets = -1** on the **Traces** tab now fully clears the background copper (concentric pocketing clipped to the board outline, terminating when done) instead of just cutting isolation channels. This is the laser-equivalent "rubout", useful for ground-pour boards. It is slower (many passes).
+
+## Double-sided boards
+
+For two-sided PCBs, gerber2rml uses **dowel-pin registration** to align top and bottom milling passes. Tick the **Double-sided** checkbox in the GUI before exporting Gerbers (requires an **F.Cu** layer in the export).
+
+### Output files
+
+A double-sided job produces six RML files plus a runplan:
+
+- `<name>_align.rml` — drill two 3.0 mm alignment holes for dowel pins
+- `<name>_bottom_drill.rml` — drill holes through the bottom side (B.Cu)
+- `<name>_bottom_traces.rml` — isolate bottom traces (B.Cu)
+- `<name>_top_traces.rml` — isolate top traces (F.Cu, reflected for registration)
+- `<name>_cutout.rml` — cut board outline and holding tabs
+- `<name>_preview.png` + `<name>_preview_summary.md` — documentation
+
+### Operator sequence
+
+1. **Drill alignment holes:** Run `_align.rml` to create two 3.0 mm holes through the board and into the sacrificial bed. Insert 3.0 mm dowel pins and seat them flush.
+
+2. **Mill bottom side:** Run `_bottom_drill.rml` (holes), then `_bottom_traces.rml` (copper traces, B.Cu).
+
+3. **Flip and re-register:** Lift the board and flip it top-over-bottom about the horizontal pin line (the two pins form the flip axis). The board drops back onto the dowels.
+
+4. **Mill top side:** Run `_top_traces.rml` (top copper traces, F.Cu). Geometry is reflected so it aligns correctly after flipping.
+
+5. **Cut out:** Run `_cutout.rml` last to separate the board. Keep the XY origin at the left pin throughout all operations.
+
+### Pin placement
+
+The two alignment pins are placed on a horizontal axis through the board centre, positioned **beyond the 104 mm jig box** (or beyond the board if wider), so they never enter the milling area. Ensure your stock has ~6 mm of waste margin around the design box on all sides so the pins have a safe landing zone.
+
+### Validation
+
+Before running a real board, mill the bundled calibration coupon double-sided to verify registration accuracy:
+
+```bash
+python -m gerber2rml.cli examples/calibration -o out -n calib
+```
+
+The coupon includes an F.Cu side with pads on every through-hole plus an asymmetric corner marker. After milling and flipping, the top pads should ring their holes concentrically. Registration is bounded by the SRM-20's repeatability (~0.05–0.1 mm) and dowel pin fit.
