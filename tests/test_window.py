@@ -48,3 +48,8 @@ def test_apply_preset_updates_forms():
     w.apply_selected_preset()
     assert w.forms["traces"].value().bit_diameter == 0.4
     assert w.forms["cutout"].value().tabs == 4
+
+def test_window_opens_with_fr4_preset_applied():
+    w = MainWindow()
+    assert w.preset_combo.currentText().startswith("FR-4")
+    assert w.forms["traces"].value().xy_feed == 1.5   # FR-4 conservative feed

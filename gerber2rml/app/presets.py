@@ -4,6 +4,19 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 BUILTIN_PRESETS = {
+    # FR-4 (abrasive glass-fibre) on the SRM-20 (max ~7000 RPM): slower feeds,
+    # slow plunges, shallow drill/cutout pecks to clear glass dust. Conservative
+    # starting points — dial up with the calibration coupon. Set VPanel spindle
+    # to max (~7000 RPM); use SOLID CARBIDE bits; dust extraction + mask required.
+    "FR-4 (1.6 mm): 1/64 traces + 0.8/1.0 drill + 1/32 cutout": {
+        "trace": {"bit_diameter": 0.4, "cut_depth": 0.10, "offsets": 2,
+                  "stepover": 0.5, "xy_feed": 1.5, "plunge_feed": 0.5, "travel_z": 2.0},
+        "drill": {"cut_depth": 0.4, "total_depth": 1.8, "xy_feed": 1.5,
+                  "plunge_feed": 0.6, "travel_z": 2.0},
+        "cutout": {"bit_diameter": 0.8, "cut_depth": 0.4, "total_depth": 1.8,
+                   "tabs": 4, "tab_width": 1.5, "xy_feed": 1.5,
+                   "plunge_feed": 0.5, "travel_z": 2.0},
+    },
     "FR-1: 1/64 traces + 0.8/1.0 drill + 1/32 cutout": {
         "trace": {"bit_diameter": 0.4, "cut_depth": 0.10, "offsets": 2,
                   "stepover": 0.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},

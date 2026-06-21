@@ -111,7 +111,14 @@ drill, cutout) in one click.
 - Click **Apply** to load it into all three operation tabs at once.
 - Modify as needed, then click **Save** to store under a new name.
 
+**Built-in presets** (the GUI opens with **FR-4** applied):
+- `FR-4 (1.6 mm)` — conservative feeds for abrasive glass-fibre on the SRM-20
+  (~7000 RPM max): traces 1.5 mm/s feed / 0.5 mm/s plunge, drill/cutout in 0.4 mm
+  pecks. Use **solid carbide** bits, set VPanel spindle to max, and run **dust
+  extraction + a mask** (FR-4 dust is harmful). Dial up with the calibration coupon.
+- `FR-1` — faster feeds (4 mm/s) for soft phenolic blanks.
+
 **Preset sources** (merged by name; later overrides earlier):
-1. **Built-in default:** `FR-1: 1/64 traces + 0.8/1.0 drill + 1/32 cutout` — embedded in code.
+1. **Built-in:** embedded in code (`FR-4` default, `FR-1`).
 2. **Repo examples:** `examples/presets.json` — team-shared presets (tracked in git).
 3. **User home:** `~/.gerber2rml/presets.json` — your personal presets, written by Save.

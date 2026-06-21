@@ -62,6 +62,10 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(); root.addLayout(top); root.addLayout(body)
         central = QWidget(); central.setLayout(root); self.setCentralWidget(central)
 
+        # open with the first preset applied (FR-4 conservative) so the form
+        # values match the selected preset in the dropdown
+        self.apply_selected_preset()
+
     def _sync_state(self):
         self.state.name = self.name_edit.text() or "board"
         self.state.machine = self.machine_combo.currentText()

@@ -8,6 +8,15 @@ def test_builtin_present():
     assert any("1/64" in name for name in presets)
 
 
+def test_fr4_preset_is_first_and_conservative():
+    name = next(iter(BUILTIN_PRESETS))         # first = the default in the GUI
+    assert name.startswith("FR-4")
+    fr4 = BUILTIN_PRESETS[name]
+    assert fr4["trace"]["xy_feed"] == 1.5      # slow feed for abrasive FR-4
+    assert fr4["trace"]["plunge_feed"] == 0.5
+    assert fr4["drill"]["cut_depth"] == 0.4    # shallow pecks to clear glass dust
+
+
 def test_apply_preset_sets_jobs():
     st = ProjectState()
     name = next(iter(BUILTIN_PRESETS))
