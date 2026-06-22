@@ -135,6 +135,7 @@ from gerbonara.apertures import (
     ObroundAperture,
     RectangleAperture,
 )
+from shapely import set_precision
 from shapely.affinity import scale, translate as _translate
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
@@ -276,21 +277,33 @@ def _copper_to_shapely(b_cu_layer) -> object:
 
 
 def _outline_to_shapely(outline_layer) -> object:
-    """Convert Edge.Cuts lines to a board outline polygon.
+    """Convert Edge.Cuts lines/arcs to a board outline polygon.
 
     Strategy:
-    1. Collect edge Lines as LineString segments.
-    2. polygonize() to form closed polygon(s) — works when the outline is a
-       clean closed rectangle.
-    3. Fallback A: if polygonize yields nothing, buffer the edge lines so the
-       cutout engine can still use outline.buffer(r).
-    4. Return the largest polygon by area.
+    1. Collect edge Lines and *linearised* Arcs (rounded/filleted corners) as
+       LineString segments. Skipping arcs leaves the straight edges
+       disconnected, so a filleted outline fails to close.
+    2. polygonize() to form closed polygon(s) — works directly when the outline
+       is a clean closed loop with exactly-coincident endpoints (e.g. a plain
+       rectangle).
+    3. Arc linearisation leaves ~1e-5 mm gaps between segment endpoints that
+       defeat polygonize's exact noding, so snap to a fine grid (set_precision,
+       well below any milling tolerance) and retry.
+    4. Fallback: buffer the edge lines so the cutout engine can still use
+       outline.buffer(r).
+    5. Return the largest polygon by area.
     """
     edge_lines = []
     for obj in outline_layer.objects:
-        if type(obj).__name__ == 'Line':
-            ls = LineString([(obj.x1, obj.y1), (obj.x2, obj.y2)])
-            edge_lines.append(ls)
+        t = type(obj).__name__
+        if t == 'Line':
+            edge_lines.append(LineString([(obj.x1, obj.y1), (obj.x2, obj.y2)]))
+        elif t == 'Arc':
+            # gerbonara linearises an arc into a chain of short Line segments
+            for seg in obj.approximate():
+                edge_lines.append(
+                    LineString([(seg.x1, seg.y1), (seg.x2, seg.y2)])
+                )
 
     if not edge_lines:
         return Point(0, 0).buffer(0)
@@ -300,9 +313,16 @@ def _outline_to_shapely(outline_layer) -> object:
         # Return the largest polygon (boards with slots may yield multiple)
         return max(polys, key=lambda p: p.area)
 
+    # Rounded corners: arc linearisation leaves sub-micron endpoint gaps that
+    # polygonize won't node. Snap to a fine grid and retry before giving up.
+    merged = unary_union(edge_lines)
+    for grid in (1e-4, 1e-3, 1e-2):
+        polys = list(polygonize([set_precision(merged, grid)]))
+        if polys:
+            return max(polys, key=lambda p: p.area)
+
     # Fallback: buffer union of edge lines to produce a filled region
-    combined = unary_union(edge_lines)
-    buffered = combined.buffer(_OUTLINE_FALLBACK_STROKE_MM)  # thin stroke to create a filled area
+    buffered = merged.buffer(_OUTLINE_FALLBACK_STROKE_MM)  # thin stroke to create a filled area
     if buffered.geom_type == 'MultiPolygon':
         return max(buffered.geoms, key=lambda p: p.area)
     return buffered
