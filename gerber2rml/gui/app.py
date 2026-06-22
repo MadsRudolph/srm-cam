@@ -134,12 +134,13 @@ class MainWindow(QMainWindow):
         self.state.load(folder)
 
     def _double_sided_layout(self):
-        """Layout (geometry only, independent of the trace/drill jobs) for the
-        active board, cached by folder so live form edits don't re-read disk."""
-        from gerber2rml.doublesided import layout_double_sided
+        """Design-frame layout for the PREVIEW (both layers registered, holes on
+        pads, top plain). The export uses the machine-frame layout separately.
+        Cached by folder so live form edits don't re-read disk."""
+        from gerber2rml.doublesided import preview_layout_double_sided
         key = str(self.state.gerber_dir)
         if self._ds_cache is None or self._ds_cache[0] != key:
-            self._ds_cache = (key, layout_double_sided(self.state.gerber_dir))
+            self._ds_cache = (key, preview_layout_double_sided(self.state.gerber_dir))
         return self._ds_cache[1]
 
     def _on_double_sided_toggled(self, checked):
@@ -161,7 +162,7 @@ class MainWindow(QMainWindow):
                 isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
         if view in ("Both sides", "Top"):
             top_cuts, _ = toolpath_segments(
-                isolate(lay.top_copper, self.state.trace, outline=lay.top_outline))
+                isolate(lay.top_copper, self.state.trace, outline=lay.outline))
         holes = lay.holes if op == "drill" else None
         self.preview.show_segments(bottom_cuts, bottom_rapids, holes=holes,
                                    top_cuts=top_cuts, pins=lay.align_holes)

@@ -78,6 +78,25 @@ def test_bottom_drill_excludes_alignment_holes(tmp_path):
         if p.name.startswith("d_bottom_drill_"):
             assert token not in p.read_text()    # pinned hole is never re-drilled
 
+def test_preview_layout_registers_layers_on_holes():
+    # The preview lays both copper layers in the same design frame, so a through-
+    # hole has copper (a pad) on BOTH layers at its centre — i.e. they register
+    # and the holes land on the pads (unlike the mirror-imaged machine frame).
+    from gerber2rml.doublesided import preview_layout_double_sided
+    from shapely.geometry import Point
+    lay = preview_layout_double_sided(FIXT)
+
+    def on(geom, x, y):
+        return geom.distance(Point(x, y)) < 0.5
+
+    assert any(on(lay.bottom_copper, x, y) and on(lay.top_copper, x, y)
+               for (x, y, _d) in lay.holes)
+    # pins still on a vertical axis, above & below the board
+    assert abs(lay.align_holes[0][0] - lay.x_axis) < 1e-6
+    _bx0, by0, _bx1, by1 = lay.outline.bounds
+    assert lay.align_holes[0][1] < by0 and lay.align_holes[1][1] > by1
+
+
 def test_single_bit_double_sided_one_bottom_drill_file(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     from gerber2rml.config import DrillJob
