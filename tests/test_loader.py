@@ -50,3 +50,15 @@ def test_copper_is_valid():
 def test_loads_top_copper_field():
     board = load_board(FIXT, mirror=False)
     assert hasattr(board, "copper_top")      # present (may be empty if no F.Cu)
+
+
+def test_loads_partial_gerber_set(tmp_path):
+    import shutil
+    src = FIXT
+    # only B.Cu, F.Cu, Edge.Cuts, drill -> the set gerbonara's mapper chokes on
+    for name in ("buck-B_Cu.gbl", "buck-F_Cu.gtl", "buck-Edge_Cuts.gm1", "buck.drl"):
+        shutil.copy(src / name, tmp_path / name)
+    board = load_board(tmp_path, mirror=False)
+    assert not board.copper.is_empty
+    assert board.outline is not None and not board.outline.is_empty
+    assert len(board.holes) > 0

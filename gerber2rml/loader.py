@@ -127,7 +127,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
-from gerbonara import LayerStack
+from gerbonara import GerberFile, LayerStack
 from gerbonara.excellon import ExcellonFile
 from gerbonara.apertures import (
     ApertureMacroInstance,
@@ -363,6 +363,15 @@ def select_drill_holes(
     return uniq
 
 
+def _find_layer(folder, *patterns):
+    """Return the first file in *folder* matching any of *patterns*, or None."""
+    for pat in patterns:
+        hits = sorted(Path(folder).glob(pat))
+        if hits:
+            return hits[0]
+    return None
+
+
 def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     """Load a KiCad Gerber folder into a ``Board`` of shapely geometry.
 
@@ -379,28 +388,46 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     Returns
     -------
     Board
-        ``.copper``  — shapely geometry (union of all B.Cu objects).
-        ``.outline`` — shapely polygon from Edge.Cuts lines.
-        ``.holes``   — list of ``(x, y, diameter)`` tuples in mm.
+        ``.copper``     — shapely geometry (union of all B.Cu objects).
+        ``.outline``    — shapely polygon from Edge.Cuts lines.
+        ``.holes``      — list of ``(x, y, diameter)`` tuples in mm.
+        ``.copper_top`` — shapely geometry (union of all F.Cu objects, or empty).
+
+    Notes
+    -----
+    Layers are located by filename pattern rather than gerbonara's
+    ``LayerStack.open()`` auto-mapper, which refuses to map folders with fewer
+    than six standard Gerber files.  ``GerberFile.open()`` is used directly on
+    each matched file, keeping the same geometry helpers.
     """
     folder = Path(folder)
-    stack = LayerStack.open(folder)
+
+    # ---- Locate layer files by filename pattern ----
+    bcu_path  = _find_layer(folder, "*-B_Cu.*", "*.gbl")
+    fcu_path  = _find_layer(folder, "*-F_Cu.*", "*.gtl")
+    edge_path = _find_layer(folder, "*-Edge_Cuts.*", "*.gm1")
+
+    if bcu_path is None:
+        raise ValueError(
+            f"No bottom-copper (B.Cu) gerber found in {folder}"
+        )
+    if edge_path is None:
+        raise ValueError(
+            f"No board outline (Edge.Cuts) gerber found in {folder}"
+        )
 
     # ---- Bottom copper ----
-    b_cu = stack.graphic_layers.get(('bottom', 'copper'))
-    if b_cu is None:
-        raise ValueError(
-            f"No bottom-copper layer found in {folder} (expected a B.Cu Gerber)"
-        )
-    copper = _copper_to_shapely(b_cu)
+    copper = _copper_to_shapely(GerberFile.open(str(bcu_path)))
+
+    # ---- Top copper (F.Cu) — optional ----
+    copper_top = (
+        _copper_to_shapely(GerberFile.open(str(fcu_path)))
+        if fcu_path is not None
+        else Polygon()
+    )
 
     # ---- Outline ----
-    outline_layer = stack.graphic_layers.get(('mechanical', 'outline'))
-    if outline_layer is None:
-        raise ValueError(
-            f"No outline layer found in {folder} (expected an Edge.Cuts / mechanical outline Gerber)"
-        )
-    outline = _outline_to_shapely(outline_layer)
+    outline = _outline_to_shapely(GerberFile.open(str(edge_path)))
 
     # ---- Drill holes ----
     # select_drill_holes prefers KiCad split (-PTH/-NPTH) files over a stale
@@ -412,10 +439,6 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
             f"No drill file found in {folder}; holes will be empty.",
             stacklevel=2,
         )
-
-    # ---- Top copper (F.Cu) ----
-    t_cu = stack.graphic_layers.get(('top', 'copper'))
-    copper_top = _copper_to_shapely(t_cu) if t_cu is not None else Polygon()
 
     # ---- Mirror if requested ----
     if mirror:
