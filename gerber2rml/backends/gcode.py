@@ -5,18 +5,23 @@ job (the machine must be set to the **NC code** command set). The output
 follows the conventions of the Fusion 360 post that already runs on the lab's
 SRM-20:
 
-  * millimetres, absolute (``G21 G90``), feed-per-minute (``G94``)
+  * millimetres, absolute (``G21 G90``); the SRM-20's feed is always mm/min, so
+    no ``G94`` -- it isn't in the machine's NC word list (manual R4 p.115)
   * a **G54 work origin** -- the XY/Z zero you set in VPanel, NOT machine zero
   * safe-Z retract via ``G28`` between moves and at end of program
-  * spindle on/off with ``M3`` / ``M5``, program end ``M30``
+  * spindle on/off with ``M3`` / ``M5``, program end ``M30``; the RPM is set in
+    VPanel's cut settings, NOT via an ``S`` word (the SRM-20 has no ``S``)
 
 gerber2rml's engine emits already-linearised :class:`Move` lists, so we only
 need ``G0`` (rapid) and ``G1`` (feed) -- no arcs (``G2/G3``) or canned drill
 cycles (``G81``). Rapids lift Z first, then traverse, so the tool never drags
 through copper.
 
-Feeds arrive in mm/s (gerber2rml convention) and are converted to mm/min for
-``G94``.
+Feeds arrive in mm/s (gerber2rml convention) and are converted to mm/min (the
+only feed unit the SRM-20 accepts).
+
+Every word this backend emits is on the SRM-20 NC word list (manual R4 p.115):
+``% O ( ) G0 G1 G17 G21 G28 G54 G90 G91 M3 M5 M30 F X Y Z``.
 """
 from gerber2rml.toolpath import Move
 
@@ -46,16 +51,14 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
         "%",
         "O0001",
         "( gerber2rml - SRM-20 NC )",
-        "G90 G94 G17",               # absolute, feed/min, XY plane
+        f"( spindle {int(round(rpm))} rpm - set this in VPanel cut settings )",
+        "G90 G17",                   # absolute, XY plane
         "G21",                       # millimetres
         "G91",                       # incremental for the homing line...
         "G28 Z0.",                   # ...retract Z to machine home (safe)
         "G90",                       # back to absolute
-        "G49",                       # cancel any tool-length offset (G43) left
-                                     #   active by a prior Fusion/NC job, so Z is
-                                     #   purely G54-relative (the VPanel zero)
         "G54",                       # work coordinate origin (set in VPanel)
-        f"S{int(round(rpm))} M3",    # spindle on, clockwise
+        "M3",                        # spindle on, clockwise (RPM from VPanel)
     ]
 
     cx = cy = cz = None              # current machine position (work coords)
