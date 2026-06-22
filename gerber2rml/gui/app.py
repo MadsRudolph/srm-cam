@@ -249,7 +249,8 @@ class MainWindow(QMainWindow):
             from gerber2rml.doublesided import build_double_sided
             return build_double_sided(
                 self.state.gerber_dir, out_dir, self.state.name,
-                trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout)
+                trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
+                machine=self.state.machine)
         return self.state.export(out_dir)
 
     def export_image_to(self, out_dir):

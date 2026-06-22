@@ -14,3 +14,5 @@ BACKENDS = {
     "Roland SRM-20": Backend(srm20.render, ".rml"),
     "Roland SRM-20 (G-code)": Backend(gcode.render, ".nc"),
 }
+
+DEFAULT_MACHINE = "Roland SRM-20"   # RML, preserves prior behaviour

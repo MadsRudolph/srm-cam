@@ -15,7 +15,7 @@ from gerber2rml.loader import load_board
 from gerber2rml.engine.traces import isolate
 from gerber2rml.engine.drill import drill_holes, drill_jobs
 from gerber2rml.engine.cutout import cut_outline
-from gerber2rml.backends import srm20
+from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
 def reflect_x(holes, x_axis):
@@ -106,16 +106,21 @@ def preview_layout_double_sided(folder, pin_diameter: float = 3.0,
 
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        pin_diameter: float = 3.0, margin: float = 6.0,
-                       box_size: float = 104.0, align_depth: float = 6.0):
-    """Build all RML job files for a double-sided board + a text run plan.
+                       box_size: float = 104.0, align_depth: float = 6.0,
+                       machine=DEFAULT_MACHINE):
+    """Build all job files for a double-sided board + a text run plan.
 
-    Returns a list of Path objects for every file written (5 RML + 1 .txt).
+    ``machine`` selects the output backend (RML or G-code), same as
+    :func:`gerber2rml.cli.build_jobs`. Returns a list of Path objects for every
+    file written (5 toolpath files + 1 .txt).
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     trace = trace or TraceJob()
     drill = drill or DrillJob()
     cutout = cutout or CutoutJob()
+    backend = BACKENDS[machine]          # (render fn, file extension)
+    ext = backend.ext
     lay = layout_double_sided(folder, pin_diameter=pin_diameter, margin=margin,
                               box_size=box_size)
     top_outline = lay.top_outline
@@ -127,23 +132,23 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
 
     def _write(fname, paths, job):
         (out_dir / fname).write_text(
-            srm20.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+            backend.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
         written.append(out_dir / fname)
 
-    _write(f"{name}_align.rml", drill_holes(lay.align_holes, align_drill), align_drill)
-    bottom_drill_files = drill_jobs(lay.holes, drill, f"{name}_bottom_drill")
+    _write(f"{name}_align{ext}", drill_holes(lay.align_holes, align_drill), align_drill)
+    bottom_drill_files = drill_jobs(lay.holes, drill, f"{name}_bottom_drill", ext=ext)
     for fname, paths in bottom_drill_files:
         _write(fname, paths, drill)
-    _write(f"{name}_bottom_traces.rml",
+    _write(f"{name}_bottom_traces{ext}",
            isolate(lay.bottom_copper, trace, outline=lay.outline), trace)
-    _write(f"{name}_top_traces.rml",
+    _write(f"{name}_top_traces{ext}",
            isolate(lay.top_copper, trace, outline=top_outline), trace)
-    _write(f"{name}_cutout.rml", cut_outline(lay.outline, cutout), cutout)
+    _write(f"{name}_cutout{ext}", cut_outline(lay.outline, cutout), cutout)
 
     drill_step = _drill_runplan_line(bottom_drill_files, drill)
     runplan = out_dir / f"{name}_runplan.txt"
     runplan.write_text(
-        f"DOUBLE-SIDED run plan: {name}\n"
+        f"DOUBLE-SIDED run plan: {name}  [{machine}]\n"
         f"0. Set XY zero ONCE (e.g. the stock lower-left corner) and do NOT re-zero "
         f"between jobs - registration comes from the pins, not from re-zeroing.\n"
         f"1. {name}_align: drills the two {pin_diameter} mm holes {align_depth} mm deep "

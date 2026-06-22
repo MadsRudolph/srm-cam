@@ -6,9 +6,7 @@ from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 from gerber2rml.engine.traces import isolate
 from gerber2rml.engine.drill import drill_jobs
 from gerber2rml.engine.cutout import cut_outline
-from gerber2rml.backends import BACKENDS
-
-DEFAULT_MACHINE = "Roland SRM-20"
+from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,

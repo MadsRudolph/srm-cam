@@ -104,3 +104,16 @@ def test_single_bit_double_sided_one_bottom_drill_file(tmp_path):
                                  drill=DrillJob(single_bit=True, bit_diameter=0.8))
     drills = sorted(p.name for p in written if "_bottom_drill" in p.name)
     assert drills == ["d_bottom_drill.rml"]
+
+
+def test_double_sided_honours_gcode_backend(tmp_path):
+    """Double-sided export must follow the selected machine, not hardcode RML."""
+    from gerber2rml.doublesided import build_double_sided
+    written = build_double_sided(FIXT, tmp_path, name="ds",
+                                 machine="Roland SRM-20 (G-code)")
+    names = {p.name for p in written}
+    for n in ("ds_align.nc", "ds_bottom_traces.nc", "ds_top_traces.nc", "ds_cutout.nc"):
+        assert n in names
+    assert not any(p.suffix == ".rml" for p in written)
+    nc = (tmp_path / "ds_top_traces.nc").read_text()
+    assert nc.startswith("%") and "G54" in nc and nc.rstrip().endswith("%")
