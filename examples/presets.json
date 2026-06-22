@@ -1,7 +1,7 @@
 {
   "SRM-20 0.8 mm flat (no 1/64\" bit): coarse traces + 0.8/1.0 drill + cutout": {
     "trace":  {"bit_diameter": 0.8, "cut_depth": 0.15, "offsets": 1, "stepover": 0.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
-    "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.8, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
+    "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 2.3, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
     "cutout": {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.8, "tabs": 4, "tab_width": 1.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0}
   }
 }
