@@ -41,4 +41,4 @@ class ProjectState:
             raise RuntimeError("load a Gerber folder first")
         return build_jobs(self.gerber_dir, out_dir, self.name,
                           trace=self.trace, drill=self.drill, cutout=self.cutout,
-                          mirror=self.mirror)
+                          mirror=self.mirror, machine=self.machine)

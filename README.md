@@ -82,6 +82,22 @@ pip install -e ".[gui]"
 python -m gerber2rml         # or the `gerber2rml` launcher after install
 ```
 
+## G-code (NC) output — for VPanel's NC-code mode
+
+The SRM-20 also runs G-code. Select the **"Roland SRM-20 (G-code)"** machine to
+emit `.nc` instead of `.rml` — in the GUI **Machine** dropdown, or on the CLI:
+
+```bash
+python -m gerber2rml.cli <gerber-folder> -o out -n <boardname> --gcode
+```
+
+VPanel streams the `.nc` the same way as RML (`Cut -> Add -> Output`) when the
+machine is in **NC-code command mode**. Coordinates reference the **G54** work
+origin (= VPanel's user origin); the header issues `G49` to clear any tool-length
+offset left active by a prior job. Moves are pre-linearised `G0`/`G1` (no arcs or
+canned cycles). Validated on hardware 2026-06-22: clean isolation at 0.15 mm with
+a sharp flat endmill.
+
 ## Tests
 
 ```bash

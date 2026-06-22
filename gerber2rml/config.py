@@ -5,7 +5,8 @@ from dataclasses import dataclass
 @dataclass
 class TraceJob:
     bit_diameter: float = 0.4    # mm (1/64")
-    cut_depth: float = 0.10      # mm, single pass
+    cut_depth: float = 0.15      # mm, single pass (validated on the SRM-20 with a
+                                 # sharp flat endmill; 0.10 left thin copper bridges)
     offsets: int = 2             # isolation passes; -1 = clear all copper
     stepover: float = 0.5        # fraction of bit diameter
     xy_feed: float = 4.0         # mm/s

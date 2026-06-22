@@ -5,7 +5,7 @@ from gerber2rml.config import TraceJob, DrillJob, CutoutJob, BoardConfig
 def test_trace_defaults_match_srm20():
     j = TraceJob()
     assert j.bit_diameter == 0.4
-    assert j.cut_depth == 0.10
+    assert j.cut_depth == 0.15
     assert j.offsets == 2
     assert j.xy_feed == 4.0
     assert j.plunge_feed == 1.0

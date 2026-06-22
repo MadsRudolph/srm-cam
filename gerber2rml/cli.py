@@ -1,4 +1,4 @@
-"""CLI: gerber folder -> three SRM-20 RML jobs."""
+"""CLI: gerber folder -> three SRM-20 jobs (RML or G-code)."""
 import argparse
 from pathlib import Path
 from gerber2rml.loader import load_board, place_in_positive_quadrant
@@ -6,29 +6,34 @@ from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 from gerber2rml.engine.traces import isolate
 from gerber2rml.engine.drill import drill_jobs
 from gerber2rml.engine.cutout import cut_outline
-from gerber2rml.backends import srm20
+from gerber2rml.backends import BACKENDS
+
+DEFAULT_MACHINE = "Roland SRM-20"
 
 
-def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None, mirror=True):
+def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
+               mirror=True, machine=DEFAULT_MACHINE):
     gerber_dir, out_dir = Path(gerber_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     trace = trace or TraceJob()
     drill = drill or DrillJob()
     cutout = cutout or CutoutJob()
+    backend = BACKENDS[machine]          # (render fn, file extension)
+    ext = backend.ext
     board = place_in_positive_quadrant(load_board(gerber_dir, mirror=mirror))
 
     written = []
 
     def _write(fname, paths, job):
         p = out_dir / fname
-        p.write_text(srm20.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+        p.write_text(backend.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
         written.append(p)
 
-    _write(f"{name}_traces.rml", isolate(board.copper, trace, outline=board.outline), trace)
-    drill_files = drill_jobs(board.holes, drill, f"{name}_drill")
+    _write(f"{name}_traces{ext}", isolate(board.copper, trace, outline=board.outline), trace)
+    drill_files = drill_jobs(board.holes, drill, f"{name}_drill", ext=ext)
     for fname, paths in drill_files:
         _write(fname, paths, drill)
-    _write(f"{name}_cutout.rml", cut_outline(board.outline, cutout), cutout)
+    _write(f"{name}_cutout{ext}", cut_outline(board.outline, cutout), cutout)
 
     # Drill run-plan line depends on the mode
     if drill.single_bit:
@@ -41,7 +46,9 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None, m
                       f"{files}\n")
 
     runplan = (
-        f"SRM-20 run plan: {name}\n"
+        f"SRM-20 run plan: {name}  [{machine}]\n"
+        f"Send each file via VPanel: Cut -> Add -> Output (set the work XY/Z "
+        f"origin first; G-code references that as G54).\n"
         f"Order: 1) traces  2) drill  3) cutout. "
         f"Re-set Z-zero after each bit change; keep XY origin.\n"
         f"1. traces  — bit {trace.bit_diameter} mm, {trace.offsets} offsets, "
@@ -65,8 +72,16 @@ def main(argv=None):
     ap.add_argument("-n", "--name", default="board")
     ap.add_argument("--no-mirror", action="store_true",
                     help="do not mirror (e.g. top-side or already-mirrored gerbers)")
+    ap.add_argument("-m", "--machine", default=DEFAULT_MACHINE, choices=list(BACKENDS),
+                    help="output target: 'Roland SRM-20' (RML) or "
+                         "'Roland SRM-20 (G-code)' (.nc for VPanel NC mode)")
+    ap.add_argument("--gcode", action="store_const", dest="machine",
+                    const="Roland SRM-20 (G-code)",
+                    help="shorthand for --machine 'Roland SRM-20 (G-code)'")
+    ap.set_defaults(machine=DEFAULT_MACHINE)
     args = ap.parse_args(argv)
-    for p in build_jobs(args.gerber_dir, args.out, args.name, mirror=not args.no_mirror):
+    for p in build_jobs(args.gerber_dir, args.out, args.name,
+                        mirror=not args.no_mirror, machine=args.machine):
         print("wrote", p)
     return 0
 

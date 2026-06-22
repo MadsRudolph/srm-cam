@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
         self.load_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.load_btn.clicked.connect(self._on_load_clicked)
         
-        self.export_btn = QPushButton("Export .rml...")
+        self.export_btn = QPushButton("Export toolpaths...")
         self.export_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_btn.clicked.connect(self._on_export_clicked)
         self.export_btn.setStyleSheet("font-weight: bold; padding: 5px;")

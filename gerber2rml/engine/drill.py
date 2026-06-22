@@ -75,17 +75,19 @@ def drill_single_bit(holes, job, tol: float = 1e-3):
     return paths
 
 
-def drill_jobs(holes, job, prefix):
+def drill_jobs(holes, job, prefix, ext=".rml"):
     """Plan the drill file(s) for *holes*, honoring ``job.single_bit``.
 
     Returns ``[(filename, toolpaths), ...]`` (filenames are bare, no directory):
-    - ``single_bit``  -> one ``'{prefix}.rml'`` (plunge + interpolate, one bit).
-    - otherwise        -> one ``'{prefix}_{dia}mm.rml'`` per diameter, smallest
+    - ``single_bit``  -> one ``'{prefix}{ext}'`` (plunge + interpolate, one bit).
+    - otherwise        -> one ``'{prefix}_{dia}mm{ext}'`` per diameter, smallest
       first, each plunged with its matching bit.
+
+    ``ext`` is the output extension (``.rml`` for RML, ``.nc`` for G-code).
     """
     if job.single_bit:
-        return [(f"{prefix}.rml", drill_single_bit(holes, job))]
+        return [(f"{prefix}{ext}", drill_single_bit(holes, job))]
     return [
-        (f"{prefix}_{format_diameter(d)}mm.rml", drill_holes(hs, job))
+        (f"{prefix}_{format_diameter(d)}mm{ext}", drill_holes(hs, job))
         for d, hs in group_holes_by_diameter(holes)
     ]
