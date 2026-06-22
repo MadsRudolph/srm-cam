@@ -84,6 +84,19 @@ def test_double_sided_preview_shows_both_sides_and_dowels():
     for (px, py, _d) in w.preview._pins:
         assert x0 <= px <= x1 and y0 <= py <= y1
 
+def test_double_sided_view_toggle_bottom_and_top():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Bottom")
+    w.generate_preview()
+    assert len(w.preview._full_cuts) > 0 and w.preview._full_top_cuts == []
+    assert len(w.preview._pins) == 2          # dowels stay visible in both views
+    w.view_combo.setCurrentText("Top")
+    w.generate_preview()
+    assert w.preview._full_cuts == [] and len(w.preview._full_top_cuts) > 0
+    assert len(w.preview._pins) == 2
+
 def test_single_sided_preview_has_no_pins():
     w = MainWindow()
     w.load_folder(str(FIXT))

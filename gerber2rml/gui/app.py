@@ -43,8 +43,14 @@ class MainWindow(QMainWindow):
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
         self.mirror_chk.toggled.connect(self._on_mirror_toggled)
         self.double_sided_chk = QCheckBox("Double-sided")
-        self.double_sided_chk.toggled.connect(self.generate_preview)
+        self.double_sided_chk.toggled.connect(self._on_double_sided_toggled)
         self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
+
+        # which side(s) to show in the double-sided preview
+        self.view_combo = QComboBox()
+        self.view_combo.addItems(["Both sides", "Bottom", "Top"])
+        self.view_combo.setEnabled(False)   # only meaningful when double-sided
+        self.view_combo.currentIndexChanged.connect(self.generate_preview)
         
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
@@ -69,6 +75,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("Machine:", self.machine_combo)
         project_layout.addRow("", self.mirror_chk)
         project_layout.addRow("", self.double_sided_chk)
+        project_layout.addRow("View:", self.view_combo)
         settings_layout.addWidget(project_group)
         
         # Presets Group
@@ -135,16 +142,25 @@ class MainWindow(QMainWindow):
             self._ds_cache = (key, layout_double_sided(self.state.gerber_dir))
         return self._ds_cache[1]
 
+    def _on_double_sided_toggled(self, checked):
+        self.view_combo.setEnabled(checked)
+        self.generate_preview()
+
     def _preview_double_sided(self, op):
-        """Show BOTH registered sides (bottom cyan + reflected top magenta), the
-        board holes, and the two dowel/alignment holes, so the operator can see
-        the flip registration and pin placement before milling."""
+        """Show the registered board with the two dowel/alignment holes so the
+        operator can check the flip registration and pin placement before
+        milling. The View selector picks bottom (cyan), reflected top (magenta),
+        or both overlaid; the dowels are always shown."""
         from gerber2rml.engine.traces import isolate
         lay = self._double_sided_layout()
-        bottom = isolate(lay.bottom_copper, self.state.trace, outline=lay.outline)
-        top = isolate(lay.top_copper, self.state.trace, outline=lay.top_outline)
-        bottom_cuts, bottom_rapids = toolpath_segments(bottom)
-        top_cuts, _ = toolpath_segments(top)
+        view = self.view_combo.currentText()
+        bottom_cuts, bottom_rapids, top_cuts = [], [], []
+        if view in ("Both sides", "Bottom"):
+            bottom_cuts, bottom_rapids = toolpath_segments(
+                isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
+        if view in ("Both sides", "Top"):
+            top_cuts, _ = toolpath_segments(
+                isolate(lay.top_copper, self.state.trace, outline=lay.top_outline))
         self.preview.show_segments(bottom_cuts, bottom_rapids, holes=lay.holes,
                                    top_cuts=top_cuts, pins=lay.align_holes)
 
