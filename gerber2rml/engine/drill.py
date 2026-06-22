@@ -3,6 +3,26 @@ import math
 from gerber2rml.toolpath import Move
 
 
+def group_holes_by_diameter(holes, ndigits: int = 3):
+    """Group holes by diameter, returned as ``[(diameter, [holes...]), ...]``
+    sorted ascending by diameter. The SRM-20 carries one bit at a time, so each
+    diameter is drilled in its own job (smallest first) with a manual bit change
+    between them."""
+    groups: dict = {}
+    for h in holes:
+        key = round(h[2], ndigits)
+        groups.setdefault(key, []).append(h)
+    return [(d, groups[d]) for d in sorted(groups)]
+
+
+def format_diameter(d: float) -> str:
+    """Format a diameter for a filename: 0.8 -> '0.8', 1.0 -> '1.0', 1.52 -> '1.52'."""
+    s = f"{d:.3f}".rstrip("0")
+    if s.endswith("."):
+        s += "0"
+    return s
+
+
 def drill_holes(holes, job):
     """Generate peck-drill toolpaths (one per hole).
 
@@ -21,3 +41,51 @@ def drill_holes(holes, job):
             tp.append(Move(x, y, job.travel_z, rapid=True))  # retract
         paths.append(tp)
     return paths
+
+
+def _interpolate_hole(x, y, hole_d, job, segments: int = 48):
+    """Mill a hole that is larger than the bit by circular interpolation: peck
+    down and trace a full circle at each depth. The path radius is
+    ``(hole_d - bit)/2`` so the cutter edge reaches the hole wall."""
+    r = (hole_d - job.bit_diameter) / 2.0
+    pecks = max(1, math.ceil(job.total_depth / job.cut_depth))
+    sx = x + r
+    tp = [Move(sx, y, job.travel_z, rapid=True)]
+    for k in range(1, pecks + 1):
+        depth = job.total_depth if k == pecks else k * job.cut_depth
+        tp.append(Move(sx, y, -depth))                       # plunge at circle start
+        for i in range(1, segments + 1):
+            ang = 2 * math.pi * i / segments
+            tp.append(Move(x + r * math.cos(ang), y + r * math.sin(ang), -depth))
+    tp.append(Move(sx, y, job.travel_z, rapid=True))         # retract
+    return tp
+
+
+def drill_single_bit(holes, job, tol: float = 1e-3):
+    """One-bit toolpath: plunge holes that fit the bit, interpolate larger ones.
+
+    Holes smaller than the bit cannot be made smaller, so they are plunged at the
+    bit size (oversized) — the GUI/run plan flags this."""
+    paths = []
+    for (x, y, d) in holes:
+        if d > job.bit_diameter + tol:
+            paths.append(_interpolate_hole(x, y, d, job))
+        else:
+            paths.extend(drill_holes([(x, y, d)], job))
+    return paths
+
+
+def drill_jobs(holes, job, prefix):
+    """Plan the drill file(s) for *holes*, honoring ``job.single_bit``.
+
+    Returns ``[(filename, toolpaths), ...]`` (filenames are bare, no directory):
+    - ``single_bit``  -> one ``'{prefix}.rml'`` (plunge + interpolate, one bit).
+    - otherwise        -> one ``'{prefix}_{dia}mm.rml'`` per diameter, smallest
+      first, each plunged with its matching bit.
+    """
+    if job.single_bit:
+        return [(f"{prefix}.rml", drill_single_bit(holes, job))]
+    return [
+        (f"{prefix}_{format_diameter(d)}mm.rml", drill_holes(hs, job))
+        for d, hs in group_holes_by_diameter(holes)
+    ]

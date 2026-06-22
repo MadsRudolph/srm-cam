@@ -10,22 +10,36 @@ export the `.rml` jobs.
 
 ## Status
 
-Early scaffold. The architecture and plan live in
-[`docs/design.md`](docs/design.md). The package modules are stubs; the legacy
-G-code→RML converter migrated from the team repo is in [`legacy/`](legacy/) as the
-starting reference for the SRM-20 backend (it has known bugs, documented in the
-design §6).
+Functional. CLI + PySide6 GUI with live preview, presets, isolation preflight,
+report export, single- and double-sided boards, and two drilling modes. The
+architecture lives in [`docs/design.md`](docs/design.md).
 
-## What it does (v1)
+## What it does
 
-Single-sided boards, three operations each exported as its own RML job:
+Three operations, each exported as its own RML job:
 
-1. **Trace isolation** (B.Cu, mirrored for bottom-up milling) — multi-pass.
-2. **Drilling** (Excellon holes).
+1. **Trace isolation** (B.Cu, mirrored for bottom-up milling) — multi-pass, or
+   full copper clearing with `offsets = -1`.
+2. **Drilling** (Excellon holes) — split into one file per diameter, or a single
+   file using one bit (plunge + interpolate). See [Drilling modes](#drilling-modes).
 3. **Board cutout** (Edge.Cuts) with holding tabs.
 
-SRM-20 is the only machine today, but output sits behind a pluggable
-`MachineBackend` interface so adding another CNC is one new backend.
+Plus **double-sided** boards with dowel-pin registration (see below). SRM-20 is
+the only machine today, but output sits behind a pluggable `MachineBackend`
+interface so adding another CNC is one new backend.
+
+## Drilling modes
+
+Different hole sizes need different handling on a single-spindle mill. Pick per
+export on the **Drill** tab (`single bit` checkbox + `bit diameter` field):
+
+- **Per-diameter (default):** one file per hole diameter, smallest first
+  (`<name>_drill_0.8mm.rml`, `<name>_drill_1.0mm.rml`, …), each **plunge-drilled**
+  with a matching bit. Change the bit between files.
+- **Single bit:** one file using one small end mill. Holes that match the bit are
+  **plunged**; holes larger than the bit are **interpolated** (the tool circles
+  out the hole to size). No bit changes. Holes smaller than the bit can't be made
+  smaller — they're plunged at bit size and flagged in the status bar.
 
 ## Architecture
 
@@ -143,43 +157,48 @@ Setting **offsets = -1** on the **Traces** tab now fully clears the background c
 
 ## Double-sided boards
 
-For two-sided PCBs, gerber2rml uses **dowel-pin registration** to align top and bottom milling passes. Tick the **Double-sided** checkbox in the GUI before exporting Gerbers (requires an **F.Cu** layer in the export).
+For two-sided PCBs, gerber2rml uses **dowel-pin registration** to align the top and bottom milling passes. Tick the **Double-sided** checkbox in the GUI before exporting (requires an **F.Cu** layer).
+
+### How the flip works
+
+The board flips **left-to-right about a vertical axis** through its centre. The bottom is milled mirrored (bottom-up, copper facing the spindle). Reflecting the front copper about that same axis **cancels** that mirror, so the **top is cut as the plain, un-mirrored F.Cu** and still registers after the flip. The two dowel pins sit **on the flip axis, above and below the board**, and you flip left-to-right onto them.
+
+> **Preview vs. export.** The on-screen preview shows both layers in the *design* frame (the way KiCad overlays them) so they register and the holes land on the pads. The exported RML carries the real machine geometry (mirrored bottom, reflected-to-plain top). Both are correct — they serve different purposes.
 
 ### Output files
 
-A double-sided job produces six RML files plus a runplan:
+A double-sided job produces a runplan plus:
 
-- `<name>_align.rml` — drill two 3.0 mm alignment holes for dowel pins
-- `<name>_bottom_drill.rml` — drill holes through the bottom side (B.Cu)
-- `<name>_bottom_traces.rml` — isolate bottom traces (B.Cu)
-- `<name>_top_traces.rml` — isolate top traces (F.Cu, reflected for registration)
-- `<name>_cutout.rml` — cut board outline and holding tabs
-- `<name>_preview.png` + `<name>_preview_summary.md` — documentation
+- `<name>_align.rml` — drill the two 3.0 mm alignment (dowel) holes, deeper than the board
+- `<name>_bottom_drill_<dia>mm.rml` — board holes through the bottom (one per diameter, or one `<name>_bottom_drill.rml` in single-bit mode)
+- `<name>_bottom_traces.rml` — isolate bottom copper (B.Cu, mirrored)
+- `<name>_top_traces.rml` — isolate top copper (**plain F.Cu**, reflected about the pin axis so it registers after the flip)
+- `<name>_cutout.rml` — cut the board outline with holding tabs
 
 ### Operator sequence
 
-0. **Zero once:** Set the machine XY origin a single time (e.g. the stock lower-left corner) and do **not** re-zero between jobs — registration comes from the pins, not from re-zeroing.
+0. **Zero once:** Set the machine XY origin a single time (e.g. the stock lower-left corner) and do **not** re-zero between jobs — registration comes from the pins.
 
-1. **Drill alignment holes:** Run `_align.rml` to create two 3.0 mm holes that go through the board **and ~4–5 mm into the sacrificial bed** (the align job drills deeper than the board holes, default 6 mm total). Insert 3.0 mm dowel pins and seat them.
+1. **Drill alignment holes:** Run `_align.rml` to create the two 3.0 mm holes — through the board **and ~4–5 mm into the sacrificial bed** (default 6 mm total, deeper than the board holes). Seat 3.0 mm dowel pins.
 
-2. **Mill bottom side:** Run `_bottom_drill.rml` (holes), then `_bottom_traces.rml` (copper traces, B.Cu).
+2. **Mill bottom side:** Run the `_bottom_drill_*.rml` file(s) (change bit between diameters), then `_bottom_traces.rml` (B.Cu).
 
-3. **Flip and re-register:** Lift the board and flip it top-over-bottom about the horizontal pin line (the two pins form the flip axis). The board drops back onto the dowels.
+3. **Flip and re-register:** Flip the board **left-to-right about the vertical pin line**. It drops back onto the dowels.
 
-4. **Mill top side:** Run `_top_traces.rml` (top copper traces, F.Cu). Geometry is reflected so it aligns correctly after flipping.
+4. **Mill top side:** Run `_top_traces.rml`. It's the plain F.Cu, already reflected so it aligns after the flip.
 
 5. **Cut out:** Run `_cutout.rml` last to separate the board.
 
 ### Pin placement
 
-The two alignment pins are placed on a horizontal axis through the board centre, positioned **beyond the 104 mm jig box** (or beyond the board if wider), so they never enter the milling area. Ensure your stock has ~6 mm of waste margin around the design box on all sides so the pins have a safe landing zone.
+The two pins are on a vertical axis through the board centre, **above and below the board**, beyond the 104 mm jig box (or beyond the board if taller), so they never enter the milling area. Leave ~6 mm of waste margin around the design box so the pins have a safe landing zone.
 
 ### Validation
 
-Before running a real board, mill the bundled calibration coupon double-sided to verify registration accuracy:
+Before a real board, mill the bundled calibration coupon double-sided to check registration:
 
 ```bash
 python -m gerber2rml.cli examples/calibration -o out -n calib
 ```
 
-The coupon includes an F.Cu side with pads on every through-hole plus an asymmetric corner marker. After milling and flipping, the top pads should ring their holes concentrically. Registration is bounded by the SRM-20's repeatability (~0.05–0.1 mm) and dowel pin fit.
+The coupon has an F.Cu side with pads on every through-hole plus an asymmetric corner marker. After milling and flipping, the top pads should ring their holes concentrically. Registration is bounded by the SRM-20's repeatability (~0.05–0.1 mm) and dowel-pin fit.
