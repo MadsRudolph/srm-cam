@@ -4,6 +4,9 @@ from PySide6.QtWidgets import QWidget, QFormLayout, QDoubleSpinBox, QSpinBox, QC
 
 _TOOLTIPS = {
     "bit_diameter": "Diameter of the endmill or drill bit.",
+    "single_bit": ("Use ONE bit for all holes: plunge holes that match the bit, "
+                   "interpolate (mill a circle) for larger ones, in a single file. "
+                   "Off = one file per hole diameter, plunged with a matching bit."),
     "cut_depth": "Depth of material removed per pass. For drills, this is the peck depth.",
     "total_depth": "Total depth to cut through the material.",
     "offsets": "Number of isolation passes. Set to -1 to clear all copper.",

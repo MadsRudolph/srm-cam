@@ -15,6 +15,11 @@ class TraceJob:
 
 @dataclass
 class DrillJob:
+    bit_diameter: float = 0.8    # mm — the drill bit / end mill in the spindle
+    single_bit: bool = False     # True  -> one file, this bit only: plunge holes
+                                 #          that fit, interpolate (circle out) larger
+                                 #          ones. False -> one file per hole
+                                 #          diameter, plunged with a matching bit.
     cut_depth: float = 0.6       # mm per peck
     total_depth: float = 1.8     # mm (through 1.6 mm board)
     xy_feed: float = 4.0

@@ -149,8 +149,9 @@ class MainWindow(QMainWindow):
     def _preview_double_sided(self, op):
         """Show the registered board with the two dowel/alignment holes so the
         operator can check the flip registration and pin placement before
-        milling. The View selector picks bottom (cyan), reflected top (magenta),
-        or both overlaid; the dowels are always shown."""
+        milling. The View selector picks bottom (cyan), top (magenta), or both
+        overlaid; the dowels are always shown. Board holes are shown on the
+        drill tab only."""
         from gerber2rml.engine.traces import isolate
         lay = self._double_sided_layout()
         view = self.view_combo.currentText()
@@ -161,8 +162,28 @@ class MainWindow(QMainWindow):
         if view in ("Both sides", "Top"):
             top_cuts, _ = toolpath_segments(
                 isolate(lay.top_copper, self.state.trace, outline=lay.top_outline))
-        self.preview.show_segments(bottom_cuts, bottom_rapids, holes=lay.holes,
+        holes = lay.holes if op == "drill" else None
+        self.preview.show_segments(bottom_cuts, bottom_rapids, holes=holes,
                                    top_cuts=top_cuts, pins=lay.align_holes)
+
+    def _drill_status(self):
+        """Human summary of the hole diameters and what export will produce,
+        so the operator can see which bits are needed before exporting."""
+        from gerber2rml.engine.drill import group_holes_by_diameter, format_diameter
+        groups = group_holes_by_diameter(self.state.board.holes)
+        if not groups:
+            return "No drill holes found."
+        summary = ", ".join(f"{format_diameter(d)}mm x{len(h)}" for d, h in groups)
+        bit = self.state.drill.bit_diameter
+        if self.state.drill.single_bit:
+            n_int = sum(len(h) for d, h in groups if d > bit + 1e-3)
+            n_small = sum(len(h) for d, h in groups if d < bit - 1e-3)
+            msg = (f"Holes: {summary}  ->  1 file, {format_diameter(bit)}mm bit "
+                   f"({n_int} interpolated)")
+            if n_small:
+                msg += f"  WARNING: {n_small} hole(s) smaller than the bit -> oversized"
+            return msg
+        return f"Holes: {summary}  ->  {len(groups)} drill files (one bit each)"
 
     def generate_preview(self):
         if self.state.board is None:
@@ -173,25 +194,27 @@ class MainWindow(QMainWindow):
         gap_warning = False
         if self.double_sided_chk.isChecked():
             self._preview_double_sided(op)
-            self.statusBar().showMessage(
-                f"Double-sided preview (both sides + dowels) in {time.time() - t0:.2f}s", 5000)
+            msg = (f"Double-sided preview (both sides + dowels) in {time.time() - t0:.2f}s"
+                   if op != "drill" else self._drill_status())
+            self.statusBar().showMessage(msg, 8000)
             return
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)
-        else:
-            cuts, rapids = toolpath_segments(self.state.toolpaths(op))
-            self.preview.show_segments(cuts, rapids)
-            if op == "traces":
-                from gerber2rml.analysis import find_narrow_gaps
-                gaps = find_narrow_gaps(self.state.board.copper,
-                                        self.state.board.outline,
-                                        self.state.trace.bit_diameter)
-                if not gaps.is_empty:
-                    self.preview.show_gaps(gaps)
-                    self.statusBar().showMessage(
-                        "Warning: copper gaps too narrow to isolate (shown red)", 8000)
-                    gap_warning = True
+            self.statusBar().showMessage(self._drill_status(), 8000)
+            return
+        cuts, rapids = toolpath_segments(self.state.toolpaths(op))
+        self.preview.show_segments(cuts, rapids)
+        if op == "traces":
+            from gerber2rml.analysis import find_narrow_gaps
+            gaps = find_narrow_gaps(self.state.board.copper,
+                                    self.state.board.outline,
+                                    self.state.trace.bit_diameter)
+            if not gaps.is_empty:
+                self.preview.show_gaps(gaps)
+                self.statusBar().showMessage(
+                    "Warning: copper gaps too narrow to isolate (shown red)", 8000)
+                gap_warning = True
         if not gap_warning:
             self.statusBar().showMessage(f"Preview updated in {time.time() - t0:.2f}s", 5000)
 
