@@ -31,3 +31,4 @@ def test_gcode_backend_renders():
     # plunge at plunge feed (1 mm/s -> 60 mm/min), lateral at xy feed (4 -> 240)
     assert "F60." in nc and "F240." in nc
     assert "G2 " not in nc and "G3 " not in nc  # linearised: no arc moves (G28 is fine)
+    assert "G0 Z0.5" in nc                      # rapid to clearance before plunging

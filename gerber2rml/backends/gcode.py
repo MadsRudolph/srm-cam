@@ -22,6 +22,8 @@ from gerber2rml.toolpath import Move
 
 DEFAULT_RAPID = 15.0   # mm/s (informational; G0 uses the machine rapid rate)
 DEFAULT_RPM = 7000     # SRM-20 spindle tops out ~7000 rpm
+PLUNGE_CLEARANCE = 0.5 # mm above the work surface (Z0) to rapid down to before a
+                       # plunge, so we don't creep through air at the plunge feed
 EPS = 1e-6
 
 
@@ -76,6 +78,11 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
                 # A pure downward move at constant XY is a plunge (slower feed).
                 is_plunge = (not changed(cx, m.x) and not changed(cy, m.y)
                              and cz is not None and m.z < cz - EPS)
+                if is_plunge and cz > PLUNGE_CLEARANCE + EPS and m.z < PLUNGE_CLEARANCE:
+                    # rapid down to just above the surface, then feed only the cut —
+                    # otherwise the whole descent from travel height is at plunge feed
+                    out.append(f"G0 Z{_f(PLUNGE_CLEARANCE)}")
+                    cz = PLUNGE_CLEARANCE
                 want = plunge_fpm if is_plunge else xy_fpm
                 line = f"G1 X{_f(m.x)} Y{_f(m.y)} Z{_f(m.z)}"
                 if changed(feed, want):
