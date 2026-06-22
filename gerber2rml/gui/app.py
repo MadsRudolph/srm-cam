@@ -43,6 +43,8 @@ class MainWindow(QMainWindow):
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
         self.mirror_chk.toggled.connect(self._on_mirror_toggled)
         self.double_sided_chk = QCheckBox("Double-sided")
+        self.double_sided_chk.toggled.connect(self.generate_preview)
+        self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
         
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
@@ -124,6 +126,28 @@ class MainWindow(QMainWindow):
         self._sync_state()
         self.state.load(folder)
 
+    def _double_sided_layout(self):
+        """Layout (geometry only, independent of the trace/drill jobs) for the
+        active board, cached by folder so live form edits don't re-read disk."""
+        from gerber2rml.doublesided import layout_double_sided
+        key = str(self.state.gerber_dir)
+        if self._ds_cache is None or self._ds_cache[0] != key:
+            self._ds_cache = (key, layout_double_sided(self.state.gerber_dir))
+        return self._ds_cache[1]
+
+    def _preview_double_sided(self, op):
+        """Show BOTH registered sides (bottom cyan + reflected top magenta), the
+        board holes, and the two dowel/alignment holes, so the operator can see
+        the flip registration and pin placement before milling."""
+        from gerber2rml.engine.traces import isolate
+        lay = self._double_sided_layout()
+        bottom = isolate(lay.bottom_copper, self.state.trace, outline=lay.outline)
+        top = isolate(lay.top_copper, self.state.trace, outline=lay.top_outline)
+        bottom_cuts, bottom_rapids = toolpath_segments(bottom)
+        top_cuts, _ = toolpath_segments(top)
+        self.preview.show_segments(bottom_cuts, bottom_rapids, holes=lay.holes,
+                                   top_cuts=top_cuts, pins=lay.align_holes)
+
     def generate_preview(self):
         if self.state.board is None:
             return
@@ -131,6 +155,11 @@ class MainWindow(QMainWindow):
         t0 = time.time()
         op = _OPS[self.tabs.currentIndex()]
         gap_warning = False
+        if self.double_sided_chk.isChecked():
+            self._preview_double_sided(op)
+            self.statusBar().showMessage(
+                f"Double-sided preview (both sides + dowels) in {time.time() - t0:.2f}s", 5000)
+            return
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)

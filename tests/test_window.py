@@ -68,3 +68,25 @@ def test_double_sided_export(tmp_path):
     w.double_sided_chk.setChecked(True)
     written = w.export_to(tmp_path)
     assert any(p.name.endswith("_top_traces.rml") for p in written)
+
+def test_double_sided_preview_shows_both_sides_and_dowels():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.generate_preview()
+    # both copper sides produced isolation toolpaths (bottom + reflected top)
+    assert len(w.preview._full_cuts) > 0
+    assert len(w.preview._full_top_cuts) > 0
+    # the two dowel/alignment holes are shown as distinct markers
+    assert len(w.preview._pins) == 2
+    # the view frame autoscales to include the pins (they sit beyond the board)
+    x0, x1, y0, y1 = w.preview._limits
+    for (px, py, _d) in w.preview._pins:
+        assert x0 <= px <= x1 and y0 <= py <= y1
+
+def test_single_sided_preview_has_no_pins():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()                  # double-sided unchecked
+    assert w.preview._pins == []
+    assert w.preview._full_top_cuts == []

@@ -27,6 +27,7 @@ class DoubleSidedLayout:
     bottom_copper: object
     top_copper: object
     outline: object
+    top_outline: object   # outline reflected about the flip axis (front-side clip)
     holes: list           # placed through-holes (bottom frame)
     align_holes: list     # 2 alignment holes on the flip axis
     y_axis: float
@@ -53,8 +54,9 @@ def layout_double_sided(folder, pin_diameter: float = 3.0, margin: float = 6.0,
     align_holes = [(x + dx, y + dy, d) for (x, y, d) in align_raw]
     y_axis = y_axis_raw + dy
     top_copper = _reflect_geom(top_src, y_axis)
-    return DoubleSidedLayout(bottom_copper, top_copper, outline, holes,
-                             align_holes, y_axis)
+    top_outline = _reflect_geom(outline, y_axis)
+    return DoubleSidedLayout(bottom_copper, top_copper, outline, top_outline,
+                             holes, align_holes, y_axis)
 
 
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
@@ -71,7 +73,7 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     cutout = cutout or CutoutJob()
     lay = layout_double_sided(folder, pin_diameter=pin_diameter, margin=margin,
                               box_size=box_size)
-    top_outline = _reflect_geom(lay.outline, lay.y_axis)
+    top_outline = lay.top_outline
     # the alignment job drills deeper (through the board AND into the bed) so the
     # dowel pins anchor; the board's own holes use the normal drill depth.
     align_drill = replace(drill, total_depth=align_depth)

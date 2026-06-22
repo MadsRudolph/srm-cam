@@ -36,13 +36,22 @@ class PreviewCanvas(QWidget):
         self._full_cuts = []
         self._full_rapids = []
         self._full_holes = []
+        self._full_top_cuts = []
+        self._pins = []
         self._limits = None
 
-    def show_segments(self, cuts, rapids, holes=None):
-        """Store the toolpaths and update the display based on the slider."""
+    def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
+        """Store the toolpaths and update the display based on the slider.
+
+        ``top_cuts`` are the reflected front-side isolation polylines (drawn in a
+        second colour) and ``pins`` are the (x, y, d) dowel/alignment holes, both
+        used for the double-sided preview. Both default empty, so the ordinary
+        single-sided callers are unaffected."""
         self._full_cuts = cuts or []
         self._full_rapids = rapids or []
         self._full_holes = holes or []
+        self._full_top_cuts = top_cuts or []
+        self._pins = pins or []
         self._limits = self._compute_limits()
         self.slider.setValue(1000)
         self._draw_fraction(1.0)
@@ -51,10 +60,10 @@ class PreviewCanvas(QWidget):
         """Fixed view frame from the FULL geometry, so scrubbing the slider
         animates within a stable view instead of rescaling each frame."""
         xs, ys = [], []
-        for seg in self._full_cuts + self._full_rapids:
+        for seg in self._full_cuts + self._full_rapids + self._full_top_cuts:
             for (x, y) in seg:
                 xs.append(x); ys.append(y)
-        for (x, y, d) in self._full_holes:
+        for (x, y, d) in self._full_holes + self._pins:
             r = max(d, 0.1) / 2.0
             xs += [x - r, x + r]; ys += [y - r, y + r]
         if not xs:
@@ -83,10 +92,12 @@ class PreviewCanvas(QWidget):
         c_end = int(len(self._full_cuts) * fraction)
         r_end = int(len(self._full_rapids) * fraction)
         h_end = int(len(self._full_holes) * fraction)
+        t_end = int(len(self._full_top_cuts) * fraction)
 
         rapids = self._full_rapids[:r_end]
         cuts = self._full_cuts[:c_end]
         holes = self._full_holes[:h_end]
+        top_cuts = self._full_top_cuts[:t_end]
 
         if rapids:
             self.ax.add_collection(
@@ -94,12 +105,25 @@ class PreviewCanvas(QWidget):
         if cuts:
             self.ax.add_collection(
                 LineCollection(cuts, colors="#00ffff", linewidths=1.2))
+        if top_cuts:
+            # reflected front-side isolation, second colour so the two registered
+            # sides are visually distinct
+            self.ax.add_collection(
+                LineCollection(top_cuts, colors="#ff55ff", linewidths=1.2))
         if holes:
             for (x, y, d) in holes:
                 self.ax.add_patch(Circle((x, y), max(d, 0.1) / 2.0, fill=False,
                                          edgecolor="#ff5555", linewidth=1.2))
             self.ax.scatter([h[0] for h in holes], [h[1] for h in holes],
                             s=15, c="#ff5555", marker="+")
+        # dowel/alignment holes: always drawn in full (registration features,
+        # never scrubbed away) and clearly distinct from the board's own holes
+        for (x, y, d) in self._pins:
+            self.ax.add_patch(Circle((x, y), max(d, 0.1) / 2.0, fill=False,
+                                     edgecolor="#ffd700", linewidth=2.0, zorder=6))
+        if self._pins:
+            self.ax.scatter([p[0] for p in self._pins], [p[1] for p in self._pins],
+                            s=80, c="#ffd700", marker="+", zorder=6)
         if self._limits:
             x0, x1, y0, y1 = self._limits
             self.ax.set_xlim(x0, x1)
