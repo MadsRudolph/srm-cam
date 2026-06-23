@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QSlider
 from PySide6.QtCore import Qt
 from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Rectangle
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
 
@@ -39,6 +39,18 @@ class PreviewCanvas(QWidget):
         self._full_top_cuts = []
         self._pins = []
         self._limits = None
+
+        # Rework box-selection state. When selecting, a left-drag draws a
+        # rectangle that persists across redraws/scrubbing; the chosen bbox is
+        # read back by the app to clip a second-pass program.
+        self._selecting = False
+        self._selection_bbox = None       # (x0, y0, x1, y1) or None
+        self._drag_start = None
+        self._rect_artist = None
+        self.on_selection_changed = None  # callback(bbox) set by the app
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_motion)
+        self.canvas.mpl_connect("button_release_event", self._on_release)
 
     def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
         """Store the toolpaths and update the display based on the slider.
@@ -128,7 +140,78 @@ class PreviewCanvas(QWidget):
             x0, x1, y0, y1 = self._limits
             self.ax.set_xlim(x0, x1)
             self.ax.set_ylim(y0, y1)
+        # ax.clear() above dropped the selection rectangle; re-add it so the
+        # picked area stays visible while scrubbing or regenerating the preview.
+        self._rect_artist = None
+        self._add_selection_patch()
         self.canvas.draw_idle()
+
+    # ---- Rework box-selection -------------------------------------------
+    def set_selecting(self, on):
+        """Enable/disable box-selection mode. A previous selection is kept so it
+        can still be exported after the operator toggles the mode back off."""
+        self._selecting = bool(on)
+        self.canvas.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+
+    def selection_bbox(self):
+        """The current (x0, y0, x1, y1) selection in board mm, or None."""
+        return self._selection_bbox
+
+    def clear_selection(self):
+        self._selection_bbox = None
+        self._drag_start = None
+        self._draw_fraction(self.slider.value() / 1000.0)
+        if self.on_selection_changed:
+            self.on_selection_changed(None)
+
+    def _add_selection_patch(self):
+        if not self._selection_bbox:
+            return
+        x0, y0, x1, y1 = self._selection_bbox
+        self._rect_artist = Rectangle(
+            (min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
+            fill=False, edgecolor="#00ff00", linestyle="--", linewidth=1.5,
+            zorder=10)
+        self.ax.add_patch(self._rect_artist)
+
+    def _redraw_selection_only(self):
+        """Cheap update of just the rectangle during a live drag."""
+        if self._rect_artist is not None:
+            try:
+                self._rect_artist.remove()
+            except (ValueError, NotImplementedError):
+                pass
+            self._rect_artist = None
+        self._add_selection_patch()
+        self.canvas.draw_idle()
+
+    def _on_press(self, event):
+        if not self._selecting or event.button != 1 or event.inaxes != self.ax:
+            return
+        self._drag_start = (event.xdata, event.ydata)
+
+    def _on_motion(self, event):
+        if self._drag_start is None or event.xdata is None or event.ydata is None:
+            return
+        x0, y0 = self._drag_start
+        self._selection_bbox = (x0, y0, event.xdata, event.ydata)
+        self._redraw_selection_only()
+
+    def _on_release(self, event):
+        if self._drag_start is None:
+            return
+        x0, y0 = self._drag_start
+        x1 = event.xdata if event.xdata is not None else x0
+        y1 = event.ydata if event.ydata is not None else y0
+        self._drag_start = None
+        if abs(x1 - x0) < 1e-6 or abs(y1 - y0) < 1e-6:
+            self._selection_bbox = None       # a click, not a box
+        else:
+            self._selection_bbox = (min(x0, x1), min(y0, y1),
+                                    max(x0, x1), max(y0, y1))
+        self._redraw_selection_only()
+        if self.on_selection_changed:
+            self.on_selection_changed(self._selection_bbox)
 
     def show_holes(self, holes):
         """Draw drill holes alone (circles + centre marks), no trace context."""
