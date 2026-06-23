@@ -1,5 +1,5 @@
 """Test the backend registry and Backend(render, ext) seam."""
-from gerber2rml.backends import BACKENDS
+from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 from gerber2rml.toolpath import Move
 
 
@@ -7,6 +7,14 @@ def test_srm20_registered():
     """SRM-20 should be registered in BACKENDS under its display name."""
     assert "Roland SRM-20" in BACKENDS
     assert "Roland SRM-20 (G-code)" in BACKENDS
+
+
+def test_default_machine_is_gcode_and_first():
+    """We use NC/G-code: it must be the default and the first entry (the GUI
+    dropdown opens on the first backend)."""
+    assert DEFAULT_MACHINE == "Roland SRM-20 (G-code)"
+    assert next(iter(BACKENDS)) == "Roland SRM-20 (G-code)"
+    assert BACKENDS[DEFAULT_MACHINE].ext == ".nc"
 
 
 def test_registry_value_renders():

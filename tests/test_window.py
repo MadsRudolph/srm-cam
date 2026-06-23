@@ -20,7 +20,7 @@ def test_load_and_preview_and_export(tmp_path):
     w.generate_preview()                          # default op (traces)
     assert len(w.preview.ax.collections) >= 1
     written = w.export_to(tmp_path)
-    assert any(p.suffix == ".rml" for p in written)
+    assert any(p.suffix == ".nc" for p in written)   # GUI defaults to G-code now
 
 def test_mirror_toggle_reloads_board():
     w = MainWindow()
@@ -67,7 +67,8 @@ def test_double_sided_export(tmp_path):
     w.load_folder(str(FIXT))
     w.double_sided_chk.setChecked(True)
     written = w.export_to(tmp_path)
-    assert any(p.name.endswith("_top_traces.rml") for p in written)
+    # GUI now defaults to the G-code backend (.nc)
+    assert any(p.name.endswith("_top_traces.nc") for p in written)
 
 def test_double_sided_preview_shows_both_sides_and_dowels():
     w = MainWindow()
