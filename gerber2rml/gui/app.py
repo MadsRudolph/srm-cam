@@ -514,6 +514,12 @@ def _configure_opengl():
         "angle": Qt.ApplicationAttribute.AA_UseOpenGLES,
     }.get(mode, Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
     QCoreApplication.setAttribute(attr, True)
+    # Share GL resources across contexts. Without this, closing the 3D viewer
+    # destroys its GL context and invalidates pyqtgraph's cached shader programs;
+    # the next viewer gets a fresh, non-sharing context and glUseProgram fails
+    # (GL_INVALID_VALUE) -> blank. Sharing keeps the programs valid across windows.
+    QCoreApplication.setAttribute(
+        Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     fmt = QSurfaceFormat()
     fmt.setVersion(2, 1)
     fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
