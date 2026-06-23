@@ -46,13 +46,13 @@ def test_apply_preset_updates_forms():
     name = next(iter(BUILTIN_PRESETS))
     w.preset_combo.setCurrentText(name)
     w.apply_selected_preset()
-    assert w.forms["traces"].value().bit_diameter == 0.4
+    assert w.forms["traces"].value().bit_diameter == 0.8
     assert w.forms["cutout"].value().tabs == 4
 
-def test_window_opens_with_fr4_preset_applied():
+def test_window_opens_with_srm20_preset_applied():
     w = MainWindow()
-    assert w.preset_combo.currentText().startswith("FR-4")
-    assert w.forms["traces"].value().xy_feed == 1.5   # FR-4 conservative feed
+    assert w.preset_combo.currentText().startswith("SRM-20")
+    assert w.forms["traces"].value().xy_feed == 4.0   # SRM-20 0.8 mm preset
 
 def test_export_image_writes_png(tmp_path):
     w = MainWindow()

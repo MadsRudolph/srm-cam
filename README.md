@@ -141,16 +141,16 @@ drill, cutout) in one click.
 - Click **Apply** to load it into all three operation tabs at once.
 - Modify as needed, then click **Save** to store under a new name.
 
-**Built-in presets** (the GUI opens with **FR-4** applied):
-- `FR-4 (1.6 mm)` — conservative feeds for abrasive glass-fibre on the SRM-20
-  (~7000 RPM max): traces 1.5 mm/s feed / 0.5 mm/s plunge, drill/cutout in 0.4 mm
-  pecks. Use **solid carbide** bits, set VPanel spindle to max, and run **dust
-  extraction + a mask** (FR-4 dust is harmful). Dial up with the calibration coupon.
-- `FR-1` — faster feeds (4 mm/s) for soft phenolic blanks.
+**Built-in preset** (the GUI opens with it applied):
+- `SRM-20 0.8 mm flat` — the one profile we use: a single **0.8 mm flat endmill**
+  for traces, drilling and cut-out on a ~1.6 mm board. Drill/cut-out depth is
+  **1.7 mm** (0.1 mm through into the spoilboard — not deeper, so the bed isn't
+  gouged). Use a **solid carbide** bit, set VPanel spindle to max (~7000 RPM), and
+  run **dust extraction + a mask** for FR-4. Dial in with the calibration coupon.
 
 **Preset sources** (merged by name; later overrides earlier):
-1. **Built-in:** embedded in code (`FR-4` default, `FR-1`).
-2. **Repo examples:** `examples/presets.json` — team-shared presets (tracked in git).
+1. **Built-in:** embedded in code (the `SRM-20 0.8 mm flat` profile).
+2. **Repo examples:** `examples/presets.json` — team-shared presets (tracked in git; empty by default).
 3. **User home:** `~/.gerber2rml/presets.json` — your personal presets, written by Save.
 
 ## Preflight, reports & clearing
