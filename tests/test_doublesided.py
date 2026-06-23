@@ -41,7 +41,7 @@ def test_through_hole_registers_after_flip():
 def test_build_double_sided_writes_jobs(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     from gerber2rml.config import TraceJob, DrillJob, CutoutJob
-    written = build_double_sided(FIXT, tmp_path, name="ds",
+    written = build_double_sided(FIXT, tmp_path, name="ds", machine="Roland SRM-20",
                                  trace=TraceJob(), drill=DrillJob(), cutout=CutoutJob())
     names = {p.name for p in written}
     for n in ("ds_align.rml", "ds_bottom_traces.rml", "ds_top_traces.rml",
@@ -62,7 +62,8 @@ def _deepest_z(path):
 def test_align_drills_deeper_than_board_holes(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     from gerber2rml.config import DrillJob
-    written = build_double_sided(FIXT, tmp_path, name="d", drill=DrillJob(), align_depth=6.0)
+    written = build_double_sided(FIXT, tmp_path, name="d", machine="Roland SRM-20",
+                                 drill=DrillJob(), align_depth=6.0)
     bottom_drills = [p for p in written if p.name.startswith("d_bottom_drill_")]
     # align holes must go deeper (more negative Z) than every board-hole file
     deepest_board = min(_deepest_z(p) for p in bottom_drills)
@@ -100,7 +101,7 @@ def test_preview_layout_registers_layers_on_holes():
 def test_single_bit_double_sided_one_bottom_drill_file(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     from gerber2rml.config import DrillJob
-    written = build_double_sided(FIXT, tmp_path, name="d",
+    written = build_double_sided(FIXT, tmp_path, name="d", machine="Roland SRM-20",
                                  drill=DrillJob(single_bit=True, bit_diameter=0.8))
     drills = sorted(p.name for p in written if "_bottom_drill" in p.name)
     assert drills == ["d_bottom_drill.rml"]

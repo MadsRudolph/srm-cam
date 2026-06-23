@@ -84,8 +84,11 @@ python -m gerber2rml         # or the `gerber2rml` launcher after install
 
 ## G-code (NC) output — for VPanel's NC-code mode
 
-The SRM-20 also runs G-code. Select the **"Roland SRM-20 (G-code)"** machine to
-emit `.nc` instead of `.rml` — in the GUI **Machine** dropdown, or on the CLI:
+**G-code is the default** (machine **"Roland SRM-20 (G-code)"**, `.nc`) — it's what
+we run on the SRM-20: real-millimetre coordinates and a standard **G54** work
+origin. RML (`.rml`) remains available as a fallback: pick **"Roland SRM-20"** in
+the GUI **Machine** dropdown, or drop `--gcode` on the CLI. To emit G-code
+explicitly on the CLI:
 
 ```bash
 python -m gerber2rml.cli <gerber-folder> -o out -n <boardname> --gcode
