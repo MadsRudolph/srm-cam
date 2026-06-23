@@ -4,25 +4,17 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 BUILTIN_PRESETS = {
-    # FR-4 (abrasive glass-fibre) on the SRM-20 (max ~7000 RPM): slower feeds,
-    # slow plunges, shallow drill/cutout pecks to clear glass dust. Conservative
-    # starting points — dial up with the calibration coupon. Set VPanel spindle
-    # to max (~7000 RPM); use SOLID CARBIDE bits; dust extraction + mask required.
-    "FR-4 (1.6 mm): 1/64 traces + 0.8/1.0 drill + 1/32 cutout": {
-        "trace": {"bit_diameter": 0.4, "cut_depth": 0.10, "offsets": 2,
-                  "stepover": 0.5, "xy_feed": 1.5, "plunge_feed": 0.5, "travel_z": 2.0},
-        "drill": {"cut_depth": 0.4, "total_depth": 1.8, "xy_feed": 1.5,
-                  "plunge_feed": 0.6, "travel_z": 2.0},
-        "cutout": {"bit_diameter": 0.8, "cut_depth": 0.4, "total_depth": 1.8,
-                   "tabs": 4, "tab_width": 1.5, "xy_feed": 1.5,
-                   "plunge_feed": 0.5, "travel_z": 2.0},
-    },
-    "FR-1: 1/64 traces + 0.8/1.0 drill + 1/32 cutout": {
-        "trace": {"bit_diameter": 0.4, "cut_depth": 0.10, "offsets": 2,
-                  "stepover": 0.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
-        "drill": {"cut_depth": 0.6, "total_depth": 1.8, "xy_feed": 4.0,
-                  "plunge_feed": 1.0, "travel_z": 2.0},
-        "cutout": {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.8,
+    # The single profile we use: SRM-20 with one 0.8 mm flat endmill for
+    # everything — traces, drilling and cut-out — on a ~1.6 mm board. Drill and
+    # cut-out depth is 1.7 mm = 0.1 mm through into the spoilboard (not more, so
+    # we don't gouge the bed). Set the VPanel spindle to max (~7000 RPM); use a
+    # SOLID CARBIDE bit; run dust extraction + a mask for FR-4.
+    "SRM-20 0.8 mm flat (no 1/64\" bit): coarse traces + 0.8/1.0 drill + cutout": {
+        "trace":  {"bit_diameter": 0.8, "cut_depth": 0.15, "offsets": 1,
+                   "stepover": 0.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
+        "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.7,
+                   "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
+        "cutout": {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.7,
                    "tabs": 4, "tab_width": 1.5, "xy_feed": 4.0,
                    "plunge_feed": 1.0, "travel_z": 2.0},
     },

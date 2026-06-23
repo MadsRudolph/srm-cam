@@ -3,25 +3,27 @@ from gerber2rml.app.presets import load_presets, apply_preset, save_user_preset,
 from gerber2rml.app.state import ProjectState
 
 
-def test_builtin_present():
-    presets = load_presets()
-    assert any("1/64" in name for name in presets)
+def test_only_one_builtin_preset():
+    # We ship a single profile: the SRM-20 0.8 mm flat endmill.
+    assert len(BUILTIN_PRESETS) == 1
+    name = next(iter(BUILTIN_PRESETS))
+    assert name.startswith("SRM-20")
 
 
-def test_fr4_preset_is_first_and_conservative():
+def test_srm20_preset_depths_and_feeds():
     name = next(iter(BUILTIN_PRESETS))         # first = the default in the GUI
-    assert name.startswith("FR-4")
-    fr4 = BUILTIN_PRESETS[name]
-    assert fr4["trace"]["xy_feed"] == 1.5      # slow feed for abrasive FR-4
-    assert fr4["trace"]["plunge_feed"] == 0.5
-    assert fr4["drill"]["cut_depth"] == 0.4    # shallow pecks to clear glass dust
+    p = BUILTIN_PRESETS[name]
+    assert p["trace"]["bit_diameter"] == 0.8   # one 0.8 mm bit for everything
+    assert p["trace"]["xy_feed"] == 4.0
+    assert p["drill"]["total_depth"] == 1.7    # 1.6 mm board + 0.1 mm through
+    assert p["cutout"]["total_depth"] == 1.7
 
 
 def test_apply_preset_sets_jobs():
     st = ProjectState()
     name = next(iter(BUILTIN_PRESETS))
     apply_preset(st, BUILTIN_PRESETS[name])
-    assert st.trace.bit_diameter == 0.4
+    assert st.trace.bit_diameter == 0.8
     assert st.cutout.tabs == 4
 
 
