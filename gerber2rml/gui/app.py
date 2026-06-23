@@ -59,7 +59,26 @@ class MainWindow(QMainWindow):
         self.view_combo.addItems(["Both sides", "Bottom", "Top"])
         self.view_combo.setEnabled(False)   # only meaningful when double-sided
         self.view_combo.currentIndexChanged.connect(self.generate_preview)
-        
+
+        # double-sided registration: fresh-milled dowels vs grid-seated pins
+        self.reg_combo = QComboBox()
+        self.reg_combo.addItems(["Fresh-milled dowels (2+3mm)",
+                                 "Grid-seated pins (M4 grid)"])
+        self.reg_combo.setEnabled(False)
+        self.reg_combo.currentIndexChanged.connect(self._on_reg_changed)
+        self.grid_pitch_edit = QLineEdit(f"{14.2}")
+        self.grid_pitch_edit.setToolTip("Grid hole-to-hole spacing (mm)")
+        self.grid_pitch_edit.editingFinished.connect(self._on_reg_changed)
+        self.grid_pin_edit = QLineEdit(f"{4.0}")
+        self.grid_pin_edit.setToolTip("Grid dowel diameter = grid hole size (mm)")
+        self.grid_pin_edit.editingFinished.connect(self._on_reg_changed)
+        self._grid_row = QWidget()
+        _grid_row_l = QHBoxLayout(self._grid_row)
+        _grid_row_l.setContentsMargins(0, 0, 0, 0)
+        _grid_row_l.addWidget(QLabel("pitch")); _grid_row_l.addWidget(self.grid_pitch_edit)
+        _grid_row_l.addWidget(QLabel("pin")); _grid_row_l.addWidget(self.grid_pin_edit)
+        self._grid_row.setEnabled(False)   # enabled only in grid mode
+
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
         self.preset_combo = QComboBox()
@@ -97,6 +116,8 @@ class MainWindow(QMainWindow):
         project_layout.addRow("", self.mirror_chk)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
+        project_layout.addRow("Reg.:", self.reg_combo)
+        project_layout.addRow("Grid:", self._grid_row)
         settings_layout.addWidget(project_group)
         
         # Presets Group
@@ -165,19 +186,48 @@ class MainWindow(QMainWindow):
         self._sync_state()
         self.state.load(folder)
 
+    def _dowel_spec(self):
+        """Build a DowelSpec from the registration controls."""
+        from gerber2rml.doublesided import DowelSpec
+        mode = "grid" if self.reg_combo.currentIndex() == 1 else "fresh"
+
+        def _f(edit, default):
+            try:
+                return float(edit.text())
+            except ValueError:
+                return default
+        pitch = _f(self.grid_pitch_edit, 14.2)
+        return DowelSpec(mode=mode, pitch_x=pitch, pitch_y=pitch,
+                         grid_pin=_f(self.grid_pin_edit, 4.0))
+
     def _double_sided_layout(self):
         """Design-frame layout for the PREVIEW (both layers registered, holes on
         pads, top plain). The export uses the machine-frame layout separately.
-        Cached by folder so live form edits don't re-read disk."""
+        Cached by folder + registration choice so live edits don't re-read disk."""
         from gerber2rml.doublesided import preview_layout_double_sided
-        key = str(self.state.gerber_dir)
+        spec = self._dowel_spec()
+        key = (str(self.state.gerber_dir), spec.mode, spec.pitch_x, spec.grid_pin)
         if self._ds_cache is None or self._ds_cache[0] != key:
-            self._ds_cache = (key, preview_layout_double_sided(self.state.gerber_dir))
+            self._ds_cache = (key, preview_layout_double_sided(
+                self.state.gerber_dir, dowels=spec))
         return self._ds_cache[1]
 
+    def _update_ds_controls(self):
+        """Enable the registration controls only when double-sided is on, and
+        the grid fields only in grid mode."""
+        ds = self.double_sided_chk.isChecked()
+        self.view_combo.setEnabled(ds)
+        self.reg_combo.setEnabled(ds)
+        self._grid_row.setEnabled(ds and self.reg_combo.currentIndex() == 1)
+
     def _on_double_sided_toggled(self, checked):
-        self.view_combo.setEnabled(checked)
+        self._update_ds_controls()
         self.generate_preview()
+
+    def _on_reg_changed(self, *_):
+        self._update_ds_controls()
+        if self.double_sided_chk.isChecked():
+            self.generate_preview()
 
     def _preview_double_sided(self, op):
         """Show the registered board with the two dowel/alignment holes so the
@@ -284,7 +334,7 @@ class MainWindow(QMainWindow):
             return build_double_sided(
                 self.state.gerber_dir, out_dir, self.state.name,
                 trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
-                machine=self.state.machine)
+                dowels=self._dowel_spec(), machine=self.state.machine)
         return self.state.export(out_dir)
 
     def export_image_to(self, out_dir):

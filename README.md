@@ -176,41 +176,39 @@ Setting **offsets = -1** on the **Traces** tab now fully clears the background c
 
 ## Double-sided boards
 
-For two-sided PCBs, gerber2rml uses **dowel-pin registration** to align the top and bottom milling passes. Tick the **Double-sided** checkbox in the GUI before exporting (requires an **F.Cu** layer).
+For two-sided PCBs, gerber2rml uses **dowel-pin registration** to align the top and bottom milling passes — it references machine-located holes, never the board edge (sheared FR-4 is never truly square). Tick the **Double-sided** checkbox in the GUI before exporting (requires an **F.Cu** layer) and pick a registration mode in the **Reg.** dropdown.
 
 ### How the flip works
 
-The board flips **left-to-right about a vertical axis** through its centre. The bottom is milled mirrored (bottom-up, copper facing the spindle). Reflecting the front copper about that same axis **cancels** that mirror, so the **top is cut as the plain, un-mirrored F.Cu** and still registers after the flip. The two dowel pins sit **on the flip axis, above and below the board**, and you flip left-to-right onto them.
+The board flips **left-to-right about a vertical axis**. The bottom is milled mirrored (bottom-up, copper facing the spindle). Reflecting the front copper about that same axis **cancels** that mirror, so the **top is cut as the plain, un-mirrored F.Cu** and still registers after the flip. The two dowels sit **on the flip axis, one above and one below the board**, so they are invariant under the flip — the board lifts off the pins, flips, and drops back onto them.
 
 > **Preview vs. export.** The on-screen preview shows both layers in the *design* frame (the way KiCad overlays them) so they register and the holes land on the pads. The exported RML carries the real machine geometry (mirrored bottom, reflected-to-plain top). Both are correct — they serve different purposes.
 
+### Two registration modes
+
+| | **Fresh-milled dowels** (default) | **Grid-seated pins** |
+|---|---|---|
+| Where the pins live | fresh holes the mill drills through the stock **into the sacrificial bed** | the bed's **threaded grid** holes (nothing fresh drilled) |
+| Pins | **Ø2 + Ø3 mm** ground dowel pins | **Ø4 mm** pins in the grid (e.g. M4 grid) |
+| Keyed so it can only seat one way | by **different diameters** | by **asymmetric spacing** (+ mark the bottom edge) |
+| Alignment depends on the grid | **no** — both sides reference the same machine-made hole | **yes** — needs the pitch + datum origin accurate (~±0.2 mm) |
+| Set the grid pitch | — | enter the measured **pitch** and **pin** Ø next to the dropdown |
+
+**Fresh** is the more accurate, foolproof choice and works on any board with a few mm of blank outside the cut. **Grid-seated** trades some accuracy for reusable pins you never re-drill. In both modes the dowels sit **just outside the Edge.Cuts rectangle**, in stock the cut-out discards — they cost zero design area; you only shear the copper blank a little oversized on two edges.
+
 ### Output files
 
-A double-sided job produces a runplan plus:
+A double-sided job produces a `<name>_runplan.txt` (mode-specific, read it first) plus:
 
-- `<name>_align.rml` — drill the two 3.0 mm alignment (dowel) holes, deeper than the board
-- `<name>_bottom_drill_<dia>mm.rml` — board holes through the bottom (one per diameter, or one `<name>_bottom_drill.rml` in single-bit mode)
-- `<name>_bottom_traces.rml` — isolate bottom copper (B.Cu, mirrored)
-- `<name>_top_traces.rml` — isolate top copper (**plain F.Cu**, reflected about the pin axis so it registers after the flip)
-- `<name>_cutout.rml` — cut the board outline with holding tabs
+- `<name>_align.<ext>` — the two dowel holes (interpolated to size with the endmill)
+- `<name>_bottom_drill_<dia>mm.<ext>` — board holes (one per diameter, or one `<name>_bottom_drill.<ext>` in single-bit mode)
+- `<name>_bottom_traces.<ext>` — isolate bottom copper (B.Cu, mirrored)
+- `<name>_top_traces.<ext>` — isolate top copper (**plain F.Cu**, reflected about the pin axis)
+- `<name>_cutout.<ext>` — cut the board outline with holding tabs
 
-### Operator sequence
+### Operator sequence (essentials)
 
-0. **Zero once:** Set the machine XY origin a single time (e.g. the stock lower-left corner) and do **not** re-zero between jobs — registration comes from the pins.
-
-1. **Drill alignment holes:** Run `_align.rml` to create the two 3.0 mm holes — through the board **and ~4–5 mm into the sacrificial bed** (default 6 mm total, deeper than the board holes). Seat 3.0 mm dowel pins.
-
-2. **Mill bottom side:** Run the `_bottom_drill_*.rml` file(s) (change bit between diameters), then `_bottom_traces.rml` (B.Cu).
-
-3. **Flip and re-register:** Flip the board **left-to-right about the vertical pin line**. It drops back onto the dowels.
-
-4. **Mill top side:** Run `_top_traces.rml`. It's the plain F.Cu, already reflected so it aligns after the flip.
-
-5. **Cut out:** Run `_cutout.rml` last to separate the board.
-
-### Pin placement
-
-The two pins are on a vertical axis through the board centre, **above and below the board**, beyond the 104 mm jig box (or beyond the board if taller), so they never enter the milling area. Leave ~6 mm of waste margin around the design box so the pins have a safe landing zone.
+Set XY zero once (fresh: stock corner; grid: the datum grid hole), **never re-zero XY** between jobs, and **re-zero Z** after every bit change *and* after the flip. Run `_align` and seat the pins → bottom drill + `_bottom_traces` → **flip left-to-right onto the pins** → `_top_traces` → `_cutout` **last**. The exact pin sizes, grid cells and stock size are written into the run-plan.
 
 ### Validation
 
@@ -220,4 +218,4 @@ Before a real board, mill the bundled calibration coupon double-sided to check r
 python -m gerber2rml.cli examples/calibration -o out -n calib
 ```
 
-The coupon has an F.Cu side with pads on every through-hole plus an asymmetric corner marker. After milling and flipping, the top pads should ring their holes concentrically. Registration is bounded by the SRM-20's repeatability (~0.05–0.1 mm) and dowel-pin fit.
+The coupon has an F.Cu side with pads on every through-hole plus an asymmetric corner marker. After milling and flipping, the top pads should ring their holes concentrically. Registration is bounded by the SRM-20's repeatability (~0.05–0.1 mm) and dowel-pin fit — so dial the dowel-hole size to your pins on the coupon first.
