@@ -23,22 +23,42 @@ def format_diameter(d: float) -> str:
     return s
 
 
+PECK_REENTRY = 0.2  # mm: rapid back to this clearance above the previous peck
+                    # depth before feeding, so plunge-feed motion only cuts fresh
+                    # material instead of crawling down through the open hole.
+
+
 def drill_holes(holes, job):
     """Generate peck-drill toolpaths (one per hole).
 
     holes: list of (x, y, diameter) tuples in mm. diameter is unused in v1
     (the operator loads one bit). Each hole: rapid over the hole, then peck
-    cycles (plunge cut_depth, retract to travel_z) until total_depth, ending
-    lifted.
+    cycles until total_depth, ending lifted to the full travel height.
+
+    Between pecks of the *same* hole the bit lifts only ``job.peck_retract`` (a
+    small clearance above the surface, enough to shed chips) and then rapids back
+    down to just above the previous depth -- it does NOT return to the full
+    ``travel_z``. The full retract happens once, after the last peck, so the
+    rapid to the next hole clears the board. This keeps slow plunge-feed motion
+    confined to fresh material and avoids the wasteful full-height bob on every
+    peck.
     """
     pecks = max(1, math.ceil(job.total_depth / job.cut_depth))
     paths = []
     for (x, y, _dia) in holes:
-        tp = [Move(x, y, job.travel_z, rapid=True)]
+        tp = [Move(x, y, job.travel_z, rapid=True)]      # rapid over the hole
+        prev = 0.0                                       # last depth reached (+ve mm)
         for k in range(1, pecks + 1):
             depth = job.total_depth if k == pecks else k * job.cut_depth
-            tp.append(Move(x, y, -depth))                    # peck down
-            tp.append(Move(x, y, job.travel_z, rapid=True))  # retract
+            # rapid to where cutting resumes: just above the surface on the first
+            # peck, just above the previous depth thereafter.
+            entry = job.peck_retract if k == 1 else -max(prev - PECK_REENTRY, 0.0)
+            tp.append(Move(x, y, entry, rapid=True))
+            tp.append(Move(x, y, -depth))                # peck down (plunge feed)
+            # small chip-clearing lift between pecks; full retract after the last.
+            tp.append(Move(x, y, job.travel_z if k == pecks else job.peck_retract,
+                           rapid=True))
+            prev = depth
         paths.append(tp)
     return paths
 
