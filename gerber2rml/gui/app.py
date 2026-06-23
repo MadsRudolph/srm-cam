@@ -371,9 +371,15 @@ class MainWindow(QMainWindow):
                 self, "3D unavailable",
                 f"3D simulation needs pyqtgraph + PyOpenGL installed.\n\n{e}")
             return
-        self._sim_window = Simulation3DWindow(
-            toolpaths, title=label, parent=self)
+        # Top-level window (no parent). A QMainWindow parented to another
+        # QMainWindow with an embedded QOpenGLWidget renders fine in an
+        # offscreen grab but can come up blank on screen; a parentless window
+        # matches the path that's known to render. self._sim_window keeps the
+        # reference so it isn't garbage-collected.
+        self._sim_window = Simulation3DWindow(toolpaths, title=label)
         self._sim_window.show()
+        self._sim_window.raise_()
+        self._sim_window.activateWindow()
 
     def _on_simulate_file(self):
         from pathlib import Path

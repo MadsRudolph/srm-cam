@@ -79,8 +79,22 @@ compatibility surface format.
 
 ## ⚠️ Open issue — "still not working correctly"
 
-The isolated probe rendered fine, but the user reports the 3D viewer still isn't
-right in actual use. Not yet diagnosed. Things to check when revisiting:
+**Update (dev PC, NVIDIA RTX 4060):**
+- The venv was **missing `pyqtgraph`/`PyOpenGL`** — this branch added them to
+  `pyproject.toml [gui]`, but the env predated the branch, so *Simulate 3D* just
+  popped the "needs pyqtgraph + PyOpenGL" dialog. `pip install -e ".[gui]"` fixed
+  it; this is the most likely original "not working".
+- OpenGL is healthy here: `AA_UseDesktopOpenGL` is taking effect (queried
+  renderer = `NVIDIA GeForce RTX 4060 / GL 4.6`, not ANGLE/llvmpipe).
+- Both **traces and drill render correctly** in an offscreen grab, parented or not.
+- **Fix applied:** `_open_sim_window` now opens the sim window **parentless**. A
+  `QMainWindow` parented to another `QMainWindow` with an embedded
+  `QOpenGLWidget` can grab fine offscreen yet come up blank on screen; parentless
+  matches the known-good probe path. (`self._sim_window` still holds the ref.)
+- **Still to do:** one final on-screen click-through confirmation — couldn't
+  capture it here (computer-use approval timed out; nobody at the dev PC).
+
+Original leads (kept for reference):
 
 1. **Reproduce precisely**: what does "not working" look like now — still GL
    errors, blank/black window, wrong geometry, no animation, or a crash? Capture
