@@ -26,7 +26,7 @@ Produces `out/mosfet_test_{traces,drill,cutout}.rml` + `mosfet_test_runplan.txt`
 |---|---|---|---|
 | Spindle enabled in header | **yes — `^IN;!MC1;`** | `!MC1;` present? | |
 | Spindle disabled in footer | **yes — `!MC0;^IN;`** | | |
-| Units (RML per mm) | **40 (0.025 mm)** | 40 | |
+| Units (RML per mm) | **100 (0.01 mm)** | 100 | |
 | XY feed command | **`VS4.0;`** | `VS...;` | |
 | Plunge feed command | **`!VZ1.0;`** | `!VZ...;` | |
 | Traces move count | **11,399** | (informational; will differ) | n/a |

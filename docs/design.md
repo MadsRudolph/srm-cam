@@ -128,7 +128,9 @@ The SRM-20 backend generates RML directly. It fixes the bugs found in the curren
    up/down speed, not XY). Current single `V15` is wrong and too fast.
 3. **Modal handling N/A here** (we emit moves from clean internal toolpaths, not by
    re-parsing modal G-code), which also removes the dropped-modal-line risk.
-4. **Units:** SCALE = 40 RML units/mm (confirmed: SRM-20 = 0.025 mm/unit).
+4. **Units:** SCALE = 100 RML units/mm (SRM-20 RML-1 software resolution =
+   0.01 mm/step, manual p.151). NOT 0.025 mm/unit — that is the older
+   MODELA/HP-GL RML dialect and makes the job come out at 40% size.
 5. **Clean header/footer:** Z-up only at start (no bogus `Z1168,1168,1168` rapid);
    lift before `!MC0`; optional park move.
 

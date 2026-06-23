@@ -11,7 +11,7 @@ The SRM-20 backend in gerber2rml/backends/srm20.py reimplements this correctly.
 """
 import sys, re
 
-SCALE = 40  # RML-1 units per mm (SRM-20 = 40 units/mm)
+SCALE = 100  # RML-1 units per mm (SRM-20 = 0.01 mm/step, manual p.151)
 Z_UP   =  2.0   # mm — travel height
 Z_DOWN = -0.1   # mm — cut depth (override per operation if needed)
 

@@ -2,9 +2,10 @@ from gerber2rml.toolpath import Move
 from gerber2rml.backends.srm20 import render
 
 
-def test_scale_is_40_units_per_mm():
+def test_scale_is_100_units_per_mm():
+    # SRM-20 RML-1 software resolution is 0.01 mm/step = 100 units/mm (manual p.151)
     rml = render([[Move(20.0, 0.0, -0.1)]], xy_feed=4.0, plunge_feed=1.0)
-    assert "Z800,0,-4;" in rml          # 20 mm * 40 = 800 ; -0.1 mm * 40 = -4
+    assert "Z2000,0,-10;" in rml         # 20 mm * 100 = 2000 ; -0.1 mm * 100 = -10
 
 
 def test_spindle_is_turned_on_then_off():
