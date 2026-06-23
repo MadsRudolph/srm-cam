@@ -73,7 +73,7 @@ def test_bottom_drill_excludes_alignment_holes(tmp_path):
     lay = layout_double_sided(FIXT)
     written = build_double_sided(FIXT, tmp_path, name="d")
     ax, ay, _d = lay.align_holes[0]
-    token = f"Z{round(ax * 40)},{round(ay * 40)},"   # 40 RML units/mm
+    token = f"Z{round(ax * 100)},{round(ay * 100)},"   # 100 RML units/mm (SRM-20)
     for p in written:
         if p.name.startswith("d_bottom_drill_"):
             assert token not in p.read_text()    # pinned hole is never re-drilled
