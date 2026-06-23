@@ -23,6 +23,9 @@ class DrillJob:
                                  #          diameter, plunged with a matching bit.
     cut_depth: float = 0.6       # mm per peck
     total_depth: float = 1.8     # mm (through 1.6 mm board)
+    peck_retract: float = 0.5    # mm above the surface to lift BETWEEN pecks of one
+                                 # hole (chip clearing). The full travel_z retract
+                                 # only happens when leaving the hole for the next.
     xy_feed: float = 4.0
     plunge_feed: float = 1.0
     travel_z: float = 2.0
