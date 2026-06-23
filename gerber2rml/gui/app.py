@@ -37,6 +37,14 @@ class MainWindow(QMainWindow):
         self.export_img_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
         self.export_img_btn.clicked.connect(self._on_export_image)
 
+        self.sim3d_btn = QPushButton("Simulate 3D")
+        self.sim3d_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.sim3d_btn.clicked.connect(self._on_simulate_3d)
+        self.sim_file_btn = QPushButton("Open && simulate file...")
+        self.sim_file_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self.sim_file_btn.clicked.connect(self._on_simulate_file)
+        self._sim_window = None   # keep a ref so the window isn't GC'd
+
         self.name_edit = QLineEdit(self.state.name)
         self.machine_combo = QComboBox()
         self.machine_combo.addItems(list(BACKENDS.keys()))
@@ -61,6 +69,18 @@ class MainWindow(QMainWindow):
         self.save_preset_btn = QPushButton("Save...")
         self.save_preset_btn.clicked.connect(self._on_save_preset)
 
+        # Rework (2nd pass): box-select an area of the previewed toolpath and
+        # export NC for just that part, to re-cut traces left not fully isolated.
+        self.select_chk = QCheckBox("Select area")
+        self.select_chk.toggled.connect(self._on_select_toggled)
+        self.clear_sel_btn = QPushButton("Clear")
+        self.clear_sel_btn.clicked.connect(lambda: self.preview.clear_selection())
+        self.export_sel_btn = QPushButton("Export selected NC...")
+        self.export_sel_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.export_sel_btn.clicked.connect(self._on_export_selected)
+        self.export_sel_btn.setEnabled(False)
+
         # Build Settings Panel
         settings_panel = QWidget()
         settings_layout = QVBoxLayout(settings_panel)
@@ -70,7 +90,8 @@ class MainWindow(QMainWindow):
         project_group = QGroupBox("Project")
         project_layout = QFormLayout(project_group)
         project_layout.addRow(self.load_btn, self.export_btn)
-        project_layout.addRow("", self.export_img_btn)
+        project_layout.addRow(self.export_img_btn, self.sim3d_btn)
+        project_layout.addRow("", self.sim_file_btn)
         project_layout.addRow("Name:", self.name_edit)
         project_layout.addRow("Machine:", self.machine_combo)
         project_layout.addRow("", self.mirror_chk)
@@ -86,6 +107,16 @@ class MainWindow(QMainWindow):
         presets_layout.addWidget(self.save_preset_btn)
         settings_layout.addWidget(presets_group)
 
+        # Rework Group
+        rework_group = QGroupBox("Rework (2nd pass)")
+        rework_layout = QVBoxLayout(rework_group)
+        rework_row = QHBoxLayout()
+        rework_row.addWidget(self.select_chk, 1)
+        rework_row.addWidget(self.clear_sel_btn)
+        rework_layout.addLayout(rework_row)
+        rework_layout.addWidget(self.export_sel_btn)
+        settings_layout.addWidget(rework_group)
+
         # Tabs for Operations
         self.forms = {"traces": DataclassForm(self.state.trace),
                       "drill": DataclassForm(self.state.drill),
@@ -99,7 +130,8 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.tabs, 1)
 
         self.preview = PreviewCanvas()
-        
+        self.preview.on_selection_changed = self._on_selection_changed
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(settings_panel)
         splitter.addWidget(self.preview)
@@ -187,6 +219,8 @@ class MainWindow(QMainWindow):
         return f"Holes: {summary}  ->  {len(groups)} drill files (one bit each)"
 
     def generate_preview(self):
+        # keep the rework export button in sync with the active tab / mode
+        self._on_selection_changed(self.preview.selection_bbox())
         if self.state.board is None:
             return
         self._sync_state()
@@ -305,6 +339,137 @@ class MainWindow(QMainWindow):
                 return
             self.statusBar().showMessage(f"Saved {png.name} + summary", 8000)
 
+    def _drill_toolpaths(self, holes):
+        """All drilling as one flat toolpath list, matching the exported files
+        (honours single-bit interpolation / per-diameter plunging)."""
+        from gerber2rml.engine.drill import drill_jobs
+        return [tp for _fname, paths in drill_jobs(holes, self.state.drill, "x")
+                for tp in paths]
+
+    def _current_toolpaths(self):
+        """(op, toolpaths) for the active tab/mode -- what the preview shows."""
+        op = _OPS[self.tabs.currentIndex()]
+        if self.double_sided_chk.isChecked():
+            from gerber2rml.engine.traces import isolate
+            from gerber2rml.engine.cutout import cut_outline
+            lay = self._double_sided_layout()
+            if op == "traces":
+                return op, isolate(lay.bottom_copper, self.state.trace,
+                                   outline=lay.outline)
+            if op == "cutout":
+                return op, cut_outline(lay.outline, self.state.cutout)
+            return op, self._drill_toolpaths(lay.holes)
+        if op == "drill":
+            return op, self._drill_toolpaths(self.state.board.holes)
+        return op, self.state.toolpaths(op)
+
+    def _open_sim_window(self, toolpaths, label):
+        try:
+            from gerber2rml.gui.sim3d import Simulation3DWindow
+        except Exception as e:
+            QMessageBox.critical(
+                self, "3D unavailable",
+                f"3D simulation needs pyqtgraph + PyOpenGL installed.\n\n{e}")
+            return
+        self._sim_window = Simulation3DWindow(
+            toolpaths, title=label, parent=self)
+        self._sim_window.show()
+
+    def _on_simulate_file(self):
+        from pathlib import Path
+        from gerber2rml.engine.gcode_parse import parse_file
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open toolpath file to simulate", "",
+            "Toolpath files (*.nc *.rml *.gcode *.g);;All files (*)")
+        if not path:
+            return
+        try:
+            toolpaths = parse_file(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Could not read file", str(e))
+            return
+        if not toolpaths or not any(toolpaths):
+            QMessageBox.information(self, "Nothing to simulate",
+                                    "No tool moves found in that file.")
+            return
+        self._open_sim_window(toolpaths, f"{Path(path).name} (3D)")
+
+    def _on_simulate_3d(self):
+        if self.state.board is None:
+            QMessageBox.warning(self, "Nothing to simulate", "Load a Gerber folder first.")
+            return
+        self._sync_state()
+        op, toolpaths = self._current_toolpaths()
+        label = op
+        # an active rework box on a clippable op -> simulate just that part
+        bbox = self.preview.selection_bbox()
+        if bbox is not None and op != "drill" and not self.double_sided_chk.isChecked():
+            from gerber2rml.engine.select import clip_toolpaths_to_bbox
+            clipped = clip_toolpaths_to_bbox(toolpaths, bbox)
+            if clipped:
+                toolpaths, label = clipped, f"{op} rework"
+        if not toolpaths:
+            QMessageBox.information(self, "Nothing to simulate",
+                                    "No toolpaths for this view.")
+            return
+        self._open_sim_window(toolpaths, f"{self.state.name} - {label} (3D)")
+
+    def _on_select_toggled(self, checked):
+        self.preview.set_selecting(checked)
+        if checked:
+            self.statusBar().showMessage(
+                "Rework: drag a box over the area to re-cut, then Export selected NC",
+                8000)
+
+    def _on_selection_changed(self, bbox):
+        op = _OPS[self.tabs.currentIndex()]
+        has_box = bbox is not None and op != "drill" \
+            and not self.double_sided_chk.isChecked()
+        self.export_sel_btn.setEnabled(has_box)
+        if bbox is not None:
+            w = abs(bbox[2] - bbox[0]); h = abs(bbox[3] - bbox[1])
+            self.statusBar().showMessage(
+                f"Selected {w:.1f} x {h:.1f} mm for {op} rework", 6000)
+
+    def _on_export_selected(self):
+        from pathlib import Path
+        from gerber2rml.engine.select import clip_toolpaths_to_bbox
+        if self.state.board is None:
+            QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
+            return
+        bbox = self.preview.selection_bbox()
+        if bbox is None:
+            QMessageBox.warning(self, "No selection",
+                                "Enable 'Select area' and drag a box first.")
+            return
+        op = _OPS[self.tabs.currentIndex()]
+        if op == "drill" or self.double_sided_chk.isChecked():
+            QMessageBox.warning(self, "Not available",
+                                "Rework export works on the single-sided traces "
+                                "or cutout preview.")
+            return
+        self._sync_state()
+        clipped = clip_toolpaths_to_bbox(self.state.toolpaths(op), bbox)
+        if not clipped:
+            QMessageBox.information(self, "Empty selection",
+                                    "No toolpaths fall inside the selected box.")
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        if not out:
+            return
+        backend = BACKENDS[self.state.machine]
+        job = self.state.trace if op == "traces" else self.state.cutout
+        try:
+            text = backend.render(clipped, xy_feed=job.xy_feed,
+                                  plunge_feed=job.plunge_feed)
+            path = Path(out) / f"{self.state.name}_{op}_rework{backend.ext}"
+            path.write_text(text)
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+            return
+        self.statusBar().showMessage(
+            f"Wrote {path.name} ({len(clipped)} rework path(s))", 10000)
+
 def apply_dark_theme(app):
     app.setStyle("Fusion")
     palette = QPalette()
@@ -324,7 +489,35 @@ def apply_dark_theme(app):
     app.setPalette(palette)
     app.setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }")
 
+def _configure_opengl():
+    """Pick the OpenGL backend *before* the QApplication exists.
+
+    On Windows Qt often defaults to an ANGLE (OpenGL-ES-over-Direct3D) context,
+    under which pyqtgraph 0.14's desktop GLSL shaders fail to link --
+    ``GL_INVALID_VALUE`` on ``glUseProgram`` -- and the 3D viewer renders
+    nothing. Requesting the native desktop driver fixes it. Override with
+    ``GERBER2RML_GL=software`` (Mesa llvmpipe) on machines without a usable GPU
+    driver (headless/RDP/VM), or ``=angle`` to restore the old behaviour."""
+    import os
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtGui import QSurfaceFormat
+    mode = os.environ.get("GERBER2RML_GL", "desktop").lower()
+    attr = {
+        "desktop": Qt.ApplicationAttribute.AA_UseDesktopOpenGL,
+        "software": Qt.ApplicationAttribute.AA_UseSoftwareOpenGL,
+        "angle": Qt.ApplicationAttribute.AA_UseOpenGLES,
+    }.get(mode, Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+    QCoreApplication.setAttribute(attr, True)
+    fmt = QSurfaceFormat()
+    fmt.setVersion(2, 1)
+    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+    fmt.setDepthBufferSize(24)
+    QSurfaceFormat.setDefaultFormat(fmt)
+
+
 def main():
+    if QApplication.instance() is None:
+        _configure_opengl()
     app = QApplication.instance() or QApplication([])
     apply_dark_theme(app)
     win = MainWindow(); win.show()
