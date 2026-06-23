@@ -45,6 +45,44 @@ def test_slider_scrubs_partial_toolpath():
     canvas.slider.setValue(500)                   # emits valueChanged -> redraw at 0.5
     assert _n_cut_segments(canvas) == 2           # half scrubbed
 
+def _simulate_box(canvas, x0, y0, x1, y1):
+    """Drive the canvas' press/motion/release handlers with synthetic events."""
+    class _Evt:
+        def __init__(self, x, y, button=1):
+            self.xdata, self.ydata, self.button = x, y, button
+            self.inaxes = canvas.ax
+    canvas._on_press(_Evt(x0, y0))
+    canvas._on_motion(_Evt((x0 + x1) / 2, (y0 + y1) / 2))
+    canvas._on_release(_Evt(x1, y1))
+
+
+def test_box_selection_records_bbox_and_persists():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (10, 0), (10, 10)]], [])
+    canvas.set_selecting(True)
+    _simulate_box(canvas, 1, 2, 6, 7)
+    assert canvas.selection_bbox() == (1, 2, 6, 7)     # normalised corners
+    canvas.slider.setValue(400)                         # a redraw must not lose it
+    assert canvas.selection_bbox() == (1, 2, 6, 7)
+    assert any(isinstance(p, type(canvas._rect_artist)) for p in canvas.ax.patches)
+
+
+def test_box_selection_ignored_when_not_selecting():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (10, 0)]], [])
+    _simulate_box(canvas, 1, 1, 5, 5)                   # selection mode off
+    assert canvas.selection_bbox() is None
+
+
+def test_clear_selection():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (10, 0)]], [])
+    canvas.set_selecting(True)
+    _simulate_box(canvas, 1, 1, 5, 5)
+    canvas.clear_selection()
+    assert canvas.selection_bbox() is None
+
+
 def test_slider_frame_stays_fixed_while_scrubbing():
     canvas = PreviewCanvas()
     cuts = [[(0, 0), (10, 0)], [(10, 0), (10, 10)],
