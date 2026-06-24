@@ -163,6 +163,32 @@ def test_placement_moves_design_and_can_exceed_bed():
     assert moved[0] > base[0] + 300            # design shifted right by ~400 mm
     assert w.preview._bed_fits is False        # now off the 203 mm-wide bed
 
+
+class _Evt:
+    def __init__(self, ax, x, y, button=1):
+        self.xdata, self.ydata, self.button, self.inaxes = x, y, button, ax
+
+
+def test_drag_move_folds_into_placement_and_is_exclusive_with_select():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    w.move_chk.setChecked(True)
+    assert w.preview._moving is True and not w.select_chk.isChecked()
+    # drag by (+15, +25) on the bed -> placement grows by that
+    w.preview._on_press(_Evt(w.preview.ax, 50, 50))
+    w.preview._on_release(_Evt(w.preview.ax, 65, 75))
+    assert abs(w.place_x_spin.value() - 15.0) < 1e-6
+    assert abs(w.place_y_spin.value() - 25.0) < 1e-6
+    # turning rework-select on turns move off
+    w.select_chk.setChecked(True)
+    assert not w.move_chk.isChecked()
+
+
+def test_stock_thickness_default():
+    w = MainWindow()
+    assert abs(w.thickness_spin.value() - 1.6) < 1e-6
+
 def test_drill_tab_shows_diameter_summary():
     w = MainWindow()
     w.load_folder(str(FIXT))

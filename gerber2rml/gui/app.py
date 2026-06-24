@@ -83,6 +83,19 @@ class MainWindow(QMainWindow):
         _pl.addWidget(QLabel("X")); _pl.addWidget(self.place_x_spin)
         _pl.addWidget(QLabel("Y")); _pl.addWidget(self.place_y_spin)
 
+        # drag the design around the bed with the mouse
+        self.move_chk = QCheckBox("Move on bed (drag)")
+        self.move_chk.toggled.connect(self._on_move_toggled)
+
+        # stock thickness (mm): drawn as the 3D slab and used for the dowel depth
+        self.thickness_spin = QDoubleSpinBox()
+        self.thickness_spin.setRange(0.1, 10.0); self.thickness_spin.setSingleStep(0.1)
+        self.thickness_spin.setDecimals(1); self.thickness_spin.setValue(1.6)
+        self.thickness_spin.setSuffix(" mm")
+        self.thickness_spin.setToolTip(
+            "PCB stock thickness - shown as the 3D slab and used for the "
+            "double-sided dowel depth")
+
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
         self.view_combo.addItems(["Both sides", "Bottom", "Top"])
@@ -174,6 +187,8 @@ class MainWindow(QMainWindow):
         project_layout.addRow("Preview:", self.frame_combo)
         project_layout.addRow("", self.show_bed_chk)
         project_layout.addRow("Place:", self._place_row)
+        project_layout.addRow("", self.move_chk)
+        project_layout.addRow("Stock:", self.thickness_spin)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
@@ -214,6 +229,7 @@ class MainWindow(QMainWindow):
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
+        self.preview.on_move_delta = self._on_move_delta
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(settings_panel)
@@ -483,7 +499,8 @@ class MainWindow(QMainWindow):
                 self.state.gerber_dir, out_dir, self.state.name,
                 trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
                 dowels=self._dowel_spec(), machine=self.state.machine,
-                offset=(self.state.place_x, self.state.place_y))
+                offset=(self.state.place_x, self.state.place_y),
+                board_thickness=self.thickness_spin.value())
         return self.state.export(out_dir)
 
     def export_image_to(self, out_dir):
@@ -658,14 +675,31 @@ class MainWindow(QMainWindow):
             return
         bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
         self._open_sim_window(toolpaths, f"{self.state.name} - {label} (3D)",
-                              board=self._sim_board_bounds(), bed=bed)
+                              board=self._sim_board_bounds(), bed=bed,
+                              thickness=self.thickness_spin.value())
 
     def _on_select_toggled(self, checked):
         self.preview.set_selecting(checked)
         if checked:
+            self.move_chk.setChecked(False)   # rework-select and move are exclusive
             self.statusBar().showMessage(
                 "Rework: drag a box over the area to re-cut, then Export selected NC",
                 8000)
+
+    def _on_move_toggled(self, checked):
+        self.preview.set_moving(checked)
+        if checked:
+            self.select_chk.setChecked(False)
+            self.statusBar().showMessage(
+                "Move: drag the design to reposition it on the bed", 8000)
+
+    def _on_move_delta(self, dx, dy):
+        """Drag committed in the preview -> fold the shift into the placement."""
+        self.place_x_spin.blockSignals(True)
+        self.place_x_spin.setValue(max(0.0, self.place_x_spin.value() + dx))
+        self.place_x_spin.blockSignals(False)
+        # setting Y triggers a single regenerate_preview at the new placement
+        self.place_y_spin.setValue(max(0.0, self.place_y_spin.value() + dy))
 
     def _on_selection_changed(self, bbox):
         op = _OPS[self.tabs.currentIndex()]

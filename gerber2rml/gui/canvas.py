@@ -60,6 +60,15 @@ class PreviewCanvas(QWidget):
         self._drag_start = None
         self._rect_artist = None
         self.on_selection_changed = None  # callback(bbox) set by the app
+
+        # Move-on-bed state: left-drag translates the whole design. A dashed
+        # ghost shows the target footprint; the committed (dx, dy) is reported
+        # to the app, which folds it into the placement offset.
+        self._moving = False
+        self._move_start = None
+        self._move_bbox0 = None
+        self._move_ghost = None
+        self.on_move_delta = None         # callback(dx, dy) set by the app
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
@@ -217,6 +226,30 @@ class PreviewCanvas(QWidget):
         self._selecting = bool(on)
         self.canvas.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
 
+    def set_moving(self, on):
+        """Enable/disable move-on-bed mode (left-drag translates the design)."""
+        self._moving = bool(on)
+        self.canvas.setCursor(Qt.SizeAllCursor if on else Qt.ArrowCursor)
+
+    def _draw_move_ghost(self, dx, dy):
+        self._clear_move_ghost()
+        if self._move_bbox0 is None:
+            return
+        x0, y0, x1, y1 = self._move_bbox0
+        self._move_ghost = Rectangle(
+            (x0 + dx, y0 + dy), x1 - x0, y1 - y0, fill=False,
+            edgecolor="#ffd700", linestyle="--", linewidth=1.5, zorder=11)
+        self.ax.add_patch(self._move_ghost)
+        self.canvas.draw_idle()
+
+    def _clear_move_ghost(self):
+        if self._move_ghost is not None:
+            try:
+                self._move_ghost.remove()
+            except (ValueError, NotImplementedError):
+                pass
+            self._move_ghost = None
+
     def selection_bbox(self):
         """The current (x0, y0, x1, y1) selection in board mm, or None."""
         return self._selection_bbox
@@ -250,18 +283,35 @@ class PreviewCanvas(QWidget):
         self.canvas.draw_idle()
 
     def _on_press(self, event):
-        if not self._selecting or event.button != 1 or event.inaxes != self.ax:
+        if event.button != 1 or event.inaxes != self.ax:
             return
-        self._drag_start = (event.xdata, event.ydata)
+        if self._selecting:
+            self._drag_start = (event.xdata, event.ydata)
+        elif self._moving:
+            self._move_start = (event.xdata, event.ydata)
+            self._move_bbox0 = self._design_bounds()
 
     def _on_motion(self, event):
-        if self._drag_start is None or event.xdata is None or event.ydata is None:
+        if event.xdata is None or event.ydata is None:
             return
-        x0, y0 = self._drag_start
-        self._selection_bbox = (x0, y0, event.xdata, event.ydata)
-        self._redraw_selection_only()
+        if self._drag_start is not None:
+            x0, y0 = self._drag_start
+            self._selection_bbox = (x0, y0, event.xdata, event.ydata)
+            self._redraw_selection_only()
+        elif self._move_start is not None:
+            self._draw_move_ghost(event.xdata - self._move_start[0],
+                                  event.ydata - self._move_start[1])
 
     def _on_release(self, event):
+        if self._move_start is not None:
+            x0, y0 = self._move_start
+            x1 = event.xdata if event.xdata is not None else x0
+            y1 = event.ydata if event.ydata is not None else y0
+            self._move_start = None
+            self._clear_move_ghost()
+            if self.on_move_delta and (abs(x1 - x0) > 1e-9 or abs(y1 - y0) > 1e-9):
+                self.on_move_delta(x1 - x0, y1 - y0)
+            return
         if self._drag_start is None:
             return
         x0, y0 = self._drag_start
