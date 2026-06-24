@@ -55,6 +55,16 @@ class MainWindow(QMainWindow):
         self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
         self._ds_mcache = None  # machine-frame layout cache (single-side rework/preview)
 
+        # single-sided preview orientation: the milled (mirrored) cut, or the
+        # KiCad design view for a sanity check. Affects ONLY the preview.
+        self.frame_combo = QComboBox()
+        self.frame_combo.addItems(["As milled (mirrored)", "As designed (KiCad top)"])
+        self.frame_combo.setToolTip(
+            "Preview orientation only - the exported job is always 'as milled'.\n"
+            "'As designed' flips the view to match your KiCad layout so you can "
+            "check it; it does not change the output.")
+        self.frame_combo.currentIndexChanged.connect(self.generate_preview)
+
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
         self.view_combo.addItems(["Both sides", "Bottom", "Top"])
@@ -143,6 +153,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("Name:", self.name_edit)
         project_layout.addRow("Machine:", self.machine_combo)
         project_layout.addRow("", self.mirror_chk)
+        project_layout.addRow("Preview:", self.frame_combo)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
@@ -353,12 +364,39 @@ class MainWindow(QMainWindow):
             return msg
         return f"Holes: {summary}  ->  {len(groups)} drill files (one bit each)"
 
+    def _apply_preview_frame(self):
+        """Set the preview's orientation badge (and a view-only flip) so it's
+        always obvious whether you're looking at the design or the mirrored
+        as-milled cut. Never changes the exported geometry."""
+        AMBER, GREEN = "#ffb000", "#33cc88"
+        if self.double_sided_chk.isChecked():
+            self.frame_combo.setEnabled(False)
+            side = self._ds_side()
+            if side == "Bottom":
+                self.preview.set_frame("AS MILLED  ·  bottom (mirrored)", AMBER)
+            elif side == "Top":
+                self.preview.set_frame("AS MILLED  ·  top (reflected)", AMBER)
+            else:
+                self.preview.set_frame(
+                    "AS DESIGNED  ·  X-ray, both layers register", GREEN)
+            return
+        mirror = self.mirror_chk.isChecked()
+        self.frame_combo.setEnabled(mirror)   # only meaningful when mirroring
+        if not mirror:
+            self.preview.set_frame("AS DESIGNED  ·  top (no mirror)", GREEN)
+        elif self.frame_combo.currentIndex() == 1:
+            self.preview.set_frame("AS DESIGNED  ·  KiCad top view", GREEN,
+                                   flip_x=True)
+        else:
+            self.preview.set_frame("AS MILLED  ·  mirrored (bottom-up)", AMBER)
+
     def generate_preview(self):
         # keep the rework export button in sync with the active tab / mode
         self._on_selection_changed(self.preview.selection_bbox())
         if self.state.board is None:
             return
         self._sync_state()
+        self._apply_preview_frame()
         t0 = time.time()
         op = _OPS[self.tabs.currentIndex()]
         gap_warning = False
