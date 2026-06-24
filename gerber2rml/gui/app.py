@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
-    QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox
+    QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette, QColor
@@ -31,7 +31,6 @@ class MainWindow(QMainWindow):
         self.export_btn = QPushButton("Export toolpaths...")
         self.export_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_btn.clicked.connect(self._on_export_clicked)
-        self.export_btn.setStyleSheet("font-weight: bold; padding: 5px;")
 
         self.export_img_btn = QPushButton("Export image")
         self.export_img_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
@@ -188,53 +187,7 @@ class MainWindow(QMainWindow):
         self.export_sel_btn.clicked.connect(self._on_export_selected)
         self.export_sel_btn.setEnabled(False)
 
-        # Build Settings Panel
-        settings_panel = QWidget()
-        settings_layout = QVBoxLayout(settings_panel)
-        settings_layout.setContentsMargins(10, 10, 10, 10)
-        
-        # Project Group
-        project_group = QGroupBox("Project")
-        project_layout = QFormLayout(project_group)
-        project_layout.addRow(self.load_btn, self.export_btn)
-        project_layout.addRow(self.export_img_btn, self.sim3d_btn)
-        project_layout.addRow("", self.sim_file_btn)
-        project_layout.addRow("Name:", self.name_edit)
-        project_layout.addRow("Machine:", self.machine_combo)
-        project_layout.addRow("", self.mirror_chk)
-        project_layout.addRow("Preview:", self.frame_combo)
-        project_layout.addRow("", self.show_bed_chk)
-        project_layout.addRow("Place:", self._place_row)
-        project_layout.addRow("", self.move_chk)
-        project_layout.addRow("Stock:", self.thickness_spin)
-        project_layout.addRow("", self._auto_depth_row)
-        project_layout.addRow("", self.double_sided_chk)
-        project_layout.addRow("View:", self.view_combo)
-        project_layout.addRow("Reg.:", self.reg_combo)
-        project_layout.addRow("Dowels:", self.place_combo)
-        project_layout.addRow("Grid:", self._grid_row)
-        project_layout.addRow("Fresh:", self._fresh_row)
-        settings_layout.addWidget(project_group)
-        
-        # Presets Group
-        presets_group = QGroupBox("Presets")
-        presets_layout = QHBoxLayout(presets_group)
-        presets_layout.addWidget(self.preset_combo, 1)
-        presets_layout.addWidget(self.apply_preset_btn)
-        presets_layout.addWidget(self.save_preset_btn)
-        settings_layout.addWidget(presets_group)
-
-        # Rework Group
-        rework_group = QGroupBox("Rework (2nd pass)")
-        rework_layout = QVBoxLayout(rework_group)
-        rework_row = QHBoxLayout()
-        rework_row.addWidget(self.select_chk, 1)
-        rework_row.addWidget(self.clear_sel_btn)
-        rework_layout.addLayout(rework_row)
-        rework_layout.addWidget(self.export_sel_btn)
-        settings_layout.addWidget(rework_group)
-
-        # Tabs for Operations
+        # Operation parameter tabs (created first so Basic can hold them)
         self.forms = {"traces": DataclassForm(self.state.trace),
                       "drill": DataclassForm(self.state.drill),
                       "cutout": DataclassForm(self.state.cutout)}
@@ -244,14 +197,111 @@ class MainWindow(QMainWindow):
             form.valueChanged.connect(self.generate_preview)
             self.tabs.addTab(form, op.capitalize())
         self.tabs.currentChanged.connect(self.generate_preview)
-        settings_layout.addWidget(self.tabs, 1)
+
+        # Load / Export are the primary actions -> accent style
+        self.load_btn.setObjectName("primaryBtn")
+        self.export_btn.setObjectName("primaryBtn")
+
+        def _row(*ws, stretch_first=False):
+            box = QWidget(); h = QHBoxLayout(box)
+            h.setContentsMargins(0, 0, 0, 0); h.setSpacing(8)
+            for i, x in enumerate(ws):
+                h.addWidget(x, 1 if (stretch_first and i == 0) else 0)
+            return box
+
+        def _group(title):
+            g = QGroupBox(title); f = QFormLayout(g)
+            f.setSpacing(8); f.setContentsMargins(14, 16, 14, 12)
+            f.setLabelAlignment(Qt.AlignRight)
+            return g, f
+
+        # ---------- Settings panel (Basic up top, Advanced behind a toggle) ----------
+        settings_panel = QWidget()
+        settings_panel.setObjectName("settingsPanel")
+        settings_layout = QVBoxLayout(settings_panel)
+        settings_layout.setContentsMargins(14, 14, 14, 14)
+        settings_layout.setSpacing(12)
+
+        # ===== BASIC: the things you set every time =====
+        board_group, bl = _group("Board")
+        bl.addRow(_row(self.load_btn, self.export_btn))
+        bl.addRow("Name", self.name_edit)
+        bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
+                                 self.save_preset_btn, stretch_first=True))
+        bl.addRow("Stock", self.thickness_spin)
+        bl.addRow("", self._auto_depth_row)
+        settings_layout.addWidget(board_group)
+
+        ops_group = QGroupBox("Operations")
+        _ol = QVBoxLayout(ops_group); _ol.setContentsMargins(10, 14, 10, 10)
+        _ol.addWidget(self.tabs)
+        settings_layout.addWidget(ops_group)
+
+        # ===== ADVANCED toggle + collapsible container =====
+        self.advanced_chk = QCheckBox("Show advanced options")
+        self.advanced_chk.setObjectName("advancedToggle")
+        self.advanced_chk.toggled.connect(self._on_advanced_toggled)
+        settings_layout.addWidget(self.advanced_chk)
+
+        self._advanced_box = QWidget()
+        adv = QVBoxLayout(self._advanced_box)
+        adv.setContentsMargins(0, 0, 0, 0); adv.setSpacing(12)
+
+        view_group, vl = _group("View & machine")
+        vl.addRow("Machine", self.machine_combo)
+        vl.addRow("Preview", self.frame_combo)
+        vl.addRow("", self.mirror_chk)
+        vl.addRow("", self.show_bed_chk)
+        vl.addRow(_row(self.sim3d_btn, self.sim_file_btn))
+        vl.addRow(_row(self.export_img_btn))
+        adv.addWidget(view_group)
+
+        place_group, pl = _group("Placement on bed")
+        pl.addRow("Place", self._place_row)
+        pl.addRow("", self.move_chk)
+        adv.addWidget(place_group)
+
+        ds_group = QGroupBox("Double-sided")
+        _dl = QVBoxLayout(ds_group); _dl.setContentsMargins(14, 16, 14, 12); _dl.setSpacing(8)
+        _dl.addWidget(self.double_sided_chk)
+        self._ds_controls = QWidget()
+        _dsf = QFormLayout(self._ds_controls)
+        _dsf.setContentsMargins(0, 6, 0, 0); _dsf.setSpacing(8)
+        _dsf.setLabelAlignment(Qt.AlignRight)
+        _dsf.addRow("View", self.view_combo)
+        _dsf.addRow("Reg.", self.reg_combo)
+        _dsf.addRow("Dowels", self.place_combo)
+        _dsf.addRow("Grid", self._grid_row)
+        _dsf.addRow("Fresh", self._fresh_row)
+        self._ds_controls.setVisible(False)
+        _dl.addWidget(self._ds_controls)
+        adv.addWidget(ds_group)
+
+        rework_group = QGroupBox("Rework (2nd pass)")
+        _rl = QVBoxLayout(rework_group); _rl.setContentsMargins(14, 16, 14, 12); _rl.setSpacing(8)
+        _rl.addWidget(_row(self.select_chk, self.clear_sel_btn, stretch_first=True))
+        _rl.addWidget(self.export_sel_btn)
+        adv.addWidget(rework_group)
+
+        self._advanced_box.setVisible(False)
+        settings_layout.addWidget(self._advanced_box)
+        settings_layout.addStretch(1)
+
+        # scrollable so the advanced sections never overflow the window
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(settings_panel)
+        scroll.setMinimumWidth(330)
+        scroll.setMaximumWidth(430)
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
         self.preview.on_move_delta = self._on_move_delta
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(settings_panel)
+        splitter.addWidget(scroll)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -351,15 +401,16 @@ class MainWindow(QMainWindow):
             return isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline)
         return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
 
+    def _on_advanced_toggled(self, on):
+        self._advanced_box.setVisible(on)
+
     def _update_ds_controls(self):
-        """Enable the registration controls only when double-sided is on, and
-        the grid fields only in grid mode."""
+        """Reveal the registration controls only when double-sided is on, and the
+        grid/fresh fields only for the matching mode."""
         ds = self.double_sided_chk.isChecked()
-        self.view_combo.setEnabled(ds)
-        self.reg_combo.setEnabled(ds)
-        self.place_combo.setEnabled(ds)
-        self._grid_row.setEnabled(ds and self.reg_combo.currentIndex() == 1)
-        self._fresh_row.setEnabled(ds and self.reg_combo.currentIndex() == 0)
+        self._ds_controls.setVisible(ds)            # hide the sub-controls until on
+        self._grid_row.setEnabled(self.reg_combo.currentIndex() == 1)
+        self._fresh_row.setEnabled(self.reg_combo.currentIndex() == 0)
 
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
@@ -799,24 +850,106 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Wrote {path.name} ({len(clipped)} rework path(s))", 10000)
 
+_STYLESHEET = """
+QWidget { color: #e4e4e6; font-size: 13px; }
+QMainWindow, QScrollArea, #settingsPanel { background: #1e1e1e; }
+QScrollArea { border: none; }
+
+QGroupBox {
+    background: #252527; border: 1px solid #37373a; border-radius: 10px;
+    margin-top: 16px; padding-top: 4px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin; subcontrol-position: top left;
+    left: 14px; top: 2px; padding: 2px 6px;
+    color: #8a9099; font-size: 11px; font-weight: 700;
+}
+QLabel { background: transparent; color: #c2c5cb; }
+
+QPushButton {
+    background: #313135; border: 1px solid #45454b; border-radius: 7px;
+    padding: 7px 13px;
+}
+QPushButton:hover { background: #3a3a40; border-color: #5a8de0; }
+QPushButton:pressed { background: #292930; }
+QPushButton:disabled { color: #6a6a6e; background: #262629; border-color: #303033; }
+QPushButton#primaryBtn { background: #3b82f6; border: none; color: #ffffff; font-weight: 600; }
+QPushButton#primaryBtn:hover { background: #4f8ff7; }
+QPushButton#primaryBtn:pressed { background: #2f6fe0; }
+QPushButton#primaryBtn:disabled { background: #2c3a52; color: #8aa0c4; }
+
+QComboBox, QLineEdit, QAbstractSpinBox {
+    background: #2c2c30; border: 1px solid #3d3d42; border-radius: 7px;
+    padding: 5px 8px; min-height: 18px; selection-background-color: #3b82f6;
+}
+QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #4d4d55; }
+QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #3b82f6; }
+QComboBox:disabled, QAbstractSpinBox:disabled { color: #6a6a6e; background: #262629; }
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox QAbstractItemView {
+    background: #2c2c30; border: 1px solid #3d3d42; border-radius: 6px;
+    selection-background-color: #3b82f6; outline: none;
+}
+
+QCheckBox { spacing: 8px; background: transparent; color: #c2c5cb; }
+QCheckBox::indicator {
+    width: 17px; height: 17px; border-radius: 5px;
+    border: 1px solid #4d4d55; background: #2c2c30;
+}
+QCheckBox::indicator:hover { border-color: #5a8de0; }
+QCheckBox::indicator:checked { background: #3b82f6; border-color: #3b82f6; }
+QCheckBox#advancedToggle { color: #8a9099; font-weight: 600; padding: 4px 2px; }
+
+QTabWidget::pane { border: 1px solid #37373a; border-radius: 8px; top: -1px; background: #252527; }
+QTabBar::tab {
+    background: transparent; color: #8a9099; padding: 7px 16px; margin-right: 2px;
+    border-top-left-radius: 7px; border-top-right-radius: 7px;
+}
+QTabBar::tab:selected {
+    background: #252527; color: #e4e4e6;
+    border: 1px solid #37373a; border-bottom: none;
+}
+
+QScrollBar:vertical { background: transparent; width: 11px; margin: 2px; }
+QScrollBar::handle:vertical { background: #3d3d42; border-radius: 5px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: #4d4d55; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+QSlider::groove:horizontal { height: 4px; background: #3d3d42; border-radius: 2px; }
+QSlider::handle:horizontal {
+    background: #3b82f6; width: 14px; margin: -6px 0; border-radius: 7px;
+}
+QSlider::handle:horizontal:hover { background: #4f8ff7; }
+
+QStatusBar { background: #1a1a1a; color: #8a9099; }
+QToolTip {
+    color: #e4e4e6; background-color: #2c2c30; border: 1px solid #4d4d55;
+    border-radius: 4px; padding: 4px 6px;
+}
+"""
+
+
 def apply_dark_theme(app):
     app.setStyle("Fusion")
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(45, 45, 45))
-    palette.setColor(QPalette.WindowText, Qt.white)
-    palette.setColor(QPalette.Base, QColor(30, 30, 30))
-    palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
-    palette.setColor(QPalette.ToolTipBase, Qt.white)
-    palette.setColor(QPalette.ToolTipText, Qt.white)
-    palette.setColor(QPalette.Text, Qt.white)
-    palette.setColor(QPalette.Button, QColor(53, 53, 53))
-    palette.setColor(QPalette.ButtonText, Qt.white)
+    palette.setColor(QPalette.Window, QColor(30, 30, 30))
+    palette.setColor(QPalette.WindowText, QColor(228, 228, 230))
+    palette.setColor(QPalette.Base, QColor(44, 44, 48))
+    palette.setColor(QPalette.AlternateBase, QColor(37, 37, 39))
+    palette.setColor(QPalette.ToolTipBase, QColor(44, 44, 48))
+    palette.setColor(QPalette.ToolTipText, QColor(228, 228, 230))
+    palette.setColor(QPalette.Text, QColor(228, 228, 230))
+    palette.setColor(QPalette.Button, QColor(49, 49, 53))
+    palette.setColor(QPalette.ButtonText, QColor(228, 228, 230))
     palette.setColor(QPalette.BrightText, Qt.red)
-    palette.setColor(QPalette.Link, QColor(42, 130, 218))
-    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-    palette.setColor(QPalette.HighlightedText, Qt.black)
+    palette.setColor(QPalette.Link, QColor(59, 130, 246))
+    palette.setColor(QPalette.Highlight, QColor(59, 130, 246))
+    palette.setColor(QPalette.HighlightedText, Qt.white)
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(106, 106, 110))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(106, 106, 110))
     app.setPalette(palette)
-    app.setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }")
+    app.setStyleSheet(_STYLESHEET)
 
 def _configure_opengl():
     """Pick the OpenGL backend *before* the QApplication exists.
