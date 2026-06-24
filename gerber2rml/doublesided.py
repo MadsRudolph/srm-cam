@@ -200,7 +200,23 @@ class DoubleSidedLayout:
     flip_pos: float        # the flip axis: constant x if vertical, constant y if horizontal
 
 
-def layout_double_sided(folder, dowels: DowelSpec = None):
+def _offset_layout(lay, offset):
+    """Translate a layout (both PreviewLayout and DoubleSidedLayout) by (dx, dy)
+    mm so the whole job can be placed anywhere on the bed."""
+    dx, dy = offset
+    if not dx and not dy:
+        return lay
+    t = lambda g: translate(g, xoff=dx, yoff=dy)
+    h = lambda holes: [(x + dx, y + dy, d) for (x, y, d) in holes]
+    kw = dict(bottom_copper=t(lay.bottom_copper), top_copper=t(lay.top_copper),
+              outline=t(lay.outline), holes=h(lay.holes),
+              align_holes=h(lay.align_holes))
+    if hasattr(lay, "top_outline"):
+        kw["top_outline"] = t(lay.top_outline)
+    return replace(lay, **kw)
+
+
+def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0)):
     dowels = dowels or DowelSpec()
     folder = Path(folder)
     axis = _axis_of(dowels)
@@ -215,8 +231,9 @@ def layout_double_sided(folder, dowels: DowelSpec = None):
     holes = [(x + dx, y + dy, d) for (x, y, d) in holes_raw]
     top_copper = _reflect_geom(top_src, axis, flip_pos)
     top_outline = _reflect_geom(outline, axis, flip_pos)
-    return DoubleSidedLayout(bottom_copper, top_copper, outline, top_outline,
-                             holes, align_holes, axis, flip_pos)
+    return _offset_layout(
+        DoubleSidedLayout(bottom_copper, top_copper, outline, top_outline,
+                          holes, align_holes, axis, flip_pos), offset)
 
 
 @dataclass
@@ -235,7 +252,7 @@ class PreviewLayout:
     flip_pos: float
 
 
-def preview_layout_double_sided(folder, dowels: DowelSpec = None):
+def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0)):
     """Layout for the preview: load WITHOUT mirroring so both copper layers and
     the holes sit in the same design frame and overlay correctly."""
     dowels = dowels or DowelSpec()
@@ -249,8 +266,9 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None):
     outline = translate(b.outline, xoff=dx, yoff=dy)
     holes = [(x + dx, y + dy, d) for (x, y, d) in b.holes]
     align_holes = [(x, y, d) for (x, y, d) in align_holes]
-    return PreviewLayout(bottom_copper, top_copper, outline, holes,
-                         align_holes, _axis_of(dowels), flip_pos)
+    return _offset_layout(
+        PreviewLayout(bottom_copper, top_copper, outline, holes,
+                      align_holes, _axis_of(dowels), flip_pos), offset)
 
 
 def _align_drill(drill, dowels, align_depth, board_thickness):
@@ -264,7 +282,7 @@ def _align_drill(drill, dowels, align_depth, board_thickness):
 
 def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
                      align_depth: float = None, board_thickness: float = 1.6,
-                     machine=DEFAULT_MACHINE):
+                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0)):
     """Build ONLY the dowel-hole (align) toolpath — nothing else.
 
     For the test-fit loop: cut the dowel holes, check the rods seat; if they
@@ -278,7 +296,7 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
     out_dir.mkdir(parents=True, exist_ok=True)
     drill = drill or DrillJob()
     backend = BACKENDS[machine]
-    lay = layout_double_sided(folder, dowels=dowels)
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset)
     align_drill, _ = _align_drill(drill, dowels, align_depth, board_thickness)
     out = out_dir / f"{name}_align{backend.ext}"
     out.write_text(backend.render(
@@ -289,7 +307,8 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
 
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        dowels: DowelSpec = None, align_depth: float = None,
-                       board_thickness: float = 1.6, machine=DEFAULT_MACHINE):
+                       board_thickness: float = 1.6, machine=DEFAULT_MACHINE,
+                       offset=(0.0, 0.0)):
     """Build all job files for a double-sided board + a text run plan.
 
     ``machine`` selects the output backend (RML or G-code). Returns a list of
@@ -303,7 +322,7 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     cutout = cutout or CutoutJob()
     backend = BACKENDS[machine]          # (render fn, file extension)
     ext = backend.ext
-    lay = layout_double_sided(folder, dowels=dowels)
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset)
     top_outline = lay.top_outline
     align_drill, align_depth = _align_drill(drill, dowels, align_depth, board_thickness)
     written = []

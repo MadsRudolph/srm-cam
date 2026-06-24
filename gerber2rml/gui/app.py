@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
-    QSplitter, QGroupBox, QStyle, QFormLayout
+    QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette, QColor
@@ -69,6 +69,19 @@ class MainWindow(QMainWindow):
         self.show_bed_chk = QCheckBox("Show bed (fit check)")
         self.show_bed_chk.setChecked(True)
         self.show_bed_chk.toggled.connect(self.generate_preview)
+
+        # place the whole job on the bed (origin = front-left home corner)
+        self.place_x_spin = QDoubleSpinBox()
+        self.place_y_spin = QDoubleSpinBox()
+        for sp, ax in ((self.place_x_spin, "right (+X)"), (self.place_y_spin, "back (+Y)")):
+            sp.setRange(0.0, 500.0); sp.setSingleStep(1.0); sp.setDecimals(1)
+            sp.setSuffix(" mm")
+            sp.setToolTip(f"Move the whole job {ax} on the bed from the front-left home")
+            sp.valueChanged.connect(self.generate_preview)
+        self._place_row = QWidget()
+        _pl = QHBoxLayout(self._place_row); _pl.setContentsMargins(0, 0, 0, 0)
+        _pl.addWidget(QLabel("X")); _pl.addWidget(self.place_x_spin)
+        _pl.addWidget(QLabel("Y")); _pl.addWidget(self.place_y_spin)
 
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
@@ -160,6 +173,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("", self.mirror_chk)
         project_layout.addRow("Preview:", self.frame_combo)
         project_layout.addRow("", self.show_bed_chk)
+        project_layout.addRow("Place:", self._place_row)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
@@ -221,6 +235,7 @@ class MainWindow(QMainWindow):
         self.state.trace = self.forms["traces"].value()
         self.state.drill = self.forms["drill"].value()
         self.state.cutout = self.forms["cutout"].value()
+        self.state.set_placement(self.place_x_spin.value(), self.place_y_spin.value())
 
     def _on_mirror_toggled(self):
         if self.state.gerber_dir is not None:
@@ -256,11 +271,12 @@ class MainWindow(QMainWindow):
         Cached by folder + registration choice so live edits don't re-read disk."""
         from gerber2rml.doublesided import preview_layout_double_sided
         spec = self._dowel_spec()
+        off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.pin_clearance)
+               spec.grid_pin, spec.pin_clearance, off)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
-                self.state.gerber_dir, dowels=spec))
+                self.state.gerber_dir, dowels=spec, offset=off))
         return self._ds_cache[1]
 
     def _machine_layout(self):
@@ -270,11 +286,12 @@ class MainWindow(QMainWindow):
         X-ray used by the 'Both sides' registration view."""
         from gerber2rml.doublesided import layout_double_sided
         spec = self._dowel_spec()
+        off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.pin_clearance)
+               spec.grid_pin, spec.pin_clearance, off)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
-                self.state.gerber_dir, dowels=spec))
+                self.state.gerber_dir, dowels=spec, offset=off))
         return self._ds_mcache[1]
 
     def _ds_side(self):
@@ -465,7 +482,8 @@ class MainWindow(QMainWindow):
             return build_double_sided(
                 self.state.gerber_dir, out_dir, self.state.name,
                 trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
-                dowels=self._dowel_spec(), machine=self.state.machine)
+                dowels=self._dowel_spec(), machine=self.state.machine,
+                offset=(self.state.place_x, self.state.place_y))
         return self.state.export(out_dir)
 
     def export_image_to(self, out_dir):

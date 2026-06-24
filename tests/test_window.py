@@ -152,6 +152,17 @@ def test_bed_shown_by_default_and_fixture_fits():
     w.show_bed_chk.setChecked(False)           # toggling off hides the bed
     assert w.preview._bed is None
 
+def test_placement_moves_design_and_can_exceed_bed():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    assert w.preview._bed_fits is True
+    base = w.preview._design_bounds()
+    w.place_x_spin.setValue(400.0)             # shove the job far to the right
+    moved = w.preview._design_bounds()
+    assert moved[0] > base[0] + 300            # design shifted right by ~400 mm
+    assert w.preview._bed_fits is False        # now off the 203 mm-wide bed
+
 def test_drill_tab_shows_diameter_summary():
     w = MainWindow()
     w.load_folder(str(FIXT))

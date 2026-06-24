@@ -14,16 +14,42 @@ class ProjectState:
     drill: DrillJob = field(default_factory=DrillJob)
     cutout: CutoutJob = field(default_factory=CutoutJob)
     mirror: bool = True
-    machine: str = "Roland SRM-20"
+    machine: str = "Roland SRM-20 (G-code)"
     name: str = "board"
     gerber_dir: Path = None
     board: object = None
+    place_x: float = 0.0   # job placement on the bed (mm), origin = front-left home
+    place_y: float = 0.0
+    _base_board: object = field(default=None, repr=False)
 
     def load(self, folder):
         self.gerber_dir = Path(folder)
-        self.board = place_in_positive_quadrant(
+        self._base_board = place_in_positive_quadrant(
             load_board(self.gerber_dir, mirror=self.mirror))
+        self.board = self._placed(self._base_board)
         return self.board
+
+    def _placed(self, b):
+        """Board translated to the current bed placement (place_x, place_y)."""
+        dx, dy = self.place_x, self.place_y
+        if not dx and not dy:
+            return b
+        from shapely.affinity import translate
+        from gerber2rml.loader import Board
+        ct = b.copper_top
+        return Board(
+            copper=translate(b.copper, xoff=dx, yoff=dy),
+            outline=translate(b.outline, xoff=dx, yoff=dy),
+            holes=[(x + dx, y + dy, d) for (x, y, d) in b.holes],
+            copper_top=translate(ct, xoff=dx, yoff=dy) if ct is not None else ct,
+        )
+
+    def set_placement(self, x, y):
+        """Move the whole job to (x, y) mm on the bed; updates ``board`` in place
+        without re-reading the Gerbers."""
+        self.place_x, self.place_y = x, y
+        if self._base_board is not None:
+            self.board = self._placed(self._base_board)
 
     def toolpaths(self, op):
         if self.board is None:
@@ -41,4 +67,5 @@ class ProjectState:
             raise RuntimeError("load a Gerber folder first")
         return build_jobs(self.gerber_dir, out_dir, self.name,
                           trace=self.trace, drill=self.drill, cutout=self.cutout,
-                          mirror=self.mirror, machine=self.machine)
+                          mirror=self.mirror, machine=self.machine,
+                          offset=(self.place_x, self.place_y))

@@ -10,7 +10,8 @@ from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
-               mirror=True, machine=DEFAULT_MACHINE):
+               mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0)):
+    from gerber2rml.toolpath import offset as offset_paths
     gerber_dir, out_dir = Path(gerber_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     trace = trace or TraceJob()
@@ -24,7 +25,8 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
 
     def _write(fname, paths, job):
         p = out_dir / fname
-        p.write_text(backend.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+        p.write_text(backend.render(offset_paths(paths, *offset),
+                                    xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
         written.append(p)
 
     _write(f"{name}_traces{ext}", isolate(board.copper, trace, outline=board.outline), trace)
