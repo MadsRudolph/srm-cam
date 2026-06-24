@@ -146,6 +146,17 @@ def test_grid_mode_build_and_runplan(tmp_path):
     assert "grid" in plan.lower() and "datum grid hole" in plan
 
 
+def test_layout_offset_shifts_board_and_dowels():
+    a = layout_double_sided(FIXT)
+    b = layout_double_sided(FIXT, offset=(10.0, 20.0))
+    ax0, ay0, _ax1, _ay1 = a.outline.bounds
+    bx0, by0, _bx1, _by1 = b.outline.bounds
+    assert abs((bx0 - ax0) - 10.0) < 1e-6 and abs((by0 - ay0) - 20.0) < 1e-6
+    # the dowels move with the job so registration is preserved
+    assert abs(b.align_holes[0][0] - (a.align_holes[0][0] + 10.0)) < 1e-6
+    assert abs(b.align_holes[0][1] - (a.align_holes[0][1] + 20.0)) < 1e-6
+
+
 def _deepest_z(path):
     zs = [int(line.split(",")[2].rstrip(";")) for line in path.read_text().splitlines()
           if line.startswith("Z")]
