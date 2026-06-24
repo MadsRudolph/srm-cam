@@ -78,6 +78,18 @@ class MainWindow(QMainWindow):
         _grid_row_l.addWidget(QLabel("pitch")); _grid_row_l.addWidget(self.grid_pitch_edit)
         _grid_row_l.addWidget(QLabel("pin")); _grid_row_l.addWidget(self.grid_pin_edit)
         self._grid_row.setEnabled(False)   # enabled only in grid mode
+        # fresh-mode: oversize the milled dowel holes for a slip fit if pins bind
+        self.fresh_clear_edit = QLineEdit(f"{0.0}")
+        self.fresh_clear_edit.setToolTip(
+            "Fresh dowels: mm added to each milled hole diameter for a slip fit "
+            "(0 = nominal). Bump if the rods bind during a test cut.")
+        self.fresh_clear_edit.editingFinished.connect(self._on_reg_changed)
+        self._fresh_row = QWidget()
+        _fresh_row_l = QHBoxLayout(self._fresh_row)
+        _fresh_row_l.setContentsMargins(0, 0, 0, 0)
+        _fresh_row_l.addWidget(QLabel("hole clearance"))
+        _fresh_row_l.addWidget(self.fresh_clear_edit)
+        self._fresh_row.setEnabled(False)   # enabled only in fresh mode
 
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
@@ -118,6 +130,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
         project_layout.addRow("Grid:", self._grid_row)
+        project_layout.addRow("Fresh:", self._fresh_row)
         settings_layout.addWidget(project_group)
         
         # Presets Group
@@ -198,7 +211,8 @@ class MainWindow(QMainWindow):
                 return default
         pitch = _f(self.grid_pitch_edit, 14.2)
         return DowelSpec(mode=mode, pitch_x=pitch, pitch_y=pitch,
-                         grid_pin=_f(self.grid_pin_edit, 4.0))
+                         grid_pin=_f(self.grid_pin_edit, 4.0),
+                         pin_clearance=_f(self.fresh_clear_edit, 0.0))
 
     def _double_sided_layout(self):
         """Design-frame layout for the PREVIEW (both layers registered, holes on
@@ -206,7 +220,8 @@ class MainWindow(QMainWindow):
         Cached by folder + registration choice so live edits don't re-read disk."""
         from gerber2rml.doublesided import preview_layout_double_sided
         spec = self._dowel_spec()
-        key = (str(self.state.gerber_dir), spec.mode, spec.pitch_x, spec.grid_pin)
+        key = (str(self.state.gerber_dir), spec.mode, spec.pitch_x, spec.grid_pin,
+               spec.pin_clearance)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec))
@@ -219,6 +234,7 @@ class MainWindow(QMainWindow):
         self.view_combo.setEnabled(ds)
         self.reg_combo.setEnabled(ds)
         self._grid_row.setEnabled(ds and self.reg_combo.currentIndex() == 1)
+        self._fresh_row.setEnabled(ds and self.reg_combo.currentIndex() == 0)
 
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
