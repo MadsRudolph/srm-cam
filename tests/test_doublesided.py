@@ -153,6 +153,30 @@ def test_single_bit_double_sided_one_bottom_drill_file(tmp_path):
     assert drills == ["d_bottom_drill.rml"]
 
 
+def test_align_only_writes_just_the_dowel_file(tmp_path):
+    """build_align_only emits ONLY the dowel-hole job, byte-identical to the
+    _align file a full build would produce (so a re-cut lands on the holes)."""
+    from gerber2rml.doublesided import build_align_only, build_double_sided
+    spec = DowelSpec(pin_clearance=0.2)
+    only = build_align_only(FIXT, tmp_path / "only", "b", dowels=spec,
+                            machine="Roland SRM-20 (G-code)")
+    assert [p.name for p in (tmp_path / "only").iterdir()] == ["b_align.nc"]
+    full = build_double_sided(FIXT, tmp_path / "full", "b", dowels=spec,
+                              machine="Roland SRM-20 (G-code)")
+    align_full = next(p for p in full if p.name == "b_align.nc")
+    assert only.read_text() == align_full.read_text()
+
+
+def test_pin_clearance_widens_holes_without_moving_centres():
+    """Bumping pin_clearance grows the milled hole but leaves the dowel centre
+    (and the whole placement) put, so a re-cut registers on the existing hole."""
+    base = layout_double_sided(FIXT, dowels=DowelSpec(pin_clearance=0.0))
+    wide = layout_double_sided(FIXT, dowels=DowelSpec(pin_clearance=0.4))
+    for (bx, by, bd), (wx, wy, wd) in zip(base.align_holes, wide.align_holes):
+        assert abs(bx - wx) < 1e-9 and abs(by - wy) < 1e-9   # centre unchanged
+        assert abs(wd - bd - 0.4) < 1e-9                     # hole grew by clearance
+
+
 def test_double_sided_honours_gcode_backend(tmp_path):
     """Double-sided export must follow the selected machine, not hardcode RML."""
     from gerber2rml.doublesided import build_double_sided

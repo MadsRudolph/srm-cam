@@ -84,11 +84,18 @@ class MainWindow(QMainWindow):
             "Fresh dowels: mm added to each milled hole diameter for a slip fit "
             "(0 = nominal). Bump if the rods bind during a test cut.")
         self.fresh_clear_edit.editingFinished.connect(self._on_reg_changed)
+        self.align_only_btn = QPushButton("Cut dowels only...")
+        self.align_only_btn.setToolTip(
+            "Export ONLY the dowel-hole G-code (no traces/drills/cutout). Use to "
+            "test-fit the rods, then bump the clearance and re-cut just the holes. "
+            "Keep the SAME XY origin so the re-cut lands on the existing holes.")
+        self.align_only_btn.clicked.connect(self._on_export_align_only)
         self._fresh_row = QWidget()
         _fresh_row_l = QHBoxLayout(self._fresh_row)
         _fresh_row_l.setContentsMargins(0, 0, 0, 0)
         _fresh_row_l.addWidget(QLabel("hole clearance"))
         _fresh_row_l.addWidget(self.fresh_clear_edit)
+        _fresh_row_l.addWidget(self.align_only_btn)
         self._fresh_row.setEnabled(False)   # enabled only in fresh mode
 
         from gerber2rml.app.presets import load_presets
@@ -391,6 +398,26 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Export failed", str(e))
                 return
             self.statusBar().showMessage(f"Exported successfully to: {out}", 10000)
+
+    def _on_export_align_only(self):
+        if self.state.gerber_dir is None:
+            QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        if not out:
+            return
+        self._sync_state()
+        from gerber2rml.doublesided import build_align_only
+        try:
+            path = build_align_only(
+                self.state.gerber_dir, out, self.state.name,
+                drill=self.state.drill, dowels=self._dowel_spec(),
+                machine=self.state.machine)
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+            return
+        self.statusBar().showMessage(
+            f"Dowel holes only -> {path.name}  (keep the same XY origin)", 10000)
 
     def _on_export_image(self):
         if self.state.board is None:
