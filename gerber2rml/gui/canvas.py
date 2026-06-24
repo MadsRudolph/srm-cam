@@ -47,6 +47,11 @@ class PreviewCanvas(QWidget):
         self._frame_color = "#ffb000"
         self._flip_x = False
 
+        # Machine bed: when set to (width, height) mm the work area is drawn from
+        # the origin (front-left corner) and the design is checked to fit inside.
+        self._bed = None
+        self._bed_fits = True
+
         # Rework box-selection state. When selecting, a left-drag draws a
         # rectangle that persists across redraws/scrubbing; the chosen bbox is
         # read back by the app to clip a second-pass program.
@@ -83,6 +88,24 @@ class PreviewCanvas(QWidget):
         self._frame_color = color
         self._flip_x = bool(flip_x)
 
+    def set_bed(self, size):
+        """Set the machine work area to ``(width, height)`` mm (origin at the
+        front-left corner), or ``None`` to hide it."""
+        self._bed = size
+
+    def _design_bounds(self):
+        """(minx, miny, maxx, maxy) of all toolpath/hole/pin geometry, or None."""
+        xs, ys = [], []
+        for seg in self._full_cuts + self._full_rapids + self._full_top_cuts:
+            for (x, y) in seg:
+                xs.append(x); ys.append(y)
+        for (x, y, d) in self._full_holes + self._pins:
+            r = max(d, 0.1) / 2.0
+            xs += [x - r, x + r]; ys += [y - r, y + r]
+        if not xs:
+            return None
+        return min(xs), min(ys), max(xs), max(ys)
+
     def _compute_limits(self):
         """Fixed view frame from the FULL geometry, so scrubbing the slider
         animates within a stable view instead of rescaling each frame."""
@@ -93,6 +116,8 @@ class PreviewCanvas(QWidget):
         for (x, y, d) in self._full_holes + self._pins:
             r = max(d, 0.1) / 2.0
             xs += [x - r, x + r]; ys += [y - r, y + r]
+        if self._bed:                       # keep the whole bed in view
+            xs += [0, self._bed[0]]; ys += [0, self._bed[1]]
         if not xs:
             return None
         m = 0.05
@@ -115,6 +140,18 @@ class PreviewCanvas(QWidget):
     def _draw_fraction(self, fraction):
         self.ax.clear()
         self._style_axes()
+
+        self._bed_fits = True
+        if self._bed:
+            bw, bh = self._bed
+            db = self._design_bounds()
+            self._bed_fits = db is None or (
+                db[0] >= -1e-6 and db[1] >= -1e-6
+                and db[2] <= bw + 1e-6 and db[3] <= bh + 1e-6)
+            bed_color = "#33cc88" if self._bed_fits else "#ff4444"
+            self.ax.add_patch(Rectangle((0, 0), bw, bh, fill=False,
+                                        edgecolor=bed_color, linewidth=1.5, zorder=1))
+            self.ax.scatter([0], [0], s=40, c=bed_color, marker="s", zorder=2)  # home
 
         c_end = int(len(self._full_cuts) * fraction)
         r_end = int(len(self._full_rapids) * fraction)
@@ -165,6 +202,11 @@ class PreviewCanvas(QWidget):
             self.ax.text(0.02, 0.98, self._frame_label, transform=self.ax.transAxes,
                          va="top", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
                          bbox=dict(boxstyle="round,pad=0.3", facecolor=self._frame_color,
+                                   edgecolor="none", alpha=0.95))
+        if self._bed and not self._bed_fits:
+            self.ax.text(0.98, 0.02, "DESIGN EXCEEDS BED", transform=self.ax.transAxes,
+                         va="bottom", ha="right", fontsize=9, color="#1e1e1e", zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#ff4444",
                                    edgecolor="none", alpha=0.95))
         self.canvas.draw_idle()
 

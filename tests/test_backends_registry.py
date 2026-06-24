@@ -9,6 +9,12 @@ def test_srm20_registered():
     assert "Roland SRM-20 (G-code)" in BACKENDS
 
 
+def test_backends_carry_srm20_bed_size():
+    """Each backend knows the SRM-20 XY work area for the fit check."""
+    for b in BACKENDS.values():
+        assert b.bed == (203.2, 152.4)
+
+
 def test_default_machine_is_gcode_and_first():
     """We use NC/G-code: it must be the default and the first entry (the GUI
     dropdown opens on the first backend)."""
