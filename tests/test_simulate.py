@@ -1,5 +1,7 @@
 """Tests for the toolpath playback model (3D simulation backing logic)."""
+import os
 import math
+import pytest
 from gerber2rml.toolpath import Move
 from gerber2rml.engine.simulate import (
     build_path, split_segments, index_at, position_at, total_length)
@@ -8,6 +10,23 @@ from gerber2rml.engine.simulate import (
 def _tp(*pts):
     """One toolpath from (x, y, z, rapid) tuples."""
     return [Move(x, y, z, rapid) for (x, y, z, rapid) in pts]
+
+
+def test_sim3d_window_draws_board_and_bed():
+    """The 3D viewer adds the stock slab + bed when given them (needs OpenGL)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    try:
+        from gerber2rml.gui.sim3d import Simulation3DWindow
+        tp = [_tp((2, 2, 2.0, True), (2, 2, -0.15, False),
+                  (30, 20, -0.15, False), (2, 2, 2.0, True))]
+        bare = Simulation3DWindow(tp)
+        full = Simulation3DWindow(tp, board=(2, 2, 30, 20), bed=(203.2, 152.4))
+    except Exception as e:                       # no pyqtgraph / no GL context
+        pytest.skip(f"3D view unavailable: {e}")
+    # board slab + bed outline + home marker + board top outline add 4 items
+    assert len(full.view.items) == len(bare.view.items) + 4
 
 
 def test_build_path_concatenates_in_machine_order():
