@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         adv = QVBoxLayout(self._advanced_box)
         adv.setContentsMargins(0, 0, 0, 0); adv.setSpacing(12)
 
-        view_group, vl = _group("View & machine")
+        view_group, vl = _group("View / machine")
         vl.addRow("Machine", self.machine_combo)
         vl.addRow("Preview", self.frame_combo)
         vl.addRow("", self.mirror_chk)
@@ -287,14 +287,12 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self._advanced_box)
         settings_layout.addStretch(1)
 
-        # scrollable so the advanced sections never overflow the window
+        # scrollable so the advanced sections never overflow the window height
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(settings_panel)
-        scroll.setMinimumWidth(330)
-        scroll.setMaximumWidth(430)
+        scroll.setMinimumWidth(380)
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
@@ -305,6 +303,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([430, 1100])     # comfortable panel width, rest to preview
 
         self.setCentralWidget(splitter)
         self.statusBar().showMessage("Ready", 5000)
