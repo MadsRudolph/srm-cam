@@ -119,6 +119,30 @@ def test_double_sided_rework_export_enabled_per_side():
     assert w._ds_side() == "Top" and w.export_sel_btn.isEnabled()
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Top"), box)
 
+def test_preview_orientation_badge_and_flip():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    # single-sided, mirror on, default -> as-milled badge, no view flip
+    w.generate_preview()
+    assert "AS MILLED" in w.preview._frame_label and w.preview._flip_x is False
+    assert w.frame_combo.isEnabled()
+    # 'As designed' -> badge flips wording AND flips the view (export unchanged)
+    w.frame_combo.setCurrentIndex(1)
+    w.generate_preview()
+    assert "AS DESIGNED" in w.preview._frame_label and w.preview._flip_x is True
+    # mirror off -> design == milled, the toggle is disabled, no flip
+    w.frame_combo.setCurrentIndex(0)
+    w.mirror_chk.setChecked(False)          # reloads + regenerates
+    assert not w.frame_combo.isEnabled() and w.preview._flip_x is False
+    # double-sided: badge follows the View, toggle disabled, never flips
+    w.mirror_chk.setChecked(True)
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Both sides"); w.generate_preview()
+    assert "AS DESIGNED" in w.preview._frame_label and not w.frame_combo.isEnabled()
+    assert w.preview._flip_x is False
+    w.view_combo.setCurrentText("Bottom"); w.generate_preview()
+    assert "AS MILLED" in w.preview._frame_label and w.preview._flip_x is False
+
 def test_drill_tab_shows_diameter_summary():
     w = MainWindow()
     w.load_folder(str(FIXT))

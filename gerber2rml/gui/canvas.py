@@ -40,6 +40,13 @@ class PreviewCanvas(QWidget):
         self._pins = []
         self._limits = None
 
+        # Orientation badge + optional view-only horizontal flip. The flip shows
+        # the un-mirrored "as designed" orientation WITHOUT changing any
+        # coordinates (data, selection and export stay in the real frame).
+        self._frame_label = None
+        self._frame_color = "#ffb000"
+        self._flip_x = False
+
         # Rework box-selection state. When selecting, a left-drag draws a
         # rectangle that persists across redraws/scrubbing; the chosen bbox is
         # read back by the app to clip a second-pass program.
@@ -67,6 +74,14 @@ class PreviewCanvas(QWidget):
         self._limits = self._compute_limits()
         self.slider.setValue(1000)
         self._draw_fraction(1.0)
+
+    def set_frame(self, label, color="#ffb000", flip_x=False):
+        """Set the persistent orientation badge and whether to flip the view
+        horizontally. ``flip_x`` only mirrors the *display* (to show the design
+        orientation); coordinates, selection and export are untouched."""
+        self._frame_label = label
+        self._frame_color = color
+        self._flip_x = bool(flip_x)
 
     def _compute_limits(self):
         """Fixed view frame from the FULL geometry, so scrubbing the slider
@@ -138,12 +153,19 @@ class PreviewCanvas(QWidget):
                             s=80, c="#ffd700", marker="+", zorder=6)
         if self._limits:
             x0, x1, y0, y1 = self._limits
-            self.ax.set_xlim(x0, x1)
+            # flip_x reverses the x-axis to show the un-mirrored "as designed"
+            # orientation; the data underneath is unchanged.
+            self.ax.set_xlim((x1, x0) if self._flip_x else (x0, x1))
             self.ax.set_ylim(y0, y1)
         # ax.clear() above dropped the selection rectangle; re-add it so the
         # picked area stays visible while scrubbing or regenerating the preview.
         self._rect_artist = None
         self._add_selection_patch()
+        if self._frame_label:
+            self.ax.text(0.02, 0.98, self._frame_label, transform=self.ax.transAxes,
+                         va="top", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor=self._frame_color,
+                                   edgecolor="none", alpha=0.95))
         self.canvas.draw_idle()
 
     # ---- Rework box-selection -------------------------------------------
