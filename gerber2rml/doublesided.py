@@ -93,8 +93,13 @@ def _place_fresh(gx0, gy0, gx1, gy1, spec):
     hole_s = spec.pin_small + spec.pin_clearance
     align_board = [(cx, gy0 - spec.edge_offset, hole_l),   # bottom (large)
                    (cx, gy1 + spec.edge_offset, hole_s)]   # top (small)
-    allminx = min(gx0, cx - hole_l / 2.0)
-    allminy = min(y - d / 2.0 for (_x, y, d) in align_board)
+    # The positive-quadrant shift uses the NOMINAL pin extent, NOT the
+    # clearance-widened hole, so the placement (and thus the dowel centres) is
+    # invariant to pin_clearance — bump the clearance and re-cut the align holes
+    # alone and they land back on the existing holes.
+    allminx = min(gx0, cx - spec.pin_large / 2.0)
+    allminy = min(gy0 - spec.edge_offset - spec.pin_large / 2.0,
+                  gy1 + spec.edge_offset - spec.pin_small / 2.0)
     dx, dy = spec.margin - allminx, spec.margin - allminy
     align = [(x + dx, y + dy, d) for (x, y, d) in align_board]
     return align, cx + dx, dx, dy
@@ -192,6 +197,40 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None):
                          align_holes, x_axis)
 
 
+def _align_drill(drill, dowels, align_depth, board_thickness):
+    """Drill spec for the dowel/align holes (single bit, interpolated to the hole
+    diameter). Fresh dowels go through the stock AND into the bed (deep); grid
+    dowels only clear the stock (the grid hole is already there)."""
+    if align_depth is None:
+        align_depth = 6.0 if dowels.mode == "fresh" else board_thickness + 1.0
+    return replace(drill, total_depth=align_depth, single_bit=True), align_depth
+
+
+def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
+                     align_depth: float = None, board_thickness: float = 1.6,
+                     machine=DEFAULT_MACHINE):
+    """Build ONLY the dowel-hole (align) toolpath — nothing else.
+
+    For the test-fit loop: cut the dowel holes, check the rods seat; if they
+    bind, bump ``dowels.pin_clearance`` and re-run THIS to re-cut just the holes
+    a touch wider. The dowel centres are invariant to ``pin_clearance`` (see
+    :func:`_place_fresh`), so the re-cut lands back on the existing holes as long
+    as the XY origin is unchanged. Returns the single Path written.
+    """
+    dowels = dowels or DowelSpec()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    drill = drill or DrillJob()
+    backend = BACKENDS[machine]
+    lay = layout_double_sided(folder, dowels=dowels)
+    align_drill, _ = _align_drill(drill, dowels, align_depth, board_thickness)
+    out = out_dir / f"{name}_align{backend.ext}"
+    out.write_text(backend.render(
+        drill_single_bit(lay.align_holes, align_drill),
+        xy_feed=align_drill.xy_feed, plunge_feed=align_drill.plunge_feed))
+    return out
+
+
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        dowels: DowelSpec = None, align_depth: float = None,
                        board_thickness: float = 1.6, machine=DEFAULT_MACHINE):
@@ -210,12 +249,7 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     ext = backend.ext
     lay = layout_double_sided(folder, dowels=dowels)
     top_outline = lay.top_outline
-    # Fresh dowels go through the stock AND into the bed (deep); grid dowels only
-    # clear the stock (the grid hole is already there). Either way the holes are
-    # milled with the endmill by circular interpolation at their own diameter.
-    if align_depth is None:
-        align_depth = 6.0 if dowels.mode == "fresh" else board_thickness + 1.0
-    align_drill = replace(drill, total_depth=align_depth, single_bit=True)
+    align_drill, align_depth = _align_drill(drill, dowels, align_depth, board_thickness)
     written = []
 
     def _write(fname, paths, job):
