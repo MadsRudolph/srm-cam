@@ -143,6 +143,15 @@ def test_preview_orientation_badge_and_flip():
     w.view_combo.setCurrentText("Bottom"); w.generate_preview()
     assert "AS MILLED" in w.preview._frame_label and w.preview._flip_x is False
 
+def test_bed_shown_by_default_and_fixture_fits():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    assert w.preview._bed == (203.2, 152.4)   # bed drawn by default
+    assert w.preview._bed_fits is True         # the small fixture fits the bed
+    w.show_bed_chk.setChecked(False)           # toggling off hides the bed
+    assert w.preview._bed is None
+
 def test_drill_tab_shows_diameter_summary():
     w = MainWindow()
     w.load_folder(str(FIXT))

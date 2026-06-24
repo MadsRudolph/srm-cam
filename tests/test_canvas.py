@@ -91,3 +91,17 @@ def test_slider_frame_stays_fixed_while_scrubbing():
     full = canvas.ax.get_xlim()
     canvas.slider.setValue(300)
     assert canvas.ax.get_xlim() == full           # view does not jump/rescale
+
+
+def test_bed_fit_flag_and_view_includes_bed():
+    canvas = PreviewCanvas()
+    canvas.set_bed((203.2, 152.4))
+    canvas.show_segments([[(10, 10), (20, 20)]], [])   # small -> inside the bed
+    assert canvas._bed_fits is True
+    x0, x1 = canvas.ax.get_xlim()
+    assert x1 >= 203.2                                  # whole bed kept in view
+    canvas.show_segments([[(10, 10), (210, 20)]], [])  # pokes past bed width
+    assert canvas._bed_fits is False
+    canvas.set_bed(None)                                # hidden -> always 'fits'
+    canvas.show_segments([[(10, 10), (210, 20)]], [])
+    assert canvas._bed_fits is True

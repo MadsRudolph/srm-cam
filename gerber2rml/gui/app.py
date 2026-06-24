@@ -65,6 +65,11 @@ class MainWindow(QMainWindow):
             "check it; it does not change the output.")
         self.frame_combo.currentIndexChanged.connect(self.generate_preview)
 
+        # draw the machine work area and flag designs that don't fit it
+        self.show_bed_chk = QCheckBox("Show bed (fit check)")
+        self.show_bed_chk.setChecked(True)
+        self.show_bed_chk.toggled.connect(self.generate_preview)
+
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
         self.view_combo.addItems(["Both sides", "Bottom", "Top"])
@@ -154,6 +159,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("Machine:", self.machine_combo)
         project_layout.addRow("", self.mirror_chk)
         project_layout.addRow("Preview:", self.frame_combo)
+        project_layout.addRow("", self.show_bed_chk)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
@@ -397,6 +403,8 @@ class MainWindow(QMainWindow):
             return
         self._sync_state()
         self._apply_preview_frame()
+        bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
+        self.preview.set_bed(bed)
         t0 = time.time()
         op = _OPS[self.tabs.currentIndex()]
         gap_warning = False
