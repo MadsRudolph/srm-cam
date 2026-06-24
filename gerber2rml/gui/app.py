@@ -59,7 +59,54 @@ class MainWindow(QMainWindow):
         self.view_combo.addItems(["Both sides", "Bottom", "Top"])
         self.view_combo.setEnabled(False)   # only meaningful when double-sided
         self.view_combo.currentIndexChanged.connect(self.generate_preview)
-        
+
+        # double-sided registration: fresh-milled dowels vs grid-seated pins
+        self.reg_combo = QComboBox()
+        self.reg_combo.addItems(["Fresh-milled dowels (1.9+3.1mm)",
+                                 "Grid-seated pins (M4 grid)"])
+        self.reg_combo.setEnabled(False)
+        self.reg_combo.currentIndexChanged.connect(self._on_reg_changed)
+        # which edge pair carries the dowels (sets the flip axis)
+        self.place_combo = QComboBox()
+        self.place_combo.addItems(["Top & bottom (flip left-right)",
+                                   "Left & right (flip top-bottom)"])
+        self.place_combo.setToolTip(
+            "Which two edges the dowels sit beyond. Put them on whichever edge "
+            "pair has the most waste room for the pins.")
+        self.place_combo.setEnabled(False)
+        self.place_combo.currentIndexChanged.connect(self._on_reg_changed)
+        self.grid_pitch_edit = QLineEdit(f"{14.2}")
+        self.grid_pitch_edit.setToolTip("Grid hole-to-hole spacing (mm)")
+        self.grid_pitch_edit.editingFinished.connect(self._on_reg_changed)
+        self.grid_pin_edit = QLineEdit(f"{4.0}")
+        self.grid_pin_edit.setToolTip("Grid dowel diameter = grid hole size (mm)")
+        self.grid_pin_edit.editingFinished.connect(self._on_reg_changed)
+        self._grid_row = QWidget()
+        _grid_row_l = QHBoxLayout(self._grid_row)
+        _grid_row_l.setContentsMargins(0, 0, 0, 0)
+        _grid_row_l.addWidget(QLabel("pitch")); _grid_row_l.addWidget(self.grid_pitch_edit)
+        _grid_row_l.addWidget(QLabel("pin")); _grid_row_l.addWidget(self.grid_pin_edit)
+        self._grid_row.setEnabled(False)   # enabled only in grid mode
+        # fresh-mode: oversize the milled dowel holes for a slip fit if pins bind
+        self.fresh_clear_edit = QLineEdit(f"{0.0}")
+        self.fresh_clear_edit.setToolTip(
+            "Fresh dowels: mm added to each milled hole diameter for a slip fit "
+            "(0 = nominal). Bump if the rods bind during a test cut.")
+        self.fresh_clear_edit.editingFinished.connect(self._on_reg_changed)
+        self.align_only_btn = QPushButton("Cut dowels only...")
+        self.align_only_btn.setToolTip(
+            "Export ONLY the dowel-hole G-code (no traces/drills/cutout). Use to "
+            "test-fit the rods, then bump the clearance and re-cut just the holes. "
+            "Keep the SAME XY origin so the re-cut lands on the existing holes.")
+        self.align_only_btn.clicked.connect(self._on_export_align_only)
+        self._fresh_row = QWidget()
+        _fresh_row_l = QHBoxLayout(self._fresh_row)
+        _fresh_row_l.setContentsMargins(0, 0, 0, 0)
+        _fresh_row_l.addWidget(QLabel("hole clearance"))
+        _fresh_row_l.addWidget(self.fresh_clear_edit)
+        _fresh_row_l.addWidget(self.align_only_btn)
+        self._fresh_row.setEnabled(False)   # enabled only in fresh mode
+
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
         self.preset_combo = QComboBox()
@@ -97,6 +144,10 @@ class MainWindow(QMainWindow):
         project_layout.addRow("", self.mirror_chk)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
+        project_layout.addRow("Reg.:", self.reg_combo)
+        project_layout.addRow("Dowels:", self.place_combo)
+        project_layout.addRow("Grid:", self._grid_row)
+        project_layout.addRow("Fresh:", self._fresh_row)
         settings_layout.addWidget(project_group)
         
         # Presets Group
@@ -165,19 +216,53 @@ class MainWindow(QMainWindow):
         self._sync_state()
         self.state.load(folder)
 
+    def _dowel_spec(self):
+        """Build a DowelSpec from the registration controls."""
+        from gerber2rml.doublesided import DowelSpec
+        mode = "grid" if self.reg_combo.currentIndex() == 1 else "fresh"
+
+        def _f(edit, default):
+            try:
+                return float(edit.text())
+            except ValueError:
+                return default
+        pitch = _f(self.grid_pitch_edit, 14.2)
+        placement = "leftright" if self.place_combo.currentIndex() == 1 else "topbottom"
+        return DowelSpec(mode=mode, placement=placement, pitch_x=pitch, pitch_y=pitch,
+                         grid_pin=_f(self.grid_pin_edit, 4.0),
+                         pin_clearance=_f(self.fresh_clear_edit, 0.0))
+
     def _double_sided_layout(self):
         """Design-frame layout for the PREVIEW (both layers registered, holes on
         pads, top plain). The export uses the machine-frame layout separately.
-        Cached by folder so live form edits don't re-read disk."""
+        Cached by folder + registration choice so live edits don't re-read disk."""
         from gerber2rml.doublesided import preview_layout_double_sided
-        key = str(self.state.gerber_dir)
+        spec = self._dowel_spec()
+        key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
+               spec.grid_pin, spec.pin_clearance)
         if self._ds_cache is None or self._ds_cache[0] != key:
-            self._ds_cache = (key, preview_layout_double_sided(self.state.gerber_dir))
+            self._ds_cache = (key, preview_layout_double_sided(
+                self.state.gerber_dir, dowels=spec))
         return self._ds_cache[1]
 
+    def _update_ds_controls(self):
+        """Enable the registration controls only when double-sided is on, and
+        the grid fields only in grid mode."""
+        ds = self.double_sided_chk.isChecked()
+        self.view_combo.setEnabled(ds)
+        self.reg_combo.setEnabled(ds)
+        self.place_combo.setEnabled(ds)
+        self._grid_row.setEnabled(ds and self.reg_combo.currentIndex() == 1)
+        self._fresh_row.setEnabled(ds and self.reg_combo.currentIndex() == 0)
+
     def _on_double_sided_toggled(self, checked):
-        self.view_combo.setEnabled(checked)
+        self._update_ds_controls()
         self.generate_preview()
+
+    def _on_reg_changed(self, *_):
+        self._update_ds_controls()
+        if self.double_sided_chk.isChecked():
+            self.generate_preview()
 
     def _preview_double_sided(self, op):
         """Show the registered board with the two dowel/alignment holes so the
@@ -284,7 +369,7 @@ class MainWindow(QMainWindow):
             return build_double_sided(
                 self.state.gerber_dir, out_dir, self.state.name,
                 trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
-                machine=self.state.machine)
+                dowels=self._dowel_spec(), machine=self.state.machine)
         return self.state.export(out_dir)
 
     def export_image_to(self, out_dir):
@@ -325,6 +410,26 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Export failed", str(e))
                 return
             self.statusBar().showMessage(f"Exported successfully to: {out}", 10000)
+
+    def _on_export_align_only(self):
+        if self.state.gerber_dir is None:
+            QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        if not out:
+            return
+        self._sync_state()
+        from gerber2rml.doublesided import build_align_only
+        try:
+            path = build_align_only(
+                self.state.gerber_dir, out, self.state.name,
+                drill=self.state.drill, dowels=self._dowel_spec(),
+                machine=self.state.machine)
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+            return
+        self.statusBar().showMessage(
+            f"Dowel holes only -> {path.name}  (keep the same XY origin)", 10000)
 
     def _on_export_image(self):
         if self.state.board is None:
