@@ -66,6 +66,15 @@ class MainWindow(QMainWindow):
                                  "Grid-seated pins (M4 grid)"])
         self.reg_combo.setEnabled(False)
         self.reg_combo.currentIndexChanged.connect(self._on_reg_changed)
+        # which edge pair carries the dowels (sets the flip axis)
+        self.place_combo = QComboBox()
+        self.place_combo.addItems(["Top & bottom (flip left-right)",
+                                   "Left & right (flip top-bottom)"])
+        self.place_combo.setToolTip(
+            "Which two edges the dowels sit beyond. Put them on whichever edge "
+            "pair has the most waste room for the pins.")
+        self.place_combo.setEnabled(False)
+        self.place_combo.currentIndexChanged.connect(self._on_reg_changed)
         self.grid_pitch_edit = QLineEdit(f"{14.2}")
         self.grid_pitch_edit.setToolTip("Grid hole-to-hole spacing (mm)")
         self.grid_pitch_edit.editingFinished.connect(self._on_reg_changed)
@@ -136,6 +145,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
+        project_layout.addRow("Dowels:", self.place_combo)
         project_layout.addRow("Grid:", self._grid_row)
         project_layout.addRow("Fresh:", self._fresh_row)
         settings_layout.addWidget(project_group)
@@ -217,7 +227,8 @@ class MainWindow(QMainWindow):
             except ValueError:
                 return default
         pitch = _f(self.grid_pitch_edit, 14.2)
-        return DowelSpec(mode=mode, pitch_x=pitch, pitch_y=pitch,
+        placement = "leftright" if self.place_combo.currentIndex() == 1 else "topbottom"
+        return DowelSpec(mode=mode, placement=placement, pitch_x=pitch, pitch_y=pitch,
                          grid_pin=_f(self.grid_pin_edit, 4.0),
                          pin_clearance=_f(self.fresh_clear_edit, 0.0))
 
@@ -227,8 +238,8 @@ class MainWindow(QMainWindow):
         Cached by folder + registration choice so live edits don't re-read disk."""
         from gerber2rml.doublesided import preview_layout_double_sided
         spec = self._dowel_spec()
-        key = (str(self.state.gerber_dir), spec.mode, spec.pitch_x, spec.grid_pin,
-               spec.pin_clearance)
+        key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
+               spec.grid_pin, spec.pin_clearance)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec))
@@ -240,6 +251,7 @@ class MainWindow(QMainWindow):
         ds = self.double_sided_chk.isChecked()
         self.view_combo.setEnabled(ds)
         self.reg_combo.setEnabled(ds)
+        self.place_combo.setEnabled(ds)
         self._grid_row.setEnabled(ds and self.reg_combo.currentIndex() == 1)
         self._fresh_row.setEnabled(ds and self.reg_combo.currentIndex() == 0)
 

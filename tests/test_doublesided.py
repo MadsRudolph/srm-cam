@@ -1,6 +1,6 @@
 from pathlib import Path
 from gerber2rml.doublesided import (
-    layout_double_sided, preview_layout_double_sided, reflect_x,
+    layout_double_sided, preview_layout_double_sided, reflect_x, reflect_holes,
     DowelSpec, PIN_LARGE, PIN_SMALL,
 )
 
@@ -19,7 +19,8 @@ def test_fresh_pins_on_axis_above_and_below_keyed_by_diameter():
     assert len(lay.align_holes) == 2
     (bx, by, bd), (tx, ty, td) = lay.align_holes
     # both on the vertical flip axis
-    assert abs(bx - lay.x_axis) < 1e-6 and abs(tx - lay.x_axis) < 1e-6
+    assert lay.axis == "vertical"
+    assert abs(bx - lay.flip_pos) < 1e-6 and abs(tx - lay.flip_pos) < 1e-6
     _x0, y0, _x1, y1 = lay.outline.bounds
     assert by < y0 and ty > y1                 # one below the board, one above
     # keyed: large below, small above, and the two differ
@@ -34,15 +35,58 @@ def test_top_outline_reflected_about_vertical_axis():
     ox0, oy0, ox1, oy1 = lay.outline.bounds
     tx0, ty0, tx1, ty1 = lay.top_outline.bounds
     assert abs(oy0 - ty0) < 1e-6 and abs(oy1 - ty1) < 1e-6      # Y preserved
-    assert abs(((ox0 + ox1) / 2) - lay.x_axis) < 1e-6          # board centred on axis
-    assert abs(((tx0 + tx1) / 2) - lay.x_axis) < 1e-6          # reflected copy too
+    assert abs(((ox0 + ox1) / 2) - lay.flip_pos) < 1e-6        # board centred on axis
+    assert abs(((tx0 + tx1) / 2) - lay.flip_pos) < 1e-6        # reflected copy too
 
 
 def test_through_hole_registers_after_flip():
     lay = layout_double_sided(FIXT)
     (hx, hy, hd) = lay.holes[0]
-    assert any(abs(rx - (2 * lay.x_axis - hx)) < 1e-6 and abs(ry - hy) < 1e-6
-               for (rx, ry, rd) in reflect_x(lay.holes, lay.x_axis))
+    assert any(abs(rx - (2 * lay.flip_pos - hx)) < 1e-6 and abs(ry - hy) < 1e-6
+               for (rx, ry, rd) in reflect_x(lay.holes, lay.flip_pos))
+
+
+# ---- left/right placement (top-bottom flip) ------------------------------
+
+def test_leftright_pins_on_horizontal_axis_beside_the_board():
+    lay = layout_double_sided(FIXT, dowels=DowelSpec(placement="leftright"))
+    assert lay.axis == "horizontal"
+    (lx, ly, ld), (rx, ry, rd) = lay.align_holes
+    # both dowels share the horizontal flip axis (constant y)
+    assert abs(ly - lay.flip_pos) < 1e-6 and abs(ry - lay.flip_pos) < 1e-6
+    x0, _y0, x1, _y1 = lay.outline.bounds
+    assert lx < x0 and rx > x1                  # one left of the board, one right
+    # keyed: large left, small right, and the two differ
+    assert abs(ld - PIN_LARGE) < 1e-6 and abs(rd - PIN_SMALL) < 1e-6
+    assert abs(ld - rd) > 0.5
+
+
+def test_leftright_top_outline_reflected_about_horizontal_axis():
+    lay = layout_double_sided(FIXT, dowels=DowelSpec(placement="leftright"))
+    ox0, _oy0, ox1, _oy1 = lay.outline.bounds
+    tx0, ty0, tx1, ty1 = lay.top_outline.bounds
+    assert abs(ox0 - tx0) < 1e-6 and abs(ox1 - tx1) < 1e-6      # X preserved
+    # board (and its reflected copy) centred on the horizontal flip axis
+    _ox0b, oy0, _ox1b, oy1 = lay.outline.bounds
+    assert abs(((oy0 + oy1) / 2) - lay.flip_pos) < 1e-6
+    assert abs(((ty0 + ty1) / 2) - lay.flip_pos) < 1e-6
+
+
+def test_leftright_through_hole_registers_after_flip():
+    lay = layout_double_sided(FIXT, dowels=DowelSpec(placement="leftright"))
+    (hx, hy, hd) = lay.holes[0]
+    # reflecting a hole about the horizontal flip axis lands on its mirror
+    assert any(abs(rx - hx) < 1e-6 and abs(ry - (2 * lay.flip_pos - hy)) < 1e-6
+               for (rx, ry, rd) in reflect_holes(lay.holes, "horizontal", lay.flip_pos))
+
+
+def test_leftright_build_runplan_says_top_to_bottom(tmp_path):
+    from gerber2rml.doublesided import build_double_sided
+    build_double_sided(FIXT, tmp_path, name="lr", machine="Roland SRM-20",
+                       dowels=DowelSpec(placement="leftright"))
+    plan = (tmp_path / "lr_runplan.txt").read_text()
+    assert "TOP-TO-BOTTOM" in plan and "LEFT" in plan and "RIGHT" in plan
+    assert "LEFT-TO-RIGHT" not in plan
 
 
 # ---- grid-seated dowels --------------------------------------------------
@@ -53,8 +97,8 @@ def test_grid_pins_land_on_grid_holes_and_are_keyed_by_spacing():
     (bx, by, bd), (tx, ty, td) = lay.align_holes
     # both on the same grid column (= the flip axis), and that column is a
     # multiple of the pitch from the datum hole at the origin
-    assert abs(bx - lay.x_axis) < 1e-6 and abs(tx - lay.x_axis) < 1e-6
-    assert abs(round(lay.x_axis / 14.2) - lay.x_axis / 14.2) < 1e-6
+    assert abs(bx - lay.flip_pos) < 1e-6 and abs(tx - lay.flip_pos) < 1e-6
+    assert abs(round(lay.flip_pos / 14.2) - lay.flip_pos / 14.2) < 1e-6
     # each dowel sits on a grid row (multiple of the pitch)
     for y in (by, ty):
         assert abs(round(y / 14.2) - y / 14.2) < 1e-6
@@ -139,7 +183,7 @@ def test_preview_layout_registers_layers_on_holes():
     assert any(on(lay.bottom_copper, x, y) and on(lay.top_copper, x, y)
                for (x, y, _d) in lay.holes)
     # pins still on a vertical axis, above & below the board
-    assert abs(lay.align_holes[0][0] - lay.x_axis) < 1e-6
+    assert abs(lay.align_holes[0][0] - lay.flip_pos) < 1e-6
     _bx0, by0, _bx1, by1 = lay.outline.bounds
     assert lay.align_holes[0][1] < by0 and lay.align_holes[1][1] > by1
 

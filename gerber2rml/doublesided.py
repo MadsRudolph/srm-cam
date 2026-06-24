@@ -19,13 +19,20 @@ error. Two placement modes are offered (see :class:`DowelSpec`):
   uniform grid-hole size forces equal-diameter pins — so the flip is keyed by
   ASYMMETRIC pin spacing (and an orientation mark) instead of by diameter.
 
-The board flips LEFT-TO-RIGHT about a vertical axis. Both dowels sit ON that
-axis (one above the board, one below), so they are invariant under the flip: the
-board lifts off the pins, flips, and drops back onto the same two pins. Because
-the bottom is already mirrored for bottom-up milling, reflecting the front
-copper about that same vertical axis CANCELS the mirror — so the top comes out
-as the plain, un-mirrored F.Cu design (in both preview and the cut) while still
-registering after the physical flip.
+The board flips about ONE axis and both dowels sit ON that axis, so they are
+invariant under the flip: the board lifts off the pins, flips, and drops back
+onto the same two pins. ``DowelSpec.placement`` chooses the axis:
+
+* ``"topbottom"`` — dowels above and below the board on its vertical centre
+  line; the board flips LEFT-TO-RIGHT about that vertical axis (the default).
+* ``"leftright"`` — dowels left and right of the board on its horizontal centre
+  line; the board flips TOP-TO-BOTTOM about that horizontal axis.
+
+Pick whichever edge pair has the most waste room for the pins. Because the
+bottom is mirrored for bottom-up milling about the SAME axis as the flip,
+reflecting the front copper about that axis CANCELS the mirror — so the top
+comes out as the plain, un-mirrored F.Cu design (in both preview and the cut)
+while still registering after the physical flip.
 """
 import math
 from dataclasses import dataclass, replace
@@ -53,8 +60,12 @@ class DowelSpec:
 
     ``mode='fresh'`` uses ``pin_large``/``pin_small``/``edge_offset``;
     ``mode='grid'`` uses ``pitch_x``/``pitch_y``/``grid_pin``/``clearance``.
+    ``placement`` chooses which edge pair carries the dowels (and hence the flip
+    axis): ``"topbottom"`` (above/below, left-right flip) or ``"leftright"``
+    (left/right, top-bottom flip).
     """
     mode: str = "fresh"                 # "fresh" | "grid"
+    placement: str = "topbottom"        # "topbottom" | "leftright"
     pin_large: float = PIN_LARGE
     pin_small: float = PIN_SMALL
     pin_clearance: float = PIN_CLEARANCE  # fresh: hole = pin + this (slip fit)
@@ -66,13 +77,43 @@ class DowelSpec:
     margin: float = 6.0                 # positive-quadrant / left clearance (mm)
 
 
+def _axis_of(spec):
+    """Flip-axis orientation implied by the dowel placement: dowels on the
+    top/bottom edges flip left-right about a VERTICAL axis; dowels on the
+    left/right edges flip top-bottom about a HORIZONTAL axis."""
+    return "horizontal" if spec.placement == "leftright" else "vertical"
+
+
+def reflect_holes(holes, axis, pos):
+    """Reflect (x, y, d) hole tuples about the flip line: the vertical line
+    x = pos when ``axis == 'vertical'``, else the horizontal line y = pos."""
+    if axis == "vertical":
+        return [(2 * pos - x, y, d) for (x, y, d) in holes]
+    return [(x, 2 * pos - y, d) for (x, y, d) in holes]
+
+
 def reflect_x(holes, x_axis):
     """Reflect (x, y, d) hole tuples about the vertical line x = x_axis."""
-    return [(2 * x_axis - x, y, d) for (x, y, d) in holes]
+    return reflect_holes(holes, "vertical", x_axis)
 
 
-def _reflect_geom(geom, x_axis):
-    return scale(geom, xfact=-1, yfact=1, origin=(x_axis, 0))
+def _reflect_geom(geom, axis, pos):
+    if axis == "vertical":
+        return scale(geom, xfact=-1, yfact=1, origin=(pos, 0))
+    return scale(geom, xfact=1, yfact=-1, origin=(0, pos))
+
+
+def _mirror_all(b, axis):
+    """Apply the bottom-up mill mirror to a freshly-loaded (unmirrored) board,
+    about the flip axis: mirror X for a vertical axis, mirror Y for a horizontal
+    one. Returns (copper, copper_top, outline, holes)."""
+    if axis == "vertical":
+        m = lambda g: scale(g, xfact=-1, yfact=1, origin=(0, 0))
+        holes = [(-x, y, d) for (x, y, d) in b.holes]
+    else:
+        m = lambda g: scale(g, xfact=1, yfact=-1, origin=(0, 0))
+        holes = [(x, -y, d) for (x, y, d) in b.holes]
+    return m(b.copper), m(b.copper_top), m(b.outline), holes
 
 
 def _frame(geoms):
@@ -132,8 +173,19 @@ def _place_grid(gx0, gy0, gx1, gy1, spec):
 
 
 def _place(gx0, gy0, gx1, gy1, spec):
+    """Dispatch to the fresh/grid placement. ``_place_fresh``/``_place_grid``
+    only ever solve the VERTICAL-axis (top/bottom dowel) case; the horizontal
+    (left/right) case is the same problem with X and Y swapped, so we transpose
+    the box, solve, and transpose the result back. Mirror-about-X in transposed
+    space is mirror-about-Y in real space — exactly the horizontal flip — and the
+    geometry mirror is applied separately by :func:`_mirror_all`.
+    Returns (align_holes, flip_pos, dx, dy)."""
     fn = _place_grid if spec.mode == "grid" else _place_fresh
-    return fn(gx0, gy0, gx1, gy1, spec)
+    if _axis_of(spec) == "vertical":
+        return fn(gx0, gy0, gx1, gy1, spec)
+    align_t, axis_t, dxt, dyt = fn(gy0, gx0, gy1, gx1, spec)
+    align = [(y, x, d) for (x, y, d) in align_t]
+    return align, axis_t, dyt, dxt    # flip_pos is now a y; dx/dy swap back
 
 
 @dataclass
@@ -141,27 +193,30 @@ class DoubleSidedLayout:
     bottom_copper: object  # mirrored B.Cu (milled bottom-up)
     top_copper: object     # plain F.Cu (mirror cancelled by the flip) — as cut
     outline: object
-    top_outline: object    # outline reflected about the vertical flip axis
+    top_outline: object    # outline reflected about the flip axis
     holes: list            # placed through-holes (bottom frame)
-    align_holes: list      # 2 dowel pins on the flip axis (below & above)
-    x_axis: float          # vertical flip axis (constant x)
+    align_holes: list      # 2 dowel pins on the flip axis (the two waste edges)
+    axis: str              # "vertical" (left-right flip) | "horizontal" (top-bottom)
+    flip_pos: float        # the flip axis: constant x if vertical, constant y if horizontal
 
 
 def layout_double_sided(folder, dowels: DowelSpec = None):
     dowels = dowels or DowelSpec()
     folder = Path(folder)
-    b = load_board(folder, mirror=True)   # raw, mirrored (bottom-up convention)
-    geoms = [g for g in (b.copper, b.outline) if not g.is_empty]
+    axis = _axis_of(dowels)
+    b = load_board(folder, mirror=False)
+    copper, copper_top, outline_g, holes_raw = _mirror_all(b, axis)  # bottom-up mirror
+    geoms = [g for g in (copper, outline_g) if not g.is_empty]
     gx0, gy0, gx1, gy1 = _frame(geoms)
-    align_holes, x_axis, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
-    bottom_copper = translate(b.copper, xoff=dx, yoff=dy)
-    top_src = translate(b.copper_top, xoff=dx, yoff=dy)
-    outline = translate(b.outline, xoff=dx, yoff=dy)
-    holes = [(x + dx, y + dy, d) for (x, y, d) in b.holes]
-    top_copper = _reflect_geom(top_src, x_axis)
-    top_outline = _reflect_geom(outline, x_axis)
+    align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
+    bottom_copper = translate(copper, xoff=dx, yoff=dy)
+    top_src = translate(copper_top, xoff=dx, yoff=dy)
+    outline = translate(outline_g, xoff=dx, yoff=dy)
+    holes = [(x + dx, y + dy, d) for (x, y, d) in holes_raw]
+    top_copper = _reflect_geom(top_src, axis, flip_pos)
+    top_outline = _reflect_geom(outline, axis, flip_pos)
     return DoubleSidedLayout(bottom_copper, top_copper, outline, top_outline,
-                             holes, align_holes, x_axis)
+                             holes, align_holes, axis, flip_pos)
 
 
 @dataclass
@@ -175,8 +230,9 @@ class PreviewLayout:
     top_copper: object     # F.Cu, true/plain
     outline: object
     holes: list
-    align_holes: list      # 2 dowel pins on the flip axis (below & above)
-    x_axis: float
+    align_holes: list      # 2 dowel pins on the flip axis (the two waste edges)
+    axis: str
+    flip_pos: float
 
 
 def preview_layout_double_sided(folder, dowels: DowelSpec = None):
@@ -187,14 +243,14 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None):
     b = load_board(folder, mirror=False)   # design frame: F.Cu true, B.Cu X-ray
     geoms = [g for g in (b.copper, b.outline) if not g.is_empty]
     gx0, gy0, gx1, gy1 = _frame(geoms)
-    align_holes, x_axis, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
+    align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
     bottom_copper = translate(b.copper, xoff=dx, yoff=dy)
     top_copper = translate(b.copper_top, xoff=dx, yoff=dy)
     outline = translate(b.outline, xoff=dx, yoff=dy)
     holes = [(x + dx, y + dy, d) for (x, y, d) in b.holes]
     align_holes = [(x, y, d) for (x, y, d) in align_holes]
     return PreviewLayout(bottom_copper, top_copper, outline, holes,
-                         align_holes, x_axis)
+                         align_holes, _axis_of(dowels), flip_pos)
 
 
 def _align_drill(drill, dowels, align_depth, board_thickness):
@@ -278,10 +334,18 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
 
 def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness):
     (bx, by, bd), (tx, ty, td) = lay.align_holes
-    head = (f"DOUBLE-SIDED run plan: {name}  [{machine}]  registration: {dowels.mode}\n"
-            f"\n")
+    horiz = lay.axis == "horizontal"
+    lo, hi = ("LEFT", "RIGHT") if horiz else ("BOTTOM", "TOP")
+    flip_dir = ("TOP-TO-BOTTOM about the horizontal pin line" if horiz
+                else "LEFT-TO-RIGHT about the vertical pin line")
+    mark = (f"mark the LEFT edge so you flip about the horizontal (not vertical)" if horiz
+            else f"mark the bottom edge so you flip about the vertical (not horizontal)")
+    bigger = "wider" if horiz else "taller"
+    centre = "horizontal centre line" if horiz else "centre line"
+    head = (f"DOUBLE-SIDED run plan: {name}  [{machine}]  registration: {dowels.mode}"
+            f"  dowels: {dowels.placement}\n\n")
     common_tail = (
-        f"3. FLIP the board LEFT-TO-RIGHT about the vertical pin line and drop it back\n"
+        f"3. FLIP the board {flip_dir} and drop it back\n"
         f"   onto the pins. Re-zero Z on the new surface.\n"
         f"4. {name}_top_traces: plain F.Cu, already reflected so it aligns after the flip.\n"
         f"5. {name}_cutout LAST: frees the board from the waste/dowels (leave the tabs).\n")
@@ -290,10 +354,10 @@ def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness
         return head + (
             f"GRID mode: pins live in the bed's threaded grid; nothing is drilled into\n"
             f"  the bed. Dowel holes (grid cells, from the datum hole = origin):\n"
-            f"    bottom  X{bx:.2f} Y{by:.2f}  ~ col {round(bx/px)}, row {round(by/py)}\n"
-            f"    top     X{tx:.2f} Y{ty:.2f}  ~ col {round(tx/px)}, row {round(ty/py)}\n"
+            f"    {lo.lower():<6} X{bx:.2f} Y{by:.2f}  ~ col {round(bx/px)}, row {round(by/py)}\n"
+            f"    {hi.lower():<6} X{tx:.2f} Y{ty:.2f}  ~ col {round(tx/px)}, row {round(ty/py)}\n"
             f"  Both {bd:.1f} mm. Spacing is asymmetric so the board seats only one way;\n"
-            f"  still mark the bottom edge so you flip about the vertical (not horizontal).\n"
+            f"  still {mark}.\n"
             f"\n"
             f"0. Set XY origin EXACTLY on the datum grid hole you call (0,0). RE-ZERO Z\n"
             f"   after every bit change AND after the flip.\n"
@@ -308,17 +372,17 @@ def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness
                   if cl else "")
     return head + (
         f"FRESH mode: the mill drills its own dowel holes; the grid screws only hold\n"
-        f"  the stock down. Load copper at least ~{waste:.0f} mm taller than the board on\n"
-        f"  the centre line - the two dowels sit in that waste and are cut away at the end.\n"
-        f"  Pins: {pl:.1f} mm (BOTTOM) and {ps:.1f} mm (TOP); the different sizes mean the\n"
+        f"  the stock down. Load copper at least ~{waste:.0f} mm {bigger} than the board on\n"
+        f"  the {centre} - the two dowels sit in that waste and are cut away at the end.\n"
+        f"  Pins: {pl:.1f} mm ({lo}) and {ps:.1f} mm ({hi}); the different sizes mean the\n"
         f"  board can only flip back on ONE way.\n"
         + clear_note +
         f"\n"
         f"0. Set XY zero ONCE (e.g. stock lower-left) and do NOT re-zero XY between jobs.\n"
         f"   RE-ZERO Z after every bit change AND after the flip.\n"
         f"1. {name}_align: mills the two dowel holes {align_depth:.1f} mm deep (through the\n"
-        f"   {thickness:.1f} mm stock AND into the bed). Seat the {pl:.1f} mm pin below and the\n"
-        f"   {ps:.1f} mm pin above; firm in the bed, slip-fit in the board.\n"
+        f"   {thickness:.1f} mm stock AND into the bed). Seat the {pl:.1f} mm pin {lo.lower()} and\n"
+        f"   the {ps:.1f} mm pin {hi.lower()}; firm in the bed, slip-fit in the board.\n"
         f"2. Bottom side: {drill_step}. Then {name}_bottom_traces.\n"
         + common_tail)
 
