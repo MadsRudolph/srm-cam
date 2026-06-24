@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
 
         # double-sided registration: fresh-milled dowels vs grid-seated pins
         self.reg_combo = QComboBox()
-        self.reg_combo.addItems(["Fresh-milled dowels (2+3mm)",
+        self.reg_combo.addItems(["Fresh-milled dowels (1.9+3.1mm)",
                                  "Grid-seated pins (M4 grid)"])
         self.reg_combo.setEnabled(False)
         self.reg_combo.currentIndexChanged.connect(self._on_reg_changed)
