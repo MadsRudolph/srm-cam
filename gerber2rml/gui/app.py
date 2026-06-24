@@ -87,14 +87,32 @@ class MainWindow(QMainWindow):
         self.move_chk = QCheckBox("Move on bed (drag)")
         self.move_chk.toggled.connect(self._on_move_toggled)
 
-        # stock thickness (mm): drawn as the 3D slab and used for the dowel depth
+        # stock thickness (mm): drawn as the 3D slab, used for the dowel depth,
+        # and (when auto-depth is on) the drill/cut-out depth.
         self.thickness_spin = QDoubleSpinBox()
         self.thickness_spin.setRange(0.1, 10.0); self.thickness_spin.setSingleStep(0.1)
-        self.thickness_spin.setDecimals(1); self.thickness_spin.setValue(1.6)
+        self.thickness_spin.setDecimals(2); self.thickness_spin.setValue(1.6)
         self.thickness_spin.setSuffix(" mm")
         self.thickness_spin.setToolTip(
-            "PCB stock thickness - shown as the 3D slab and used for the "
-            "double-sided dowel depth")
+            "Measured PCB stock thickness - shown as the 3D slab, used for the "
+            "double-sided dowel depth, and (with auto-depth) the drill/cut-out depth")
+        self.thickness_spin.valueChanged.connect(self._on_depth_source_changed)
+
+        # auto-depth: drill + cut-out depth = stock thickness + breakthrough, so
+        # measuring the board sets how deep it drills and cuts out.
+        self.auto_depth_chk = QCheckBox("Auto depth = stock +")
+        self.auto_depth_chk.setChecked(True)
+        self.auto_depth_chk.toggled.connect(self._on_depth_source_changed)
+        self.breakthrough_spin = QDoubleSpinBox()
+        self.breakthrough_spin.setRange(0.0, 3.0); self.breakthrough_spin.setSingleStep(0.05)
+        self.breakthrough_spin.setDecimals(2); self.breakthrough_spin.setValue(0.1)
+        self.breakthrough_spin.setSuffix(" mm")
+        self.breakthrough_spin.setToolTip(
+            "How far PAST the board the drill and cut-out go, into the spoilboard")
+        self.breakthrough_spin.valueChanged.connect(self._on_depth_source_changed)
+        self._auto_depth_row = QWidget()
+        _ad = QHBoxLayout(self._auto_depth_row); _ad.setContentsMargins(0, 0, 0, 0)
+        _ad.addWidget(self.auto_depth_chk); _ad.addWidget(self.breakthrough_spin)
 
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
@@ -189,6 +207,7 @@ class MainWindow(QMainWindow):
         project_layout.addRow("Place:", self._place_row)
         project_layout.addRow("", self.move_chk)
         project_layout.addRow("Stock:", self.thickness_spin)
+        project_layout.addRow("", self._auto_depth_row)
         project_layout.addRow("", self.double_sided_chk)
         project_layout.addRow("View:", self.view_combo)
         project_layout.addRow("Reg.:", self.reg_combo)
@@ -476,6 +495,7 @@ class MainWindow(QMainWindow):
         self.forms["traces"].set_instance(self.state.trace)
         self.forms["drill"].set_instance(self.state.drill)
         self.forms["cutout"].set_instance(self.state.cutout)
+        self._apply_auto_depth()      # auto-depth wins over the preset's depth
         if self.state.board is not None:
             self.generate_preview()
 
@@ -685,6 +705,22 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Rework: drag a box over the area to re-cut, then Export selected NC",
                 8000)
+
+    def _apply_auto_depth(self):
+        """When auto-depth is on, set the drill + cut-out total depth from the
+        measured stock thickness (+ breakthrough) and lock those fields."""
+        auto = self.auto_depth_chk.isChecked()
+        self.breakthrough_spin.setEnabled(auto)
+        total = round(self.thickness_spin.value() + self.breakthrough_spin.value(), 3)
+        for op in ("drill", "cutout"):
+            form = self.forms[op]
+            if auto:
+                form.set_field_value("total_depth", total)
+            form.enable_field("total_depth", not auto)
+
+    def _on_depth_source_changed(self, *_):
+        self._apply_auto_depth()
+        self.generate_preview()
 
     def _on_move_toggled(self, checked):
         self.preview.set_moving(checked)

@@ -63,6 +63,19 @@ class DataclassForm(QWidget):
         else:
             w.setValue(value)
 
+    def set_field_value(self, name, value):
+        """Set one editor's value WITHOUT emitting valueChanged (programmatic
+        update, e.g. a derived depth)."""
+        self._updating = True
+        try:
+            self.set_field(name, value)
+        finally:
+            self._updating = False
+
+    def enable_field(self, name, on):
+        """Grey out / re-enable a single editor (e.g. a field that is now derived)."""
+        self._editors[name].setEnabled(bool(on))
+
     def set_instance(self, instance):
         """Replace the backing instance and push its values into the editors."""
         self._instance = instance
