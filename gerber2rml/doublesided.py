@@ -38,8 +38,8 @@ from gerber2rml.engine.cutout import cut_outline
 from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
-PIN_LARGE = 3.0     # fresh: bottom dowel diameter (mm)
-PIN_SMALL = 2.0     # fresh: top dowel diameter (mm)
+PIN_LARGE = 3.1     # fresh: bottom dowel diameter (mm) — measured metal rod
+PIN_SMALL = 1.9     # fresh: top dowel diameter (mm) — measured metal rod
 EDGE_OFFSET = 8.0   # fresh: mm from the board edge to the dowel centre (waste)
 GRID_PITCH = 14.2   # grid: hole-to-hole spacing (mm) — set to your measured grid
 GRID_PIN = 4.0      # grid: dowel diameter = grid hole size (mm)
