@@ -190,6 +190,17 @@ def test_stock_thickness_default():
     assert abs(w.thickness_spin.value() - 1.6) < 1e-6
 
 
+def test_advanced_options_hidden_until_toggled():
+    w = MainWindow()
+    assert w._advanced_box.isHidden() is True          # advanced collapsed by default
+    w.advanced_chk.setChecked(True)
+    assert w._advanced_box.isHidden() is False
+    # double-sided sub-controls stay hidden until double-sided is enabled
+    assert w._ds_controls.isHidden() is True
+    w.double_sided_chk.setChecked(True)
+    assert w._ds_controls.isHidden() is False
+
+
 def test_auto_depth_follows_stock_thickness():
     w = MainWindow()
     w.load_folder(str(FIXT))
