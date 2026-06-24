@@ -189,6 +189,22 @@ def test_stock_thickness_default():
     w = MainWindow()
     assert abs(w.thickness_spin.value() - 1.6) < 1e-6
 
+
+def test_auto_depth_follows_stock_thickness():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    # default: auto on, 1.6 mm stock + 0.1 breakthrough -> 1.7 mm
+    assert abs(w.forms["drill"].value().total_depth - 1.7) < 1e-6
+    assert abs(w.forms["cutout"].value().total_depth - 1.7) < 1e-6
+    assert not w.forms["drill"]._editors["total_depth"].isEnabled()  # locked
+    # measure a thicker board -> drill + cut-out depth follow
+    w.thickness_spin.setValue(2.0)
+    assert abs(w.forms["drill"].value().total_depth - 2.1) < 1e-6
+    assert abs(w.forms["cutout"].value().total_depth - 2.1) < 1e-6
+    # turning auto off unlocks the fields for manual control
+    w.auto_depth_chk.setChecked(False)
+    assert w.forms["drill"]._editors["total_depth"].isEnabled()
+
 def test_drill_tab_shows_diameter_summary():
     w = MainWindow()
     w.load_folder(str(FIXT))
