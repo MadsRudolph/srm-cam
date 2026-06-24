@@ -35,12 +35,26 @@ def _pairs(segments):
     return np.array([p for seg in segments for p in seg], dtype=float)
 
 
+def _box_meshdata(x0, y0, z0, x1, y1, z1):
+    """MeshData for an axis-aligned box (12 triangles) -- the PCB stock slab."""
+    v = np.array([[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+                  [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], dtype=float)
+    f = np.array([[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7],
+                  [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+                  [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]], dtype=int)
+    return gl.MeshData(vertexes=v, faces=f)
+
+
 class Simulation3DWindow(QMainWindow):
-    def __init__(self, toolpaths, title="3D simulation", parent=None):
+    def __init__(self, toolpaths, title="3D simulation", parent=None,
+                 board=None, bed=None, thickness=1.6):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(900, 700)
 
+        self._board = board          # (x0, y0, x1, y1) PCB outline bounds, or None
+        self._bed = bed              # (width, height) machine work area, or None
+        self._thickness = thickness  # PCB stock thickness (mm)
         self._points, self._is_rapid, self._cum = build_path(toolpaths)
         self._total = self._cum[-1] if self._cum else 0.0
         self._dist = 0.0
@@ -111,15 +125,46 @@ class Simulation3DWindow(QMainWindow):
         lo, hi, diag = self._bounds()
         cx, cy = (lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0
 
-        # ground grid at the work surface (Z=0)
+        # ground grid at the work surface (Z=0), extended to cover the bed
         grid = gl.GLGridItem()
         span = max(hi[0] - lo[0], hi[1] - lo[1]) or 10.0
+        gx, gy = cx, cy
+        if self._bed:
+            span = max(span, self._bed[0], self._bed[1])
+            gx, gy = self._bed[0] / 2.0, self._bed[1] / 2.0
         grid.setSize(span * 1.4, span * 1.4)
         step = max(span / 10.0, 1.0)
         grid.setSpacing(step, step)
-        grid.translate(cx, cy, 0)
+        grid.translate(gx, gy, 0)
         grid.setColor((80, 80, 80, 160))
         self.view.addItem(grid)
+
+        # machine bed outline (work area) at Z=0, home corner marked at the origin
+        if self._bed:
+            bw, bh = self._bed
+            loop = np.array([[0, 0, 0], [bw, 0, 0], [bw, bh, 0], [0, bh, 0],
+                             [0, 0, 0]], dtype=float)
+            self.view.addItem(gl.GLLinePlotItem(
+                pos=loop, color=(0.25, 0.8, 0.5, 1.0), width=1.5,
+                mode='line_strip', antialias=True))
+            self.view.addItem(gl.GLScatterPlotItem(
+                pos=np.array([[0, 0, 0]], dtype=float), size=12,
+                color=(1.0, 0.7, 0.1, 1.0)))
+
+        # PCB stock as a translucent slab from the surface (Z=0) down to -thickness;
+        # the cuts dip into it so you see depth and placement in context
+        if self._board:
+            x0, y0, x1, y1 = self._board
+            slab = gl.GLMeshItem(
+                meshdata=_box_meshdata(x0, y0, -self._thickness, x1, y1, 0.0),
+                color=(0.15, 0.5, 0.28, 0.30), smooth=False,
+                glOptions='translucent')
+            self.view.addItem(slab)
+            top = np.array([[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0],
+                            [x0, y0, 0]], dtype=float)
+            self.view.addItem(gl.GLLinePlotItem(
+                pos=top, color=(0.4, 0.9, 0.55, 1.0), width=1.5,
+                mode='line_strip', antialias=True))
 
         cut, rapid = split_segments(self._points, self._is_rapid)
         self._cut_item = gl.GLLinePlotItem(

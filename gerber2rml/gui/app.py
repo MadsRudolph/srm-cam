@@ -586,7 +586,18 @@ class MainWindow(QMainWindow):
             return op, self._drill_toolpaths(self.state.board.holes)
         return op, self.state.toolpaths(op)
 
-    def _open_sim_window(self, toolpaths, label):
+    def _sim_board_bounds(self):
+        """PCB outline bounds (x0, y0, x1, y1) for the side currently shown, so
+        the 3D viewer can draw the stock slab the cuts go into. None if no board."""
+        if self.state.board is None:
+            return None
+        if self.double_sided_chk.isChecked():
+            mlay = self._machine_layout()
+            outline = mlay.top_outline if self._ds_side() == "Top" else mlay.outline
+            return tuple(outline.bounds)
+        return tuple(self.state.board.outline.bounds)
+
+    def _open_sim_window(self, toolpaths, label, board=None, bed=None, thickness=1.6):
         try:
             from gerber2rml.gui.sim3d import Simulation3DWindow
         except Exception as e:
@@ -599,7 +610,8 @@ class MainWindow(QMainWindow):
         # offscreen grab but can come up blank on screen; a parentless window
         # matches the path that's known to render. self._sim_window keeps the
         # reference so it isn't garbage-collected.
-        self._sim_window = Simulation3DWindow(toolpaths, title=label)
+        self._sim_window = Simulation3DWindow(toolpaths, title=label,
+                                              board=board, bed=bed, thickness=thickness)
         self._sim_window.show()
         self._sim_window.raise_()
         self._sim_window.activateWindow()
@@ -644,7 +656,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nothing to simulate",
                                     "No toolpaths for this view.")
             return
-        self._open_sim_window(toolpaths, f"{self.state.name} - {label} (3D)")
+        bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
+        self._open_sim_window(toolpaths, f"{self.state.name} - {label} (3D)",
+                              board=self._sim_board_bounds(), bed=bed)
 
     def _on_select_toggled(self, checked):
         self.preview.set_selecting(checked)
