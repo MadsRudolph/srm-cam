@@ -53,6 +53,7 @@ class MainWindow(QMainWindow):
         self.double_sided_chk = QCheckBox("Double-sided")
         self.double_sided_chk.toggled.connect(self._on_double_sided_toggled)
         self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
+        self._ds_mcache = None  # machine-frame layout cache (single-side rework/preview)
 
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
@@ -245,6 +246,42 @@ class MainWindow(QMainWindow):
                 self.state.gerber_dir, dowels=spec))
         return self._ds_cache[1]
 
+    def _machine_layout(self):
+        """Machine-frame layout — the board exactly as each side is cut (bottom
+        mirrored, top reflected). Single-side preview and rework use this so an
+        on-screen box maps to the real toolpath coordinates, not the design-frame
+        X-ray used by the 'Both sides' registration view."""
+        from gerber2rml.doublesided import layout_double_sided
+        spec = self._dowel_spec()
+        key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
+               spec.grid_pin, spec.pin_clearance)
+        if self._ds_mcache is None or self._ds_mcache[0] != key:
+            self._ds_mcache = (key, layout_double_sided(
+                self.state.gerber_dir, dowels=spec))
+        return self._ds_mcache[1]
+
+    def _ds_side(self):
+        """For a double-sided board, the single side selected in View ('Bottom'
+        or 'Top'), or None for 'Both sides' / single-sided boards. Rework needs a
+        single side because each side is a separate job in its own frame."""
+        if not self.double_sided_chk.isChecked():
+            return None
+        v = self.view_combo.currentText()
+        return v if v in ("Bottom", "Top") else None
+
+    def _ds_side_toolpaths(self, op, side):
+        """Machine-frame toolpaths for one side of a double-sided board — exactly
+        what that side's exported job cuts, so a rework box clips against the real
+        paths and the result runs in the same frame as the full job."""
+        from gerber2rml.engine.traces import isolate
+        from gerber2rml.engine.cutout import cut_outline
+        mlay = self._machine_layout()
+        if op == "cutout":
+            return cut_outline(mlay.outline, self.state.cutout)
+        if side == "Top":
+            return isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline)
+        return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
+
     def _update_ds_controls(self):
         """Enable the registration controls only when double-sided is on, and
         the grid fields only in grid mode."""
@@ -271,6 +308,19 @@ class MainWindow(QMainWindow):
         overlaid; the dowels are always shown. Board holes are shown on the
         drill tab only."""
         from gerber2rml.engine.traces import isolate
+        side = self._ds_side()
+        if side is not None and op != "drill":
+            # Single side: show it in the MACHINE frame (as actually cut) so a
+            # rework box maps to real toolpath coordinates. Keep the channel
+            # contract: Bottom -> bottom cuts, Top -> top cuts.
+            mlay = self._machine_layout()
+            cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
+            if side == "Top":
+                self.preview.show_segments([], [], top_cuts=cuts, pins=mlay.align_holes)
+            else:
+                self.preview.show_segments(cuts, rapids, pins=mlay.align_holes)
+            return
+        # Both sides (or the drill tab): design-frame X-ray for registration.
         lay = self._double_sided_layout()
         view = self.view_combo.currentText()
         bottom_cuts, bottom_rapids, top_cuts = [], [], []
@@ -455,6 +505,10 @@ class MainWindow(QMainWindow):
         """(op, toolpaths) for the active tab/mode -- what the preview shows."""
         op = _OPS[self.tabs.currentIndex()]
         if self.double_sided_chk.isChecked():
+            side = self._ds_side()
+            if side is not None and op != "drill":
+                # single side: machine-frame paths for that side (matches preview)
+                return op, self._ds_side_toolpaths(op, side)
             from gerber2rml.engine.traces import isolate
             from gerber2rml.engine.cutout import cut_outline
             lay = self._double_sided_layout()
@@ -512,9 +566,12 @@ class MainWindow(QMainWindow):
         self._sync_state()
         op, toolpaths = self._current_toolpaths()
         label = op
-        # an active rework box on a clippable op -> simulate just that part
+        # an active rework box on a clippable op -> simulate just that part.
+        # Double-sided is reworkable only when a single side (Bottom/Top) is
+        # shown; _current_toolpaths already returns that side's machine paths.
         bbox = self.preview.selection_bbox()
-        if bbox is not None and op != "drill" and not self.double_sided_chk.isChecked():
+        ds = self.double_sided_chk.isChecked()
+        if bbox is not None and op != "drill" and (not ds or self._ds_side() is not None):
             from gerber2rml.engine.select import clip_toolpaths_to_bbox
             clipped = clip_toolpaths_to_bbox(toolpaths, bbox)
             if clipped:
@@ -534,13 +591,17 @@ class MainWindow(QMainWindow):
 
     def _on_selection_changed(self, bbox):
         op = _OPS[self.tabs.currentIndex()]
-        has_box = bbox is not None and op != "drill" \
-            and not self.double_sided_chk.isChecked()
+        ds = self.double_sided_chk.isChecked()
+        # reworkable single-sided, or double-sided with one side (Bottom/Top) shown
+        has_box = (bbox is not None and op != "drill"
+                   and (not ds or self._ds_side() is not None))
         self.export_sel_btn.setEnabled(has_box)
         if bbox is not None:
             w = abs(bbox[2] - bbox[0]); h = abs(bbox[3] - bbox[1])
+            side = self._ds_side()
+            tag = f"{side.lower()} {op}" if side else op
             self.statusBar().showMessage(
-                f"Selected {w:.1f} x {h:.1f} mm for {op} rework", 6000)
+                f"Selected {w:.1f} x {h:.1f} mm for {tag} rework", 6000)
 
     def _on_export_selected(self):
         from pathlib import Path
@@ -554,13 +615,21 @@ class MainWindow(QMainWindow):
                                 "Enable 'Select area' and drag a box first.")
             return
         op = _OPS[self.tabs.currentIndex()]
-        if op == "drill" or self.double_sided_chk.isChecked():
+        ds = self.double_sided_chk.isChecked()
+        side = self._ds_side()
+        if op == "drill":
             QMessageBox.warning(self, "Not available",
-                                "Rework export works on the single-sided traces "
-                                "or cutout preview.")
+                                "Rework export works on the traces or cutout "
+                                "preview, not drilling.")
+            return
+        if ds and side is None:
+            QMessageBox.warning(self, "Pick a side",
+                                "Double-sided board: set View to Bottom or Top "
+                                "to rework that side.")
             return
         self._sync_state()
-        clipped = clip_toolpaths_to_bbox(self.state.toolpaths(op), bbox)
+        toolpaths = self._ds_side_toolpaths(op, side) if ds else self.state.toolpaths(op)
+        clipped = clip_toolpaths_to_bbox(toolpaths, bbox)
         if not clipped:
             QMessageBox.information(self, "Empty selection",
                                     "No toolpaths fall inside the selected box.")
@@ -573,7 +642,8 @@ class MainWindow(QMainWindow):
         try:
             text = backend.render(clipped, xy_feed=job.xy_feed,
                                   plunge_feed=job.plunge_feed)
-            path = Path(out) / f"{self.state.name}_{op}_rework{backend.ext}"
+            side_tag = f"{side.lower()}_" if side else ""
+            path = Path(out) / f"{self.state.name}_{side_tag}{op}_rework{backend.ext}"
             path.write_text(text)
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))

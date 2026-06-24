@@ -98,6 +98,27 @@ def test_double_sided_view_toggle_bottom_and_top():
     assert w.preview._full_cuts == [] and len(w.preview._full_top_cuts) > 0
     assert len(w.preview._pins) == 2
 
+def test_double_sided_rework_export_enabled_per_side():
+    from gerber2rml.engine.select import clip_toolpaths_to_bbox
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    box = (0, 0, 200, 200)                         # covers the whole placed board
+    # Both sides: can't rework two sides at once -> export stays disabled
+    w.view_combo.setCurrentText("Both sides")
+    w._on_selection_changed(box)
+    assert w._ds_side() is None and not w.export_sel_btn.isEnabled()
+    # Bottom: export enabled, and the bottom side's MACHINE-frame paths clip
+    w.view_combo.setCurrentText("Bottom")
+    w._on_selection_changed(box)
+    assert w._ds_side() == "Bottom" and w.export_sel_btn.isEnabled()
+    assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Bottom"), box)
+    # Top: its own side paths (reflected) also clip
+    w.view_combo.setCurrentText("Top")
+    w._on_selection_changed(box)
+    assert w._ds_side() == "Top" and w.export_sel_btn.isEnabled()
+    assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Top"), box)
+
 def test_drill_tab_shows_diameter_summary():
     w = MainWindow()
     w.load_folder(str(FIXT))
