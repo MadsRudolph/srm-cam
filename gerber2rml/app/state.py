@@ -62,10 +62,10 @@ class ProjectState:
             return cut_outline(self.board.outline, self.cutout)
         raise ValueError(f"unknown operation: {op}")
 
-    def export(self, out_dir):
+    def export(self, out_dir, level=None):
         if self.gerber_dir is None:
             raise RuntimeError("load a Gerber folder first")
         return build_jobs(self.gerber_dir, out_dir, self.name,
                           trace=self.trace, drill=self.drill, cutout=self.cutout,
                           mirror=self.mirror, machine=self.machine,
-                          offset=(self.place_x, self.place_y))
+                          offset=(self.place_x, self.place_y), level=level)
