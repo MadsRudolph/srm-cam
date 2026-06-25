@@ -6,6 +6,12 @@
  * flaky — never move on one read), step Z down 25 um at a time until D7 touches,
  * read Z, lift. Repeatable to the step size on this machine.
  *
+ * FAST APPROACH: the first point of a run fine-steps the whole way down from the
+ * datum lift (slow, but it learns where the copper is). Every point after that
+ * rapids straight down to ~1 mm above the highest copper seen (APPROACH_CLEAR_UM)
+ * in a single move, then fine-steps only that last millimetre. So a 2-3 mm datum
+ * lift costs about the same time as a 1 mm one, with no loss of touch accuracy.
+ *
  * PROBE WIRING (proven): copper board ISOLATED from the bed (paper/tape under it),
  *   D7 -> copper (floats HIGH via pull-up), GND -> collet/tool (grounded). Tool
  *   touching copper pulls D7 LOW. Spindle stays OFF the whole time.
@@ -49,12 +55,19 @@
 SRM20SPIRemote srm20;
 
 const int  PROBE_PIN = 7;            // external touch probe; LOW = contact
-const long PROBE_STEP_UM = 25;       // descent step
+const long PROBE_STEP_UM = 25;       // fine descent step (touch accuracy)
 const long PROBE_MAX_DROP_UM = 6000; // absolute floor: never drop > 6 mm from safe Z
 const long OUTLIER_MARGIN_UM = 1200; // runaway guard: once a surface is known, never
                                      // descend more than this past it without contact.
                                      // A real board's surface varies far less; going
                                      // this much deeper means we missed copper.
+const long APPROACH_CLEAR_UM = 1000; // FAST APPROACH: once the first point has found the
+                                     // surface, rapid straight down to this height above
+                                     // the highest copper seen so far, THEN fine-step.
+                                     // Crosses the air gap in one move instead of ~120
+                                     // tiny steps, so a 3 mm datum lift costs about the
+                                     // same as 1 mm. Must exceed the board's surface
+                                     // variation so the rapid never slams into copper.
 const long MOVE_SPEED = -1;          // library default
 
 long datX = 0, datY = 0, safeZ = 0;
@@ -64,6 +77,9 @@ bool haveDatum = false;
 // every new datum ('D'), i.e. at the start of each grid run.
 long refSurfaceZ = 0;
 bool haveRef = false;
+// Highest (least-negative) copper Z touched this run — the fast-approach planes
+// its rapid descent / between-point lift just above this. Set on the first touch.
+long maxSurfaceZ = 0;
 
 // setOrigin experiment: saved origin so the test can always restore it.
 long savedOX = 0, savedOY = 0, savedOZ = 0;
@@ -117,13 +133,39 @@ void liftSafe(long mx, long my) {
   waitForMotorStop();
 }
 
+// Travel/approach height for the fast approach: full safeZ until the surface is
+// known, then just APPROACH_CLEAR_UM above the highest copper seen (capped at
+// safeZ so it never rises above the operator's datum lift).
+long approachZ() {
+  if (!haveRef) return safeZ;
+  long z = maxSurfaceZ + APPROACH_CLEAR_UM;
+  return (z > safeZ) ? safeZ : z;
+}
+
+// Between-point lift after a touch: only back up to the approach plane (not the
+// full datum height), so the next point's rapid + descent stays short.
+void liftToApproach(long mx, long my) {
+  srm20.jumpTo(mx, my, approachZ(), MOVE_SPEED);
+  waitForMotorStop();
+}
+
 // Probe at absolute machine (mx,my). Returns 1 + touchZ on contact, 0 on no
 // contact (lifted), -1 if aborted (operator '!' or a move that didn't finish),
 // -2 if it ran away past the known surface (missed copper -> stopped early).
 int probeAt(long mx, long my, long &touchZ) {
-  srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);   // rapid above the point at safe Z
+  // Rapid to the point at the approach height (≈1 mm above known copper once the
+  // first point has found the surface; full safeZ for that first point).
+  long startZ = approachZ();
+  srm20.jumpTo(mx, my, startZ, MOVE_SPEED);
   if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
-  if (digitalRead(PROBE_PIN) == LOW) return 0;   // already touching: safe Z too low
+  if (digitalRead(PROBE_PIN) == LOW) {
+    // Copper higher than the approach plane (surface rose > clearance). Back off
+    // to full safe Z and fine-step from there — never plunge from a low rapid.
+    srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);
+    if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
+    if (digitalRead(PROBE_PIN) == LOW) return 0;   // touching even at safe Z: safe Z too low
+    startZ = safeZ;
+  }
   // Floor = absolute cap, tightened to refSurface - margin once a surface is known.
   long floorZ = safeZ - PROBE_MAX_DROP_UM;
   bool refLimited = false;
@@ -131,7 +173,7 @@ int probeAt(long mx, long my, long &touchZ) {
     long refFloor = refSurfaceZ - OUTLIER_MARGIN_UM;
     if (refFloor > floorZ) { floorZ = refFloor; refLimited = true; }
   }
-  long z = safeZ;
+  long z = startZ;
   while (z > floorZ) {
     if (checkAbort()) { liftSafe(mx, my); return -1; }
     z -= PROBE_STEP_UM;
@@ -140,10 +182,13 @@ int probeAt(long mx, long my, long &touchZ) {
     if (digitalRead(PROBE_PIN) == LOW) {
       long tx, ty, tz;
       bool ok = readPos(tx, ty, tz);
-      liftSafe(mx, my);
-      if (!ok) return 0;
-      if (!haveRef) { refSurfaceZ = tz; haveRef = true; }   // first touch = surface ref
-      touchZ = tz; return 1;
+      if (ok) {
+        if (!haveRef) { refSurfaceZ = tz; maxSurfaceZ = tz; haveRef = true; }  // surface ref
+        else if (tz > maxSurfaceZ) maxSurfaceZ = tz;          // track highest for approach
+        touchZ = tz;
+      }
+      liftToApproach(mx, my);                 // back up only to the approach plane
+      return ok ? 1 : 0;
     }
   }
   liftSafe(mx, my);                          // hit the floor with no contact
