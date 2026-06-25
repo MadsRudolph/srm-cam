@@ -1,0 +1,18 @@
+%TF.FileFunction,Profile,NP*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+%MOMM*%
+%LPD*%
+G01*
+
+%ADD10C,0.100*%
+%ADD11C,1.000*%
+D10*
+
+X0Y0D02*
+X50000000Y0D01*
+X50000000Y40000000D01*
+X0Y40000000D01*
+X0Y0D01*
+M02*
