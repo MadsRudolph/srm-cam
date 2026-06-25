@@ -28,6 +28,7 @@ gui = [
 
 [project.scripts]
 gerber2rml-cli = "gerber2rml.cli:main"
+gerber2rml-doctor = "gerber2rml.doctor:main"
 
 [project.gui-scripts]
 gerber2rml = "gerber2rml.gui.app:main"
