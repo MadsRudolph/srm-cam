@@ -66,6 +66,22 @@ python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activ
 pip install -e ".[dev]"
 ```
 
+## Keep your environment up to date
+
+After every `git pull`, run the **doctor** to install any newly added packages so
+the GUI always works — it reads the dependencies from `pyproject.toml`, reports
+what's missing, and installs it for you:
+
+```bash
+python -m gerber2rml.doctor          # check, then install anything missing
+python -m gerber2rml.doctor --check  # only report (don't install)
+python -m gerber2rml.doctor --dev    # also install the test (dev) extras
+```
+
+It only needs the standard library to start, so it works even on a brand-new
+checkout where nothing is installed yet. (After an install it's also available as
+the `gerber2rml-doctor` command.)
+
 ## Run
 
 Headless CLI (Plan A):
