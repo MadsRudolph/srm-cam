@@ -297,21 +297,23 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0
                       align_holes, _axis_of(dowels), flip_pos), offset)
 
 
-def _align_drill(drill, dowels, align_depth, board_thickness):
+def _align_drill(drill, dowels, align_depth, board_thickness,
+                 bed_depth=DOWEL_BED_DEPTH):
     """Drill spec for the dowel/align holes (single bit, interpolated to the hole
-    diameter). Fresh dowels go through the stock AND into the bed (deep); grid
-    dowels only clear the stock (the grid hole is already there)."""
+    diameter). Fresh dowels go through the stock AND ``bed_depth`` mm into the bed;
+    grid dowels only clear the stock (the grid hole is already there)."""
     if align_depth is None:
-        # fresh: through the stock + a fixed bite into the bed (adapts to stock
-        # thickness). grid: just clear the stock onto the pin already in the grid.
-        align_depth = (board_thickness + DOWEL_BED_DEPTH if dowels.mode == "fresh"
+        # fresh: through the stock + the bed bite (adapts to stock thickness).
+        # grid: just clear the stock onto the pin already in the grid.
+        align_depth = (board_thickness + bed_depth if dowels.mode == "fresh"
                        else board_thickness + 1.0)
     return replace(drill, total_depth=align_depth, single_bit=True), align_depth
 
 
 def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
                      align_depth: float = None, board_thickness: float = 1.6,
-                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0):
+                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0,
+                     bed_depth=DOWEL_BED_DEPTH):
     """Build ONLY the dowel-hole (align) toolpath — nothing else.
 
     For the test-fit loop: cut the dowel holes, check the rods seat; if they
@@ -326,7 +328,7 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
     drill = drill or DrillJob()
     backend = BACKENDS[machine]
     lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
-    align_drill, _ = _align_drill(drill, dowels, align_depth, board_thickness)
+    align_drill, _ = _align_drill(drill, dowels, align_depth, board_thickness, bed_depth)
     out = out_dir / f"{name}_align{backend.ext}"
     out.write_text(backend.render(
         drill_single_bit(lay.align_holes, align_drill),
@@ -337,7 +339,8 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        dowels: DowelSpec = None, align_depth: float = None,
                        board_thickness: float = 1.6, machine=DEFAULT_MACHINE,
-                       offset=(0.0, 0.0), level=None, rotate=0):
+                       offset=(0.0, 0.0), level=None, rotate=0,
+                       bed_depth=DOWEL_BED_DEPTH):
     """Build all job files for a double-sided board + a text run plan.
 
     ``machine`` selects the output backend (RML or G-code). Returns a list of
@@ -359,7 +362,8 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     ext = backend.ext
     lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
     top_outline = lay.top_outline
-    align_drill, align_depth = _align_drill(drill, dowels, align_depth, board_thickness)
+    align_drill, align_depth = _align_drill(drill, dowels, align_depth,
+                                            board_thickness, bed_depth)
     from gerber2rml.engine.estimate import estimate_toolpaths_seconds, format_duration
     written = []
     est = {}                                     # fname -> estimated seconds
