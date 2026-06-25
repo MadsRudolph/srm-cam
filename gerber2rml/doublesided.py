@@ -228,11 +228,24 @@ def _offset_layout(lay, offset):
     return replace(lay, **kw)
 
 
-def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0)):
+def _load_rotated(folder, rotate):
+    """Load the board (design frame) and rotate it by ``rotate`` degrees, re-
+    normalised to the positive quadrant. Rotating here — before the mirror, dowel
+    placement and framing — keeps the whole job (board + dowels) consistent, so
+    the registration is unchanged for the rotated orientation."""
+    b = load_board(folder, mirror=False)
+    if rotate % 360:
+        from gerber2rml.loader import rotate_board, place_in_positive_quadrant
+        b = place_in_positive_quadrant(rotate_board(b, rotate))
+    return b
+
+
+def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
+                        rotate=0):
     dowels = dowels or DowelSpec()
     folder = Path(folder)
     axis = _axis_of(dowels)
-    b = load_board(folder, mirror=False)
+    b = _load_rotated(folder, rotate)
     copper, copper_top, outline_g, holes_raw = _mirror_all(b, axis)  # bottom-up mirror
     geoms = [g for g in (copper, outline_g) if not g.is_empty]
     gx0, gy0, gx1, gy1 = _frame(geoms)
@@ -264,12 +277,13 @@ class PreviewLayout:
     flip_pos: float
 
 
-def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0)):
+def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
+                                rotate=0):
     """Layout for the preview: load WITHOUT mirroring so both copper layers and
     the holes sit in the same design frame and overlay correctly."""
     dowels = dowels or DowelSpec()
     folder = Path(folder)
-    b = load_board(folder, mirror=False)   # design frame: F.Cu true, B.Cu X-ray
+    b = _load_rotated(folder, rotate)      # design frame: F.Cu true, B.Cu X-ray
     geoms = [g for g in (b.copper, b.outline) if not g.is_empty]
     gx0, gy0, gx1, gy1 = _frame(geoms)
     align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
@@ -297,7 +311,7 @@ def _align_drill(drill, dowels, align_depth, board_thickness):
 
 def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
                      align_depth: float = None, board_thickness: float = 1.6,
-                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0)):
+                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0):
     """Build ONLY the dowel-hole (align) toolpath — nothing else.
 
     For the test-fit loop: cut the dowel holes, check the rods seat; if they
@@ -311,7 +325,7 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
     out_dir.mkdir(parents=True, exist_ok=True)
     drill = drill or DrillJob()
     backend = BACKENDS[machine]
-    lay = layout_double_sided(folder, dowels=dowels, offset=offset)
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
     align_drill, _ = _align_drill(drill, dowels, align_depth, board_thickness)
     out = out_dir / f"{name}_align{backend.ext}"
     out.write_text(backend.render(
@@ -323,7 +337,7 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        dowels: DowelSpec = None, align_depth: float = None,
                        board_thickness: float = 1.6, machine=DEFAULT_MACHINE,
-                       offset=(0.0, 0.0), level=None):
+                       offset=(0.0, 0.0), level=None, rotate=0):
     """Build all job files for a double-sided board + a text run plan.
 
     ``machine`` selects the output backend (RML or G-code). Returns a list of
@@ -343,7 +357,7 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     cutout = cutout or CutoutJob()
     backend = BACKENDS[machine]          # (render fn, file extension)
     ext = backend.ext
-    lay = layout_double_sided(folder, dowels=dowels, offset=offset)
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
     top_outline = lay.top_outline
     align_drill, align_depth = _align_drill(drill, dowels, align_depth, board_thickness)
     from gerber2rml.engine.estimate import estimate_toolpaths_seconds, format_duration
