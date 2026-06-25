@@ -10,7 +10,10 @@ from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
-               mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0)):
+               mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None):
+    """``level`` (optional) is a callable ``hmap(x, y) -> dz`` from
+    :mod:`gerber2rml.engine.leveling`; when given, every job's Z is warped to
+    follow the measured surface (applied AFTER placement, in machine coords)."""
     from gerber2rml.toolpath import offset as offset_paths
     gerber_dir, out_dir = Path(gerber_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -25,7 +28,11 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
 
     def _write(fname, paths, job):
         p = out_dir / fname
-        p.write_text(backend.render(offset_paths(paths, *offset),
+        placed = offset_paths(paths, *offset)
+        if level is not None:
+            from gerber2rml.engine.leveling import apply_leveling
+            placed = apply_leveling(placed, level)
+        p.write_text(backend.render(placed,
                                     xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
         written.append(p)
 
@@ -78,9 +85,14 @@ def main(argv=None):
     ap.add_argument("--gcode", action="store_const", dest="machine",
                     const="Roland SRM-20 (G-code)",
                     help="shorthand for --machine 'Roland SRM-20 (G-code)'")
+    ap.add_argument("--multi-bit", action="store_true",
+                    help="one drill file per hole diameter (change bits between "
+                         "files). Default is single-bit: one file, plunge + "
+                         "interpolate with the bit in the spindle.")
     ap.set_defaults(machine=DEFAULT_MACHINE)
     args = ap.parse_args(argv)
-    for p in build_jobs(args.gerber_dir, args.out, args.name,
+    drill = DrillJob(single_bit=not args.multi_bit)
+    for p in build_jobs(args.gerber_dir, args.out, args.name, drill=drill,
                         mirror=not args.no_mirror, machine=args.machine):
         print("wrote", p)
     return 0

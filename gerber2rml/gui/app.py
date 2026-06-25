@@ -2,9 +2,10 @@
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
-    QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea
+    QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea,
+    QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
 import time
 
@@ -15,6 +16,92 @@ from gerber2rml.gui.form import DataclassForm
 from gerber2rml.gui.canvas import PreviewCanvas
 
 _OPS = ["traces", "drill", "cutout"]
+
+
+class _ProbeWorker(QThread):
+    """Runs the SPI grid probe off the GUI thread; emits one result per point."""
+    result = Signal(dict)
+    done = Signal(str)            # "" on success, else an error message
+
+    def __init__(self, port, points):
+        super().__init__()
+        self._port, self._points = port, points
+
+    def run(self):
+        from gerber2rml.engine.spi_probe import probe_grid
+        try:
+            probe_grid(self._port, self._points,
+                       on_result=lambda d: self.result.emit(d))
+            self.done.emit("")
+        except Exception as e:                 # serial/timeout/parse -> report to UI
+            self.done.emit(str(e))
+
+
+class _DROPoller(QThread):
+    """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
+    position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
+    touch_done = Signal(bool, float, float, float)  # ok, x, y, z (mm) of surface
+    failed = Signal(str)
+
+    def __init__(self, port):
+        super().__init__()
+        self._port, self._run = port, True
+        self._lock = QMutex()
+        self._pending_move = None       # (x_um, y_um) queued jog target
+        self._pending_touch = False     # queued touch-off request
+
+    def request_move(self, x_um, y_um):
+        """Queue a click-to-jog target (thread-safe); last click wins."""
+        self._lock.lock()
+        self._pending_move = (int(x_um), int(y_um))
+        self._lock.unlock()
+
+    def request_touchoff(self):
+        """Queue a probe-down-to-surface touch-off."""
+        self._lock.lock()
+        self._pending_touch = True
+        self._lock.unlock()
+
+    def run(self):
+        from gerber2rml.engine import spi_probe
+        try:
+            ser = spi_probe.open_link(self._port)
+        except Exception as e:
+            self.failed.emit(str(e)); return
+        try:
+            while self._run:
+                self._lock.lock()
+                mv = self._pending_move
+                to = self._pending_touch
+                self._pending_move = None
+                self._pending_touch = False
+                self._lock.unlock()
+                try:
+                    if mv is not None:
+                        spi_probe.jog_to(ser, mv[0], mv[1])   # lifts then travels XY
+                    elif to:
+                        r = spi_probe.touch_off(ser)          # descend to surface, stop
+                        if r is not None:
+                            self.touch_done.emit(True, r[0], r[1], r[2])
+                        else:
+                            self.touch_done.emit(False, 0.0, 0.0, 0.0)
+                    else:
+                        p = spi_probe.query_position(ser)
+                        if p is not None:
+                            self.position.emit(*p)
+                except Exception:
+                    pass
+                self.msleep(60 if (self._pending_move or self._pending_touch) else 250)
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+    def stop(self):
+        self._run = False
+        self.wait(3000)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -86,6 +173,87 @@ class MainWindow(QMainWindow):
         self.move_chk = QCheckBox("Move on bed (drag)")
         self.move_chk.toggled.connect(self._on_move_toggled)
 
+        # ---- Bed leveling: probe grid -> measured Z table -> warp on export ----
+        self.level_chk = QCheckBox("Apply bed leveling on export")
+        self.level_chk.setToolTip(
+            "Warp every job's Z to follow the measured surface, so traces cut to "
+            "depth even on a bed that isn't perfectly flat.")
+        self.level_nx_spin = QSpinBox(); self.level_nx_spin.setRange(2, 8)
+        self.level_nx_spin.setValue(3); self.level_nx_spin.setPrefix("nx ")
+        self.level_ny_spin = QSpinBox(); self.level_ny_spin.setRange(2, 8)
+        self.level_ny_spin.setValue(3); self.level_ny_spin.setPrefix("ny ")
+        self.level_grid_btn = QPushButton("Build grid")
+        self.level_grid_btn.setToolTip(
+            "Lay out an nx x ny probe grid over the placed board and fill the table.")
+        self.level_grid_btn.clicked.connect(self._on_build_level_grid)
+        self.level_export_btn = QPushButton("Export probe files...")
+        self.level_export_btn.setToolTip(
+            "Write one G-code program per probe point (queue them in VPanel) + a "
+            "checklist. Press Continue in VPanel to step point-to-point.")
+        self.level_export_btn.clicked.connect(self._on_export_probe_files)
+        self.level_save_btn = QPushButton("Save CSV")
+        self.level_save_btn.setToolTip("Save the probe grid (X, Y, dz) to a CSV file.")
+        self.level_save_btn.clicked.connect(self._on_save_level_grid)
+        # auto-probe over the SRM-20 SPI link (Arduino running srm20_spi_probe.ino)
+        self.level_port_edit = QLineEdit("COM5")
+        self.level_port_edit.setMaximumWidth(70)
+        self.level_port_edit.setToolTip("Serial port of the Arduino prober (Device Manager > Ports).")
+        self.level_probe_btn = QPushButton("Probe over SPI")
+        self.level_probe_btn.setToolTip(
+            "Auto-probe the grid via the Arduino over SPI and fill the Z column. "
+            "Jog the tool ~2-3 mm above the first grid point first, with the prober "
+            "sketch running and the Arduino Serial Monitor CLOSED.")
+        self.level_probe_btn.clicked.connect(self._on_probe_spi)
+        self.level_show_chk = QCheckBox("Show height map")
+        self.level_show_chk.setToolTip(
+            "Overlay the probed surface as a tilt/warp heatmap on the preview.")
+        self.level_show_chk.toggled.connect(lambda _on: self._update_level_overlay())
+        self.level_3d_btn = QPushButton("3D view")
+        self.level_3d_btn.setToolTip(
+            "Open the probed surface as a rotatable 3D mesh (OctoPrint-style).")
+        self.level_3d_btn.clicked.connect(self._on_bed_3d)
+
+        # ---- live machine link: DRO banner + tool overlay ----
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.setCheckable(True)
+        self.connect_btn.setToolTip(
+            "Open the Arduino link and show live X/Y/Z + the tool position on the "
+            "preview. Uses the same port as probing; Serial Monitor must be closed.")
+        self.connect_btn.toggled.connect(self._on_connect_toggled)
+        self.jog_chk = QCheckBox("Click to jog")
+        self.jog_chk.setEnabled(False)        # only meaningful while connected
+        self.jog_chk.setToolTip(
+            "Click a point on the preview to move the tool there (lifts ~5 mm "
+            "first, then travels XY). Needs the machine connected.")
+        self.jog_chk.toggled.connect(self._on_jog_mode_toggled)
+        self.zero_btn = QPushButton("Probe Z")
+        self.zero_btn.setEnabled(False)
+        self.zero_btn.setToolTip(
+            "Lower the bit from here until it touches the plate, stop at the "
+            "surface, and set that Z as the work-surface zero. Needs the touch "
+            "clips connected; start a few mm above the surface.")
+        self.zero_btn.clicked.connect(self._on_probe_z)
+        self._z_zero = None         # captured surface Z (machine mm), or None
+        self._touching = False      # last reported probe contact state
+        self.dro_label = QLabel("○  machine offline")
+        self.dro_label.setStyleSheet(
+            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+        self.touch_label = QLabel("bit ○")        # contact indicator (D7 probe)
+        self.touch_label.setToolTip(
+            "Whether the bit is touching the (probe-wired) plate. Needs the touch "
+            "clips connected to mean anything.")
+        self.touch_label.setStyleSheet(
+            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+        self._dro = None            # _DROPoller when connected
+        self._tool_xyz = None       # last good (x, y, z) mm
+        self._dro_rejects = 0       # consecutive implausible reads (re-sync guard)
+        self._dro_was_on = False    # restore the link after a probe run
+        self.level_table = QTableWidget(0, 3)
+        self.level_table.setHorizontalHeaderLabels(["X (mm)", "Y (mm)", "Z (mm)"])
+        self.level_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.level_table.verticalHeader().setVisible(False)
+        self.level_table.setMaximumHeight(220)
+
         # stock thickness (mm): drawn as the 3D slab, used for the dowel depth,
         # and (when auto-depth is on) the drill/cut-out depth.
         self.thickness_spin = QDoubleSpinBox()
@@ -146,12 +314,19 @@ class MainWindow(QMainWindow):
         _grid_row_l.addWidget(QLabel("pitch")); _grid_row_l.addWidget(self.grid_pitch_edit)
         _grid_row_l.addWidget(QLabel("pin")); _grid_row_l.addWidget(self.grid_pin_edit)
         self._grid_row.setEnabled(False)   # enabled only in grid mode
-        # fresh-mode: oversize the milled dowel holes for a slip fit if pins bind
-        self.fresh_clear_edit = QLineEdit(f"{0.0}")
-        self.fresh_clear_edit.setToolTip(
-            "Fresh dowels: mm added to each milled hole diameter for a slip fit "
-            "(0 = nominal). Bump if the rods bind during a test cut.")
-        self.fresh_clear_edit.editingFinished.connect(self._on_reg_changed)
+        # fresh-mode: oversize the milled dowel holes PER PIN (kerf differs by
+        # diameter — dialed in on the fit-test coupon: big +0.20, small +0.15).
+        from gerber2rml.doublesided import CLEAR_LARGE, CLEAR_SMALL
+        self.fresh_clear_large_edit = QLineEdit(f"{CLEAR_LARGE}")
+        self.fresh_clear_large_edit.setToolTip(
+            "Fresh dowels: mm added to the BIG (3.1 mm) hole. 0.20 seats the big "
+            "pin snug on this machine. Bump if it binds during a test cut.")
+        self.fresh_clear_large_edit.editingFinished.connect(self._on_reg_changed)
+        self.fresh_clear_small_edit = QLineEdit(f"{CLEAR_SMALL}")
+        self.fresh_clear_small_edit.setToolTip(
+            "Fresh dowels: mm added to the SMALL (1.9 mm) hole. 0.15 seats the "
+            "small pin snug — a touch tighter than the big one.")
+        self.fresh_clear_small_edit.editingFinished.connect(self._on_reg_changed)
         self.align_only_btn = QPushButton("Cut dowels only...")
         self.align_only_btn.setToolTip(
             "Export ONLY the dowel-hole G-code (no traces/drills/cutout). Use to "
@@ -161,8 +336,10 @@ class MainWindow(QMainWindow):
         self._fresh_row = QWidget()
         _fresh_row_l = QHBoxLayout(self._fresh_row)
         _fresh_row_l.setContentsMargins(0, 0, 0, 0)
-        _fresh_row_l.addWidget(QLabel("hole clearance"))
-        _fresh_row_l.addWidget(self.fresh_clear_edit)
+        _fresh_row_l.addWidget(QLabel("clr L"))
+        _fresh_row_l.addWidget(self.fresh_clear_large_edit)
+        _fresh_row_l.addWidget(QLabel("S"))
+        _fresh_row_l.addWidget(self.fresh_clear_small_edit)
         _fresh_row_l.addWidget(self.align_only_btn)
         self._fresh_row.setEnabled(False)   # enabled only in fresh mode
 
@@ -261,6 +438,16 @@ class MainWindow(QMainWindow):
         pl.addRow("", self.move_chk)
         adv.addWidget(place_group)
 
+        level_group = QGroupBox("Bed leveling")
+        _ll = QVBoxLayout(level_group); _ll.setContentsMargins(14, 16, 14, 12); _ll.setSpacing(8)
+        _ll.addWidget(self.level_chk)
+        _ll.addWidget(_row(self.level_nx_spin, self.level_ny_spin,
+                           self.level_grid_btn, self.level_export_btn, self.level_save_btn))
+        _ll.addWidget(_row(QLabel("port"), self.level_port_edit, self.level_probe_btn,
+                           self.level_show_chk, self.level_3d_btn, stretch_first=False))
+        _ll.addWidget(self.level_table)
+        adv.addWidget(level_group)
+
         ds_group = QGroupBox("Double-sided")
         _dl = QVBoxLayout(ds_group); _dl.setContentsMargins(14, 16, 14, 12); _dl.setSpacing(8)
         _dl.addWidget(self.double_sided_chk)
@@ -297,6 +484,7 @@ class MainWindow(QMainWindow):
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
         self.preview.on_move_delta = self._on_move_delta
+        self.preview.on_jog_to = self._on_jog_to
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(scroll)
@@ -305,7 +493,25 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([430, 1100])     # comfortable panel width, rest to preview
 
-        self.setCentralWidget(splitter)
+        # Machine bar across the top: live DRO readout + connect toggle.
+        machine_bar = QWidget()
+        machine_bar.setObjectName("machineBar")
+        _mb = QHBoxLayout(machine_bar)
+        _mb.setContentsMargins(8, 2, 8, 2)
+        _mb.addWidget(self.dro_label)
+        _mb.addWidget(self.touch_label)
+        _mb.addStretch(1)
+        _mb.addWidget(self.zero_btn)
+        _mb.addWidget(self.jog_chk)
+        _mb.addWidget(self.connect_btn)
+
+        central = QWidget()
+        _cv = QVBoxLayout(central)
+        _cv.setContentsMargins(0, 0, 0, 0)
+        _cv.setSpacing(0)
+        _cv.addWidget(machine_bar)
+        _cv.addWidget(splitter, 1)
+        self.setCentralWidget(central)
         self.statusBar().showMessage("Ready", 5000)
 
         # open with the first preset applied (FR-4 conservative) so the form
@@ -335,7 +541,7 @@ class MainWindow(QMainWindow):
 
     def _dowel_spec(self):
         """Build a DowelSpec from the registration controls."""
-        from gerber2rml.doublesided import DowelSpec
+        from gerber2rml.doublesided import DowelSpec, CLEAR_LARGE, CLEAR_SMALL
         mode = "grid" if self.reg_combo.currentIndex() == 1 else "fresh"
 
         def _f(edit, default):
@@ -347,7 +553,8 @@ class MainWindow(QMainWindow):
         placement = "leftright" if self.place_combo.currentIndex() == 1 else "topbottom"
         return DowelSpec(mode=mode, placement=placement, pitch_x=pitch, pitch_y=pitch,
                          grid_pin=_f(self.grid_pin_edit, 4.0),
-                         pin_clearance=_f(self.fresh_clear_edit, 0.0))
+                         clearance_large=_f(self.fresh_clear_large_edit, CLEAR_LARGE),
+                         clearance_small=_f(self.fresh_clear_small_edit, CLEAR_SMALL))
 
     def _double_sided_layout(self):
         """Design-frame layout for the PREVIEW (both layers registered, holes on
@@ -357,7 +564,7 @@ class MainWindow(QMainWindow):
         spec = self._dowel_spec()
         off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.pin_clearance, off)
+               spec.grid_pin, spec.clearance_large, spec.clearance_small, off)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off))
@@ -372,7 +579,7 @@ class MainWindow(QMainWindow):
         spec = self._dowel_spec()
         off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.pin_clearance, off)
+               spec.grid_pin, spec.clearance_large, spec.clearance_small, off)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off))
@@ -564,6 +771,12 @@ class MainWindow(QMainWindow):
     def export_to(self, out_dir):
         self._sync_state()
         if self.double_sided_chk.isChecked():
+            if self.level_chk.isChecked():
+                QMessageBox.information(
+                    self, "Leveling skipped",
+                    "Bed leveling isn't applied to double-sided jobs yet — the "
+                    "surface changes after the flip, so it would need a second "
+                    "probe pass. Exporting double-sided without leveling.")
             from gerber2rml.doublesided import build_double_sided
             return build_double_sided(
                 self.state.gerber_dir, out_dir, self.state.name,
@@ -571,7 +784,334 @@ class MainWindow(QMainWindow):
                 dowels=self._dowel_spec(), machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
                 board_thickness=self.thickness_spin.value())
-        return self.state.export(out_dir)
+        return self.state.export(out_dir, level=self._height_map())
+
+    # ---- bed leveling -----------------------------------------------------
+
+    def _level_bounds(self):
+        """Placed-board footprint to lay the probe grid over."""
+        if self.state.board is None:
+            return None
+        return self.state.board.outline.bounds
+
+    def _on_build_level_grid(self):
+        from gerber2rml.engine.leveling import probe_points
+        bounds = self._level_bounds()
+        if bounds is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        pts = probe_points(bounds, self.level_nx_spin.value(),
+                           self.level_ny_spin.value())
+        self.level_table.setRowCount(len(pts))
+        for r, (x, y) in enumerate(pts):
+            for c, v in ((0, x), (1, y)):
+                it = QTableWidgetItem(f"{v:.3f}")
+                it.setFlags(it.flags() & ~Qt.ItemIsEditable)   # X/Y read-only
+                self.level_table.setItem(r, c, it)
+            z = self.level_table.item(r, 2)
+            if z is None:
+                self.level_table.setItem(r, 2, QTableWidgetItem("0" if r == 0 else ""))
+        self.statusBar().showMessage(
+            f"{len(pts)} probe points — measure Z at each and fill the table", 8000)
+
+    def _table_points(self):
+        """All (x, y) in the table, and the (x, y, z) rows that have a Z filled in."""
+        xy, xyz = [], []
+        for r in range(self.level_table.rowCount()):
+            xi, yi = self.level_table.item(r, 0), self.level_table.item(r, 1)
+            if xi is None or yi is None:
+                continue
+            x, y = float(xi.text()), float(yi.text())
+            xy.append((x, y))
+            zi = self.level_table.item(r, 2)
+            ztxt = zi.text().strip() if zi else ""
+            if ztxt not in ("", "-"):
+                xyz.append((x, y, float(ztxt)))
+        return xy, xyz
+
+    def _on_export_probe_files(self):
+        if not self.level_table.rowCount():
+            self._on_build_level_grid()
+        xy, _xyz = self._table_points()
+        if not xy:
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        if not out:
+            return
+        from gerber2rml.engine.leveling import write_probe_files
+        written = write_probe_files(out, self.state.name or "board", xy)
+        self.statusBar().showMessage(
+            f"Wrote {len(written) - 1} probe files + checklist to {out}", 10000)
+
+    def _on_save_level_grid(self):
+        """Write the probe grid (X, Y, dz) to a CSV so the height map is recorded."""
+        if not self.level_table.rowCount():
+            QMessageBox.warning(self, "Nothing to save", "No probe grid yet.")
+            return
+        from pathlib import Path
+        default = f"{self.state.name or 'board'}_heightmap.csv"
+        path, _ = QFileDialog.getSaveFileName(self, "Save height map", default,
+                                              "CSV (*.csv)")
+        if not path:
+            return
+        lines = ["x_mm,y_mm,dz_mm"]
+        for r in range(self.level_table.rowCount()):
+            vals = []
+            for c in range(3):
+                it = self.level_table.item(r, c)
+                vals.append(it.text().strip() if it else "")
+            lines.append(",".join(vals))
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.statusBar().showMessage(f"Saved height map to {path}", 8000)
+
+    # ---- live machine link (DRO + tool overlay) -------------------------
+
+    _DRO_OFF = "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+    _DRO_ON = "color:#39ff14; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+
+    def _on_connect_toggled(self, on):
+        if on:
+            self._start_dro()
+        else:
+            self._stop_dro()
+
+    def _start_dro(self):
+        port = self.level_port_edit.text().strip() or "COM5"
+        self._dro = _DROPoller(port)
+        self._dro.position.connect(self._on_position)
+        self._dro.touch_done.connect(self._on_touch_done)
+        self._dro.failed.connect(self._on_dro_failed)
+        self._dro.start()
+        self.connect_btn.setText("Disconnect")
+        self.jog_chk.setEnabled(True)
+        self.zero_btn.setEnabled(True)
+        self.dro_label.setText(f"●  connecting on {port}…")
+        self.dro_label.setStyleSheet(self._DRO_ON)
+
+    def _stop_dro(self):
+        self._pause_dro()
+        self.preview.set_tool_position(None, None)
+        self.jog_chk.setChecked(False)
+        self.jog_chk.setEnabled(False)
+        self.preview.set_jogging(False)
+        self.zero_btn.setEnabled(False)
+        self._z_zero = None
+        if self.connect_btn.isChecked():
+            self.connect_btn.blockSignals(True)
+            self.connect_btn.setChecked(False)
+            self.connect_btn.blockSignals(False)
+        self.connect_btn.setText("Connect")
+        self.dro_label.setText("○  machine offline")
+        self.dro_label.setStyleSheet(self._DRO_OFF)
+        self.touch_label.setText("bit ○")
+        self.touch_label.setStyleSheet(self._DRO_OFF)
+
+    def _pause_dro(self):
+        """Stop the poller and free the port (for a probe run). Returns whether it
+        was running, so it can be resumed."""
+        if self._dro is None:
+            return False
+        try:
+            self._dro.position.disconnect(self._on_position)
+        except Exception:
+            pass
+        self._dro.stop()
+        self._dro = None
+        self._tool_xyz = None
+        return True
+
+    def _on_dro_failed(self, msg):
+        self._stop_dro()
+        QMessageBox.warning(self, "Machine link failed", msg)
+
+    def _on_jog_mode_toggled(self, on):
+        self.preview.set_jogging(on)
+        if on:                                   # jog mode is exclusive with the others
+            self.select_chk.setChecked(False)
+            self.move_chk.setChecked(False)
+            self.statusBar().showMessage(
+                "Click a point on the preview to jog the tool there", 6000)
+
+    def _on_jog_to(self, x, y):
+        if self._dro is None:
+            return
+        self._dro.request_move(round(x * 1000), round(y * 1000))
+        self.statusBar().showMessage(f"Jogging to X {x:.1f}  Y {y:.1f} mm", 4000)
+
+    _TOUCH_ON = "color:#ff3b3b; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+    _TOUCH_OFF = "color:#39ff14; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+
+    def _on_position(self, x, y, z, touching):
+        # reject implausible jumps (garbage SPI reads) but re-sync after a few in
+        # a row, so a bad first baseline doesn't freeze the readout.
+        if self._tool_xyz is not None:
+            px, py, pz = self._tool_xyz
+            if abs(x - px) > 40 or abs(y - py) > 40 or abs(z - pz) > 40:
+                self._dro_rejects += 1
+                if self._dro_rejects < 3:
+                    return
+        self._dro_rejects = 0
+        self._tool_xyz = (x, y, z)
+        self._touching = touching
+        txt = f"●  X {x:8.2f}   Y {y:8.2f}   Z {z:8.2f}   mm"
+        if self._z_zero is not None:
+            txt += f"   surf {z - self._z_zero:+.2f}"     # depth below the zeroed surface
+        self.dro_label.setText(txt)
+        self.dro_label.setStyleSheet(self._DRO_ON)
+        self.touch_label.setText("bit ● TOUCHING" if touching else "bit ○ clear")
+        self.touch_label.setStyleSheet(self._TOUCH_ON if touching else self._TOUCH_OFF)
+        self.preview.set_tool_position(x, y, touching)
+
+    def _on_probe_z(self):
+        """Probe down from the current XY until the bit touches, then zero Z there."""
+        if self._dro is None:
+            QMessageBox.warning(self, "Not connected", "Connect the machine first.")
+            return
+        if self._touching:
+            QMessageBox.warning(self, "Already touching",
+                                "The bit is already touching — lift it a few mm first.")
+            return
+        self.zero_btn.setEnabled(False)
+        self.statusBar().showMessage("Probing down to the surface…")
+        self._dro.request_touchoff()
+
+    def _on_touch_done(self, ok, x, y, z):
+        self.zero_btn.setEnabled(self._dro is not None)
+        if not ok:
+            QMessageBox.warning(
+                self, "No contact",
+                "Descended the full range without contact. Check the touch clips "
+                "and start the bit closer to the surface.")
+            self.statusBar().showMessage("Touch-off: no contact", 6000)
+            return
+        self._z_zero = z
+        self.statusBar().showMessage(f"Surface found — Z zeroed (machine Z {z:.2f} mm)", 8000)
+        self._on_position(x, y, z, True)        # bit is now resting on the surface
+
+    def closeEvent(self, e):
+        if self._dro is not None:
+            self._dro.stop()
+        super().closeEvent(e)
+
+    def _on_probe_spi(self):
+        """Auto-probe the grid over the SPI link and fill the Z column."""
+        if not self.level_table.rowCount():
+            self._on_build_level_grid()
+        xy, _xyz = self._table_points()
+        if len(xy) < 3:
+            QMessageBox.warning(self, "No grid", "Build a probe grid first.")
+            return
+        x0, y0 = xy[0]                          # datum = first grid point
+        # datum-local offsets in microns; ids are table row indices
+        points = [(i, round((x - x0) * 1000), round((y - y0) * 1000))
+                  for i, (x, y) in enumerate(xy)]
+        port = self.level_port_edit.text().strip() or "COM5"
+        if QMessageBox.question(
+                self, "Probe over SPI",
+                f"Jog the tool ~2-3 mm above grid point 1 "
+                f"(X{x0:.1f} Y{y0:.1f}), spindle OFF, prober sketch running, "
+                f"Serial Monitor CLOSED.\n\nProbe {len(points)} points on {port}?"
+                ) != QMessageBox.Yes:
+            return
+        self._dro_was_on = self._pause_dro()   # free the port for the probe run
+        self._probe_z0 = None
+        self.level_probe_btn.setEnabled(False)
+        self.statusBar().showMessage(f"Probing {len(points)} points on {port}...")
+        self._probe_worker = _ProbeWorker(port, points)
+        self._probe_worker.result.connect(self._on_probe_result)
+        self._probe_worker.done.connect(self._on_probe_done)
+        self._probe_worker.start()
+
+    def _on_probe_result(self, d):
+        """One point came back: fill its Z cell with the deviation (mm)."""
+        row = d["id"]
+        if d.get("z") is None:
+            self.level_table.setItem(row, 2, QTableWidgetItem("ERR"))
+        else:
+            if self._probe_z0 is None:
+                self._probe_z0 = d["z"]         # first good point = reference (dz=0)
+            dz = (d["z"] - self._probe_z0) / 1000.0
+            self.level_table.setItem(row, 2, QTableWidgetItem(f"{dz:.4f}"))
+        self.statusBar().showMessage(f"Probed point {row + 1}/{self.level_table.rowCount()}")
+
+    def _on_probe_done(self, err):
+        self.level_probe_btn.setEnabled(True)
+        if err:
+            QMessageBox.critical(self, "Probe failed", err)
+            self.statusBar().showMessage("Probe failed", 8000)
+        else:
+            self.level_chk.setChecked(True)     # leveling is ready to apply
+            self.level_show_chk.setChecked(True)  # reveal the surface heatmap
+            self._update_level_overlay()
+            self.statusBar().showMessage("Probe complete — Z column filled", 10000)
+        if self._dro_was_on:                    # restore the live link after probing
+            self._dro_was_on = False
+            self._start_dro()
+
+    def _level_heightmap_preview(self):
+        """HeightMap from the table for the OVERLAY (ignores the apply checkbox);
+        None if fewer than 3 points are measured."""
+        _xy, xyz = self._table_points()
+        if len(xyz) < 3:
+            return None
+        from gerber2rml.engine.leveling import HeightMap
+        return HeightMap.from_points(xyz, self.level_nx_spin.value(),
+                                     self.level_ny_spin.value())
+
+    def _update_level_overlay(self):
+        """Sample the measured surface over the board and push it to the preview."""
+        if not self.level_show_chk.isChecked() or self.state.board is None:
+            self.preview.set_level_overlay(None)
+            return
+        hmap = self._level_heightmap_preview()
+        _xy, xyz = self._table_points()
+        if hmap is None:
+            self.preview.set_level_overlay(None)
+            return
+        import numpy as np
+        x0, y0, x1, y1 = self.state.board.outline.bounds
+        xs = np.linspace(x0, x1, 48); ys = np.linspace(y0, y1, 48)
+        X, Y = np.meshgrid(xs, ys)
+        Z = [[hmap(float(x), float(y)) for x in xs] for y in ys]
+        self.preview.set_level_overlay(X, Y, Z, xyz)
+
+    def _on_bed_3d(self):
+        """Open the probed surface as a rotatable 3D mesh (OctoPrint-style)."""
+        hmap = self._level_heightmap_preview()
+        if hmap is None or self.state.board is None:
+            QMessageBox.warning(self, "No height map",
+                                "Probe or enter at least 3 points first.")
+            return
+        import numpy as np
+        x0, y0, x1, y1 = self.state.board.outline.bounds
+        xs = np.linspace(x0, x1, 40)
+        ys = np.linspace(y0, y1, 40)
+        Z = np.array([[hmap(float(x), float(y)) for y in ys] for x in xs])  # (nx, ny)
+        _xy, xyz = self._table_points()
+        try:
+            from gerber2rml.gui.bedviz import BedVisualizerWindow
+            self._bedviz = BedVisualizerWindow(
+                xs, ys, Z, xyz, title=f"{self.state.name or 'board'} - bed", parent=self)
+            self._bedviz.show()
+        except Exception as e:
+            QMessageBox.critical(self, "3D view failed",
+                                 f"The 3D bed view needs pyqtgraph + PyOpenGL.\n\n{e}")
+
+    def _height_map(self):
+        """Build a HeightMap from the filled-in table, or None if leveling is off
+        or fewer than 3 points are measured."""
+        if not self.level_chk.isChecked():
+            return None
+        _xy, xyz = self._table_points()
+        if len(xyz) < 3:
+            QMessageBox.warning(
+                self, "Not enough points",
+                "Bed leveling needs at least 3 measured Z values. Exporting "
+                "without leveling.")
+            return None
+        from gerber2rml.engine.leveling import HeightMap
+        return HeightMap.from_points(xyz, self.level_nx_spin.value(),
+                                     self.level_ny_spin.value())
 
     def export_image_to(self, out_dir):
         from pathlib import Path
@@ -625,7 +1165,8 @@ class MainWindow(QMainWindow):
             path = build_align_only(
                 self.state.gerber_dir, out, self.state.name,
                 drill=self.state.drill, dowels=self._dowel_spec(),
-                machine=self.state.machine)
+                machine=self.state.machine,
+                board_thickness=self.thickness_spin.value())
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
             return

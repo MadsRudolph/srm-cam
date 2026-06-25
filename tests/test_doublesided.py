@@ -1,8 +1,13 @@
 from pathlib import Path
 from gerber2rml.doublesided import (
     layout_double_sided, preview_layout_double_sided, reflect_x, reflect_holes,
-    DowelSpec, PIN_LARGE, PIN_SMALL,
+    DowelSpec, PIN_LARGE, PIN_SMALL, CLEAR_LARGE, CLEAR_SMALL,
 )
+
+# align_holes carry the milled-HOLE diameter = pin + default per-pin clearance
+# (the SRM-20 kerf differs by diameter; see CLEAR_LARGE / CLEAR_SMALL).
+HOLE_LARGE = PIN_LARGE + CLEAR_LARGE
+HOLE_SMALL = PIN_SMALL + CLEAR_SMALL
 
 FIXT = Path(__file__).parent / "fixtures" / "mosfet_test"
 
@@ -24,7 +29,7 @@ def test_fresh_pins_on_axis_above_and_below_keyed_by_diameter():
     _x0, y0, _x1, y1 = lay.outline.bounds
     assert by < y0 and ty > y1                 # one below the board, one above
     # keyed: large below, small above, and the two differ
-    assert abs(bd - PIN_LARGE) < 1e-6 and abs(td - PIN_SMALL) < 1e-6
+    assert abs(bd - HOLE_LARGE) < 1e-6 and abs(td - HOLE_SMALL) < 1e-6
     assert abs(bd - td) > 0.5
     # the pins hug the edges (offset ~ edge_offset), NOT 50 mm out in bare bed
     assert (y0 - by) < 12.0 and (ty - y1) < 12.0
@@ -57,7 +62,7 @@ def test_leftright_pins_on_horizontal_axis_beside_the_board():
     x0, _y0, x1, _y1 = lay.outline.bounds
     assert lx < x0 and rx > x1                  # one left of the board, one right
     # keyed: large left, small right, and the two differ
-    assert abs(ld - PIN_LARGE) < 1e-6 and abs(rd - PIN_SMALL) < 1e-6
+    assert abs(ld - HOLE_LARGE) < 1e-6 and abs(rd - HOLE_SMALL) < 1e-6
     assert abs(ld - rd) > 0.5
 
 
@@ -128,7 +133,7 @@ def test_build_double_sided_writes_jobs(tmp_path):
     for n in ("ds_align.rml", "ds_bottom_traces.rml", "ds_top_traces.rml",
               "ds_cutout.rml"):
         assert n in names
-    assert any(n.startswith("ds_bottom_drill_") and n.endswith("mm.rml") for n in names)
+    assert "ds_bottom_drill.rml" in names      # single-bit default: one combined file
     for p in written:
         if p.suffix == ".rml":
             t = p.read_text()
@@ -168,7 +173,7 @@ def test_align_drills_deeper_than_board_holes(tmp_path):
     from gerber2rml.config import DrillJob
     written = build_double_sided(FIXT, tmp_path, name="d", machine="Roland SRM-20",
                                  drill=DrillJob(), align_depth=6.0)
-    bottom_drills = [p for p in written if p.name.startswith("d_bottom_drill_")]
+    bottom_drills = [p for p in written if p.name.startswith("d_bottom_drill")]
     deepest_board = min(_deepest_z(p) for p in bottom_drills)
     assert _deepest_z(tmp_path / "d_align.rml") < deepest_board
 
@@ -212,7 +217,7 @@ def test_align_only_writes_just_the_dowel_file(tmp_path):
     """build_align_only emits ONLY the dowel-hole job, byte-identical to the
     _align file a full build would produce (so a re-cut lands on the holes)."""
     from gerber2rml.doublesided import build_align_only, build_double_sided
-    spec = DowelSpec(pin_clearance=0.2)
+    spec = DowelSpec(clearance_large=0.2, clearance_small=0.2)
     only = build_align_only(FIXT, tmp_path / "only", "b", dowels=spec,
                             machine="Roland SRM-20 (G-code)")
     assert [p.name for p in (tmp_path / "only").iterdir()] == ["b_align.nc"]
@@ -223,10 +228,12 @@ def test_align_only_writes_just_the_dowel_file(tmp_path):
 
 
 def test_pin_clearance_widens_holes_without_moving_centres():
-    """Bumping pin_clearance grows the milled hole but leaves the dowel centre
+    """Bumping a clearance grows the milled hole but leaves the dowel centre
     (and the whole placement) put, so a re-cut registers on the existing hole."""
-    base = layout_double_sided(FIXT, dowels=DowelSpec(pin_clearance=0.0))
-    wide = layout_double_sided(FIXT, dowels=DowelSpec(pin_clearance=0.4))
+    base = layout_double_sided(
+        FIXT, dowels=DowelSpec(clearance_large=0.0, clearance_small=0.0))
+    wide = layout_double_sided(
+        FIXT, dowels=DowelSpec(clearance_large=0.4, clearance_small=0.4))
     for (bx, by, bd), (wx, wy, wd) in zip(base.align_holes, wide.align_holes):
         assert abs(bx - wx) < 1e-9 and abs(by - wy) < 1e-9   # centre unchanged
         assert abs(wd - bd - 0.4) < 1e-9                     # hole grew by clearance

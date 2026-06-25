@@ -22,6 +22,160 @@ def test_load_and_preview_and_export(tmp_path):
     written = w.export_to(tmp_path)
     assert any(p.suffix == ".nc" for p in written)   # GUI defaults to G-code now
 
+def test_bed_leveling_grid_and_warped_export(tmp_path):
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    # build a 3x3 probe grid over the placed board
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)
+    w._on_build_level_grid()
+    assert w.level_table.rowCount() == 9
+    # fill measured Z = a tilt in X (so the warp is non-trivial and checkable)
+    for r in range(9):
+        x = float(w.level_table.item(r, 0).text())
+        w.level_table.setItem(r, 2, QTableWidgetItem(f"{0.01 * x:.4f}"))
+    w.level_chk.setChecked(True)
+    hmap = w._height_map()
+    assert hmap is not None and abs(hmap(100, 0) - 1.0) < 1e-6   # 0.01 * 100
+
+    plain = tmp_path / "plain"; warped = tmp_path / "warped"
+    w.level_chk.setChecked(False); w.export_to(plain)
+    w.level_chk.setChecked(True);  w.export_to(warped)
+    pt = (plain / "board_traces.nc").read_text()
+    wt = (warped / "board_traces.nc").read_text()
+    assert pt != wt                                   # leveling changed the Z
+
+def test_probe_results_fill_table_as_deviations():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)
+    w._on_build_level_grid()
+    w._probe_z0 = None
+    # simulate the worker streaming touch heights (microns): a tilt in id order
+    for i in range(9):
+        w._on_probe_result({"id": i, "x": 0, "y": 0, "z": -56000 - i * 10})
+    assert w.level_table.item(0, 2).text() == "0.0000"          # reference point
+    assert w.level_table.item(1, 2).text() == "-0.0100"         # 10 um lower
+    assert w.level_table.item(8, 2).text() == "-0.0800"
+    # and that Z column now feeds a usable height map
+    w.level_chk.setChecked(True)
+    assert w._height_map() is not None
+
+
+def test_height_map_overlay_toggles():
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3); w._on_build_level_grid()
+    for r in range(9):                       # a tilt so the map is non-trivial
+        x = float(w.level_table.item(r, 0).text())
+        w.level_table.setItem(r, 2, QTableWidgetItem(f"{0.001 * x:.4f}"))
+    w.level_show_chk.setChecked(True)
+    ov = w.preview._level_overlay
+    assert ov is not None and len(ov[3]) == 9      # X,Y,Z meshes + 9 points
+    w.level_show_chk.setChecked(False)
+    assert w.preview._level_overlay is None
+
+
+def test_save_level_grid_csv(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QTableWidgetItem, QFileDialog
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.level_nx_spin.setValue(2); w.level_ny_spin.setValue(2); w._on_build_level_grid()
+    for r in range(4):
+        w.level_table.setItem(r, 2, QTableWidgetItem(f"{0.01 * r:.4f}"))
+    out = tmp_path / "hm.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    w._on_save_level_grid()
+    text = out.read_text()
+    assert text.splitlines()[0] == "x_mm,y_mm,dz_mm"
+    assert len(text.strip().splitlines()) == 5            # header + 4 points
+
+
+def test_probe_error_point_marked():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._on_build_level_grid()
+    w._probe_z0 = None
+    w._on_probe_result({"id": 0, "x": 0, "y": 0, "z": -56000})
+    w._on_probe_result({"id": 1, "x": 0, "y": 0, "z": None, "error": "E 1 NOTOUCH"})
+    assert w.level_table.item(1, 2).text() == "ERR"
+
+
+def test_click_to_jog_sends_machine_move():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    assert not w.jog_chk.isEnabled()             # disabled until connected
+
+    class FakeDRO:
+        def __init__(self): self.moved = None
+        def request_move(self, x, y): self.moved = (x, y)
+    w._dro = FakeDRO()
+    w._on_jog_to(120.0, 26.0)                     # a click at (120, 26) mm
+    assert w._dro.moved == (120000, 26000)        # converted to microns
+
+    # the canvas reports clicks only in jog mode
+    seen = {}
+    w.preview.on_jog_to = lambda x, y: seen.setdefault("xy", (x, y))
+    w.preview.set_jogging(True)
+    ev = type("E", (), {"button": 1, "inaxes": w.preview.ax, "xdata": 50.0, "ydata": 40.0})
+    w.preview._on_press(ev())
+    assert seen["xy"] == (50.0, 40.0)
+
+
+def test_probe_z_requests_touchoff_and_zeros_on_contact():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+
+    class FakeDRO:
+        def __init__(self): self.touchoff = False
+        def request_touchoff(self): self.touchoff = True
+    w._dro = FakeDRO()
+    w._touching = False
+    w._on_probe_z()                              # not touching -> requests a touch-off
+    assert w._dro.touchoff is True
+
+    w._on_touch_done(True, 50.0, 40.0, -56.29)   # surface found
+    assert abs(w._z_zero - (-56.29)) < 1e-9
+    assert "surf" in w.dro_label.text()
+    # now 0.15 mm deeper reads as -0.15 below the surface
+    w._on_position(50.0, 40.0, -56.44, True)
+    assert "surf -0.15" in w.dro_label.text()
+
+
+def test_probe_z_no_contact_warns(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    w = MainWindow(); w.load_folder(str(FIXT))
+    seen = {}
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: seen.setdefault("w", True)))
+    w._on_touch_done(False, 0.0, 0.0, 0.0)
+    assert seen.get("w") and w._z_zero is None
+
+
+def test_dro_updates_banner_and_tool_marker():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w._on_position(120.0, 26.0, -54.26, False)
+    assert "120.00" in w.dro_label.text() and "-54.26" in w.dro_label.text()
+    assert w.preview._tool_pos == (120.0, 26.0)
+    # garbage spike is rejected (keeps last), then re-syncs after a few in a row
+    w._on_position(0.0, 0.0, 0.0, False)
+    assert w._tool_xyz[:2] == (120.0, 26.0)
+    w._on_position(0.0, 0.0, 0.0, False); w._on_position(0.0, 0.0, 0.0, False)
+    assert w._tool_xyz[:2] == (0.0, 0.0)
+
+
+def test_touch_indicator_reflects_contact():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w._on_position(50.0, 40.0, -55.0, True)
+    assert "TOUCHING" in w.touch_label.text() and w.preview._tool_touch is True
+    w._on_position(50.0, 40.0, -50.0, False)
+    assert "clear" in w.touch_label.text() and w.preview._tool_touch is False
+
+
 def test_mirror_toggle_reloads_board():
     w = MainWindow()
     w.load_folder(str(FIXT))
@@ -222,7 +376,8 @@ def test_drill_tab_shows_diameter_summary():
     w.tabs.setCurrentIndex(1)             # drill tab
     w.generate_preview()
     msg = w.statusBar().currentMessage()
-    assert "0.8mm" in msg and "files" in msg   # lists diameters + export plan
+    # single-bit is the default now -> one file, diameters still listed
+    assert "0.8mm" in msg and "1 file" in msg
 
 def test_drill_summary_single_bit_mode():
     w = MainWindow()

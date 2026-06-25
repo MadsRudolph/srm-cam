@@ -52,6 +52,17 @@ class PreviewCanvas(QWidget):
         self._bed = None
         self._bed_fits = True
 
+        # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
+        # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
+        # can eyeball the tilt/warp before cutting. None = hidden.
+        self._level_overlay = None
+
+        # Live tool position (machine mm) for the DRO overlay — a crosshair+ring
+        # showing where the spindle is over the bed. None = hidden.
+        self._tool_pos = None
+        self._tool_touch = False
+        self._tool_artists = []
+
         # Rework box-selection state. When selecting, a left-drag draws a
         # rectangle that persists across redraws/scrubbing; the chosen bbox is
         # read back by the app to clip a second-pass program.
@@ -69,6 +80,11 @@ class PreviewCanvas(QWidget):
         self._move_bbox0 = None
         self._move_ghost = None
         self.on_move_delta = None         # callback(dx, dy) set by the app
+
+        # Click-to-jog: in this mode a left-click reports the bed (x, y) so the
+        # app can drive the machine there. Mutually exclusive with select/move.
+        self._jogging = False
+        self.on_jog_to = None             # callback(x, y) set by the app
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
@@ -101,6 +117,63 @@ class PreviewCanvas(QWidget):
         """Set the machine work area to ``(width, height)`` mm (origin at the
         front-left corner), or ``None`` to hide it."""
         self._bed = size
+
+    def set_level_overlay(self, X=None, Y=None, Z=None, points=None):
+        """Show (or clear, with no args) the height-map heatmap. ``X``/``Y``/``Z``
+        are 2D meshes of surface deviation (mm); ``points`` are the probed
+        ``(x, y, dz)`` in mm. Redraws immediately."""
+        self._level_overlay = (X, Y, Z, points) if X is not None else None
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_tool_position(self, x, y, touch=False):
+        """Show (or clear, with ``None``) the live tool marker at machine ``(x, y)``
+        mm; ``touch`` turns it red when the bit is contacting the plate.
+        Lightweight: updates just the marker, no full redraw."""
+        self._tool_pos = (x, y) if x is not None else None
+        self._tool_touch = bool(touch)
+        self._redraw_tool_only()
+
+    def _add_tool_marker(self):
+        if not self._tool_pos:
+            return
+        x, y = self._tool_pos
+        c = "#ff3b3b" if self._tool_touch else "#39ff14"   # red on contact, else green
+        self._tool_artists = [
+            self.ax.axhline(y, color=c, lw=0.5, alpha=0.4, zorder=15),
+            self.ax.axvline(x, color=c, lw=0.5, alpha=0.4, zorder=15),
+            self.ax.scatter([x], [y], s=70, facecolors="none", edgecolors=c,
+                            linewidths=1.5, zorder=16),
+            self.ax.scatter([x], [y], s=8, c=c, zorder=16),
+        ]
+
+    def _redraw_tool_only(self):
+        for a in self._tool_artists:
+            try:
+                a.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        self._tool_artists = []
+        self._add_tool_marker()
+        self.canvas.draw_idle()
+
+    def _draw_level_overlay(self):
+        X, Y, Z, points = self._level_overlay
+        zmax = max(abs(min(min(r) for r in Z)), abs(max(max(r) for r in Z)), 1e-4)
+        self.ax.pcolormesh(X, Y, Z, cmap="coolwarm", alpha=0.55, zorder=0,
+                           shading="auto", vmin=-zmax, vmax=zmax)
+        if points:
+            self.ax.scatter([p[0] for p in points], [p[1] for p in points],
+                            s=18, facecolors="none", edgecolors="#1e1e1e", zorder=3)
+            for (x, y, dz) in points:           # label each point in microns
+                self.ax.annotate(f"{dz * 1000:+.0f}", (x, y), color="#1e1e1e",
+                                 fontsize=7, ha="center", va="bottom", zorder=3)
+            lo = min(p[2] for p in points) * 1000.0
+            hi = max(p[2] for p in points) * 1000.0
+            self.ax.text(0.98, 0.98, f"surface {lo:+.0f}..{hi:+.0f} um",
+                         transform=self.ax.transAxes, va="top", ha="right",
+                         fontsize=9, color="#1e1e1e", zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#88bbff",
+                                   edgecolor="none", alpha=0.95))
 
     def _design_bounds(self):
         """(minx, miny, maxx, maxy) of all toolpath/hole/pin geometry, or None."""
@@ -162,6 +235,9 @@ class PreviewCanvas(QWidget):
                                         edgecolor=bed_color, linewidth=1.5, zorder=1))
             self.ax.scatter([0], [0], s=40, c=bed_color, marker="s", zorder=2)  # home
 
+        if self._level_overlay is not None:
+            self._draw_level_overlay()
+
         c_end = int(len(self._full_cuts) * fraction)
         r_end = int(len(self._full_rapids) * fraction)
         h_end = int(len(self._full_holes) * fraction)
@@ -207,6 +283,8 @@ class PreviewCanvas(QWidget):
         # picked area stays visible while scrubbing or regenerating the preview.
         self._rect_artist = None
         self._add_selection_patch()
+        self._tool_artists = []          # ax.clear() dropped them; re-add live marker
+        self._add_tool_marker()
         if self._frame_label:
             self.ax.text(0.02, 0.98, self._frame_label, transform=self.ax.transAxes,
                          va="top", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
@@ -230,6 +308,11 @@ class PreviewCanvas(QWidget):
         """Enable/disable move-on-bed mode (left-drag translates the design)."""
         self._moving = bool(on)
         self.canvas.setCursor(Qt.SizeAllCursor if on else Qt.ArrowCursor)
+
+    def set_jogging(self, on):
+        """Enable/disable click-to-jog mode (a left-click reports the bed point)."""
+        self._jogging = bool(on)
+        self.canvas.setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
 
     def _draw_move_ghost(self, dx, dy):
         self._clear_move_ghost()
@@ -285,7 +368,10 @@ class PreviewCanvas(QWidget):
     def _on_press(self, event):
         if event.button != 1 or event.inaxes != self.ax:
             return
-        if self._selecting:
+        if self._jogging:
+            if self.on_jog_to and event.xdata is not None and event.ydata is not None:
+                self.on_jog_to(event.xdata, event.ydata)
+        elif self._selecting:
             self._drag_start = (event.xdata, event.ydata)
         elif self._moving:
             self._move_start = (event.xdata, event.ydata)
