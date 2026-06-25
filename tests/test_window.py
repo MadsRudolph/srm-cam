@@ -9,6 +9,23 @@ from gerber2rml.gui.app import MainWindow
 FIXT = Path(__file__).parent / "fixtures" / "mosfet_test"
 _app = QApplication.instance() or QApplication([])
 
+def test_stylesheet_parses_without_warning():
+    # Qt discards the WHOLE stylesheet on a parse error (and logs "Could not
+    # parse application stylesheet"), so guard against malformed QSS slipping in.
+    from PySide6.QtCore import qInstallMessageHandler
+    from PySide6.QtWidgets import QCheckBox, QPushButton
+    from gerber2rml.gui import app
+    msgs = []
+    qInstallMessageHandler(lambda mode, ctx, m: msgs.append(m))
+    try:
+        _app.setStyleSheet(app._STYLESHEET)
+        for W in (QCheckBox, QPushButton):
+            w = W("x"); w.ensurePolished(); w.show(); _app.processEvents()
+    finally:
+        qInstallMessageHandler(None)
+    assert not [m for m in msgs if "parse" in m.lower() and "stylesheet" in m.lower()]
+
+
 def test_window_builds():
     w = MainWindow()
     assert w.machine_combo.count() >= 1          # SRM-20 present
@@ -171,6 +188,133 @@ def test_arrow_jog_without_connection_is_safe():
     w = MainWindow(); w.load_folder(str(FIXT))
     w._dro = None
     w._on_jog_step(1.0, 0.0)                       # no machine -> hint only, no crash
+
+
+def test_rotate_button_cycles_and_reorients_board():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    b0 = w.state.board.outline.bounds
+    assert w._rotation == 0 and w.rotate_lbl.text() == "0°"
+
+    w._on_rotate()                                 # 90
+    assert w._rotation == 90 and "90" in w.rotate_lbl.text()
+    assert w.state.rotate == 90
+    b1 = w.state.board.outline.bounds
+    # rotation reorients the real geometry: width<->height swap, still positive
+    assert abs((b0[2] - b0[0]) - (b1[3] - b1[1])) < 1e-6
+    assert b1[0] >= -1e-6 and b1[1] >= -1e-6
+
+    for _ in range(3):                             # 180, 270, back to 0
+        w._on_rotate()
+    assert w._rotation == 0 and w.state.rotate == 0
+
+
+def test_double_sided_disables_and_resets_rotation():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w._on_rotate()                                 # rotate to 90 first
+    assert w._rotation == 90
+    w.double_sided_chk.setChecked(True)            # turning on DS resets + disables
+    assert w._rotation == 0 and w.state.rotate == 0
+    assert not w.rotate_btn.isEnabled()
+    w.double_sided_chk.setChecked(False)
+    assert w.rotate_btn.isEnabled()
+
+
+def test_ruler_snaps_to_board_geometry_and_is_exclusive():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    # snap targets were pushed to the canvas
+    assert w.preview._snap_pts and w.preview._snap_segs
+
+    # enabling the ruler turns off the other drag modes
+    w.move_chk.setChecked(True)
+    w.measure_chk.setChecked(True)
+    assert w.preview._measuring and not w.move_chk.isChecked()
+
+    # a press near a real corner snaps the start point onto it
+    corner = w.preview._snap_pts[0]
+    near = type("E", (), {"button": 1, "inaxes": w.preview.ax,
+                          "xdata": corner[0] + 0.05, "ydata": corner[1] + 0.05})
+    w.preview._on_press(near())
+    sx, sy = w.preview._measure_start
+    assert abs(sx - corner[0]) < 1e-6 and abs(sy - corner[1]) < 1e-6
+
+    # leaving ruler mode clears the drawn line
+    w.measure_chk.setChecked(False)
+    assert w.preview._measure_line is None
+
+
+def test_emergency_stop_aborts_workers_and_disconnects():
+    from gerber2rml.gui.app import _ProbeWorker, _DROPoller
+
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    assert w.stop_btn.isEnabled()                 # STOP is always available
+
+    # fake an in-progress grid probe + live link, then hit STOP
+    class FakePW:
+        def __init__(self): self.aborted = False
+        def isRunning(self): return True
+        def abort(self): self.aborted = True
+    class FakeDRO:
+        def __init__(self): self.aborted = False
+        def request_abort(self): self.aborted = True
+        def stop(self): pass
+        position = type("S", (), {"disconnect": lambda *a: None})()
+    w._probe_worker = FakePW()
+    w._dro = FakeDRO()
+    dro = w._dro
+    w._on_emergency_stop()
+    assert w._probe_worker.aborted and dro.aborted   # both told to lift + stop
+    assert w._dro is None and not w._dro_was_on       # link torn down, no auto-resume
+
+    # the worker classes expose the abort hooks the stop relies on
+    pw = _ProbeWorker("X", []); pw.abort(); assert pw._abort is True
+    d = _DROPoller("X"); d.request_abort(); assert d._abort is True
+
+
+def test_clear_level_wipes_z_keeps_grid():
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)
+    w._on_build_level_grid()
+    w.level_table.setItem(0, 2, QTableWidgetItem("-0.05"))
+    w.level_chk.setChecked(True); w.level_show_chk.setChecked(True)
+    w._on_clear_level()
+    zs = [w.level_table.item(r, 2).text() for r in range(w.level_table.rowCount())]
+    assert all(z == "" for z in zs)               # Z column wiped
+    assert w.level_table.item(0, 0) is not None    # X/Y grid kept
+    assert not w.level_chk.isChecked() and not w.level_show_chk.isChecked()
+
+
+def test_probe_grid_lays_over_displayed_outline_double_sided():
+    # the grid must follow the outline that's actually shown — for double-sided
+    # that's the registered layout, not the single-sided state.board frame.
+    w = MainWindow(); w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True); w.generate_preview()
+    bounds = w._level_bounds()
+    lay = w._double_sided_layout().outline.bounds
+    assert tuple(round(v, 3) for v in bounds) == tuple(round(v, 3) for v in lay)
+    w._on_build_level_grid()
+    x0, y0, x1, y1 = lay
+    xy, _ = w._table_points()
+    assert xy and all(x0 <= x <= x1 and y0 <= y <= y1 for (x, y) in xy)  # all on the board
+
+
+def test_probe_grid_overlay_toggles_on_preview():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)
+    w._on_build_level_grid()                       # build -> auto-shows the grid
+    assert w.level_gridshow_chk.isChecked()
+    assert len(w.preview._probe_grid) == 9
+    w.preview._draw_fraction(1.0)                  # redraw keeps it (no error)
+    assert len(w.preview._probe_grid) == 9
+    w.level_gridshow_chk.setChecked(False)         # toggle off clears it
+    assert w.preview._probe_grid is None
+
+
+def test_preview_status_shows_run_estimate():
+    w = MainWindow(); w.load_folder(str(FIXT))
+    w.tabs.setCurrentIndex(2)                       # cutout tab (no gap-warning path)
+    w.generate_preview()
+    assert "est. run" in w.statusBar().currentMessage()
 
 
 def test_probe_z_requests_touchoff_and_zeros_on_contact():

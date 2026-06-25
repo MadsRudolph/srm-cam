@@ -52,10 +52,20 @@ class PreviewCanvas(QWidget):
         self._bed = None
         self._bed_fits = True
 
+        # Board outline (the Edge.Cuts boundary) as a list of (x, y) vertices,
+        # drawn so the physical board edge is always visible, not just the
+        # toolpaths inside it. None = hidden.
+        self._outline_xy = None
+
         # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
         # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
         # can eyeball the tilt/warp before cutting. None = hidden.
         self._level_overlay = None
+
+        # Bed-leveling probe grid: the planned (x, y) probe points, drawn as
+        # numbered markers so you can see where it will probe before measuring.
+        # None = hidden.
+        self._probe_grid = None
 
         # Live tool position (machine mm) for the DRO overlay — a crosshair+ring
         # showing where the spindle is over the bed. None = hidden.
@@ -93,6 +103,16 @@ class PreviewCanvas(QWidget):
         self._hover = False               # mouse currently over the canvas
         self.canvas.setFocusPolicy(Qt.StrongFocus)
 
+        # Measure (ruler): drag a line that snaps to the board's corners, edges
+        # and hole centres, reading out length + dx/dy. Corner-to-corner gives
+        # the board size. Mutually exclusive with the other drag modes.
+        self._measuring = False
+        self._measure_start = None        # snapped (x, y) of the drag start
+        self._measure_line = None         # (x0, y0, x1, y1) of the ruler, or None
+        self._measure_artists = []
+        self._snap_pts = []               # corners + hole centres to snap to
+        self._snap_segs = []              # outline edge segments (ax, ay, bx, by)
+
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
@@ -129,11 +149,22 @@ class PreviewCanvas(QWidget):
         front-left corner), or ``None`` to hide it."""
         self._bed = size
 
+    def set_board_outline(self, outline_xy):
+        """Set the board's Edge.Cuts boundary as a list of (x, y) vertices (open
+        ring), or ``None`` to hide it. Stored; drawn on the next redraw."""
+        self._outline_xy = outline_xy or None
+
     def set_level_overlay(self, X=None, Y=None, Z=None, points=None):
         """Show (or clear, with no args) the height-map heatmap. ``X``/``Y``/``Z``
         are 2D meshes of surface deviation (mm); ``points`` are the probed
         ``(x, y, dz)`` in mm. Redraws immediately."""
         self._level_overlay = (X, Y, Z, points) if X is not None else None
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_probe_grid(self, points):
+        """Show (or clear, with ``None``) the planned bed-leveling probe points as
+        numbered markers. ``points`` is a list of (x, y) in board mm. Redraws."""
+        self._probe_grid = list(points) if points else None
         self._draw_fraction(self.slider.value() / 1000.0)
 
     def set_tool_position(self, x, y, touch=False):
@@ -246,8 +277,25 @@ class PreviewCanvas(QWidget):
                                         edgecolor=bed_color, linewidth=1.5, zorder=1))
             self.ax.scatter([0], [0], s=40, c=bed_color, marker="s", zorder=2)  # home
 
+        if self._outline_xy:
+            # the board edge (Edge.Cuts) — a subtle closed boundary so the PCB
+            # outline is always visible, not just the cuts inside it
+            ox = [p[0] for p in self._outline_xy] + [self._outline_xy[0][0]]
+            oy = [p[1] for p in self._outline_xy] + [self._outline_xy[0][1]]
+            self.ax.plot(ox, oy, color="#9aa0a6", lw=1.2, alpha=0.9, zorder=1)
+
         if self._level_overlay is not None:
             self._draw_level_overlay()
+
+        if self._probe_grid:
+            gx = [p[0] for p in self._probe_grid]
+            gy = [p[1] for p in self._probe_grid]
+            self.ax.scatter(gx, gy, s=70, marker="P", facecolors="#ff9a3c",
+                            edgecolors="#1e1e1e", linewidths=0.8, zorder=13)
+            for i, (px, py) in enumerate(self._probe_grid, 1):
+                self.ax.annotate(str(i), (px, py), color="#ff9a3c", fontsize=7,
+                                 ha="left", va="bottom", zorder=13,
+                                 xytext=(3, 3), textcoords="offset points")
 
         c_end = int(len(self._full_cuts) * fraction)
         r_end = int(len(self._full_rapids) * fraction)
@@ -296,6 +344,8 @@ class PreviewCanvas(QWidget):
         self._add_selection_patch()
         self._tool_artists = []          # ax.clear() dropped them; re-add live marker
         self._add_tool_marker()
+        self._measure_artists = []       # ax.clear() dropped the ruler; re-add it
+        self._add_measure_artist()
         if self._frame_label:
             self.ax.text(0.02, 0.98, self._frame_label, transform=self.ax.transAxes,
                          va="top", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
@@ -382,6 +432,11 @@ class PreviewCanvas(QWidget):
         if self._jogging:
             if self.on_jog_to and event.xdata is not None and event.ydata is not None:
                 self.on_jog_to(event.xdata, event.ydata)
+        elif self._measuring:
+            sx, sy, _ = self._snap(event.xdata, event.ydata)
+            if sx is not None:
+                self._measure_start = (sx, sy)
+                self._measure_line = (sx, sy, sx, sy)
         elif self._selecting:
             self._drag_start = (event.xdata, event.ydata)
         elif self._moving:
@@ -390,6 +445,12 @@ class PreviewCanvas(QWidget):
 
     def _on_motion(self, event):
         if event.xdata is None or event.ydata is None:
+            return
+        if self._measure_start is not None:
+            sx, sy, _ = self._snap(event.xdata, event.ydata)
+            x0, y0 = self._measure_start
+            self._measure_line = (x0, y0, sx, sy)
+            self._redraw_measure_only()
             return
         if self._drag_start is not None:
             x0, y0 = self._drag_start
@@ -400,6 +461,9 @@ class PreviewCanvas(QWidget):
                                   event.ydata - self._move_start[1])
 
     def _on_release(self, event):
+        if self._measure_start is not None:
+            self._measure_start = None       # keep the finished ruler displayed
+            return
         if self._move_start is not None:
             x0, y0 = self._move_start
             x1 = event.xdata if event.xdata is not None else x0
@@ -452,6 +516,96 @@ class PreviewCanvas(QWidget):
         ux, uy = self._JOG_KEYS[base]
         dx = -ux * step if self._flip_x else ux * step   # keep on-screen dir intuitive
         self.on_jog_step(dx, uy * step)
+
+    # ---- Measure (ruler) with snapping --------------------------------------
+    def set_measuring(self, on):
+        """Enable/disable ruler mode. Leaving the mode clears the drawn line."""
+        self._measuring = bool(on)
+        self.canvas.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+        if not on:
+            self._measure_start = None
+            self._measure_line = None
+            self._redraw_measure_only()
+
+    def set_snap_geometry(self, outline_xy=None, holes=None):
+        """Give the ruler the board outline vertices and hole centres to snap to.
+        ``outline_xy`` is a list of (x, y) perimeter vertices (open ring); its
+        consecutive pairs become the snappable edges."""
+        pts, segs = [], []
+        if outline_xy:
+            n = len(outline_xy)
+            for i, (x, y) in enumerate(outline_xy):
+                pts.append((x, y))
+                nx, ny = outline_xy[(i + 1) % n]
+                segs.append((x, y, nx, ny))
+        if holes:
+            pts += [(h[0], h[1]) for h in holes]
+        self._snap_pts, self._snap_segs = pts, segs
+
+    @staticmethod
+    def _project(px, py, ax, ay, bx, by):
+        """Closest point to (px, py) on the segment (ax,ay)-(bx,by)."""
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        if L2 == 0:
+            return ax, ay
+        t = ((px - ax) * dx + (py - ay) * dy) / L2
+        t = max(0.0, min(1.0, t))
+        return ax + t * dx, ay + t * dy
+
+    def _snap(self, x, y):
+        """Snap (x, y) to the nearest corner/hole/edge within a view-relative
+        tolerance. Returns (sx, sy, snapped?)."""
+        if x is None or y is None:
+            return x, y, False
+        from math import hypot
+        x0, x1 = sorted(self.ax.get_xlim())
+        y0, y1 = sorted(self.ax.get_ylim())
+        tol = 0.03 * max(x1 - x0, y1 - y0, 1e-6)
+        best, bestd = None, tol
+        for (px, py) in self._snap_pts:               # corners + hole centres
+            d = hypot(x - px, y - py)
+            if d < bestd:
+                bestd, best = d, (px, py)
+        for (ax_, ay_, bx_, by_) in self._snap_segs:  # outline edges
+            qx, qy = self._project(x, y, ax_, ay_, bx_, by_)
+            d = hypot(x - qx, y - qy)
+            if d < bestd:
+                bestd, best = d, (qx, qy)
+        if best is not None:
+            return best[0], best[1], True
+        return x, y, False
+
+    def _add_measure_artist(self):
+        if not self._measure_line:
+            return
+        from math import hypot
+        x0, y0, x1, y1 = self._measure_line
+        col = "#ffd24a"
+        self._measure_artists = [
+            self.ax.plot([x0, x1], [y0, y1], color=col, lw=1.4, zorder=18)[0],
+            self.ax.scatter([x0, x1], [y0, y1], s=32, facecolors=col,
+                            edgecolors="#1e1e1e", linewidths=0.8, zorder=19),
+        ]
+        L = hypot(x1 - x0, y1 - y0)
+        if L > 1e-6:
+            mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            label = f"{L:.2f} mm   (dx {abs(x1 - x0):.2f}, dy {abs(y1 - y0):.2f})"
+            self._measure_artists.append(
+                self.ax.annotate(label, (mx, my), color="#1e1e1e", fontsize=8,
+                                 ha="center", va="center", zorder=20,
+                                 bbox=dict(boxstyle="round,pad=0.3", facecolor=col,
+                                           edgecolor="none", alpha=0.95)))
+
+    def _redraw_measure_only(self):
+        for a in self._measure_artists:
+            try:
+                a.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        self._measure_artists = []
+        self._add_measure_artist()
+        self.canvas.draw_idle()
 
     def show_holes(self, holes):
         """Draw drill holes alone (circles + centre marks), no trace context."""

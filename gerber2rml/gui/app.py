@@ -27,13 +27,30 @@ class _ProbeWorker(QThread):
     def __init__(self, port, points):
         super().__init__()
         self._port, self._points = port, points
+        self._abort = False
+
+    def abort(self):
+        """Request a STOP: the next read bails and the firmware lifts the tool."""
+        self._abort = True
 
     def run(self):
         from gerber2rml.engine.spi_probe import probe_grid
         try:
-            probe_grid(self._port, self._points,
-                       on_result=lambda d: self.result.emit(d))
-            self.done.emit("")
+            res = probe_grid(self._port, self._points,
+                             on_result=lambda d: self.result.emit(d),
+                             should_abort=lambda: self._abort)
+            if self._abort:
+                self.done.emit("aborted")
+                return
+            bad = next((r for r in res if "runaway" in str(r.get("error", "")).lower()),
+                       None)
+            if bad is not None:                # runaway -> tool lifted, grid stopped
+                self.done.emit(
+                    f"RUNAWAY at point {bad['id'] + 1}: {bad['error']}. "
+                    f"Probing stopped and the bit lifted — check the probe wiring "
+                    f"and that every grid point sits on copper.")
+            else:
+                self.done.emit("")
         except Exception as e:                 # serial/timeout/parse -> report to UI
             self.done.emit(str(e))
 
@@ -50,6 +67,15 @@ class _DROPoller(QThread):
         self._lock = QMutex()
         self._pending_move = None       # (x_um, y_um) queued jog target
         self._pending_touch = False     # queued touch-off request
+        self._abort = False             # STOP: lift the tool and stop polling
+
+    def request_abort(self):
+        """STOP: drop any queued motion; the loop sends ``!`` (lift) and exits."""
+        self._lock.lock()
+        self._abort = True
+        self._pending_move = None
+        self._pending_touch = False
+        self._lock.unlock()
 
     def request_move(self, x_um, y_um):
         """Queue a click-to-jog target (thread-safe); last click wins."""
@@ -74,14 +100,18 @@ class _DROPoller(QThread):
                 self._lock.lock()
                 mv = self._pending_move
                 to = self._pending_touch
+                ab = self._abort
                 self._pending_move = None
                 self._pending_touch = False
                 self._lock.unlock()
+                if ab:
+                    spi_probe.send_abort(ser)                 # lift the tool, then stop
+                    break
                 try:
                     if mv is not None:
                         spi_probe.jog_to(ser, mv[0], mv[1])   # lifts then travels XY
                     elif to:
-                        r = spi_probe.touch_off(ser)          # descend to surface, stop
+                        r = spi_probe.touch_off(ser, should_abort=lambda: self._abort)
                         if r is not None:
                             self.touch_done.emit(True, r[0], r[1], r[2])
                         else:
@@ -179,6 +209,24 @@ class MainWindow(QMainWindow):
         self.move_chk = QCheckBox("Move on bed (drag)")
         self.move_chk.toggled.connect(self._on_move_toggled)
 
+        # rotate the whole job in 90 deg steps (reorients the exported cut)
+        self._rotation = 0
+        self.rotate_btn = QPushButton("Rotate 90°")
+        self.rotate_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.rotate_btn.setToolTip(
+            "Rotate the whole board 90° - this reorients the ACTUAL exported "
+            "toolpaths, not just the view. Single-sided boards only.")
+        self.rotate_btn.clicked.connect(self._on_rotate)
+        self.rotate_lbl = QLabel("0°")
+
+        # measure (ruler): drag a line that snaps to the board edges/corners/holes
+        self.measure_chk = QCheckBox("Measure (ruler)")
+        self.measure_chk.setToolTip(
+            "Drag a ruler over the preview; it snaps to the board's corners, "
+            "edges and hole centres and shows length + dx/dy. Drag corner-to-"
+            "corner to read off the board size.")
+        self.measure_chk.toggled.connect(self._on_measure_toggled)
+
         # ---- Bed leveling: probe grid -> measured Z table -> warp on export ----
         self.level_chk = QCheckBox("Apply bed leveling on export")
         self.level_chk.setToolTip(
@@ -200,6 +248,11 @@ class MainWindow(QMainWindow):
         self.level_save_btn = QPushButton("Save CSV")
         self.level_save_btn.setToolTip("Save the probe grid (X, Y, dz) to a CSV file.")
         self.level_save_btn.clicked.connect(self._on_save_level_grid)
+        self.level_clear_btn = QPushButton("Clear Z")
+        self.level_clear_btn.setToolTip(
+            "Clear the measured Z values so you can re-probe (keeps the X/Y grid). "
+            "Also turns off leveling and the height-map overlay.")
+        self.level_clear_btn.clicked.connect(self._on_clear_level)
         # auto-probe over the SRM-20 SPI link (Arduino running srm20_spi_probe.ino)
         self.level_port_combo = QComboBox()
         self.level_port_combo.setMaximumWidth(90)
@@ -220,6 +273,11 @@ class MainWindow(QMainWindow):
             "Jog the tool ~2-3 mm above the first grid point first, with the prober "
             "sketch running and the Arduino Serial Monitor CLOSED.")
         self.level_probe_btn.clicked.connect(self._on_probe_spi)
+        self.level_gridshow_chk = QCheckBox("Show grid")
+        self.level_gridshow_chk.setToolTip(
+            "Overlay the planned probe points (numbered) on the preview, so you "
+            "can see where it will probe before measuring.")
+        self.level_gridshow_chk.toggled.connect(lambda _on: self._update_grid_overlay())
         self.level_show_chk = QCheckBox("Show height map")
         self.level_show_chk.setToolTip(
             "Overlay the probed surface as a tilt/warp heatmap on the preview.")
@@ -230,6 +288,15 @@ class MainWindow(QMainWindow):
         self.level_3d_btn.clicked.connect(self._on_bed_3d)
 
         # ---- live machine link: DRO banner + tool overlay ----
+        # Emergency STOP: abort any probing/touch-off/jog, lift the tool, and
+        # drop the link. Always enabled so it works even mid-probe.
+        self.stop_btn = QPushButton("STOP")
+        self.stop_btn.setObjectName("stopBtn")
+        self.stop_btn.setToolTip(
+            "Abort immediately: stop probing/jogging, lift the bit to safe Z, and "
+            "disconnect. Use if the tool is heading into the board or bed.")
+        self.stop_btn.clicked.connect(self._on_emergency_stop)
+
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setCheckable(True)
         self.connect_btn.setToolTip(
@@ -486,7 +553,9 @@ class MainWindow(QMainWindow):
 
         place_group, pl = _group("Placement on bed")
         pl.addRow("Place", self._place_row)
+        pl.addRow("Rotate", _row(self.rotate_btn, self.rotate_lbl, stretch_first=False))
         pl.addRow("", self.move_chk)
+        pl.addRow("", self.measure_chk)
         l_proj.addWidget(place_group)
         l_proj.addStretch(1)
 
@@ -495,9 +564,11 @@ class MainWindow(QMainWindow):
         _ll = QVBoxLayout(level_group); _ll.setContentsMargins(14, 16, 14, 12); _ll.setSpacing(8)
         _ll.addWidget(self.level_chk)
         _ll.addWidget(_row(self.level_nx_spin, self.level_ny_spin,
-                           self.level_grid_btn, self.level_export_btn, self.level_save_btn))
+                           self.level_grid_btn, self.level_export_btn,
+                           self.level_save_btn, self.level_clear_btn))
         _ll.addWidget(_row(QLabel("port"), self.level_port_combo, self.level_probe_btn,
-                           self.level_show_chk, self.level_3d_btn, stretch_first=False))
+                           self.level_gridshow_chk, self.level_show_chk,
+                           self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
         l_level.addWidget(level_group)
         l_level.addStretch(1)
@@ -560,6 +631,7 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.zero_btn)
         _mb.addWidget(self.jog_chk)
         _mb.addWidget(self.connect_btn)
+        _mb.addWidget(self.stop_btn)
 
         central = QWidget()
         _cv = QVBoxLayout(central)
@@ -667,21 +739,50 @@ class MainWindow(QMainWindow):
         pass
 
     def _update_ds_controls(self):
-        """Reveal the registration controls only when double-sided is on, and the
-        grid/fresh fields only for the matching mode."""
+        """Reveal the registration controls only when double-sided is on, enable
+        the View/Reg/Dowels selectors with it, and show the grid/fresh fields
+        only for the matching mode."""
         ds = self.double_sided_chk.isChecked()
         self._ds_controls.setVisible(ds)            # hide the sub-controls until on
-        self._grid_row.setEnabled(self.reg_combo.currentIndex() == 1)
-        self._fresh_row.setEnabled(self.reg_combo.currentIndex() == 0)
+        for w in (self.view_combo, self.reg_combo, self.place_combo):
+            w.setEnabled(ds)                        # were disabled at init; enable with DS
+        is_grid = self.reg_combo.currentIndex() == 1
+        self._grid_row.setEnabled(ds and is_grid)
+        self._fresh_row.setEnabled(ds and not is_grid)
 
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
+        # rotation isn't supported for double-sided (the flip/dowel registration
+        # would need re-deriving); disable it and reset any applied rotation.
+        self.rotate_btn.setEnabled(not checked)
+        if checked and self._rotation:
+            self._rotation = 0
+            self.rotate_lbl.setText("0°")
+            self.state.set_rotation(0)
         self.generate_preview()
 
     def _on_reg_changed(self, *_):
         self._update_ds_controls()
         if self.double_sided_chk.isChecked():
             self.generate_preview()
+
+    @staticmethod
+    def _poly_xy(poly):
+        """Exterior (x, y) vertices of a shapely polygon (largest part of a
+        MultiPolygon), or None."""
+        if poly is None or poly.is_empty:
+            return None
+        if poly.geom_type == "MultiPolygon":
+            poly = max(poly.geoms, key=lambda p: p.area)
+        return list(poly.exterior.coords)[:-1] if poly.geom_type == "Polygon" else None
+
+    def _snap_geometry(self):
+        """Board outline vertices + hole centres for the ruler to snap to, in the
+        current placed/rotated frame. (None, None) if no board is loaded."""
+        b = self.state.board
+        if b is None:
+            return None, None
+        return self._poly_xy(b.outline), b.holes
 
     def _preview_double_sided(self, op):
         """Show the registered board with the two dowel/alignment holes so the
@@ -697,6 +798,8 @@ class MainWindow(QMainWindow):
             # contract: Bottom -> bottom cuts, Top -> top cuts.
             mlay = self._machine_layout()
             cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
+            outline = mlay.top_outline if side == "Top" else mlay.outline
+            self.preview.set_board_outline(self._poly_xy(outline))
             if side == "Top":
                 self.preview.show_segments([], [], top_cuts=cuts, pins=mlay.align_holes)
             else:
@@ -704,6 +807,7 @@ class MainWindow(QMainWindow):
             return
         # Both sides (or the drill tab): design-frame X-ray for registration.
         lay = self._double_sided_layout()
+        self.preview.set_board_outline(self._poly_xy(lay.outline))
         view = self.view_combo.currentText()
         bottom_cuts, bottom_rapids, top_cuts = [], [], []
         if view in ("Both sides", "Bottom"):
@@ -770,6 +874,9 @@ class MainWindow(QMainWindow):
         self._apply_preview_frame()
         bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
         self.preview.set_bed(bed)
+        oxy, holes = self._snap_geometry()
+        self.preview.set_snap_geometry(oxy, holes)
+        self.preview.set_board_outline(oxy)        # draw the board edge (single-sided)
         t0 = time.time()
         op = _OPS[self.tabs.currentIndex()]
         gap_warning = False
@@ -782,10 +889,15 @@ class MainWindow(QMainWindow):
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)
-            self.statusBar().showMessage(self._drill_status(), 8000)
+            est = self._estimate_str(self._drill_toolpaths(self.state.board.holes),
+                                     self.state.drill)
+            self.statusBar().showMessage(self._drill_status() + est, 8000)
             return
-        cuts, rapids = toolpath_segments(self.state.toolpaths(op))
+        tps = self.state.toolpaths(op)
+        cuts, rapids = toolpath_segments(tps)
         self.preview.show_segments(cuts, rapids)
+        est = self._estimate_str(tps, self.state.trace if op == "traces"
+                                 else self.state.cutout)
         if op == "traces":
             from gerber2rml.analysis import find_narrow_gaps
             gaps = find_narrow_gaps(self.state.board.copper,
@@ -794,10 +906,24 @@ class MainWindow(QMainWindow):
             if not gaps.is_empty:
                 self.preview.show_gaps(gaps)
                 self.statusBar().showMessage(
-                    "Warning: copper gaps too narrow to isolate (shown red)", 8000)
+                    "Warning: copper gaps too narrow to isolate (shown red)" + est, 8000)
                 gap_warning = True
         if not gap_warning:
-            self.statusBar().showMessage(f"Preview updated in {time.time() - t0:.2f}s", 5000)
+            self.statusBar().showMessage(
+                f"Preview updated in {time.time() - t0:.2f}s{est}", 5000)
+
+    def _estimate_str(self, toolpaths, job):
+        """' · est. run ~<time>' for the given toolpaths + job feeds (mm/s), or
+        '' if there's nothing to estimate."""
+        if not toolpaths:
+            return ""
+        try:
+            from gerber2rml.engine.estimate import (estimate_toolpaths_seconds,
+                                                     format_duration)
+            s = estimate_toolpaths_seconds(toolpaths, job.xy_feed, job.plunge_feed)
+            return f"  ·  est. run ~{format_duration(s)}"
+        except Exception:
+            return ""
 
     def apply_selected_preset(self):
         from gerber2rml.app.presets import apply_preset
@@ -844,11 +970,28 @@ class MainWindow(QMainWindow):
 
     # ---- bed leveling -----------------------------------------------------
 
-    def _level_bounds(self):
-        """Placed-board footprint to lay the probe grid over."""
+    def _display_outline(self):
+        """The board outline currently shown in the preview, in the frame it's
+        drawn — so the probe grid lays over the visible board. For double-sided
+        that's the registered layout (design frame, or machine frame per side),
+        which differs from the single-sided ``state.board``."""
         if self.state.board is None:
             return None
-        return self.state.board.outline.bounds
+        if self.double_sided_chk.isChecked():
+            side = self._ds_side()
+            if side is not None:
+                mlay = self._machine_layout()
+                return mlay.top_outline if side == "Top" else mlay.outline
+            return self._double_sided_layout().outline
+        return self.state.board.outline
+
+    def _level_bounds(self):
+        """Footprint of the displayed board, to lay the probe grid over so the
+        points sit on the board you see (not a mismatched frame)."""
+        o = self._display_outline()
+        if o is None or o.is_empty:
+            return None
+        return o.bounds
 
     def _on_build_level_grid(self):
         from gerber2rml.engine.leveling import probe_points
@@ -867,8 +1010,30 @@ class MainWindow(QMainWindow):
             z = self.level_table.item(r, 2)
             if z is None:
                 self.level_table.setItem(r, 2, QTableWidgetItem("0" if r == 0 else ""))
+        self.level_gridshow_chk.setChecked(True)    # reveal the grid on the preview
+        self._update_grid_overlay()
         self.statusBar().showMessage(
             f"{len(pts)} probe points — measure Z at each and fill the table", 8000)
+
+    def _on_clear_level(self):
+        """Wipe the measured Z column so the grid can be re-probed (keeps X/Y).
+        Also turns off leveling + the height-map overlay so nothing stale is used."""
+        for r in range(self.level_table.rowCount()):
+            self.level_table.setItem(r, 2, QTableWidgetItem(""))
+        self._probe_z0 = None
+        self.level_chk.setChecked(False)
+        self.level_show_chk.setChecked(False)
+        self.preview.set_level_overlay(None)
+        self.statusBar().showMessage(
+            "Cleared probe measurements — grid kept, ready to re-probe", 8000)
+
+    def _update_grid_overlay(self):
+        """Push the planned probe points to the preview (or clear them)."""
+        if not self.level_gridshow_chk.isChecked():
+            self.preview.set_probe_grid(None)
+            return
+        xy, _xyz = self._table_points()
+        self.preview.set_probe_grid(xy)
 
     def _table_points(self):
         """All (x, y) in the table, and the (x, y, z) rows that have a Z filled in."""
@@ -948,6 +1113,12 @@ class MainWindow(QMainWindow):
             "(Shift = 10 mm, Ctrl = 0.1 mm)", 8000)
 
     def _stop_dro(self):
+        # disconnecting must also stop an in-progress grid probe (else the
+        # Arduino keeps probing and resumes on its own) — abort it and lift.
+        pw = getattr(self, "_probe_worker", None)
+        if pw is not None and pw.isRunning():
+            pw.abort()
+        self._dro_was_on = False              # don't auto-resume after an explicit stop
         self._pause_dro()
         self.preview.set_tool_position(None, None)
         self.jog_chk.setChecked(False)
@@ -983,11 +1154,29 @@ class MainWindow(QMainWindow):
         self._stop_dro()
         QMessageBox.warning(self, "Machine link failed", msg)
 
+    def _on_emergency_stop(self):
+        """ABORT everything: stop grid-probe / touch-off / jog, tell the firmware
+        to lift the bit to safe Z, and drop the link. Safe to hit any time."""
+        stopped = False
+        pw = getattr(self, "_probe_worker", None)
+        if pw is not None and pw.isRunning():
+            pw.abort()                        # ! -> firmware lifts; worker bails
+            stopped = True
+        if self._dro is not None:
+            self._dro.request_abort()         # ! -> firmware lifts; poller bails
+            stopped = True
+        self._dro_was_on = False              # never auto-resume after a STOP
+        self._stop_dro()
+        self.statusBar().showMessage(
+            "STOP — lifting the bit to safe Z and disconnecting" if stopped
+            else "STOP — nothing was running", 12000)
+
     def _on_jog_mode_toggled(self, on):
         self.preview.set_jogging(on)
         if on:                                   # jog mode is exclusive with the others
             self.select_chk.setChecked(False)
             self.move_chk.setChecked(False)
+            self.measure_chk.setChecked(False)
             self.statusBar().showMessage(
                 "Click a point on the preview to jog the tool there", 6000)
 
@@ -1116,7 +1305,13 @@ class MainWindow(QMainWindow):
 
     def _on_probe_done(self, err):
         self.level_probe_btn.setEnabled(True)
-        if err:
+        if err == "aborted":
+            self.statusBar().showMessage("Probing aborted — bit lifted to safe Z", 8000)
+        elif err.startswith("RUNAWAY"):
+            QMessageBox.warning(self, "Runaway stopped", err)
+            self.statusBar().showMessage(
+                "Runaway detected — probing stopped, bit lifted", 12000)
+        elif err:
             QMessageBox.critical(self, "Probe failed", err)
             self.statusBar().showMessage("Probe failed", 8000)
         else:
@@ -1230,7 +1425,13 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Export failed", str(e))
                 return
-            self.statusBar().showMessage(f"Exported successfully to: {out}", 10000)
+            from gerber2rml.engine.estimate import estimate_file_seconds, format_duration
+            secs = [estimate_file_seconds(p) for p in written]
+            total = sum(s for s in secs if s)
+            msg = f"Exported successfully to: {out}"
+            if total:
+                msg += f"  ·  est. total run ~{format_duration(total)} (see runplan)"
+            self.statusBar().showMessage(msg, 12000)
 
     def _on_export_align_only(self):
         if self.state.gerber_dir is None:
@@ -1373,9 +1574,34 @@ class MainWindow(QMainWindow):
         self.preview.set_selecting(checked)
         if checked:
             self.move_chk.setChecked(False)   # rework-select and move are exclusive
+            self.measure_chk.setChecked(False)
             self.statusBar().showMessage(
                 "Rework: drag a box over the area to re-cut, then Export selected NC",
                 8000)
+
+    def _on_rotate(self):
+        """Rotate the whole job another 90° (reorients the exported cut)."""
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        if self.double_sided_chk.isChecked():
+            return                            # disabled in double-sided mode
+        self._rotation = (self._rotation + 90) % 360
+        self.rotate_lbl.setText(f"{self._rotation}°")
+        self.state.set_rotation(self._rotation)
+        self.generate_preview()
+        self.statusBar().showMessage(f"Rotated to {self._rotation}°", 4000)
+
+    def _on_measure_toggled(self, checked):
+        self.preview.set_measuring(checked)
+        if checked:                           # ruler is exclusive with the drag modes
+            self.select_chk.setChecked(False)
+            self.move_chk.setChecked(False)
+            if self.jog_chk.isChecked():
+                self.jog_chk.setChecked(False)
+            self.statusBar().showMessage(
+                "Ruler: drag from one board corner to another - it snaps to "
+                "edges and hole centres", 8000)
 
     def _apply_auto_depth(self):
         """When auto-depth is on, set the drill + cut-out total depth from the
@@ -1397,6 +1623,7 @@ class MainWindow(QMainWindow):
         self.preview.set_moving(checked)
         if checked:
             self.select_chk.setChecked(False)
+            self.measure_chk.setChecked(False)
             self.statusBar().showMessage(
                 "Move: drag the design to reposition it on the bed", 8000)
 
@@ -1520,6 +1747,9 @@ QPushButton#primaryBtn { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, sto
 QPushButton#primaryBtn:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffcc80, stop:1 #fb8c00); }
 QPushButton#primaryBtn:pressed { background: #e65100; }
 QPushButton#primaryBtn:disabled { background: #3e2723; color: #8d6e63; }
+QPushButton#stopBtn { background: #c0392b; border: none; color: #ffffff; font-weight: 700; }
+QPushButton#stopBtn:hover { background: #e04434; }
+QPushButton#stopBtn:pressed { background: #962d22; }
 
 QComboBox, QLineEdit, QAbstractSpinBox {
     background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
@@ -1544,7 +1774,7 @@ QCheckBox::indicator {
     border: 1px solid #4a4a4a; background: #242424;
 }
 QCheckBox::indicator:hover { border-color: #ffb74d; }
-QCheckBox::indicator:checked { background: #ff9800; border-color: #ff9800; image: url(data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23121212" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>); }
+QCheckBox::indicator:checked { background: #ff9800; border-color: #ff9800; }
 QCheckBox::indicator:checked:hover { background: #ffb74d; border-color: #ffb74d; }
 
 QTabWidget::pane { border: 1px solid #2e2e2e; border-radius: 8px; top: -1px; background: #1e1e1e; }
