@@ -463,10 +463,19 @@ class MainWindow(QMainWindow):
             "Fresh dowels: mm added to the SMALL (1.9 mm) hole. 0.15 seats the "
             "small pin snug — a touch tighter than the big one.")
         self.fresh_clear_small_edit.editingFinished.connect(self._on_reg_changed)
+        # how deep the dowel holes bite into the sacrificial bed BELOW the stock
+        self.fresh_bed_spin = QDoubleSpinBox()
+        self.fresh_bed_spin.setRange(0.0, 12.0); self.fresh_bed_spin.setSingleStep(0.5)
+        self.fresh_bed_spin.setDecimals(1); self.fresh_bed_spin.setValue(5.0)
+        self.fresh_bed_spin.setSuffix(" mm")
+        self.fresh_bed_spin.setToolTip(
+            "How far the dowel holes go INTO the wood/bed below the stock. The pins "
+            "seat in this; if they don't bite deep enough, raise this and re-cut "
+            "just the dowels ('Cut dowels only').")
         self.align_only_btn = QPushButton("Cut dowels only...")
         self.align_only_btn.setToolTip(
             "Export ONLY the dowel-hole G-code (no traces/drills/cutout). Use to "
-            "test-fit the rods, then bump the clearance and re-cut just the holes. "
+            "test-fit the rods or deepen the bed bite, then re-cut just the holes. "
             "Keep the SAME XY origin so the re-cut lands on the existing holes.")
         self.align_only_btn.clicked.connect(self._on_export_align_only)
         self._fresh_row = QWidget()
@@ -476,6 +485,8 @@ class MainWindow(QMainWindow):
         _fresh_row_l.addWidget(self.fresh_clear_large_edit)
         _fresh_row_l.addWidget(QLabel("S"))
         _fresh_row_l.addWidget(self.fresh_clear_small_edit)
+        _fresh_row_l.addWidget(QLabel("bed"))
+        _fresh_row_l.addWidget(self.fresh_bed_spin)
         _fresh_row_l.addWidget(self.align_only_btn)
         self._fresh_row.setEnabled(False)   # enabled only in fresh mode
 
@@ -1023,7 +1034,7 @@ class MainWindow(QMainWindow):
                 dowels=self._dowel_spec(), machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
                 board_thickness=self.thickness_spin.value(), level=level,
-                rotate=self.state.rotate)
+                rotate=self.state.rotate, bed_depth=self.fresh_bed_spin.value())
         return self.state.export(out_dir, level=self._height_map())
 
     # ---- bed leveling -----------------------------------------------------
@@ -1512,7 +1523,7 @@ class MainWindow(QMainWindow):
                 drill=self.state.drill, dowels=self._dowel_spec(),
                 machine=self.state.machine,
                 board_thickness=self.thickness_spin.value(),
-                rotate=self.state.rotate)
+                rotate=self.state.rotate, bed_depth=self.fresh_bed_spin.value())
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
             return
