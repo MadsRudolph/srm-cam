@@ -23,6 +23,7 @@ gui = [
     "matplotlib>=3.7",
     "pyqtgraph>=0.13",
     "PyOpenGL>=3.1",
+    "pyserial>=3.5",   # SPI bed-probing over the Arduino serial link
 ]
 
 [project.scripts]
