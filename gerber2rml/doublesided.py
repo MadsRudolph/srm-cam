@@ -403,6 +403,33 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     return written
 
 
+def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None,
+                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0, level=None):
+    """Re-export ONLY the top (F.Cu) isolation traces, optionally warped to a
+    fresh height map probed on the FLIPPED board.
+
+    Top-side leveling is a two-phase thing: the full export writes the top traces
+    UNleveled (you can't probe that face until you flip). After the flip + a
+    top-side probe you call this to overwrite ``<name>_top_traces`` with a copy
+    warped to the just-measured surface. ``level`` is a height map in the TOP
+    machine frame (the frame the top traces are cut in). Returns the Path written.
+    """
+    dowels = dowels or DowelSpec()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    trace = trace or TraceJob()
+    backend = BACKENDS[machine]
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
+    paths = isolate(lay.top_copper, trace, outline=lay.top_outline)
+    if level is not None:
+        from gerber2rml.engine.leveling import apply_leveling
+        paths = apply_leveling(paths, level)   # warp Z to the flipped-side surface
+    out = out_dir / f"{name}_top_traces{backend.ext}"
+    out.write_text(backend.render(paths, xy_feed=trace.xy_feed,
+                                  plunge_feed=trace.plunge_feed))
+    return out
+
+
 def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness):
     (bx, by, bd), (tx, ty, td) = lay.align_holes
     horiz = lay.axis == "horizontal"
@@ -418,6 +445,8 @@ def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness
     common_tail = (
         f"3. FLIP the board {flip_dir} and drop it back\n"
         f"   onto the pins. Re-zero Z on the new surface.\n"
+        f"   (Bed leveling: to level this side too, re-probe now in View=Top and\n"
+        f"    use 'Export top traces (leveled)' to refresh {name}_top_traces.)\n"
         f"4. {name}_top_traces: plain F.Cu, already reflected so it aligns after the flip.\n"
         f"5. {name}_cutout LAST: frees the board from the waste/dowels (leave the tabs).\n")
     if dowels.mode == "grid":
