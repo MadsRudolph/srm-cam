@@ -428,6 +428,16 @@ class MainWindow(QMainWindow):
             "machine, hit Run in VPanel, then press this — the bar follows the bit "
             "and counts down the time left.")
         self.run_track_btn.toggled.connect(self._on_track_run)
+        self.run_auto_chk = QCheckBox("Auto")
+        self.run_auto_chk.setChecked(True)
+        self.run_auto_chk.setToolTip(
+            "Start tracking automatically when the bit begins moving (a run starts "
+            "in VPanel), so you don't have to press 'Track run'. Uses the op picked "
+            "on the left.")
+        self._run_finished = False        # current run reached 100%
+        self._run_motion = 0              # consecutive 'moving' DRO reads (auto-start)
+        self._run_last_pos = None         # last pos used for the motion test
+        self._last_jog_t = 0.0            # time of the last jog (suppresses auto-start)
         self.run_bar = QProgressBar()
         self.run_bar.setRange(0, 100)
         self.run_bar.setValue(0)
@@ -798,6 +808,7 @@ class MainWindow(QMainWindow):
         _pb.addWidget(QLabel("Run:"))
         _pb.addWidget(self.run_op_combo)
         _pb.addWidget(self.run_rework_chk)
+        _pb.addWidget(self.run_auto_chk)
         _pb.addWidget(self.run_track_btn)
         _pb.addWidget(self.run_bar, 1)
         _pb.addWidget(self.run_eta_lbl)
@@ -1411,6 +1422,7 @@ class MainWindow(QMainWindow):
     def _on_jog_to(self, x, y):
         if self._dro is None:
             return
+        self._last_jog_t = time.time()       # our own motion — don't auto-start on it
         self._dro.request_move(round(x * 1000), round(y * 1000))
         self.statusBar().showMessage(f"Jogging to X {x:.1f}  Y {y:.1f} mm", 4000)
 
@@ -1428,6 +1440,7 @@ class MainWindow(QMainWindow):
             return
         x, y, z = self._tool_xyz
         nx, ny = x + dx, y + dy
+        self._last_jog_t = time.time()       # our own motion — don't auto-start on it
         self._dro.request_move(round(nx * 1000), round(ny * 1000))
         # optimistically advance the local position so rapid key taps accumulate
         # into one move to the final spot instead of all reading the same stale XY
@@ -1441,14 +1454,21 @@ class MainWindow(QMainWindow):
         """Arm/disarm live run-progress tracking from the DRO position."""
         if not on:
             self._run_progress = None
+            self._run_finished = False
             self.run_bar.setValue(0)
             self.run_eta_lbl.setText("—")
             self.run_track_btn.setText("Track run")
             return
-        if self.state.board is None:
-            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+        if not self._arm_tracking():
             self.run_track_btn.setChecked(False)
-            return
+
+    def _arm_tracking(self, silent=False):
+        """Build the run-progress tracker for the picked op. Returns True on
+        success. ``silent`` suppresses warning dialogs (used by auto-start)."""
+        if self.state.board is None:
+            if not silent:
+                QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return False
         self._sync_state()
         op = self._RUN_OP[self.run_op_combo.currentText()]
         try:
@@ -1456,20 +1476,21 @@ class MainWindow(QMainWindow):
             if self.run_rework_chk.isChecked():
                 bbox = self.preview.selection_bbox()
                 if bbox is None:
-                    QMessageBox.warning(self, "No selection",
-                                        "Tick off 'selection', or drag a rework box "
-                                        "first.")
-                    self.run_track_btn.setChecked(False)
-                    return
+                    if not silent:
+                        QMessageBox.warning(self, "No selection",
+                                            "Tick off 'selection', or drag a rework "
+                                            "box first.")
+                    return False
                 toolpaths, _lv = self._rework_clip(toolpaths, bbox)
         except Exception as e:
-            QMessageBox.warning(self, "Can't track", f"No toolpaths for {op}: {e}")
-            self.run_track_btn.setChecked(False)
-            return
+            if not silent:
+                QMessageBox.warning(self, "Can't track", f"No toolpaths for {op}: {e}")
+            return False
         from gerber2rml.engine.progress import RunProgress
         from gerber2rml.engine.estimate import format_duration
         job = self._job_for_op(op)
         self._run_progress = RunProgress(toolpaths, job.xy_feed, job.plunge_feed)
+        self._run_finished = False
         self.run_bar.setValue(0)
         self.run_track_btn.setText("Tracking…")
         total = format_duration(self._run_progress.total)
@@ -1477,8 +1498,38 @@ class MainWindow(QMainWindow):
             self.run_eta_lbl.setText(f"{total} — connect to track")
         else:
             self.run_eta_lbl.setText(f"{total} total")
+        return True
+
+    def _maybe_autostart_run(self, x, y, z):
+        """Auto-arm tracking when the bit starts moving (a run began in VPanel).
+        Needs the machine connected and 'Auto' on; ignored right after a jog and
+        while a run is already actively tracking."""
+        if not self.run_auto_chk.isChecked() or self._dro is None:
+            return
+        if self._run_progress is not None and not self._run_finished:
+            return                              # already tracking this run
+        if time.time() - self._last_jog_t < 2.0:
+            self._run_last_pos = (x, y, z)      # a jog is motion we caused — skip
+            return
+        prev = self._run_last_pos
+        self._run_last_pos = (x, y, z)
+        if prev is None:
+            return
+        moved = ((x - prev[0]) ** 2 + (y - prev[1]) ** 2 + (z - prev[2]) ** 2) ** 0.5
+        self._run_motion = self._run_motion + 1 if moved > 0.25 else 0
+        if self._run_motion >= 3:               # ~0.75 s of continuous motion
+            self._run_motion = 0
+            if self.run_track_btn.isChecked():  # finished run -> rebuild in place
+                self._arm_tracking(silent=True)
+            elif self._arm_tracking(silent=True):
+                self.run_track_btn.blockSignals(True)
+                self.run_track_btn.setChecked(True)
+                self.run_track_btn.blockSignals(False)
+            self.statusBar().showMessage(
+                "Auto-started run tracking from tool motion", 4000)
 
     def _update_run_progress(self, x, y, z):
+        self._maybe_autostart_run(x, y, z)
         if self._run_progress is None:
             return
         from gerber2rml.engine.estimate import format_duration
@@ -1486,6 +1537,7 @@ class MainWindow(QMainWindow):
         pct = int(round(frac * 100))
         self.run_bar.setValue(pct)
         if frac >= 0.999:
+            self._run_finished = True
             self.run_eta_lbl.setText("done")
         else:
             self.run_eta_lbl.setText(f"{format_duration(rem)} left")
