@@ -381,6 +381,31 @@ def test_apply_setup_tolerates_missing_board_and_unknown_fields():
     assert w.place_x_spin.value() == 5.0           # other settings still applied
 
 
+def test_level_csv_save_load_round_trip(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QTableWidgetItem
+    w = MainWindow(); w.load_folder(str(FIXT))
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(2); w._on_build_level_grid()
+    w.level_table.setItem(0, 2, QTableWidgetItem("-0.05"))
+    w.level_table.setItem(1, 2, QTableWidgetItem("ERR"))   # a missed point
+    w.level_table.setItem(2, 2, QTableWidgetItem("0.10"))
+
+    csv = tmp_path / "hm.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(csv), "")))
+    w._on_save_level_grid()
+    assert "x_mm,y_mm,dz_mm" in csv.read_text()
+
+    # load it into a fresh window — ERR is preserved but skipped as unmeasured
+    w2 = MainWindow(); w2.load_folder(str(FIXT))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(csv), "")))
+    w2._on_load_level_grid()
+    assert w2.level_table.rowCount() == 6
+    assert w2.level_table.item(0, 2).text() == "-0.05"
+    _xy, xyz = w2._table_points()
+    assert len(xyz) == 2                            # ERR row skipped, not crashed
+
+
 def test_probe_resume_skips_filled_points():
     from PySide6.QtWidgets import QTableWidgetItem
     w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()

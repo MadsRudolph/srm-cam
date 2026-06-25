@@ -310,6 +310,12 @@ class MainWindow(QMainWindow):
         self.level_save_btn = QPushButton("Save CSV")
         self.level_save_btn.setToolTip("Save the probe grid (X, Y, dz) to a CSV file.")
         self.level_save_btn.clicked.connect(self._on_save_level_grid)
+        self.level_load_btn = QPushButton("Load CSV")
+        self.level_load_btn.setToolTip(
+            "Load a probe grid (X, Y, dz) CSV back into the table - e.g. one you "
+            "saved with 'Save CSV' before a restart/update. You can then Resume "
+            "probing or apply leveling.")
+        self.level_load_btn.clicked.connect(self._on_load_level_grid)
         self.level_clear_btn = QPushButton("Clear Z")
         self.level_clear_btn.setToolTip(
             "Clear the measured Z values so you can re-probe (keeps the X/Y grid). "
@@ -654,7 +660,8 @@ class MainWindow(QMainWindow):
         _ll.addWidget(self.level_chk)
         _ll.addWidget(_row(self.level_nx_spin, self.level_ny_spin,
                            self.level_grid_btn, self.level_export_btn,
-                           self.level_save_btn, self.level_clear_btn))
+                           self.level_save_btn, self.level_load_btn,
+                           self.level_clear_btn))
         _ll.addWidget(_row(QLabel("port"), self.level_port_combo, self.level_probe_btn,
                            self.level_gridshow_chk, self.level_show_chk,
                            self.level_3d_btn, stretch_first=False))
@@ -1145,8 +1152,10 @@ class MainWindow(QMainWindow):
             xy.append((x, y))
             zi = self.level_table.item(r, 2)
             ztxt = zi.text().strip() if zi else ""
-            if ztxt not in ("", "-"):
-                xyz.append((x, y, float(ztxt)))
+            try:
+                xyz.append((x, y, float(ztxt)))   # ERR/blank -> ValueError -> skip
+            except ValueError:
+                pass                              # unmeasured point (interpolated)
         return xy, xyz
 
     def _on_export_probe_files(self):
@@ -1183,6 +1192,51 @@ class MainWindow(QMainWindow):
             lines.append(",".join(vals))
         Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.statusBar().showMessage(f"Saved height map to {path}", 8000)
+
+    def _on_load_level_grid(self):
+        """Load a probe grid (x_mm, y_mm, dz_mm) CSV back into the table — e.g. one
+        saved with 'Save CSV' before an update. Infers nx/ny from the points."""
+        path, _ = QFileDialog.getOpenFileName(self, "Load height map CSV", "",
+                                              "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except Exception as e:
+            QMessageBox.critical(self, "Load failed", str(e))
+            return
+        rows = []
+        for line in text.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2:
+                continue
+            try:
+                x, y = float(parts[0]), float(parts[1])
+            except ValueError:
+                continue                            # header / non-numeric line
+            z = parts[2] if len(parts) > 2 else ""
+            rows.append((x, y, z))
+        if not rows:
+            QMessageBox.warning(self, "Empty", "No probe points found in the CSV.")
+            return
+        self.level_table.setRowCount(len(rows))
+        for r, (x, y, z) in enumerate(rows):
+            for c, val in ((0, f"{x:.3f}"), (1, f"{y:.3f}"), (2, z)):
+                it = QTableWidgetItem(val)
+                if c < 2:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.level_table.setItem(r, c, it)
+        nx = len({round(x, 2) for x, _y, _z in rows})
+        ny = len({round(y, 2) for _x, y, _z in rows})
+        if 2 <= nx <= 8:
+            self.level_nx_spin.setValue(nx)
+        if 2 <= ny <= 8:
+            self.level_ny_spin.setValue(ny)
+        self.level_gridshow_chk.setChecked(True)
+        self._update_grid_overlay()
+        self._update_level_overlay()
+        self.statusBar().showMessage(
+            f"Loaded {len(rows)} probe points from {Path(path).name}", 8000)
 
     # ---- live machine link (DRO + tool overlay) -------------------------
 
