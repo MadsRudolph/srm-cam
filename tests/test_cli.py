@@ -10,8 +10,8 @@ def test_build_jobs_writes_rml(tmp_path):
     names = {p.name for p in written}
     assert "mosfet_test_traces.rml" in names
     assert "mosfet_test_cutout.rml" in names
-    # drill is split into one file per diameter (default mode)
-    assert any(n.startswith("mosfet_test_drill_") and n.endswith("mm.rml") for n in names)
+    # default is single-bit: one combined drill file (not split per diameter)
+    assert "mosfet_test_drill.rml" in names
     for p in written:
         if p.suffix == ".rml":
             text = p.read_text()
@@ -31,3 +31,11 @@ def test_build_jobs_single_bit_makes_one_drill_file(tmp_path):
                          drill=DrillJob(single_bit=True, bit_diameter=0.8))
     drills = sorted(p.name for p in written if "_drill" in p.name and p.suffix == ".rml")
     assert drills == ["m_drill.rml"]            # one combined single-bit file
+
+
+def test_cli_multi_bit_flag_splits_per_diameter(tmp_path):
+    from gerber2rml.cli import main
+    main([str(FIXT), "-o", str(tmp_path), "-n", "m", "-m", "Roland SRM-20",
+          "--multi-bit"])
+    drills = sorted(p.name for p in tmp_path.glob("m_drill*.rml"))
+    assert drills and all(n.endswith("mm.rml") for n in drills)   # split per diameter
