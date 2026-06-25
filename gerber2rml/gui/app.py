@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
+from pathlib import Path
 import time
 
 from gerber2rml.app.state import ProjectState
@@ -157,6 +158,16 @@ class MainWindow(QMainWindow):
             "deepest cut fit the SRM-20 Z range (probe Z first), holes vs bit. "
             "Run this before a full-bed job.")
         self.diag_btn.clicked.connect(self._on_diagnostics)
+
+        self.save_setup_btn = QPushButton("Save setup...")
+        self.save_setup_btn.setToolTip(
+            "Save the WHOLE setup to a file: the loaded board, placement, rotation, "
+            "all job/double-sided/stock settings and the probed height map. Reload "
+            "it after a restart/update to pick up exactly where you left off.")
+        self.save_setup_btn.clicked.connect(self._on_save_setup)
+        self.load_setup_btn = QPushButton("Load setup...")
+        self.load_setup_btn.setToolTip("Restore a setup saved with 'Save setup'.")
+        self.load_setup_btn.clicked.connect(self._on_load_setup)
 
         self.export_img_btn = QPushButton("Export image")
         self.export_img_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
@@ -599,6 +610,7 @@ class MainWindow(QMainWindow):
         board_group, bl = _group("Board")
         bl.addRow(_row(self.load_btn, self.export_btn))
         bl.addRow(_row(self.diag_btn))
+        bl.addRow(_row(self.save_setup_btn, self.load_setup_btn))
         bl.addRow("Name", self.name_edit)
         bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
                                  self.save_preset_btn, stretch_first=True))
@@ -1637,6 +1649,163 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(
             f"Wrote leveled {path.name} — run it (then the cut-out)", 10000)
+
+    # ---- save / load the whole setup -----------------------------------
+    def _collect_setup(self):
+        """Snapshot every setting that defines the current job, as a JSON-able
+        dict — including the probed height-map table, the expensive part."""
+        import dataclasses
+        self._sync_state()
+        rows = []
+        for r in range(self.level_table.rowCount()):
+            rows.append([(self.level_table.item(r, c).text()
+                          if self.level_table.item(r, c) else "") for c in range(3)])
+        return {
+            "version": 1,
+            "gerber_dir": str(self.state.gerber_dir) if self.state.gerber_dir else None,
+            "name": self.name_edit.text(),
+            "machine": self.machine_combo.currentText(),
+            "mirror": self.mirror_chk.isChecked(),
+            "frame": self.frame_combo.currentIndex(),
+            "show_bed": self.show_bed_chk.isChecked(),
+            "place_x": self.place_x_spin.value(),
+            "place_y": self.place_y_spin.value(),
+            "rotation": self._rotation,
+            "thickness": self.thickness_spin.value(),
+            "auto_depth": self.auto_depth_chk.isChecked(),
+            "breakthrough": self.breakthrough_spin.value(),
+            "jobs": {op: dataclasses.asdict(self.forms[op].value()) for op in _OPS},
+            "double_sided": self.double_sided_chk.isChecked(),
+            "view": self.view_combo.currentIndex(),
+            "reg": self.reg_combo.currentIndex(),
+            "dowel_edge": self.place_combo.currentIndex(),
+            "grid_pitch": self.grid_pitch_edit.text(),
+            "grid_pin": self.grid_pin_edit.text(),
+            "clr_large": self.fresh_clear_large_edit.text(),
+            "clr_small": self.fresh_clear_small_edit.text(),
+            "bed_bite": self.fresh_bed_spin.value(),
+            "stock": {"w": self.stock_w_spin.value(), "h": self.stock_h_spin.value(),
+                      "x": self.stock_x_spin.value(), "y": self.stock_y_spin.value(),
+                      "show": self.stock_show_chk.isChecked()},
+            "level": {"nx": self.level_nx_spin.value(), "ny": self.level_ny_spin.value(),
+                      "apply": self.level_chk.isChecked(), "rows": rows},
+        }
+
+    def _apply_setup(self, d):
+        """Restore a setup dict from :meth:`_collect_setup`. Tolerant of missing
+        keys and renamed/removed job fields, so a setup survives a code update."""
+        import dataclasses
+        from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+
+        def _spin(sp, v):
+            sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+
+        def _chk(c, v):
+            c.blockSignals(True); c.setChecked(bool(v)); c.blockSignals(False)
+
+        def _combo(c, i):
+            c.blockSignals(True); c.setCurrentIndex(int(i)); c.blockSignals(False)
+
+        self.machine_combo.setCurrentText(d.get("machine", self.machine_combo.currentText()))
+        _chk(self.mirror_chk, d.get("mirror", True))
+        self.name_edit.setText(d.get("name", "board"))
+
+        loaded = False
+        gd = d.get("gerber_dir")
+        if gd and Path(gd).is_dir():
+            try:
+                self.load_folder(gd); loaded = True
+            except Exception as e:
+                QMessageBox.warning(self, "Could not reload board", str(e))
+
+        cls = {"traces": TraceJob, "drill": DrillJob, "cutout": CutoutJob}
+        for op, jd in d.get("jobs", {}).items():
+            if op in cls:
+                known = {f.name for f in dataclasses.fields(cls[op])}
+                try:
+                    self.forms[op].set_instance(
+                        cls[op](**{k: v for k, v in jd.items() if k in known}))
+                except Exception:
+                    pass
+
+        _spin(self.place_x_spin, d.get("place_x", 0.0))
+        _spin(self.place_y_spin, d.get("place_y", 0.0))
+        self._rotation = int(d.get("rotation", 0)) % 360
+        self.rotate_lbl.setText(f"{self._rotation}°")
+        self.state.set_rotation(self._rotation)
+        _spin(self.thickness_spin, d.get("thickness", 1.6))
+        _chk(self.auto_depth_chk, d.get("auto_depth", True))
+        _spin(self.breakthrough_spin, d.get("breakthrough", 0.1))
+        _combo(self.frame_combo, d.get("frame", 0))
+        _chk(self.show_bed_chk, d.get("show_bed", True))
+
+        _combo(self.reg_combo, d.get("reg", 0))
+        _combo(self.place_combo, d.get("dowel_edge", 0))
+        self.grid_pitch_edit.setText(d.get("grid_pitch", "14.2"))
+        self.grid_pin_edit.setText(d.get("grid_pin", "4.0"))
+        self.fresh_clear_large_edit.setText(d.get("clr_large", "0.2"))
+        self.fresh_clear_small_edit.setText(d.get("clr_small", "0.15"))
+        _spin(self.fresh_bed_spin, d.get("bed_bite", 5.0))
+        _combo(self.view_combo, d.get("view", 0))
+        _chk(self.double_sided_chk, d.get("double_sided", False))
+        self._update_ds_controls()
+        self.level_top_btn.setEnabled(self.double_sided_chk.isChecked())
+
+        st = d.get("stock", {})
+        for sp, k in ((self.stock_w_spin, "w"), (self.stock_h_spin, "h"),
+                      (self.stock_x_spin, "x"), (self.stock_y_spin, "y")):
+            _spin(sp, st.get(k, 0.0))
+        _chk(self.stock_show_chk, st.get("show", False))
+
+        lv = d.get("level", {})
+        _spin(self.level_nx_spin, lv.get("nx", 3))
+        _spin(self.level_ny_spin, lv.get("ny", 3))
+        rows = lv.get("rows", [])
+        self.level_table.setRowCount(len(rows))
+        for r, cells in enumerate(rows):
+            for c, txt in enumerate(cells[:3]):
+                it = QTableWidgetItem(txt)
+                if c < 2:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.level_table.setItem(r, c, it)
+        _chk(self.level_chk, lv.get("apply", False))
+
+        self._apply_auto_depth()
+        self._update_stock_preview()
+        self._update_grid_overlay()
+        self._update_level_overlay()
+        if loaded:
+            self.generate_preview()
+        self.statusBar().showMessage(
+            "Setup loaded" if loaded else
+            "Setup loaded (board not found — load the Gerber folder manually)", 10000)
+
+    def _on_save_setup(self):
+        import json
+        default = f"{self.name_edit.text() or 'board'}_setup.json"
+        path, _ = QFileDialog.getSaveFileName(self, "Save setup", default,
+                                              "Setup (*.json)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(json.dumps(self._collect_setup(), indent=2),
+                                  encoding="utf-8")
+        except Exception as e:
+            QMessageBox.critical(self, "Save failed", str(e))
+            return
+        self.statusBar().showMessage(f"Saved setup to {Path(path).name}", 8000)
+
+    def _on_load_setup(self):
+        import json
+        path, _ = QFileDialog.getOpenFileName(self, "Load setup", "", "Setup (*.json)")
+        if not path:
+            return
+        try:
+            d = json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception as e:
+            QMessageBox.critical(self, "Load failed", str(e))
+            return
+        self._apply_setup(d)
 
     def _diag_bounds(self):
         """Placed job bounds (board + dowels) in the cut/machine frame, for the

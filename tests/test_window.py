@@ -349,6 +349,38 @@ def test_center_design_on_stock_moves_placement():
     assert abs(cx - (10 + 70)) < 0.5 and abs(cy - (10 + 70)) < 0.5   # centred on stock
 
 
+def test_save_load_setup_round_trips(tmp_path):
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.place_x_spin.setValue(-2.0); w.place_y_spin.setValue(3.0)
+    w._on_rotate()                                 # 90
+    w.double_sided_chk.setChecked(True); w.fresh_bed_spin.setValue(4.0)
+    w.stock_w_spin.setValue(60.0); w.stock_show_chk.setChecked(True)
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3); w._on_build_level_grid()
+    w.level_table.setItem(0, 2, QTableWidgetItem("-0.05"))
+    w.level_chk.setChecked(True)
+
+    setup = w._collect_setup()
+
+    w2 = MainWindow()
+    w2._apply_setup(setup)                         # fresh window restores everything
+    assert w2.place_x_spin.value() == -2.0 and w2._rotation == 90
+    assert w2.double_sided_chk.isChecked() and w2.fresh_bed_spin.value() == 4.0
+    assert w2.stock_w_spin.value() == 60.0
+    assert w2.level_table.item(0, 2).text() == "-0.05" and w2.level_chk.isChecked()
+    assert str(w2.state.gerber_dir).endswith("mosfet_test")   # board reloaded
+
+
+def test_apply_setup_tolerates_missing_board_and_unknown_fields():
+    w = MainWindow()
+    # board path gone + an unknown job field -> must not raise, just skip them
+    w._apply_setup({
+        "gerber_dir": "C:/nope/missing", "place_x": 5.0,
+        "jobs": {"traces": {"cut_depth": 0.2, "bogus_field": 99}},
+    })
+    assert w.place_x_spin.value() == 5.0           # other settings still applied
+
+
 def test_probe_resume_skips_filled_points():
     from PySide6.QtWidgets import QTableWidgetItem
     w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
