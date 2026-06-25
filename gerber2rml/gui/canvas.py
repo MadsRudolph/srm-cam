@@ -1,4 +1,5 @@
 """Matplotlib preview canvas: draws cut/rapid polylines, or drill holes as circles."""
+import math
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSlider,
                                QPushButton)
 from PySide6.QtCore import Qt
@@ -95,6 +96,13 @@ class PreviewCanvas(QWidget):
         self._tool_pos = None
         self._tool_touch = False
         self._tool_artists = []
+
+        # Breadcrumb trail of where the tool has actually been (live DRO samples),
+        # drawn as a recency-faded amber line so you can follow the bit's tracks
+        # during a rework pass. Capped so a long job can't grow it without bound.
+        self._tool_trail = []
+        self._tool_trail_on = True
+        self._tool_trail_artist = None
 
         # Rework box-selection state. When selecting, a left-drag draws a
         # rectangle that persists across redraws/scrubbing; the chosen bbox is
@@ -197,13 +205,53 @@ class PreviewCanvas(QWidget):
         self._probe_grid = list(points) if points else None
         self._draw_fraction(self.slider.value() / 1000.0)
 
+    # Trail tuning: drop samples closer than this (mm) so jitter doesn't pile up,
+    # and cap the point count so a long job stays responsive.
+    _TRAIL_MIN_STEP = 0.2
+    _TRAIL_MAX = 4000
+
     def set_tool_position(self, x, y, touch=False):
         """Show (or clear, with ``None``) the live tool marker at machine ``(x, y)``
-        mm; ``touch`` turns it red when the bit is contacting the plate.
-        Lightweight: updates just the marker, no full redraw."""
+        mm; ``touch`` turns it red when the bit is contacting the plate. Each new
+        position also extends the breadcrumb trail. Lightweight: updates just the
+        marker + trail, no full redraw."""
+        if x is not None and self._tool_trail_on:
+            if (not self._tool_trail
+                    or math.hypot(x - self._tool_trail[-1][0],
+                                  y - self._tool_trail[-1][1]) >= self._TRAIL_MIN_STEP):
+                self._tool_trail.append((x, y))
+                if len(self._tool_trail) > self._TRAIL_MAX:
+                    del self._tool_trail[:-self._TRAIL_MAX]
         self._tool_pos = (x, y) if x is not None else None
         self._tool_touch = bool(touch)
         self._redraw_tool_only()
+
+    def clear_tool_trail(self):
+        """Wipe the breadcrumb trail (e.g. when starting a fresh pass)."""
+        self._tool_trail = []
+        self._redraw_tool_only()
+
+    def set_tool_trail_visible(self, on):
+        """Show/hide the breadcrumb trail. Hiding also stops recording so it
+        doesn't silently accumulate while invisible."""
+        self._tool_trail_on = bool(on)
+        if not on:
+            self._tool_trail = []
+        self._redraw_tool_only()
+
+    def _add_tool_trail(self):
+        """Draw the trail as segments fading from dim (oldest) to bright amber
+        (newest), so the freshest tracks read clearly over the cyan toolpaths."""
+        if not self._tool_trail_on or len(self._tool_trail) < 2:
+            return
+        pts = self._tool_trail
+        segs = [[pts[i], pts[i + 1]] for i in range(len(pts) - 1)]
+        n = len(segs)
+        colors = [(1.0, 0.78, 0.12, 0.15 + 0.75 * (i / max(n - 1, 1)))
+                  for i in range(n)]                # alpha 0.15 -> 0.90 over the run
+        self._tool_trail_artist = LineCollection(
+            segs, colors=colors, linewidths=1.7, zorder=14)
+        self.ax.add_collection(self._tool_trail_artist)
 
     def _add_tool_marker(self):
         if not self._tool_pos:
@@ -219,12 +267,19 @@ class PreviewCanvas(QWidget):
         ]
 
     def _redraw_tool_only(self):
+        if self._tool_trail_artist is not None:
+            try:
+                self._tool_trail_artist.remove()
+            except (ValueError, NotImplementedError):
+                pass
+            self._tool_trail_artist = None
         for a in self._tool_artists:
             try:
                 a.remove()
             except (ValueError, NotImplementedError):
                 pass
         self._tool_artists = []
+        self._add_tool_trail()
         self._add_tool_marker()
         self.canvas.draw_idle()
 
@@ -459,6 +514,8 @@ class PreviewCanvas(QWidget):
         self._rect_artist = None
         self._add_selection_patch()
         self._tool_artists = []          # ax.clear() dropped them; re-add live marker
+        self._tool_trail_artist = None   # and the breadcrumb trail under it
+        self._add_tool_trail()
         self._add_tool_marker()
         self._measure_artists = []       # ax.clear() dropped the ruler; re-add it
         self._add_measure_artist()

@@ -384,6 +384,16 @@ class MainWindow(QMainWindow):
             "Click a point on the preview to move the tool there (lifts ~5 mm "
             "first, then travels XY). Needs the machine connected.")
         self.jog_chk.toggled.connect(self._on_jog_mode_toggled)
+        self.trail_chk = QCheckBox("Trail")
+        self.trail_chk.setChecked(True)
+        self.trail_chk.setToolTip(
+            "Leave a fading amber breadcrumb trail of where the bit has already "
+            "travelled, so you can follow its tracks during a rework pass.")
+        self.trail_chk.toggled.connect(
+            lambda on: self.preview.set_tool_trail_visible(on))
+        self.trail_clear_btn = QPushButton("Clear trail")
+        self.trail_clear_btn.setToolTip("Wipe the breadcrumb trail and start fresh.")
+        self.trail_clear_btn.clicked.connect(lambda: self.preview.clear_tool_trail())
         self.zero_btn = QPushButton("Probe Z")
         self.zero_btn.setEnabled(False)
         self.zero_btn.setToolTip(
@@ -725,6 +735,8 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.dro_label)
         _mb.addWidget(self.touch_label)
         _mb.addStretch(1)
+        _mb.addWidget(self.trail_chk)
+        _mb.addWidget(self.trail_clear_btn)
         _mb.addWidget(self.zero_btn)
         _mb.addWidget(self.jog_chk)
         _mb.addWidget(self.connect_btn)
