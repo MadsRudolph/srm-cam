@@ -301,6 +301,41 @@ def test_probe_grid_lays_over_displayed_outline_double_sided():
     assert xy and all(x0 <= x <= x1 and y0 <= y <= y1 for (x, y) in xy)  # all on the board
 
 
+def test_copper_stock_overlay_and_fit_check():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    # enter a copper piece and show it
+    w.stock_w_spin.setValue(120.0); w.stock_h_spin.setValue(120.0)
+    w.stock_x_spin.setValue(0.0); w.stock_y_spin.setValue(0.0)
+    w.stock_show_chk.setChecked(True)
+    assert w.preview._stock == (0.0, 0.0, 120.0, 120.0)
+    w.generate_preview()
+    assert w.preview._stock_fits                    # big copper -> design fits
+
+    # tiny copper -> design spills off
+    w.stock_w_spin.setValue(5.0); w.stock_h_spin.setValue(5.0)
+    w.generate_preview()
+    assert not w.preview._stock_fits
+
+    # capture the corner from the live tool position
+    w._on_position(40.0, 30.0, -54.0, False)
+    w._on_stock_corner_from_tool()
+    assert (w.stock_x_spin.value(), w.stock_y_spin.value()) == (40.0, 30.0)
+
+    w.stock_show_chk.setChecked(False)
+    assert w.preview._stock is None                 # hidden
+
+
+def test_center_design_on_stock_moves_placement():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.stock_w_spin.setValue(140.0); w.stock_h_spin.setValue(140.0)
+    w.stock_x_spin.setValue(10.0); w.stock_y_spin.setValue(10.0)
+    w.stock_show_chk.setChecked(True)
+    w._on_center_design_on_stock()
+    jb = w._job_bounds()
+    cx, cy = (jb[0] + jb[2]) / 2, (jb[1] + jb[3]) / 2
+    assert abs(cx - (10 + 70)) < 0.5 and abs(cy - (10 + 70)) < 0.5   # centred on stock
+
+
 def test_probe_grid_overlay_toggles_on_preview():
     w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
     w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)

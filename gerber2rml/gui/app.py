@@ -228,6 +228,45 @@ class MainWindow(QMainWindow):
             "corner to read off the board size.")
         self.measure_chk.toggled.connect(self._on_measure_toggled)
 
+        # ---- Copper stock: draw the physical piece of copper to align onto ----
+        self.stock_w_spin = QDoubleSpinBox(); self.stock_h_spin = QDoubleSpinBox()
+        for sp, ax in ((self.stock_w_spin, "width"), (self.stock_h_spin, "height")):
+            sp.setRange(0.0, 300.0); sp.setSingleStep(1.0); sp.setDecimals(1)
+            sp.setSuffix(" mm")
+            sp.setToolTip(f"Measured {ax} of the copper stock you're milling onto")
+            sp.valueChanged.connect(self._update_stock_preview)
+        self._stock_wh_row = QWidget()
+        _sw = QHBoxLayout(self._stock_wh_row); _sw.setContentsMargins(0, 0, 0, 0)
+        _sw.addWidget(QLabel("W")); _sw.addWidget(self.stock_w_spin)
+        _sw.addWidget(QLabel("H")); _sw.addWidget(self.stock_h_spin)
+
+        self.stock_x_spin = QDoubleSpinBox(); self.stock_y_spin = QDoubleSpinBox()
+        for sp in (self.stock_x_spin, self.stock_y_spin):
+            sp.setRange(0.0, 500.0); sp.setSingleStep(1.0); sp.setDecimals(1)
+            sp.setSuffix(" mm")
+            sp.setToolTip("Front-left corner of the copper on the bed (machine X/Y)")
+            sp.valueChanged.connect(self._update_stock_preview)
+        self._stock_xy_row = QWidget()
+        _sx = QHBoxLayout(self._stock_xy_row); _sx.setContentsMargins(0, 0, 0, 0)
+        _sx.addWidget(QLabel("X")); _sx.addWidget(self.stock_x_spin)
+        _sx.addWidget(QLabel("Y")); _sx.addWidget(self.stock_y_spin)
+
+        self.stock_show_chk = QCheckBox("Show copper stock")
+        self.stock_show_chk.setToolTip(
+            "Draw the measured copper piece on the bed so you can line the design "
+            "(and dowels) up inside it. Turns red if the job spills off the copper.")
+        self.stock_show_chk.toggled.connect(self._update_stock_preview)
+        self.stock_here_btn = QPushButton("Corner = tool")
+        self.stock_here_btn.setToolTip(
+            "Set the copper's front-left corner to the live tool position — jog the "
+            "bit to the corner of the copper, then click. Needs the machine connected.")
+        self.stock_here_btn.clicked.connect(self._on_stock_corner_from_tool)
+        self.stock_center_btn = QPushButton("Center design")
+        self.stock_center_btn.setToolTip(
+            "Move the design so it's centred on the copper stock — a starting point "
+            "you can then nudge with the drag/placement controls.")
+        self.stock_center_btn.clicked.connect(self._on_center_design_on_stock)
+
         # ---- Bed leveling: probe grid -> measured Z table -> warp on export ----
         self.level_chk = QCheckBox("Apply bed leveling on export")
         self.level_chk.setToolTip(
@@ -565,6 +604,13 @@ class MainWindow(QMainWindow):
         pl.addRow("", self.move_chk)
         pl.addRow("", self.measure_chk)
         l_proj.addWidget(place_group)
+
+        stock_group, sg = _group("Copper stock")
+        sg.addRow("Size", self._stock_wh_row)
+        sg.addRow("Corner", self._stock_xy_row)
+        sg.addRow("", _row(self.stock_here_btn, self.stock_center_btn))
+        sg.addRow("", self.stock_show_chk)
+        l_proj.addWidget(stock_group)
         l_proj.addStretch(1)
 
         # ===== BED LEVELING =====
@@ -1693,6 +1739,63 @@ class MainWindow(QMainWindow):
         self.place_x_spin.blockSignals(False)
         # setting Y triggers a single regenerate_preview at the new placement
         self.place_y_spin.setValue(max(0.0, self.place_y_spin.value() + dy))
+
+    # ---- copper stock alignment -----------------------------------------
+    def _update_stock_preview(self, *_):
+        """Push the measured copper rectangle to the preview (or hide it)."""
+        if not self.stock_show_chk.isChecked():
+            self.preview.set_stock(None)
+            return
+        self.preview.set_stock((self.stock_x_spin.value(), self.stock_y_spin.value(),
+                                self.stock_w_spin.value(), self.stock_h_spin.value()))
+
+    def _on_stock_corner_from_tool(self):
+        """Capture the live tool XY as the copper's front-left corner."""
+        if self._tool_xyz is None:
+            self.statusBar().showMessage(
+                "Connect the machine and jog the bit to the copper corner first", 6000)
+            return
+        x, y, _z = self._tool_xyz
+        self.stock_x_spin.setValue(max(0.0, x))     # valueChanged -> _update_stock_preview
+        self.stock_y_spin.setValue(max(0.0, y))
+        self.stock_show_chk.setChecked(True)
+        self.statusBar().showMessage(f"Copper corner set to X {x:.1f}  Y {y:.1f}", 6000)
+
+    def _job_bounds(self):
+        """Bounds of everything that lands on the copper (board + dowels) in the
+        currently displayed frame, or None."""
+        o = self._display_outline()
+        if o is None or o.is_empty:
+            return None
+        x0, y0, x1, y1 = o.bounds
+        if self.double_sided_chk.isChecked():
+            lay = self._machine_layout() if self._ds_side() else self._double_sided_layout()
+            for (hx, hy, hd) in lay.align_holes:
+                r = max(hd, 0.1) / 2.0
+                x0, y0 = min(x0, hx - r), min(y0, hy - r)
+                x1, y1 = max(x1, hx + r), max(y1, hy + r)
+        return (x0, y0, x1, y1)
+
+    def _on_center_design_on_stock(self):
+        """Shift the placement so the job is centred on the copper stock."""
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        if self.stock_w_spin.value() <= 0 or self.stock_h_spin.value() <= 0:
+            QMessageBox.warning(self, "No stock size",
+                                "Enter the copper width and height first.")
+            return
+        jb = self._job_bounds()
+        if jb is None:
+            return
+        cx, cy = (jb[0] + jb[2]) / 2.0, (jb[1] + jb[3]) / 2.0
+        tx = self.stock_x_spin.value() + self.stock_w_spin.value() / 2.0
+        ty = self.stock_y_spin.value() + self.stock_h_spin.value() / 2.0
+        self.place_x_spin.blockSignals(True)
+        self.place_x_spin.setValue(max(0.0, self.place_x_spin.value() + (tx - cx)))
+        self.place_x_spin.blockSignals(False)
+        self.place_y_spin.setValue(max(0.0, self.place_y_spin.value() + (ty - cy)))
+        self.statusBar().showMessage("Design centred on the copper stock", 5000)
 
     def _on_selection_changed(self, bbox):
         op = _OPS[self.tabs.currentIndex()]
