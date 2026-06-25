@@ -663,6 +663,28 @@ def test_rework_follows_height_map_for_uniform_depth():
     assert max(zs) > -0.20 + 1e-3                     # surface-follow lifts some cuts upward
 
 
+def test_run_progress_tracks_live_position():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.run_op_combo.setCurrentText("Traces")
+    w.run_track_btn.setChecked(True)                  # arm
+    assert w._run_progress is not None and w._run_progress.total > 0
+    end = w._run_progress.pts[-1]                      # last point of the path
+    w._on_position(end[0], end[1], end[2], False)      # report the bit at the end
+    assert w.run_bar.value() >= 99                      # ~done
+    assert "done" in w.run_eta_lbl.text() or "left" in w.run_eta_lbl.text()
+    w.run_track_btn.setChecked(False)                  # disarm resets
+    assert w._run_progress is None and w.run_bar.value() == 0
+
+
+def test_run_progress_rework_needs_a_box(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.run_rework_chk.setChecked(True)                  # selection mode, no box drawn
+    w.run_track_btn.setChecked(True)
+    assert w._run_progress is None and not w.run_track_btn.isChecked()  # refused
+
+
 def test_preview_orientation_badge_and_flip():
     w = MainWindow()
     w.load_folder(str(FIXT))
