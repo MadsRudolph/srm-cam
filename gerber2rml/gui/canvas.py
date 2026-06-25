@@ -265,10 +265,43 @@ class PreviewCanvas(QWidget):
     def _style_axes(self):
         self.ax.set_aspect("equal")
         self.ax.set_facecolor('#1e1e1e')
-        self.ax.tick_params(colors='#d4d4d4')
-        self.ax.grid(True, color='#333333', linestyle='--')
+        self.ax.set_axisbelow(True)                 # grid behind the toolpaths
+        self.ax.tick_params(colors='#d4d4d4', labelsize=8)
+        self.ax.set_xlabel("X (mm)", color="#8a9099", fontsize=8)
+        self.ax.set_ylabel("Y (mm)", color="#8a9099", fontsize=8)
         for spine in self.ax.spines.values():
             spine.set_color('#333333')
+        # the actual mm grid is set in _apply_ruler_grid (needs the view limits)
+
+    @staticmethod
+    def _nice_step(raw):
+        """Round ``raw`` up to a 'nice' 1/2/5 x 10^n step (ruler-friendly)."""
+        import math
+        if raw <= 0:
+            return 1.0
+        base = 10.0 ** math.floor(math.log10(raw))
+        for m in (1, 2, 5):
+            if raw <= m * base:
+                return m * base
+        return 10 * base
+
+    def _apply_ruler_grid(self):
+        """A ruler-like mm grid: labeled major lines + a finer minor grid. The
+        spacing is chosen from the current view span so it stays readable whether
+        you're looking at a 20 mm coupon or the whole bed."""
+        from matplotlib.ticker import MultipleLocator
+        x0, x1 = sorted(self.ax.get_xlim())
+        y0, y1 = sorted(self.ax.get_ylim())
+        span = max(x1 - x0, y1 - y0, 1.0)
+        major = self._nice_step(span / 8.0)         # ~8 labeled divisions across
+        minor = max(major / 10.0, 0.1)              # fine ticks (1 mm when major=10)
+        for axis in (self.ax.xaxis, self.ax.yaxis):
+            axis.set_major_locator(MultipleLocator(major))
+            axis.set_minor_locator(MultipleLocator(minor))
+        self.ax.grid(True, which="major", color="#45454a", linewidth=0.7, alpha=0.9)
+        self.ax.grid(True, which="minor", color="#2b2b2e", linewidth=0.4, alpha=0.7)
+        self.ax.tick_params(which="major", length=5, colors="#d4d4d4", labelsize=8)
+        self.ax.tick_params(which="minor", length=2, colors="#666666")
 
     def _on_slider(self, val):
         self._draw_fraction(val / 1000.0)
@@ -363,6 +396,7 @@ class PreviewCanvas(QWidget):
             # orientation; the data underneath is unchanged.
             self.ax.set_xlim((x1, x0) if self._flip_x else (x0, x1))
             self.ax.set_ylim(y0, y1)
+        self._apply_ruler_grid()             # mm ruler grid, sized to the view
         # ax.clear() above dropped the selection rectangle; re-add it so the
         # picked area stays visible while scrubbing or regenerating the preview.
         self._rect_artist = None
