@@ -676,6 +676,33 @@ def test_run_progress_tracks_live_position():
     assert w._run_progress is None and w.run_bar.value() == 0
 
 
+def test_run_progress_autostarts_on_motion():
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.run_op_combo.setCurrentText("Traces")
+    w.run_auto_chk.setChecked(True)
+    w._dro = object()                                  # pretend the link is open
+    assert w._run_progress is None
+    # three consecutive moving reads (>0.25 mm each) -> auto-arm
+    w._on_position(10.0, 10.0, -0.15, False)
+    w._on_position(11.0, 10.0, -0.15, False)
+    w._on_position(12.0, 10.0, -0.15, False)
+    w._on_position(13.0, 10.0, -0.15, False)
+    assert w._run_progress is not None and w.run_track_btn.isChecked()
+    w._dro = None
+
+
+def test_run_progress_no_autostart_right_after_jog():
+    import time as _t
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.run_auto_chk.setChecked(True)
+    w._dro = object()
+    w._last_jog_t = _t.time()                          # we just jogged
+    for x in (10.0, 11.0, 12.0, 13.0):                 # motion, but it's our jog
+        w._on_position(x, 10.0, -0.15, False)
+    assert w._run_progress is None                      # suppressed near a jog
+    w._dro = None
+
+
 def test_run_progress_rework_needs_a_box(monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
