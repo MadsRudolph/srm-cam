@@ -301,6 +301,26 @@ def test_probe_grid_lays_over_displayed_outline_double_sided():
     assert xy and all(x0 <= x <= x1 and y0 <= y <= y1 for (x, y) in xy)  # all on the board
 
 
+def test_height_map_overlay_follows_displayed_frame_double_sided():
+    # regression: the heatmap mesh must be sampled over the DISPLAYED (mirrored)
+    # outline, the same frame as the probe grid/PCB — not state.board.outline,
+    # which for a mirrored bottom side is offset and makes the heatmap misalign.
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow(); w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True); w.generate_preview()
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3); w._on_build_level_grid()
+    for r in range(9):                                  # tilt so the map is non-trivial
+        x = float(w.level_table.item(r, 0).text())
+        w.level_table.setItem(r, 2, QTableWidgetItem(f"{0.001 * x:.4f}"))
+    w.level_show_chk.setChecked(True); w._update_level_overlay()
+    X, _Y, _Z, _pts = w.preview._level_overlay
+    mesh = (round(float(X.min()), 3), round(float(X.max()), 3))
+    disp = w._level_bounds()
+    assert mesh == (round(disp[0], 3), round(disp[2], 3))      # mesh spans displayed X
+    design = w.state.board.outline.bounds
+    assert mesh != (round(design[0], 3), round(design[2], 3))  # NOT the design frame
+
+
 def test_diagnostics_runs(monkeypatch):
     from PySide6.QtWidgets import QMessageBox
     seen = {}
