@@ -20,9 +20,15 @@ def test_format_diameter():
 
 def test_drill_jobs_splits_per_diameter():
     holes = [(0, 0, 0.8), (1, 1, 1.0), (2, 2, 0.8)]
-    files = drill_jobs(holes, DrillJob(), "b_drill")
+    files = drill_jobs(holes, DrillJob(single_bit=False), "b_drill")  # opt into multi-bit
     names = [f for f, _ in files]
     assert names == ["b_drill_0.8mm.rml", "b_drill_1.0mm.rml"]   # smallest first
+
+
+def test_drill_jobs_default_is_single_bit():
+    holes = [(0, 0, 0.8), (1, 1, 1.2)]
+    files = drill_jobs(holes, DrillJob(), "b_drill")             # default = one bit
+    assert [f for f, _ in files] == ["b_drill.rml"]
 
 
 def test_drill_jobs_single_bit_one_file():

@@ -1,0 +1,34 @@
+DOWEL-PIN FIT TEST: hole_test  (drill gerber)
+
+Load the folder in the GUI, place it, export the DRILL job in single-bit
+(interpolate) mode ~6 mm deep. Try each pin in its row; the hole that
+grips snugly gives the pin_clearance to set.
+
+  TOP row    (larger Y, 24 mm) -> SMALL pin 1.9 mm
+  BOTTOM row (smaller Y, 8 mm) -> BIG   pin 3.1 mm
+  Hole 1 = leftmost (smallest), hole 9 = rightmost (largest).
+  'measured' is the expected milled size (~0.4 mm under commanded).
+
+row      pin   #      X     Y  clearance  commanded  ~measured
+
+BIG      3.1   1    8.0   8.0       0.20       3.30       2.90
+BIG      3.1   2   15.0   8.0       0.25       3.35       2.95
+BIG      3.1   3   22.0   8.0       0.30       3.40       3.00
+BIG      3.1   4   29.0   8.0       0.35       3.45       3.05
+BIG      3.1   5   36.0   8.0       0.40       3.50       3.10
+BIG      3.1   6   43.0   8.0       0.45       3.55       3.15
+BIG      3.1   7   50.0   8.0       0.50       3.60       3.20
+BIG      3.1   8   57.0   8.0       0.55       3.65       3.25
+BIG      3.1   9   64.0   8.0       0.60       3.70       3.30
+SMALL    1.9   1    8.0  24.0       0.20       2.10       1.70
+SMALL    1.9   2   15.0  24.0       0.25       2.15       1.75
+SMALL    1.9   3   22.0  24.0       0.30       2.20       1.80
+SMALL    1.9   4   29.0  24.0       0.35       2.25       1.85
+SMALL    1.9   5   36.0  24.0       0.40       2.30       1.90
+SMALL    1.9   6   43.0  24.0       0.45       2.35       1.95
+SMALL    1.9   7   50.0  24.0       0.50       2.40       2.00
+SMALL    1.9   8   57.0  24.0       0.55       2.45       2.05
+SMALL    1.9   9   64.0  24.0       0.60       2.50       2.10
+
+Tell me the snug hole per row (e.g. 'BIG #5, SMALL #5') and I'll
+set pin_clearance to match.

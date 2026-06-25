@@ -1,0 +1,19 @@
+DOUBLE-SIDED run plan: doweltest  [Roland SRM-20 (G-code)]  registration: fresh  dowels: topbottom
+
+FRESH mode: the mill drills its own dowel holes; the grid screws only hold
+  the stock down. Load copper at least ~11 mm taller than the board on
+  the centre line - the two dowels sit in that waste and are cut away at the end.
+  Pins: 3.1 mm (BOTTOM) and 1.9 mm (TOP); the different sizes mean the
+  board can only flip back on ONE way.
+  Holes are milled 0.50 mm oversize (3.60/2.40 mm) for a slip fit.
+
+0. Set XY zero ONCE (e.g. stock lower-left) and do NOT re-zero XY between jobs.
+   RE-ZERO Z after every bit change AND after the flip.
+1. doweltest_align: mills the two dowel holes 6.0 mm deep (through the
+   1.6 mm stock AND into the bed). Seat the 3.1 mm pin bottom and
+   the 1.9 mm pin top; firm in the bed, slip-fit in the board.
+2. Bottom side: change bit between files - doweltest_bottom_drill_0.8mm.nc. Then doweltest_bottom_traces.
+3. FLIP the board LEFT-TO-RIGHT about the vertical pin line and drop it back
+   onto the pins. Re-zero Z on the new surface.
+4. doweltest_top_traces: plain F.Cu, already reflected so it aligns after the flip.
+5. doweltest_cutout LAST: frees the board from the waste/dowels (leave the tabs).

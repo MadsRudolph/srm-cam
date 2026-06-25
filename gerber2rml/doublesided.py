@@ -47,7 +47,18 @@ from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
 PIN_LARGE = 3.1     # fresh: bottom dowel diameter (mm) — measured metal rod
 PIN_SMALL = 1.9     # fresh: top dowel diameter (mm) — measured metal rod
-PIN_CLEARANCE = 0.0  # fresh: mm added to each dowel-HOLE diameter (slip fit; 0 = nominal)
+# fresh: mm added to each dowel-HOLE diameter, PER PIN. Dialed in on the fit-test
+# coupon (examples/hole_test): the 3.1 mm pin seats perfectly at +0.20, the 1.9 mm
+# pin wants a touch tighter at +0.15. The kerf isn't identical at both diameters,
+# so the two clearances differ. See memory: srm20-interpolated-hole-undersize.
+CLEAR_LARGE = 0.20   # big (3.1 mm) dowel hole oversize
+CLEAR_SMALL = 0.15   # small (1.9 mm) dowel hole oversize
+DOWEL_BED_DEPTH = 5.0  # fresh: mm the dowel hole goes BELOW the stock into the
+                       # sacrificial bed, so the pin has enough bite to stay put.
+                       # Was 3.0 but only ~2 mm actually reached, so bumped for a
+                       # solid bite. If the bit still can't reach, the work surface
+                       # may be near the bottom of Z travel (see memory:
+                       # srm20-z-travel-cuttable-range) — lower it, don't just bump.
 EDGE_OFFSET = 8.0   # fresh: mm from the board edge to the dowel centre (waste)
 GRID_PITCH = 14.2   # grid: hole-to-hole spacing (mm) — set to your measured grid
 GRID_PIN = 4.0      # grid: dowel diameter = grid hole size (mm)
@@ -68,7 +79,8 @@ class DowelSpec:
     placement: str = "topbottom"        # "topbottom" | "leftright"
     pin_large: float = PIN_LARGE
     pin_small: float = PIN_SMALL
-    pin_clearance: float = PIN_CLEARANCE  # fresh: hole = pin + this (slip fit)
+    clearance_large: float = CLEAR_LARGE  # fresh: big hole  = pin_large + this
+    clearance_small: float = CLEAR_SMALL  # fresh: small hole = pin_small + this
     edge_offset: float = EDGE_OFFSET
     pitch_x: float = GRID_PITCH
     pitch_y: float = GRID_PITCH
@@ -130,14 +142,14 @@ def _place_fresh(gx0, gy0, gx1, gy1, spec):
     cx = (gx0 + gx1) / 2.0
     # milled hole runs pin + clearance wide for a slip fit; pin diameter itself
     # is reported in the run plan so you still seat the right rod.
-    hole_l = spec.pin_large + spec.pin_clearance
-    hole_s = spec.pin_small + spec.pin_clearance
+    hole_l = spec.pin_large + spec.clearance_large
+    hole_s = spec.pin_small + spec.clearance_small
     align_board = [(cx, gy0 - spec.edge_offset, hole_l),   # bottom (large)
                    (cx, gy1 + spec.edge_offset, hole_s)]   # top (small)
     # The positive-quadrant shift uses the NOMINAL pin extent, NOT the
     # clearance-widened hole, so the placement (and thus the dowel centres) is
-    # invariant to pin_clearance — bump the clearance and re-cut the align holes
-    # alone and they land back on the existing holes.
+    # invariant to the clearances — bump them and re-cut the align holes alone
+    # and they land back on the existing holes.
     allminx = min(gx0, cx - spec.pin_large / 2.0)
     allminy = min(gy0 - spec.edge_offset - spec.pin_large / 2.0,
                   gy1 + spec.edge_offset - spec.pin_small / 2.0)
@@ -276,7 +288,10 @@ def _align_drill(drill, dowels, align_depth, board_thickness):
     diameter). Fresh dowels go through the stock AND into the bed (deep); grid
     dowels only clear the stock (the grid hole is already there)."""
     if align_depth is None:
-        align_depth = 6.0 if dowels.mode == "fresh" else board_thickness + 1.0
+        # fresh: through the stock + a fixed bite into the bed (adapts to stock
+        # thickness). grid: just clear the stock onto the pin already in the grid.
+        align_depth = (board_thickness + DOWEL_BED_DEPTH if dowels.mode == "fresh"
+                       else board_thickness + 1.0)
     return replace(drill, total_depth=align_depth, single_bit=True), align_depth
 
 
@@ -286,10 +301,10 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
     """Build ONLY the dowel-hole (align) toolpath — nothing else.
 
     For the test-fit loop: cut the dowel holes, check the rods seat; if they
-    bind, bump ``dowels.pin_clearance`` and re-run THIS to re-cut just the holes
-    a touch wider. The dowel centres are invariant to ``pin_clearance`` (see
-    :func:`_place_fresh`), so the re-cut lands back on the existing holes as long
-    as the XY origin is unchanged. Returns the single Path written.
+    bind, bump ``dowels.clearance_large`` / ``clearance_small`` and re-run THIS to
+    re-cut just the holes a touch wider. The dowel centres are invariant to the
+    clearances (see :func:`_place_fresh`), so the re-cut lands back on the existing
+    holes as long as the XY origin is unchanged. Returns the single Path written.
     """
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)
@@ -386,9 +401,10 @@ def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness
             f"   stock down onto the pins. Bottom side: {drill_step}. Then {name}_bottom_traces.\n"
             + common_tail)
     waste = dowels.edge_offset + dowels.pin_large
-    pl, ps, cl = dowels.pin_large, dowels.pin_small, dowels.pin_clearance
-    clear_note = (f"  Holes are milled {cl:.2f} mm oversize ({bd:.2f}/{td:.2f} mm) for a slip fit.\n"
-                  if cl else "")
+    pl, ps = dowels.pin_large, dowels.pin_small
+    cl_l, cl_s = dowels.clearance_large, dowels.clearance_small
+    clear_note = (f"  Holes are milled oversize for fit: {bd:.2f} mm (+{cl_l:.2f}) bottom, "
+                  f"{td:.2f} mm (+{cl_s:.2f}) top.\n" if (cl_l or cl_s) else "")
     return head + (
         f"FRESH mode: the mill drills its own dowel holes; the grid screws only hold\n"
         f"  the stock down. Load copper at least ~{waste:.0f} mm {bigger} than the board on\n"
@@ -400,7 +416,7 @@ def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness
         f"0. Set XY zero ONCE (e.g. stock lower-left) and do NOT re-zero XY between jobs.\n"
         f"   RE-ZERO Z after every bit change AND after the flip.\n"
         f"1. {name}_align: mills the two dowel holes {align_depth:.1f} mm deep (through the\n"
-        f"   {thickness:.1f} mm stock AND into the bed). Seat the {pl:.1f} mm pin {lo.lower()} and\n"
+        f"   {thickness:.1f} mm stock AND {align_depth - thickness:.1f} mm into the bed). Seat the {pl:.1f} mm pin {lo.lower()} and\n"
         f"   the {ps:.1f} mm pin {hi.lower()}; firm in the bed, slip-fit in the board.\n"
         f"2. Bottom side: {drill_step}. Then {name}_bottom_traces.\n"
         + common_tail)

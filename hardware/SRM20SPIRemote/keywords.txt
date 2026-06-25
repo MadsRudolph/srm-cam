@@ -1,0 +1,37 @@
+#######################################
+# Syntax Coloring Map For SRM20SPIRemote
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+SRM20SPIRemote	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+begin	KEYWORD2
+end	KEYWORD2
+isReady	KEYWORD2
+getStatus	KEYWORD2
+suspendJob	KEYWORD2
+resumeJob	KEYWORD2
+cancelJob	KEYWORD2
+stopMoving	KEYWORD2
+setOrigin	KEYWORD2
+jumpTo	KEYWORD2
+turnSpindle	KEYWORD2
+jumpToView	KEYWORD2
+scanTo	KEYWORD2
+getActualPosition	KEYWORD2
+readSensor	KEYWORD2
+getOrigin	KEYWORD2
+getScanPosition	KEYWORD2
+getActualSpindleSpeed	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
