@@ -953,19 +953,22 @@ class MainWindow(QMainWindow):
     def export_to(self, out_dir):
         self._sync_state()
         if self.double_sided_chk.isChecked():
-            if self.level_chk.isChecked():
-                QMessageBox.information(
-                    self, "Leveling skipped",
-                    "Bed leveling isn't applied to double-sided jobs yet — the "
-                    "surface changes after the flip, so it would need a second "
-                    "probe pass. Exporting double-sided without leveling.")
             from gerber2rml.doublesided import build_double_sided
+            # leveling warps only the bottom-side jobs (the probed setup); the top
+            # is cut after the flip on the other face, so it's left unleveled.
+            level = self._height_map()
+            if level is not None:
+                QMessageBox.information(
+                    self, "Bottom-side leveling",
+                    "Bed leveling will warp the BOTTOM-side jobs (align, drill, "
+                    "bottom traces, cut-out). The top traces are cut after the flip "
+                    "on the other face, so they are left unleveled.")
             return build_double_sided(
                 self.state.gerber_dir, out_dir, self.state.name,
                 trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
                 dowels=self._dowel_spec(), machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
-                board_thickness=self.thickness_spin.value())
+                board_thickness=self.thickness_spin.value(), level=level)
         return self.state.export(out_dir, level=self._height_map())
 
     # ---- bed leveling -----------------------------------------------------
@@ -995,6 +998,11 @@ class MainWindow(QMainWindow):
 
     def _on_build_level_grid(self):
         from gerber2rml.engine.leveling import probe_points
+        # Double-sided: leveling is probed and applied in the BOTTOM-side setup,
+        # which is milled in the machine frame. Show that side so the grid, the
+        # overlay and the exported (leveled) toolpaths all share one frame.
+        if self.double_sided_chk.isChecked() and self._ds_side() != "Bottom":
+            self.view_combo.setCurrentText("Bottom")    # triggers generate_preview
         bounds = self._level_bounds()
         if bounds is None:
             QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
