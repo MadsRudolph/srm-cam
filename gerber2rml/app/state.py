@@ -20,6 +20,7 @@ class ProjectState:
     board: object = None
     place_x: float = 0.0   # job placement on the bed (mm), origin = front-left home
     place_y: float = 0.0
+    rotate: int = 0        # whole-job rotation in degrees (0/90/180/270), CCW
     _base_board: object = field(default=None, repr=False)
 
     def load(self, folder):
@@ -30,7 +31,12 @@ class ProjectState:
         return self.board
 
     def _placed(self, b):
-        """Board translated to the current bed placement (place_x, place_y)."""
+        """Board rotated to the current orientation then translated to the bed
+        placement (place_x, place_y). Rotation runs first and re-normalises to
+        the front-left origin, so placement stays measured from the corner."""
+        if self.rotate % 360:
+            from gerber2rml.loader import rotate_board
+            b = place_in_positive_quadrant(rotate_board(b, self.rotate))
         dx, dy = self.place_x, self.place_y
         if not dx and not dy:
             return b
@@ -51,6 +57,13 @@ class ProjectState:
         if self._base_board is not None:
             self.board = self._placed(self._base_board)
 
+    def set_rotation(self, angle):
+        """Rotate the whole job to ``angle`` degrees (snapped to 0/90/180/270);
+        recomputes ``board`` without re-reading the Gerbers."""
+        self.rotate = int(round(angle / 90.0)) * 90 % 360
+        if self._base_board is not None:
+            self.board = self._placed(self._base_board)
+
     def toolpaths(self, op):
         if self.board is None:
             raise RuntimeError("load a Gerber folder first")
@@ -68,4 +81,5 @@ class ProjectState:
         return build_jobs(self.gerber_dir, out_dir, self.name,
                           trace=self.trace, drill=self.drill, cutout=self.cutout,
                           mirror=self.mirror, machine=self.machine,
-                          offset=(self.place_x, self.place_y), level=level)
+                          offset=(self.place_x, self.place_y), level=level,
+                          rotate=self.rotate)

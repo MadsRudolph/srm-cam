@@ -10,10 +10,14 @@ from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
-               mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None):
+               mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None,
+               rotate=0):
     """``level`` (optional) is a callable ``hmap(x, y) -> dz`` from
     :mod:`gerber2rml.engine.leveling`; when given, every job's Z is warped to
-    follow the measured surface (applied AFTER placement, in machine coords)."""
+    follow the measured surface (applied AFTER placement, in machine coords).
+
+    ``rotate`` (degrees, 0/90/180/270) reorients the whole board before
+    toolpaths are generated, so the exported cut comes out rotated."""
     from gerber2rml.toolpath import offset as offset_paths
     gerber_dir, out_dir = Path(gerber_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -23,8 +27,13 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
     backend = BACKENDS[machine]          # (render fn, file extension)
     ext = backend.ext
     board = place_in_positive_quadrant(load_board(gerber_dir, mirror=mirror))
+    if rotate % 360:
+        from gerber2rml.loader import rotate_board
+        board = place_in_positive_quadrant(rotate_board(board, rotate))
 
+    from gerber2rml.engine.estimate import estimate_toolpaths_seconds, format_duration
     written = []
+    est = {}                                     # fname -> estimated seconds
 
     def _write(fname, paths, job):
         p = out_dir / fname
@@ -34,6 +43,7 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
             placed = apply_leveling(placed, level)
         p.write_text(backend.render(placed,
                                     xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+        est[fname] = estimate_toolpaths_seconds(placed, job.xy_feed, job.plunge_feed)
         written.append(p)
 
     _write(f"{name}_traces{ext}", isolate(board.copper, trace, outline=board.outline), trace)
@@ -64,6 +74,11 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
         f"3. cutout  — bit {cutout.bit_diameter} mm, {cutout.tabs} tabs x "
         f"{cutout.tab_width} mm, total {cutout.total_depth} mm\n"
         f"Board mirrored for bottom-up milling: {mirror}.\n"
+        + (f"Whole job rotated {rotate % 360}°.\n" if rotate % 360 else "")
+        + "Estimated run time (excludes tool changes, spin-up and pauses):\n"
+        + "".join(f"   {Path(p).name}: ~{format_duration(est[Path(p).name])}\n"
+                  for p in written if Path(p).name in est)
+        + f"   TOTAL: ~{format_duration(sum(est.values()))}\n"
     )
     rp = out_dir / f"{name}_runplan.txt"
     rp.write_text(runplan, encoding="utf-8")

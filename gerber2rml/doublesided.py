@@ -340,11 +340,14 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     lay = layout_double_sided(folder, dowels=dowels, offset=offset)
     top_outline = lay.top_outline
     align_drill, align_depth = _align_drill(drill, dowels, align_depth, board_thickness)
+    from gerber2rml.engine.estimate import estimate_toolpaths_seconds, format_duration
     written = []
+    est = {}                                     # fname -> estimated seconds
 
     def _write(fname, paths, job):
         (out_dir / fname).write_text(
             backend.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+        est[fname] = estimate_toolpaths_seconds(paths, job.xy_feed, job.plunge_feed)
         written.append(out_dir / fname)
 
     _write(f"{name}_align{ext}", drill_single_bit(lay.align_holes, align_drill), align_drill)
@@ -358,9 +361,13 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     _write(f"{name}_cutout{ext}", cut_outline(lay.outline, cutout), cutout)
 
     drill_step = _drill_runplan_line(bottom_drill_files, drill)
+    est_block = ("Estimated run time (excludes tool changes, spin-up and pauses):\n"
+                 + "".join(f"   {fn}: ~{format_duration(est[fn])}\n"
+                           for fn in (p.name for p in written) if fn in est)
+                 + f"   TOTAL: ~{format_duration(sum(est.values()))}\n")
     runplan = out_dir / f"{name}_runplan.txt"
     runplan.write_text(_runplan_text(name, machine, lay, dowels, drill_step,
-                                     align_depth, board_thickness),
+                                     align_depth, board_thickness) + est_block,
                        encoding="utf-8")
     written.append(runplan)
     return written

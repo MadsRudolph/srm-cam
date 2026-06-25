@@ -470,6 +470,35 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     return Board(copper=copper, outline=outline, holes=holes, copper_top=copper_top)
 
 
+def rotate_board(board: Board, angle: float, origin=(0, 0)) -> Board:
+    """Rotate copper, outline, holes and top copper by ``angle`` degrees CCW
+    about ``origin``.
+
+    Used to reorient the whole job so the exported toolpaths cut in that
+    orientation (the GUI restricts this to 90° steps). Callers typically re-run
+    :func:`place_in_positive_quadrant` afterwards to bring the rotated board
+    back to the front-left origin."""
+    if angle % 360 == 0:
+        return board
+    import math
+    from shapely.affinity import rotate as _rotate
+    a = math.radians(angle)
+    ca, sa = math.cos(a), math.sin(a)
+    ox, oy = origin
+
+    def _rot_hole(x, y, d):
+        x -= ox; y -= oy
+        return (ox + x * ca - y * sa, oy + x * sa + y * ca, d)
+
+    ct = board.copper_top if board.copper_top is not None else Polygon()
+    return Board(
+        copper=_rotate(board.copper, angle, origin=origin),
+        outline=_rotate(board.outline, angle, origin=origin),
+        holes=[_rot_hole(*h) for h in board.holes],
+        copper_top=_rotate(ct, angle, origin=origin),
+    )
+
+
 def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
     """Translate copper, outline and holes so the board's lower-left corner
     sits at (margin, margin). Machine coordinates (operator zeroes at the board

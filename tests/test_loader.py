@@ -6,9 +6,26 @@ from pathlib import Path
 from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 
-from gerber2rml.loader import load_board
+from gerber2rml.loader import load_board, rotate_board
 
 FIXT = Path(__file__).parent / "fixtures" / "mosfet_test"
+
+
+def test_rotate_board_90_moves_geometry():
+    b = load_board(FIXT, mirror=False)
+    # rotate a hole 90deg CCW about the origin: (x, y) -> (-y, x)
+    hx, hy, hd = b.holes[0]
+    r = rotate_board(b, 90)
+    rx, ry, rd = r.holes[0]
+    assert abs(rx - (-hy)) < 1e-6 and abs(ry - hx) < 1e-6 and rd == hd
+    # outline area is preserved, copper geometry stays valid
+    assert abs(r.outline.area - b.outline.area) < 1e-6
+    assert r.copper.is_valid
+
+
+def test_rotate_board_360_is_identity():
+    b = load_board(FIXT, mirror=False)
+    assert rotate_board(b, 360) is b           # no-op fast path
 
 
 def test_loads_copper_outline_and_holes():
