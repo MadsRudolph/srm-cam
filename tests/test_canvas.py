@@ -45,6 +45,38 @@ def test_slider_scrubs_partial_toolpath():
     canvas.slider.setValue(500)                   # emits valueChanged -> redraw at 0.5
     assert _n_cut_segments(canvas) == 2           # half scrubbed
 
+def _trail_artist(canvas):
+    return canvas._tool_trail_artist
+
+
+def test_tool_trail_accumulates_and_fades():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (40, 0)]], [])
+    for x in (0.0, 10.0, 20.0, 30.0):          # four well-separated samples
+        canvas.set_tool_position(x, 5.0)
+    art = _trail_artist(canvas)
+    assert art is not None and len(art.get_segments()) == 3      # n-1 segments
+    cols = art.get_colors()
+    assert cols[0][3] < cols[-1][3]            # oldest segment fainter than newest
+
+def test_tool_trail_dedups_tiny_jitter():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (1, 1)]], [])
+    canvas.set_tool_position(10.0, 10.0)
+    canvas.set_tool_position(10.05, 10.0)      # < _TRAIL_MIN_STEP -> ignored
+    assert len(canvas._tool_trail) == 1
+
+def test_tool_trail_clear_and_toggle():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (1, 1)]], [])
+    for x in (0.0, 5.0, 10.0):
+        canvas.set_tool_position(x, 0.0)
+    canvas.clear_tool_trail()
+    assert canvas._tool_trail == [] and _trail_artist(canvas) is None
+    canvas.set_tool_trail_visible(False)       # off -> stops recording
+    canvas.set_tool_position(20.0, 0.0)
+    assert canvas._tool_trail == [] and _trail_artist(canvas) is None
+
 def _simulate_box(canvas, x0, y0, x1, y1):
     """Drive the canvas' press/motion/release handlers with synthetic events."""
     class _Evt:
