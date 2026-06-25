@@ -208,15 +208,18 @@ def test_rotate_button_cycles_and_reorients_board():
     assert w._rotation == 0 and w.state.rotate == 0
 
 
-def test_double_sided_disables_and_resets_rotation():
-    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
-    w._on_rotate()                                 # rotate to 90 first
-    assert w._rotation == 90
-    w.double_sided_chk.setChecked(True)            # turning on DS resets + disables
-    assert w._rotation == 0 and w.state.rotate == 0
-    assert not w.rotate_btn.isEnabled()
-    w.double_sided_chk.setChecked(False)
-    assert w.rotate_btn.isEnabled()
+def test_double_sided_rotation_reorients_layout():
+    w = MainWindow(); w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True); w.generate_preview()
+    assert w.rotate_btn.isEnabled()                # rotation works in double-sided too
+    b0 = w._double_sided_layout().outline.bounds
+    w._on_rotate()                                 # 90°
+    assert w._rotation == 90 and w.state.rotate == 90
+    b1 = w._double_sided_layout().outline.bounds   # cache keyed on rotate -> recomputed
+    # width<->height swap (the dowels rotate with the board; counts preserved)
+    assert abs((b0[2] - b0[0]) - (b1[3] - b1[1])) < 1e-6
+    lay = w._machine_layout()
+    assert len(lay.align_holes) == 2 and len(lay.holes) > 0   # dowels rotate too
 
 
 def test_ruler_snaps_to_board_geometry_and_is_exclusive():

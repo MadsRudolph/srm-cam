@@ -215,7 +215,8 @@ class MainWindow(QMainWindow):
         self.rotate_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self.rotate_btn.setToolTip(
             "Rotate the whole board 90° - this reorients the ACTUAL exported "
-            "toolpaths, not just the view. Single-sided boards only.")
+            "toolpaths, not just the view. Works for single- and double-sided "
+            "(the dowels rotate with the board).")
         self.rotate_btn.clicked.connect(self._on_rotate)
         self.rotate_lbl = QLabel("0°")
 
@@ -692,10 +693,12 @@ class MainWindow(QMainWindow):
         spec = self._dowel_spec()
         off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.clearance_large, spec.clearance_small, off)
+               spec.grid_pin, spec.clearance_large, spec.clearance_small, off,
+               self.state.rotate)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
-                self.state.gerber_dir, dowels=spec, offset=off))
+                self.state.gerber_dir, dowels=spec, offset=off,
+                rotate=self.state.rotate))
         return self._ds_cache[1]
 
     def _machine_layout(self):
@@ -707,10 +710,12 @@ class MainWindow(QMainWindow):
         spec = self._dowel_spec()
         off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.clearance_large, spec.clearance_small, off)
+               spec.grid_pin, spec.clearance_large, spec.clearance_small, off,
+               self.state.rotate)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
-                self.state.gerber_dir, dowels=spec, offset=off))
+                self.state.gerber_dir, dowels=spec, offset=off,
+                rotate=self.state.rotate))
         return self._ds_mcache[1]
 
     def _ds_side(self):
@@ -752,13 +757,6 @@ class MainWindow(QMainWindow):
 
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
-        # rotation isn't supported for double-sided (the flip/dowel registration
-        # would need re-deriving); disable it and reset any applied rotation.
-        self.rotate_btn.setEnabled(not checked)
-        if checked and self._rotation:
-            self._rotation = 0
-            self.rotate_lbl.setText("0°")
-            self.state.set_rotation(0)
         self.generate_preview()
 
     def _on_reg_changed(self, *_):
@@ -968,7 +966,8 @@ class MainWindow(QMainWindow):
                 trace=self.state.trace, drill=self.state.drill, cutout=self.state.cutout,
                 dowels=self._dowel_spec(), machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
-                board_thickness=self.thickness_spin.value(), level=level)
+                board_thickness=self.thickness_spin.value(), level=level,
+                rotate=self.state.rotate)
         return self.state.export(out_dir, level=self._height_map())
 
     # ---- bed leveling -----------------------------------------------------
@@ -1455,7 +1454,8 @@ class MainWindow(QMainWindow):
                 self.state.gerber_dir, out, self.state.name,
                 drill=self.state.drill, dowels=self._dowel_spec(),
                 machine=self.state.machine,
-                board_thickness=self.thickness_spin.value())
+                board_thickness=self.thickness_spin.value(),
+                rotate=self.state.rotate)
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
             return
@@ -1588,12 +1588,11 @@ class MainWindow(QMainWindow):
                 8000)
 
     def _on_rotate(self):
-        """Rotate the whole job another 90° (reorients the exported cut)."""
+        """Rotate the whole job another 90° (reorients the exported cut). Works
+        for single- and double-sided (the dowels rotate with the board)."""
         if self.state.board is None:
             QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
             return
-        if self.double_sided_chk.isChecked():
-            return                            # disabled in double-sided mode
         self._rotation = (self._rotation + 90) % 360
         self.rotate_lbl.setText(f"{self._rotation}°")
         self.state.set_rotation(self._rotation)
