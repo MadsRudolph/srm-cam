@@ -181,6 +181,39 @@ datum handshake.
 
 ---
 
+## Emergency STOP / abort (added after a near-miss)
+
+A probe run drove the bit toward the bed; opening the lid paused the machine, but
+the firmware kept *queuing deeper Z moves* (its `waitForMotorStop` couldn't tell
+"done" from "paused"), so closing the lid resumed the descent. Disconnecting the
+GUI did nothing because the Arduino probes autonomously. Fixes, three layers:
+
+- **Firmware (`srm20_spi_probe.ino`) — self-protecting.** `waitForMotorStop` now
+  returns false if a move doesn't complete in time (i.e. the machine is paused)
+  **or** an `!` abort byte arrives. The probe/touch-off loops check it between
+  every 25 µm step and, on false, **lift to safe Z and stop** instead of stepping
+  again. New top-level `!` command also lifts. **You must reflash the Arduino**
+  with this sketch for the STOP button to fully work.
+- **Driver (`spi_probe.py`).** `probe_grid`/`touch_off` take `should_abort`; on
+  abort they send `!` (firmware lifts) and bail. Serial opens with a short read
+  timeout so a STOP is responsive mid-read.
+- **GUI.** A red **STOP** button (always enabled) aborts probing/touch-off/jog,
+  lifts the tool, and disconnects. Plain **Disconnect** now also aborts a running
+  probe. NOTE: this is a software backstop — the machine's own lid interlock /
+  power switch is still the real emergency stop.
+
+**Automatic runaway guard (outlier Z).** A bed's surface is flat to a fraction of
+a millimetre, so a probe that comes back much deeper than the others didn't find
+copper — the bit is heading into the board/bed. Both layers now catch this:
+
+- **Firmware**: the first good touch sets a reference surface; later points may
+  not descend more than `OUTLIER_MARGIN_UM` (1.2 mm) past it without contact. Hit
+  that limit → lift and report `E <id> RUNAWAY` instead of plunging to the 6 mm
+  cap. (Tilt/warp is far less than 1.2 mm, so real points still touch first.)
+- **Host** (`probe_grid`, `outlier_mm=1.5`): a firmware `RUNAWAY`, or any touch
+  more than `outlier_mm` deeper than the first point, aborts the whole grid —
+  lifts (`!`), stops, and the GUI shows which point ran away.
+
 ## Hard-won gotchas (read before touching the SPI path)
 - **Never trust a single SPI read** to drive motion — require two agreeing reads.
 - **`readSensor`/`scanTo` are unreliable** — use the external D7 touch probe.

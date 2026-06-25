@@ -22,9 +22,13 @@ def _open_serial(port, baud, timeout):
     return serial.Serial(port, baud, timeout=timeout)
 
 
-def _read_line(ser, deadline):
-    """Next non-comment line (stripped str), skipping ``#`` logs. None on timeout."""
+def _read_line(ser, deadline, should_abort=None):
+    """Next non-comment line (stripped str), skipping ``#`` logs. None on timeout
+    or when ``should_abort()`` turns true (so a STOP is responsive even mid-read;
+    the serial port must be opened with a short read timeout for this to poll)."""
     while time.monotonic() < deadline:
+        if should_abort is not None and should_abort():
+            return None
         raw = ser.readline()
         if not raw:
             continue
@@ -34,9 +38,20 @@ def _read_line(ser, deadline):
     return None
 
 
+def send_abort(ser):
+    """Tell the prober to STOP descending and lift to safe Z (the firmware ``!``).
+    Safe to call any time; failures are swallowed (the caller is already aborting)."""
+    try:
+        ser.write(b"!\n")
+        ser.flush()
+    except Exception:
+        pass
+
+
 def probe_grid(port, points, baud=115200, point_timeout=90.0,
                startup_wait=2.0, ack_timeout=3.0, ack_tries=3,
-               serial_factory=None, on_result=None):
+               serial_factory=None, on_result=None, should_abort=None,
+               outlier_mm=1.5):
     """Probe a grid and return per-point results.
 
     ``points``: list of ``(id, x_um, y_um)`` datum-local offsets (ints).
@@ -47,9 +62,18 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
     ``startup_wait`` covers the Uno's auto-reset when the port opens; the datum
     (``D``) handshake is retried ``ack_tries`` times in case the first lands
     during the reboot.
+
+    Runaway guard: if a touch comes back more than ``outlier_mm`` deeper than the
+    first measured point (no real board surface varies that much — it means the
+    probe missed copper and the bit is heading into the board/bed), the grid is
+    aborted: the tool is lifted (``!``) and probing stops. The firmware enforces
+    the same limit in real time; this is the host-side backstop. Set
+    ``outlier_mm=None`` to disable.
     """
     factory = serial_factory or _open_serial
-    ser = factory(port, baud, point_timeout)
+    # Short read timeout so reads return often and a STOP stays responsive; the
+    # real per-point limit is enforced by point_timeout deadlines below.
+    ser = factory(port, baud, 0.5)
     try:
         if startup_wait:
             time.sleep(startup_wait)         # Uno reboots on port open — let it boot
@@ -68,9 +92,16 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
                 f"no datum ack from {port} (got {ack!r}). Is the prober sketch "
                 f"running and the Serial Monitor closed?")
         results = []
+        ref_z = None                          # first measured Z (runaway reference)
         for (pid, x, y) in points:
+            if should_abort is not None and should_abort():
+                send_abort(ser)              # lift the tool, then stop the grid
+                break
             ser.write(f"P {int(pid)} {int(x)} {int(y)}\n".encode())
-            line = _read_line(ser, time.monotonic() + point_timeout)
+            line = _read_line(ser, time.monotonic() + point_timeout, should_abort)
+            if should_abort is not None and should_abort():
+                send_abort(ser)
+                break
             d = {"id": int(pid), "x": int(x), "y": int(y), "z": None}
             if line and line.startswith("R"):
                 parts = line.split()
@@ -82,9 +113,25 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
                 d["error"] = line
             else:
                 d["error"] = f"timeout (got {line!r})"
+
+            # Runaway detection: a firmware RUNAWAY, or a touch far deeper than the
+            # reference surface, means the bit is heading into the board -> abort.
+            runaway = bool(d.get("error") and "RUNAWAY" in d["error"])
+            if d["z"] is not None and outlier_mm is not None:
+                if ref_z is None:
+                    ref_z = d["z"]
+                elif (ref_z - d["z"]) > outlier_mm * 1000.0:     # microns; deeper = lower Z
+                    d["error"] = (f"runaway: {(ref_z - d['z']) / 1000.0:.2f} mm deeper "
+                                  f"than the surface")
+                    d["z"] = None
+                    runaway = True
+
             results.append(d)
             if on_result:
                 on_result(d)
+            if runaway:
+                send_abort(ser)              # lift the bit and stop the grid
+                break
         return results
     finally:
         ser.close()
@@ -122,12 +169,16 @@ def query_position(ser, timeout=1.0):
     return None
 
 
-def touch_off(ser, timeout=40.0):
+def touch_off(ser, timeout=40.0, should_abort=None):
     """Send ``T`` (descend from the current XY until the probe contacts, then
     stop). Returns ``(x_mm, y_mm, z_mm)`` of the contact, or None on no-contact
-    /error."""
+    /error/abort. If ``should_abort()`` turns true mid-descent, sends ``!`` so the
+    tool lifts and stops."""
     ser.write(b"T\n")
-    line = _read_line(ser, time.monotonic() + timeout)
+    line = _read_line(ser, time.monotonic() + timeout, should_abort)
+    if should_abort is not None and should_abort():
+        send_abort(ser)
+        return None
     if line and line.startswith("T"):
         parts = line.split()
         if len(parts) >= 4:
