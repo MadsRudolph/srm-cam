@@ -619,6 +619,27 @@ def test_double_sided_rework_export_enabled_per_side():
     assert w._ds_side() == "Top" and w.export_sel_btn.isEnabled()
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Top"), box)
 
+def test_rework_export_uses_custom_depth(tmp_path, monkeypatch):
+    # the rework pass cuts at the spin's depth, not the original job's depth.
+    from PySide6.QtWidgets import QFileDialog
+    import gerber2rml.engine.select as sel
+    real = sel.clip_toolpaths_to_bbox
+    seen = {}
+    def spy(toolpaths, bbox, cut_z=None):
+        seen["cut_z"] = cut_z
+        return real(toolpaths, bbox, cut_z=cut_z)
+    monkeypatch.setattr(sel, "clip_toolpaths_to_bbox", spy)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.tabs.setCurrentIndex(0)                          # traces op
+    db = w.state.board.outline.bounds
+    w.preview._selection_bbox = (db[0] - 1, db[1] - 1, db[2] + 1, db[3] + 1)
+    w.rework_depth_spin.setValue(0.42)
+    w._on_export_selected()
+    assert seen["cut_z"] == -0.42                      # exported deeper than the 1st pass
+
+
 def test_preview_orientation_badge_and_flip():
     w = MainWindow()
     w.load_folder(str(FIXT))
