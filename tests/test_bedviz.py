@@ -45,6 +45,36 @@ def test_main_window_opens_bed_3d():
     assert isinstance(w._bedviz, BedVisualizerWindow)
 
 
+def test_hover_text_reports_value_and_band():
+    from gerber2rml.gui.bedviz import _hover_text
+    pts = [(10, 10, 0.0), (40, 30, -0.08), (70, 50, 0.02)]
+    t = _hover_text(pts, zmin=-0.08, zmax=0.02, i=1)
+    assert "Probe #2 of 3" in t
+    assert "X 40.000" in t and "Y 30.000" in t
+    assert "-80 µm" in t and "-0.0800 mm" in t
+    assert "0% of range" in t                 # the minimum sits at the band bottom
+
+
+def test_nearest_index_within_radius():
+    from gerber2rml.gui.bedviz import _nearest_index
+    screen = [(100, 100), None, (300, 300)]   # a clipped point is skipped
+    assert _nearest_index(screen, 104, 97, max_px=18) == 0
+    assert _nearest_index(screen, 305, 296, max_px=18) == 2
+    assert _nearest_index(screen, 200, 200, max_px=18) is None   # nothing in range
+
+
+def test_bedviz_pick_round_trips_a_marker():
+    # project a marker to the screen, then pick at that pixel -> same point.
+    xs, ys, Z, pts = _bowl()
+    w = BedVisualizerWindow(xs, ys, Z, pts, title="pick")
+    w.view.resize(800, 600)                   # give the offscreen view a real size
+    x, y, dz = w._points[1]                    # the centre point — always on-screen
+    scr = w._project(x, y, dz * w._exag)
+    assert scr is not None
+    assert w._pick(scr[0], scr[1]) == 1
+    assert w._pick(-999, -999) is None         # empty space picks nothing
+
+
 def test_bed_3d_warns_without_data(monkeypatch):
     w = MainWindow()
     w.load_folder(str(FIXT))
