@@ -73,7 +73,7 @@ def _run_to_toolpath(run, cut_z, travel_z):
     return tp
 
 
-def clip_toolpaths_to_bbox(toolpaths, bbox):
+def clip_toolpaths_to_bbox(toolpaths, bbox, cut_z=None):
     """Return new toolpaths covering only the cut geometry inside ``bbox``.
 
     ``bbox`` is ``(x0, y0, x1, y1)`` in board millimetres, in any corner order.
@@ -81,6 +81,11 @@ def clip_toolpaths_to_bbox(toolpaths, bbox):
     edge); each maximal connected run inside the box becomes its own toolpath
     with a fresh rapid approach and retract at the source toolpath's travel
     height.
+
+    ``cut_z`` (machine mm, negative for below the surface) overrides the depth
+    the rework cuts at; when None each run keeps the source pass's own depth.
+    Use it to re-cut a missed area deeper than the first pass without touching
+    the original job.
     """
     bbox = _norm_bbox(bbox)
     result = []
@@ -89,7 +94,7 @@ def clip_toolpaths_to_bbox(toolpaths, bbox):
         cut_moves = [m for m in tp if not m.rapid]
         if len(cut_moves) < 2:
             continue
-        cut_z = cut_moves[0].z
+        run_cut_z = cut_moves[0].z if cut_z is None else cut_z
         if travel_z is None:                          # no rapid -> park above cuts
             travel_z = max(m.z for m in cut_moves)
         pts = [(m.x, m.y) for m in cut_moves]
@@ -98,7 +103,7 @@ def clip_toolpaths_to_bbox(toolpaths, bbox):
             clip = _clip_segment(p, q, bbox)
             if clip is None:
                 if run:
-                    result.append(_run_to_toolpath(run, cut_z, travel_z))
+                    result.append(_run_to_toolpath(run, run_cut_z, travel_z))
                     run = []
                 continue
             a, b = clip
@@ -106,11 +111,11 @@ def clip_toolpaths_to_bbox(toolpaths, bbox):
                 run.append(b)
             else:
                 if run:
-                    result.append(_run_to_toolpath(run, cut_z, travel_z))
+                    result.append(_run_to_toolpath(run, run_cut_z, travel_z))
                 run = [a, b]
             if not _close(b, q):                      # segment exits the box at b
-                result.append(_run_to_toolpath(run, cut_z, travel_z))
+                result.append(_run_to_toolpath(run, run_cut_z, travel_z))
                 run = []
         if run:
-            result.append(_run_to_toolpath(run, cut_z, travel_z))
+            result.append(_run_to_toolpath(run, run_cut_z, travel_z))
     return result

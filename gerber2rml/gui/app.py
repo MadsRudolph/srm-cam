@@ -545,6 +545,18 @@ class MainWindow(QMainWindow):
         self.select_chk.toggled.connect(self._on_select_toggled)
         self.clear_sel_btn = QPushButton("Clear")
         self.clear_sel_btn.clicked.connect(lambda: self.preview.clear_selection())
+        # Depth the rework pass cuts at — independent of the original job so you
+        # can re-cut a missed area deeper without disturbing the first pass.
+        self.rework_depth_spin = QDoubleSpinBox()
+        self.rework_depth_spin.setRange(0.0, 5.0)
+        self.rework_depth_spin.setSingleStep(0.01)
+        self.rework_depth_spin.setDecimals(3)
+        self.rework_depth_spin.setValue(0.15)
+        self.rework_depth_spin.setSuffix(" mm")
+        self.rework_depth_spin.setToolTip(
+            "Depth (below the surface zero) the rework pass cuts at. Defaults to the "
+            "normal trace depth; increase it to clear copper the first pass left "
+            "behind. Bed leveling is not applied to rework — this is a flat depth.")
         self.export_sel_btn = QPushButton("Export selected NC...")
         self.export_sel_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
@@ -702,6 +714,8 @@ class MainWindow(QMainWindow):
         rework_group = QGroupBox("Rework (2nd pass)")
         _rl = QVBoxLayout(rework_group); _rl.setContentsMargins(14, 16, 14, 12); _rl.setSpacing(8)
         _rl.addWidget(_row(self.select_chk, self.clear_sel_btn, stretch_first=True))
+        _rl.addWidget(_row(QLabel("Rework depth"), self.rework_depth_spin,
+                           stretch_first=True))
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
@@ -1043,6 +1057,8 @@ class MainWindow(QMainWindow):
         self.forms["drill"].set_instance(self.state.drill)
         self.forms["cutout"].set_instance(self.state.cutout)
         self._apply_auto_depth()      # auto-depth wins over the preset's depth
+        # default the rework depth to this profile's trace depth (user can override)
+        self.rework_depth_spin.setValue(self.state.trace.cut_depth)
         if self.state.board is not None:
             self.generate_preview()
 
@@ -2030,7 +2046,8 @@ class MainWindow(QMainWindow):
         ds = self.double_sided_chk.isChecked()
         if bbox is not None and op != "drill" and (not ds or self._ds_side() is not None):
             from gerber2rml.engine.select import clip_toolpaths_to_bbox
-            clipped = clip_toolpaths_to_bbox(toolpaths, bbox)
+            clipped = clip_toolpaths_to_bbox(toolpaths, bbox,
+                                             cut_z=-self.rework_depth_spin.value())
             if clipped:
                 toolpaths, label = clipped, f"{op} rework"
         if not toolpaths:
@@ -2203,7 +2220,8 @@ class MainWindow(QMainWindow):
             return
         self._sync_state()
         toolpaths = self._ds_side_toolpaths(op, side) if ds else self.state.toolpaths(op)
-        clipped = clip_toolpaths_to_bbox(toolpaths, bbox)
+        clipped = clip_toolpaths_to_bbox(toolpaths, bbox,
+                                         cut_z=-self.rework_depth_spin.value())
         if not clipped:
             QMessageBox.information(self, "Empty selection",
                                     "No toolpaths fall inside the selected box.")
@@ -2223,7 +2241,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export failed", str(e))
             return
         self.statusBar().showMessage(
-            f"Wrote {path.name} ({len(clipped)} rework path(s))", 10000)
+            f"Wrote {path.name} ({len(clipped)} rework path(s) at "
+            f"{self.rework_depth_spin.value():.3f} mm deep)", 10000)
 
 _STYLESHEET = """
 QWidget { color: #e4e4e6; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }

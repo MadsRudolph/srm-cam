@@ -68,6 +68,17 @@ def test_bbox_corner_order_agnostic():
     assert _cut_points(a) == _cut_points(b)
 
 
+def test_cut_z_override_sets_rework_depth():
+    # default keeps the source depth; an override re-cuts at the new depth, and
+    # the rapid travel height is left untouched.
+    tp = _ring([(0, 0), (10, 0)], cut_z=-0.15, travel_z=2.0)
+    default = clip_toolpaths_to_bbox([tp], (-1, -1, 11, 1))
+    assert all(abs(m.z + 0.15) < 1e-9 for m in default[0] if not m.rapid)
+    deeper = clip_toolpaths_to_bbox([tp], (-1, -1, 11, 1), cut_z=-0.30)
+    assert all(abs(m.z + 0.30) < 1e-9 for m in deeper[0] if not m.rapid)  # cuts deeper
+    assert any(m.rapid and abs(m.z - 2.0) < 1e-9 for m in deeper[0])      # travel kept
+
+
 def test_disjoint_runs_split_into_separate_paths():
     # square with a box over two opposite edges -> two separate rework runs
     tp = _ring([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
