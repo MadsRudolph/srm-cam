@@ -1,0 +1,13 @@
+%
+O0003
+( gerber2rml bed-level probe 3/9  X194.000 Y6.000 )
+G90 G17
+G21
+M5
+G91
+G28 Z0.
+G90
+G0 X194. Y6.
+G0 Z2.
+M30
+%
