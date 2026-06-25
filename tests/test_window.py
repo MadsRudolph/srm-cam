@@ -349,6 +349,31 @@ def test_center_design_on_stock_moves_placement():
     assert abs(cx - (10 + 70)) < 0.5 and abs(cy - (10 + 70)) < 0.5   # centred on stock
 
 
+def test_probe_resume_skips_filled_points():
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)
+    w._on_build_level_grid()                       # 9 points; row 0 seeded with "0"
+    # mark rows 0..4 measured, leave 5..8 unfilled (one as ERR)
+    for r in range(5):
+        w.level_table.setItem(r, 2, QTableWidgetItem(f"{-0.01 * r:.4f}"))
+    w.level_table.setItem(5, 2, QTableWidgetItem("ERR"))
+    filled, unfilled = w._grid_fill_state()
+    assert filled == 5 and unfilled == 4
+
+    # resume: anchor (row 0) + the 4 unfilled rows (5 ERR, 6, 7, 8)
+    pts, x0, y0 = w._probe_points(resume=True)
+    rows = [p[0] for p in pts]
+    assert rows[0] == 0                            # anchor first -> re-sets dz ref
+    assert set(rows) == {0, 5, 6, 7, 8}            # filled 1..4 are kept, not re-probed
+    # offsets are relative to point 0
+    assert pts[0][1] == 0 and pts[0][2] == 0
+
+    # re-probe all = every row
+    pts_all, _, _ = w._probe_points(resume=False)
+    assert len(pts_all) == 9
+
+
 def test_probe_grid_overlay_toggles_on_preview():
     w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
     w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3)

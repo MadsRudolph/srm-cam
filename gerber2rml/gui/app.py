@@ -1349,18 +1349,65 @@ class MainWindow(QMainWindow):
             self._dro.stop()
         super().closeEvent(e)
 
+    def _grid_fill_state(self):
+        """(filled, unfilled) probe-point counts (ERR/blank count as unfilled)."""
+        filled = unfilled = 0
+        for r in range(self.level_table.rowCount()):
+            if self.level_table.item(r, 0) is None:
+                continue
+            zi = self.level_table.item(r, 2)
+            ztxt = zi.text().strip() if zi else ""
+            if ztxt not in ("", "-", "ERR"):
+                filled += 1
+            else:
+                unfilled += 1
+        return filled, unfilled
+
+    def _probe_points(self, resume):
+        """(points, x0, y0). ``points`` = [(row, dx_um, dy_um)] from the first
+        grid point. ``resume`` probes the anchor (row 0, to re-set the dz
+        reference) + only the unfilled rows, keeping the rest."""
+        rows = []
+        for r in range(self.level_table.rowCount()):
+            xi, yi = self.level_table.item(r, 0), self.level_table.item(r, 1)
+            if xi is None or yi is None:
+                continue
+            zi = self.level_table.item(r, 2)
+            ztxt = zi.text().strip() if zi else ""
+            rows.append((r, float(xi.text()), float(yi.text()),
+                         ztxt not in ("", "-", "ERR")))
+        if not rows:
+            return [], 0.0, 0.0
+        x0, y0 = rows[0][1], rows[0][2]
+        if resume:
+            sel = [rows[0]] + [r for r in rows if not r[3] and r[0] != rows[0][0]]
+        else:
+            sel = rows
+        points = [(r, round((x - x0) * 1000), round((y - y0) * 1000))
+                  for (r, x, y, _h) in sel]
+        return points, x0, y0
+
     def _on_probe_spi(self):
         """Auto-probe the grid over the SPI link and fill the Z column."""
         if not self.level_table.rowCount():
             self._on_build_level_grid()
-        xy, _xyz = self._table_points()
-        if len(xy) < 3:
+        filled, unfilled = self._grid_fill_state()
+        if filled + unfilled < 3:
             QMessageBox.warning(self, "No grid", "Build a probe grid first.")
             return
-        x0, y0 = xy[0]                          # datum = first grid point
-        # datum-local offsets in microns; ids are table row indices
-        points = [(i, round((x - x0) * 1000), round((y - y0) * 1000))
-                  for i, (x, y) in enumerate(xy)]
+        # part-done grid -> offer to resume rather than start over
+        resume = False
+        if filled and unfilled:
+            ans = QMessageBox.question(
+                self, "Resume or re-probe?",
+                f"{filled} of {filled + unfilled} points are already measured.\n\n"
+                f"Resume: probe only the {unfilled} remaining (re-probes point 1 as "
+                f"the reference, keeps the rest).\nRe-probe all: start over.",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if ans == QMessageBox.Cancel:
+                return
+            resume = ans == QMessageBox.Yes
+        points, x0, y0 = self._probe_points(resume)
         port = self.level_port_combo.currentText().strip() or "COM5"
         if QMessageBox.question(
                 self, "Probe over SPI",
