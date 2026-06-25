@@ -114,24 +114,32 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
             else:
                 d["error"] = f"timeout (got {line!r})"
 
-            # Runaway detection: a firmware RUNAWAY, or a touch far deeper than the
-            # reference surface, means the bit is heading into the board -> abort.
-            runaway = bool(d.get("error") and "RUNAWAY" in d["error"])
+            # A contact FAR DEEPER than the surface is the genuinely suspicious case
+            # (the bit punched into the board) -> stop the whole grid.
+            deep_outlier = False
             if d["z"] is not None and outlier_mm is not None:
                 if ref_z is None:
                     ref_z = d["z"]
                 elif (ref_z - d["z"]) > outlier_mm * 1000.0:     # microns; deeper = lower Z
-                    d["error"] = (f"runaway: {(ref_z - d['z']) / 1000.0:.2f} mm deeper "
+                    d["error"] = (f"outlier: {(ref_z - d['z']) / 1000.0:.2f} mm deeper "
                                   f"than the surface")
                     d["z"] = None
-                    runaway = True
+                    deep_outlier = True
 
             results.append(d)
             if on_result:
                 on_result(d)
-            if runaway:
-                send_abort(ser)              # lift the bit and stop the grid
+
+            if deep_outlier:
+                send_abort(ser)              # suspicious deep touch -> lift + stop
                 break
+            if d["z"] is None and ref_z is None:
+                # missed before any surface was found -> can't level; stop so the
+                # operator can fix the datum/probe rather than plunge blindly.
+                send_abort(ser)
+                break
+            # else a miss WITH a known surface: the firmware safely capped that
+            # point (no copper there) -> record it as missing and keep probing.
         return results
     finally:
         ser.close()

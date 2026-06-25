@@ -64,9 +64,9 @@ def test_probe_grid_abort_stops_early_and_lifts():
     assert s.closed                                    # port still closed
 
 
-def test_probe_grid_outlier_z_aborts_and_lifts():
-    # point 1 touches at the surface; point 2 comes back far deeper (missed copper
-    # -> runaway). The grid must stop there and send '!' to lift.
+def test_probe_grid_deep_outlier_aborts_and_lifts():
+    # point 1 touches at the surface; point 2 comes back far DEEPER than the
+    # surface (the bit punched into the board) -> stop the grid and lift.
     sent = []
     class Deep(FakeSerial):
         def write(self, data):
@@ -81,15 +81,17 @@ def test_probe_grid_outlier_z_aborts_and_lifts():
     s = Deep()
     res = probe_grid("COM5", [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
                      serial_factory=lambda p, b, t: s, startup_wait=0, outlier_mm=1.5)
-    assert len(res) == 2                              # stopped after the runaway point
-    assert "runaway" in str(res[1].get("error", "")).lower()
+    assert len(res) == 2                              # stopped after the deep point
+    assert "outlier" in str(res[1].get("error", "")).lower()
     assert res[1]["z"] is None                        # the bad reading is discarded
     assert b"!\n" in sent                             # tool told to lift
 
 
-def test_probe_grid_firmware_runaway_reply_aborts():
+def test_probe_grid_missed_point_skips_and_continues():
+    # a point that finds no copper (firmware RUNAWAY) is recorded as missing but
+    # the grid keeps going (the firmware safely capped that descent).
     sent = []
-    class FwRunaway(FakeSerial):
+    class OneMiss(FakeSerial):
         def write(self, data):
             sent.append(data)
             s = data.decode().strip()
@@ -97,12 +99,31 @@ def test_probe_grid_firmware_runaway_reply_aborts():
                 self._out.append(b"D 0 0 -50000\n")
             elif s.startswith("P"):
                 pid = s.split()[1]
-                self._out.append((b"R 0 0 0 -56000\n" if pid == "0"
-                                  else f"E {pid} RUNAWAY\n".encode()))
-    s = FwRunaway()
+                self._out.append(f"E {pid} RUNAWAY\n".encode() if pid == "1"
+                                 else f"R {pid} 0 0 -56000\n".encode())
+    s = OneMiss()
     res = probe_grid("COM5", [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
                      serial_factory=lambda p, b, t: s, startup_wait=0)
-    assert len(res) == 2 and b"!\n" in sent           # firmware RUNAWAY -> stop + lift
+    assert len(res) == 3                              # ALL points probed (not aborted)
+    assert res[1]["z"] is None and res[0]["z"] and res[2]["z"]   # only #1 missed
+    assert b"!\n" not in sent                         # no abort -> no lift command
+
+
+def test_probe_grid_aborts_if_first_point_misses():
+    # no surface found yet (point 0 misses) -> can't level -> stop + lift
+    sent = []
+    class FirstMiss(FakeSerial):
+        def write(self, data):
+            sent.append(data)
+            s = data.decode().strip()
+            if s == "D":
+                self._out.append(b"D 0 0 -50000\n")
+            elif s.startswith("P"):
+                self._out.append(f"E {s.split()[1]} RUNAWAY\n".encode())
+    s = FirstMiss()
+    res = probe_grid("COM5", [(0, 0, 0), (1, 0, 0)],
+                     serial_factory=lambda p, b, t: s, startup_wait=0)
+    assert len(res) == 1 and b"!\n" in sent           # no reference -> stop + lift
 
 
 def test_touch_off_abort_lifts_and_returns_none():

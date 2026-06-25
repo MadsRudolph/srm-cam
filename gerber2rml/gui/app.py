@@ -42,15 +42,15 @@ class _ProbeWorker(QThread):
             if self._abort:
                 self.done.emit("aborted")
                 return
-            bad = next((r for r in res if "runaway" in str(r.get("error", "")).lower()),
-                       None)
-            if bad is not None:                # runaway -> tool lifted, grid stopped
+            if len(res) < len(self._points):    # stopped early (deep touch / no datum)
+                last = res[-1] if res else {"id": -1, "error": "stopped"}
                 self.done.emit(
-                    f"RUNAWAY at point {bad['id'] + 1}: {bad['error']}. "
-                    f"Probing stopped and the bit lifted — check the probe wiring "
-                    f"and that every grid point sits on copper.")
-            else:
-                self.done.emit("")
+                    f"STOPPED at point {last['id'] + 1}: {last.get('error', '?')}. "
+                    f"The bit lifted — check the probe wiring and that the surface "
+                    f"is found before this point.")
+                return
+            missed = [r["id"] + 1 for r in res if r.get("z") is None]
+            self.done.emit(f"missed:{','.join(map(str, missed))}" if missed else "")
         except Exception as e:                 # serial/timeout/parse -> report to UI
             self.done.emit(str(e))
 
@@ -1394,10 +1394,17 @@ class MainWindow(QMainWindow):
         self.level_probe_btn.setEnabled(True)
         if err == "aborted":
             self.statusBar().showMessage("Probing aborted — bit lifted to safe Z", 8000)
-        elif err.startswith("RUNAWAY"):
-            QMessageBox.warning(self, "Runaway stopped", err)
+        elif err.startswith("STOPPED"):
+            QMessageBox.warning(self, "Probing stopped", err)
+            self.statusBar().showMessage("Probing stopped, bit lifted", 12000)
+        elif err.startswith("missed:"):
+            pts = err.split(":", 1)[1]
+            self.level_chk.setChecked(True)
+            self.level_show_chk.setChecked(True)
+            self._update_level_overlay()
             self.statusBar().showMessage(
-                "Runaway detected — probing stopped, bit lifted", 12000)
+                f"Probe complete — points {pts} found no copper (skipped; the height "
+                f"map interpolates over them)", 14000)
         elif err:
             QMessageBox.critical(self, "Probe failed", err)
             self.statusBar().showMessage("Probe failed", 8000)
