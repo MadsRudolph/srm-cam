@@ -323,11 +323,17 @@ def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None
 def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=None,
                        dowels: DowelSpec = None, align_depth: float = None,
                        board_thickness: float = 1.6, machine=DEFAULT_MACHINE,
-                       offset=(0.0, 0.0)):
+                       offset=(0.0, 0.0), level=None):
     """Build all job files for a double-sided board + a text run plan.
 
     ``machine`` selects the output backend (RML or G-code). Returns a list of
     Path objects for every file written (5 toolpath files + 1 .txt).
+
+    ``level`` (optional) is a height-map callable ``hmap(x, y) -> dz`` measured in
+    the BOTTOM-side machine frame. It warps the Z of the operations cut in that
+    setup — the dowel/align holes, bottom drill, bottom traces and the cut-out —
+    but NOT the top traces, which are milled after the flip on the other face
+    (that surface isn't the one we probed; it would need a second probe pass).
     """
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)
@@ -344,24 +350,34 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     written = []
     est = {}                                     # fname -> estimated seconds
 
-    def _write(fname, paths, job):
+    def _write(fname, paths, job, leveled=False):
+        if level is not None and leveled:
+            from gerber2rml.engine.leveling import apply_leveling
+            paths = apply_leveling(paths, level)   # warp Z to the probed surface
         (out_dir / fname).write_text(
             backend.render(paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
         est[fname] = estimate_toolpaths_seconds(paths, job.xy_feed, job.plunge_feed)
         written.append(out_dir / fname)
 
-    _write(f"{name}_align{ext}", drill_single_bit(lay.align_holes, align_drill), align_drill)
+    # Bottom-side setup (the probed surface) -> leveled. Top traces are cut after
+    # the flip on the other face, so they are NOT leveled.
+    _write(f"{name}_align{ext}", drill_single_bit(lay.align_holes, align_drill),
+           align_drill, leveled=True)
     bottom_drill_files = drill_jobs(lay.holes, drill, f"{name}_bottom_drill", ext=ext)
     for fname, paths in bottom_drill_files:
-        _write(fname, paths, drill)
+        _write(fname, paths, drill, leveled=True)
     _write(f"{name}_bottom_traces{ext}",
-           isolate(lay.bottom_copper, trace, outline=lay.outline), trace)
+           isolate(lay.bottom_copper, trace, outline=lay.outline), trace, leveled=True)
     _write(f"{name}_top_traces{ext}",
-           isolate(lay.top_copper, trace, outline=top_outline), trace)
-    _write(f"{name}_cutout{ext}", cut_outline(lay.outline, cutout), cutout)
+           isolate(lay.top_copper, trace, outline=top_outline), trace, leveled=False)
+    _write(f"{name}_cutout{ext}", cut_outline(lay.outline, cutout), cutout, leveled=True)
 
     drill_step = _drill_runplan_line(bottom_drill_files, drill)
-    est_block = ("Estimated run time (excludes tool changes, spin-up and pauses):\n"
+    level_block = ("Bed leveling applied to the BOTTOM-side jobs (align, drill, "
+                   "bottom traces, cut-out); top traces are NOT leveled (cut after "
+                   "the flip).\n" if level is not None else "")
+    est_block = (level_block
+                 + "Estimated run time (excludes tool changes, spin-up and pauses):\n"
                  + "".join(f"   {fn}: ~{format_duration(est[fn])}\n"
                            for fn in (p.name for p in written) if fn in est)
                  + f"   TOTAL: ~{format_duration(sum(est.values()))}\n")

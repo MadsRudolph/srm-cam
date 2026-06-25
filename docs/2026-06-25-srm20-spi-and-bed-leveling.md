@@ -70,6 +70,14 @@ depth variation from tilt/warp shows up everywhere.
   subdivides long feed moves** so Z ramps along the warp, not just at endpoints.
   Runs LAST (after placement), in machine coordinates.
 - Threaded into `build_jobs` / `state.export` via an optional `level` callable.
+- **Double-sided** (`build_double_sided`): leveling warps only the **bottom-side**
+  jobs (align, bottom drill, bottom traces, cut-out) — the operations cut in the
+  same setup we probed. The **top traces are NOT leveled** (cut after the flip on
+  the other face — that surface would need a second probe pass). The GUI builds
+  the probe grid in the **bottom-side machine frame** (it switches the View to
+  "Bottom" so the grid, the overlay and the leveled toolpaths all share one
+  frame; the design-frame X-ray is mirrored from the machine frame, which would
+  otherwise misplace the height map).
 
 ### 2.3 Manual probe path
 `probe_points` lays out a grid; `write_probe_files` emits one tiny G-code program

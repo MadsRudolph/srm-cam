@@ -140,6 +140,27 @@ def test_build_double_sided_writes_jobs(tmp_path):
             assert t.startswith("^IN;!MC1;") and t.rstrip().endswith("!MC0;^IN;")
 
 
+def test_double_sided_leveling_warps_bottom_only(tmp_path):
+    import re
+    from gerber2rml.doublesided import build_double_sided
+    from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+
+    # an X-tilt height map (deeper as x grows), in the bottom-side machine frame
+    level = lambda x, y: -0.003 * x
+    written = build_double_sided(
+        FIXT, tmp_path, name="lv", machine="Roland SRM-20 (G-code)",
+        trace=TraceJob(), drill=DrillJob(), cutout=CutoutJob(), level=level)
+
+    def cut_zs(name):
+        t = (tmp_path / name).read_text()
+        zs = [float(m) for m in re.findall(r"Z(-?[0-9.]+)", t)]
+        return {round(z, 3) for z in zs if z < 0.4}        # drop travel/lift heights
+
+    assert len(cut_zs("lv_bottom_traces.nc")) > 5          # leveled -> many Z values
+    assert len(cut_zs("lv_top_traces.nc")) <= 2            # NOT leveled -> flat depth
+    assert "BOTTOM-side" in (tmp_path / "lv_runplan.txt").read_text()
+
+
 def test_grid_mode_build_and_runplan(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     written = build_double_sided(FIXT, tmp_path, name="g", machine="Roland SRM-20",
