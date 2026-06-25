@@ -85,9 +85,20 @@ class PreviewCanvas(QWidget):
         # app can drive the machine there. Mutually exclusive with select/move.
         self._jogging = False
         self.on_jog_to = None             # callback(x, y) set by the app
+
+        # Arrow-key carriage jog: while the mouse is over the preview, the arrow
+        # keys nudge the machine in X/Y. on_jog_step(dx, dy) reports a signed
+        # step in board mm; the app turns it into a relative machine move.
+        self.on_jog_step = None
+        self._hover = False               # mouse currently over the canvas
+        self.canvas.setFocusPolicy(Qt.StrongFocus)
+
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         self.canvas.mpl_connect("button_release_event", self._on_release)
+        self.canvas.mpl_connect("figure_enter_event", self._on_enter)
+        self.canvas.mpl_connect("figure_leave_event", self._on_leave)
+        self.canvas.mpl_connect("key_press_event", self._on_key)
 
     def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
         """Store the toolpaths and update the display based on the slider.
@@ -412,6 +423,35 @@ class PreviewCanvas(QWidget):
         self._redraw_selection_only()
         if self.on_selection_changed:
             self.on_selection_changed(self._selection_bbox)
+
+    # ---- Arrow-key carriage jog (active while the mouse is over the canvas) ----
+    _JOG_KEYS = {"left": (-1, 0), "right": (1, 0), "up": (0, 1), "down": (0, -1)}
+
+    def _on_enter(self, event):
+        """Mouse entered the preview: grab keyboard focus so the arrow keys jog
+        the carriage without needing a click first."""
+        self._hover = True
+        self.canvas.setFocus()
+
+    def _on_leave(self, event):
+        """Mouse left the preview: release focus so typing goes back to the
+        settings fields, and stop handling arrow-key jogs."""
+        self._hover = False
+        self.canvas.clearFocus()
+
+    def _on_key(self, event):
+        """Arrow keys nudge the carriage in X/Y while the mouse is over the
+        canvas. Step = 1 mm, Shift = 10 mm (coarse), Ctrl = 0.1 mm (fine).
+        Reports a signed (dx, dy) in board mm; the app makes it a relative move."""
+        if not self._hover or not self.on_jog_step or not event.key:
+            return
+        base = event.key.rsplit("+", 1)[-1]        # strip any modifier prefixes
+        if base not in self._JOG_KEYS:
+            return
+        step = 0.1 if "ctrl" in event.key else (10.0 if "shift" in event.key else 1.0)
+        ux, uy = self._JOG_KEYS[base]
+        dx = -ux * step if self._flip_x else ux * step   # keep on-screen dir intuitive
+        self.on_jog_step(dx, uy * step)
 
     def show_holes(self, holes):
         """Draw drill holes alone (circles + centre marks), no trace context."""

@@ -124,6 +124,55 @@ def test_click_to_jog_sends_machine_move():
     assert seen["xy"] == (50.0, 40.0)
 
 
+def test_arrow_keys_jog_carriage_relative():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+
+    class FakeDRO:
+        def __init__(self): self.moved = None
+        def request_move(self, x, y): self.moved = (x, y)
+    w._dro = FakeDRO()
+    w._tool_xyz = (50.0, 40.0, -54.0)
+
+    w._on_jog_step(1.0, 0.0)                       # right arrow, 1 mm in +X
+    assert w._dro.moved == (51000, 40000)         # absolute target, microns
+    assert w._tool_xyz[:2] == (51.0, 40.0)        # optimistic local advance
+
+    w._on_jog_step(0.0, 1.0)                       # next tap reads the advanced XY
+    assert w._dro.moved == (51000, 41000)
+
+    # canvas dispatch: while hovering, arrow + modifier -> signed (dx, dy) mm
+    seen = {}
+    w.preview.on_jog_step = lambda dx, dy: seen.setdefault("d", (dx, dy))
+    w.preview._flip_x = False
+    w.preview._hover = True
+    w.preview._on_key(type("E", (), {"key": "shift+up"})())
+    assert seen["d"] == (0.0, 10.0)               # shift = 10 mm coarse
+
+    seen.clear()
+    w.preview._on_key(type("E", (), {"key": "ctrl+left"})())
+    assert seen["d"] == (-0.1, 0.0)               # ctrl = 0.1 mm fine
+
+    # a flipped ("as designed") view keeps the on-screen direction intuitive
+    seen.clear()
+    w.preview._flip_x = True
+    w.preview._on_key(type("E", (), {"key": "right"})())
+    assert seen["d"] == (-1.0, 0.0)               # screen-right -> data -X when flipped
+
+    # keys are ignored unless the mouse is over the preview
+    seen.clear()
+    w.preview._flip_x = False
+    w.preview._hover = False
+    w.preview._on_key(type("E", (), {"key": "up"})())
+    assert "d" not in seen
+
+
+def test_arrow_jog_without_connection_is_safe():
+    w = MainWindow(); w.load_folder(str(FIXT))
+    w._dro = None
+    w._on_jog_step(1.0, 0.0)                       # no machine -> hint only, no crash
+
+
 def test_probe_z_requests_touchoff_and_zeros_on_contact():
     w = MainWindow()
     w.load_folder(str(FIXT)); w.generate_preview()
@@ -342,17 +391,6 @@ def test_drag_move_folds_into_placement_and_is_exclusive_with_select():
 def test_stock_thickness_default():
     w = MainWindow()
     assert abs(w.thickness_spin.value() - 1.6) < 1e-6
-
-
-def test_advanced_options_hidden_until_toggled():
-    w = MainWindow()
-    assert w._advanced_box.isHidden() is True          # advanced collapsed by default
-    w.advanced_chk.setChecked(True)
-    assert w._advanced_box.isHidden() is False
-    # double-sided sub-controls stay hidden until double-sided is enabled
-    assert w._ds_controls.isHidden() is True
-    w.double_sided_chk.setChecked(True)
-    assert w._ds_controls.isHidden() is False
 
 
 def test_auto_depth_follows_stock_thickness():

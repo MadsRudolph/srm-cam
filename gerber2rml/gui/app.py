@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
     QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea,
-    QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+    QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QListWidget, QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
@@ -132,7 +133,10 @@ class MainWindow(QMainWindow):
         self._sim_window = None   # keep a ref so the window isn't GC'd
 
         self.name_edit = QLineEdit(self.state.name)
+        from PySide6.QtWidgets import QSizePolicy
         self.machine_combo = QComboBox()
+        self.machine_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.machine_combo.setMinimumWidth(100)
         self.machine_combo.addItems(list(BACKENDS.keys()))
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
         self.mirror_chk.toggled.connect(self._on_mirror_toggled)
@@ -144,6 +148,8 @@ class MainWindow(QMainWindow):
         # single-sided preview orientation: the milled (mirrored) cut, or the
         # KiCad design view for a sanity check. Affects ONLY the preview.
         self.frame_combo = QComboBox()
+        self.frame_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.frame_combo.setMinimumWidth(100)
         self.frame_combo.addItems(["As milled (mirrored)", "As designed (KiCad top)"])
         self.frame_combo.setToolTip(
             "Preview orientation only - the exported job is always 'as milled'.\n"
@@ -195,9 +201,19 @@ class MainWindow(QMainWindow):
         self.level_save_btn.setToolTip("Save the probe grid (X, Y, dz) to a CSV file.")
         self.level_save_btn.clicked.connect(self._on_save_level_grid)
         # auto-probe over the SRM-20 SPI link (Arduino running srm20_spi_probe.ino)
-        self.level_port_edit = QLineEdit("COM5")
-        self.level_port_edit.setMaximumWidth(70)
-        self.level_port_edit.setToolTip("Serial port of the Arduino prober (Device Manager > Ports).")
+        self.level_port_combo = QComboBox()
+        self.level_port_combo.setMaximumWidth(90)
+        self.level_port_combo.setToolTip("Serial port of the Arduino prober (Device Manager > Ports).")
+        self.level_port_combo.setEditable(True)
+        try:
+            import serial.tools.list_ports
+            ports = [p.device for p in serial.tools.list_ports.comports()]
+            if ports:
+                self.level_port_combo.addItems(ports)
+            else:
+                self.level_port_combo.addItem("COM5")
+        except Exception:
+            self.level_port_combo.addItem("COM5")
         self.level_probe_btn = QPushButton("Probe over SPI")
         self.level_probe_btn.setToolTip(
             "Auto-probe the grid via the Arduino over SPI and fill the Z column. "
@@ -283,18 +299,24 @@ class MainWindow(QMainWindow):
 
         # which side(s) to show in the double-sided preview
         self.view_combo = QComboBox()
+        self.view_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.view_combo.setMinimumWidth(100)
         self.view_combo.addItems(["Both sides", "Bottom", "Top"])
         self.view_combo.setEnabled(False)   # only meaningful when double-sided
         self.view_combo.currentIndexChanged.connect(self.generate_preview)
 
         # double-sided registration: fresh-milled dowels vs grid-seated pins
         self.reg_combo = QComboBox()
+        self.reg_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.reg_combo.setMinimumWidth(100)
         self.reg_combo.addItems(["Fresh-milled dowels (1.9+3.1mm)",
                                  "Grid-seated pins (M4 grid)"])
         self.reg_combo.setEnabled(False)
         self.reg_combo.currentIndexChanged.connect(self._on_reg_changed)
         # which edge pair carries the dowels (sets the flip axis)
         self.place_combo = QComboBox()
+        self.place_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.place_combo.setMinimumWidth(100)
         self.place_combo.addItems(["Top & bottom (flip left-right)",
                                    "Left & right (flip top-bottom)"])
         self.place_combo.setToolTip(
@@ -346,6 +368,8 @@ class MainWindow(QMainWindow):
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
         self.preset_combo = QComboBox()
+        self.preset_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.preset_combo.setMinimumWidth(100)
         self.preset_combo.addItems(list(self._presets.keys()))
         self.apply_preset_btn = QPushButton("Apply")
         self.apply_preset_btn.clicked.connect(self.apply_selected_preset)
@@ -364,15 +388,18 @@ class MainWindow(QMainWindow):
         self.export_sel_btn.clicked.connect(self._on_export_selected)
         self.export_sel_btn.setEnabled(False)
 
-        # Operation parameter tabs (created first so Basic can hold them)
+        # Operation parameters (hidden, managed by presets)
         self.forms = {"traces": DataclassForm(self.state.trace),
                       "drill": DataclassForm(self.state.drill),
                       "cutout": DataclassForm(self.state.cutout)}
-        self.tabs = QTabWidget()
         for op in _OPS:
-            form = self.forms[op]
-            form.valueChanged.connect(self.generate_preview)
-            self.tabs.addTab(form, op.capitalize())
+            self.forms[op].valueChanged.connect(self.generate_preview)
+
+        # Preview mode toggle
+        from PySide6.QtWidgets import QTabBar
+        self.tabs = QTabBar()
+        for op in _OPS:
+            self.tabs.addTab(op.capitalize())
         self.tabs.currentChanged.connect(self.generate_preview)
 
         # Load / Export are the primary actions -> accent style
@@ -392,12 +419,45 @@ class MainWindow(QMainWindow):
             f.setLabelAlignment(Qt.AlignRight)
             return g, f
 
-        # ---------- Settings panel (Basic up top, Advanced behind a toggle) ----------
-        settings_panel = QWidget()
-        settings_panel.setObjectName("settingsPanel")
-        settings_layout = QVBoxLayout(settings_panel)
-        settings_layout.setContentsMargins(14, 14, 14, 14)
-        settings_layout.setSpacing(12)
+        # ---------- Settings Sidebar & Stacked Widget ----------
+        self.sidebar = QListWidget()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(180)
+        self.sidebar.addItems([
+            "Project & Tools", 
+            "Double-Sided", 
+            "Bed Leveling", 
+            "Rework"
+        ])
+        
+        self.stacked_widget = QStackedWidget()
+        self.sidebar.currentRowChanged.connect(self.stacked_widget.setCurrentIndex)
+
+        def _make_page(help_text=""):
+            p = QWidget()
+            vl = QVBoxLayout(p)
+            vl.setContentsMargins(14, 14, 14, 14)
+            vl.setSpacing(12)
+            
+            if help_text:
+                lbl = QLabel(help_text)
+                lbl.setWordWrap(True)
+                lbl.setObjectName("helpText")
+                vl.addWidget(lbl)
+                
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.NoFrame)
+            scroll.setWidget(p)
+            self.stacked_widget.addWidget(scroll)
+            return vl
+
+        l_proj = _make_page("Load your Gerber files, select a preset toolpath profile, and position the board on the bed. Switch preview modes below to see how the board will be milled.")
+        l_double = _make_page("Configure how the board is flipped to mill the second side. You can use fresh-milled dowel holes or a pre-installed M4 pin grid for perfect registration.")
+        l_level = _make_page("Compensate for an uneven bed or bowed PCB. Probe the copper surface to generate a height map so the engraving depth remains perfectly consistent.")
+        l_rework = _make_page("Missed some copper isolation? Select an area in the 3D preview and generate toolpaths only for that specific region to clear remaining shorts.")
+
+        self.sidebar.setCurrentRow(0)
 
         # ===== BASIC: the things you set every time =====
         board_group, bl = _group("Board")
@@ -407,23 +467,14 @@ class MainWindow(QMainWindow):
                                  self.save_preset_btn, stretch_first=True))
         bl.addRow("Stock", self.thickness_spin)
         bl.addRow("", self._auto_depth_row)
-        settings_layout.addWidget(board_group)
+        l_proj.addWidget(board_group)
 
-        ops_group = QGroupBox("Operations")
+        ops_group = QGroupBox("Preview Mode")
         _ol = QVBoxLayout(ops_group); _ol.setContentsMargins(10, 14, 10, 10)
         _ol.addWidget(self.tabs)
-        settings_layout.addWidget(ops_group)
+        l_proj.addWidget(ops_group)
 
-        # ===== ADVANCED toggle + collapsible container =====
-        self.advanced_chk = QCheckBox("Show advanced options")
-        self.advanced_chk.setObjectName("advancedToggle")
-        self.advanced_chk.toggled.connect(self._on_advanced_toggled)
-        settings_layout.addWidget(self.advanced_chk)
-
-        self._advanced_box = QWidget()
-        adv = QVBoxLayout(self._advanced_box)
-        adv.setContentsMargins(0, 0, 0, 0); adv.setSpacing(12)
-
+        # ===== VIEW / PLACEMENT =====
         view_group, vl = _group("View / machine")
         vl.addRow("Machine", self.machine_combo)
         vl.addRow("Preview", self.frame_combo)
@@ -431,23 +482,27 @@ class MainWindow(QMainWindow):
         vl.addRow("", self.show_bed_chk)
         vl.addRow(_row(self.sim3d_btn, self.sim_file_btn))
         vl.addRow(_row(self.export_img_btn))
-        adv.addWidget(view_group)
+        l_proj.addWidget(view_group)
 
         place_group, pl = _group("Placement on bed")
         pl.addRow("Place", self._place_row)
         pl.addRow("", self.move_chk)
-        adv.addWidget(place_group)
+        l_proj.addWidget(place_group)
+        l_proj.addStretch(1)
 
+        # ===== BED LEVELING =====
         level_group = QGroupBox("Bed leveling")
         _ll = QVBoxLayout(level_group); _ll.setContentsMargins(14, 16, 14, 12); _ll.setSpacing(8)
         _ll.addWidget(self.level_chk)
         _ll.addWidget(_row(self.level_nx_spin, self.level_ny_spin,
                            self.level_grid_btn, self.level_export_btn, self.level_save_btn))
-        _ll.addWidget(_row(QLabel("port"), self.level_port_edit, self.level_probe_btn,
+        _ll.addWidget(_row(QLabel("port"), self.level_port_combo, self.level_probe_btn,
                            self.level_show_chk, self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
-        adv.addWidget(level_group)
+        l_level.addWidget(level_group)
+        l_level.addStretch(1)
 
+        # ===== DOUBLE-SIDED =====
         ds_group = QGroupBox("Double-sided")
         _dl = QVBoxLayout(ds_group); _dl.setContentsMargins(14, 16, 14, 12); _dl.setSpacing(8)
         _dl.addWidget(self.double_sided_chk)
@@ -462,36 +517,37 @@ class MainWindow(QMainWindow):
         _dsf.addRow("Fresh", self._fresh_row)
         self._ds_controls.setVisible(False)
         _dl.addWidget(self._ds_controls)
-        adv.addWidget(ds_group)
+        l_double.addWidget(ds_group)
+        l_double.addStretch(1)
 
+        # ===== REWORK =====
         rework_group = QGroupBox("Rework (2nd pass)")
         _rl = QVBoxLayout(rework_group); _rl.setContentsMargins(14, 16, 14, 12); _rl.setSpacing(8)
         _rl.addWidget(_row(self.select_chk, self.clear_sel_btn, stretch_first=True))
         _rl.addWidget(self.export_sel_btn)
-        adv.addWidget(rework_group)
+        l_rework.addWidget(rework_group)
+        l_rework.addStretch(1)
 
-        self._advanced_box.setVisible(False)
-        settings_layout.addWidget(self._advanced_box)
-        settings_layout.addStretch(1)
-
-        # scrollable so the advanced sections never overflow the window height
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
-        scroll.setWidget(settings_panel)
-        scroll.setMinimumWidth(380)
+        settings_container = QWidget()
+        sc_layout = QHBoxLayout(settings_container)
+        sc_layout.setContentsMargins(0, 0, 0, 0)
+        sc_layout.setSpacing(0)
+        sc_layout.addWidget(self.sidebar)
+        sc_layout.addWidget(self.stacked_widget)
+        settings_container.setMinimumWidth(450)
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
+        self.preview.on_jog_step = self._on_jog_step
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(scroll)
+        splitter.addWidget(settings_container)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([430, 1100])     # comfortable panel width, rest to preview
+        splitter.setSizes([550, 550])     # centered initially
 
         # Machine bar across the top: live DRO readout + connect toggle.
         machine_bar = QWidget()
@@ -608,7 +664,7 @@ class MainWindow(QMainWindow):
         return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
 
     def _on_advanced_toggled(self, on):
-        self._advanced_box.setVisible(on)
+        pass
 
     def _update_ds_controls(self):
         """Reveal the registration controls only when double-sided is on, and the
@@ -876,7 +932,7 @@ class MainWindow(QMainWindow):
             self._stop_dro()
 
     def _start_dro(self):
-        port = self.level_port_edit.text().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or "COM5"
         self._dro = _DROPoller(port)
         self._dro.position.connect(self._on_position)
         self._dro.touch_done.connect(self._on_touch_done)
@@ -887,6 +943,9 @@ class MainWindow(QMainWindow):
         self.zero_btn.setEnabled(True)
         self.dro_label.setText(f"●  connecting on {port}…")
         self.dro_label.setStyleSheet(self._DRO_ON)
+        self.statusBar().showMessage(
+            "Hover the preview and use the arrow keys to jog X/Y "
+            "(Shift = 10 mm, Ctrl = 0.1 mm)", 8000)
 
     def _stop_dro(self):
         self._pause_dro()
@@ -937,6 +996,27 @@ class MainWindow(QMainWindow):
             return
         self._dro.request_move(round(x * 1000), round(y * 1000))
         self.statusBar().showMessage(f"Jogging to X {x:.1f}  Y {y:.1f} mm", 4000)
+
+    def _on_jog_step(self, dx, dy):
+        """Arrow-key relative jog from the preview: move the carriage by (dx, dy)
+        mm from its last known position. Relative, so it's correct regardless of
+        any G54/preview-frame offset (unlike click-to-jog)."""
+        if self._dro is None:
+            self.statusBar().showMessage(
+                "Connect the machine to jog with the arrow keys", 4000)
+            return
+        if self._tool_xyz is None:
+            self.statusBar().showMessage(
+                "Waiting for a live position read before jogging…", 4000)
+            return
+        x, y, z = self._tool_xyz
+        nx, ny = x + dx, y + dy
+        self._dro.request_move(round(nx * 1000), round(ny * 1000))
+        # optimistically advance the local position so rapid key taps accumulate
+        # into one move to the final spot instead of all reading the same stale XY
+        self._tool_xyz = (nx, ny, z)
+        self.statusBar().showMessage(
+            f"Jog {dx:+.1f} {dy:+.1f} mm  ->  X {nx:.1f}  Y {ny:.1f} mm", 3000)
 
     _TOUCH_ON = "color:#ff3b3b; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
     _TOUCH_OFF = "color:#39ff14; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
@@ -1005,7 +1085,7 @@ class MainWindow(QMainWindow):
         # datum-local offsets in microns; ids are table row indices
         points = [(i, round((x - x0) * 1000), round((y - y0) * 1000))
                   for i, (x, y) in enumerate(xy)]
-        port = self.level_port_edit.text().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or "COM5"
         if QMessageBox.question(
                 self, "Probe over SPI",
                 f"Jog the tool ~2-3 mm above grid point 1 "
@@ -1391,103 +1471,130 @@ class MainWindow(QMainWindow):
             f"Wrote {path.name} ({len(clipped)} rework path(s))", 10000)
 
 _STYLESHEET = """
-QWidget { color: #e4e4e6; font-size: 13px; }
-QMainWindow, QScrollArea, #settingsPanel { background: #1e1e1e; }
+QWidget { color: #e4e4e6; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
+QMainWindow, QScrollArea, #settingsPanel { background: #121212; }
 QScrollArea { border: none; }
 
+#sidebar {
+    background: #181818;
+    border-right: 1px solid #2e2e2e;
+    outline: none;
+    padding: 10px 0px;
+}
+#sidebar::item {
+    padding: 12px 20px;
+    color: #a0a0a5;
+    font-size: 14px;
+    font-weight: 500;
+}
+#sidebar::item:hover {
+    background: #202020;
+    color: #e4e4e6;
+}
+#sidebar::item:selected {
+    background: #261c14;
+    color: #ff9800;
+    border-left: 3px solid #ff9800;
+}
+
 QGroupBox {
-    background: #252527; border: 1px solid #37373a; border-radius: 10px;
-    margin-top: 16px; padding-top: 4px;
+    background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 12px;
+    margin-top: 18px; padding-top: 8px;
 }
 QGroupBox::title {
     subcontrol-origin: margin; subcontrol-position: top left;
-    left: 14px; top: 2px; padding: 2px 6px;
-    color: #8a9099; font-size: 11px; font-weight: 700;
+    left: 14px; top: 4px; padding: 2px 6px;
+    color: #ff9800; font-size: 12px; font-weight: 700; text-transform: uppercase;
 }
-QLabel { background: transparent; color: #c2c5cb; }
+QLabel { background: transparent; color: #b0b3b8; font-weight: 500; }
+#helpText { color: #ff9800; font-size: 13px; font-style: italic; margin-bottom: 4px; border: 1px solid #443210; background: #1a1510; border-radius: 6px; padding: 8px; }
 
 QPushButton {
-    background: #313135; border: 1px solid #45454b; border-radius: 7px;
-    padding: 7px 13px;
+    background: #2a2a2a; border: 1px solid #3e3e3e; border-radius: 6px;
+    padding: 8px 14px; font-weight: 500;
 }
-QPushButton:hover { background: #3a3a40; border-color: #5a8de0; }
-QPushButton:pressed { background: #292930; }
-QPushButton:disabled { color: #6a6a6e; background: #262629; border-color: #303033; }
-QPushButton#primaryBtn { background: #3b82f6; border: none; color: #ffffff; font-weight: 600; }
-QPushButton#primaryBtn:hover { background: #4f8ff7; }
-QPushButton#primaryBtn:pressed { background: #2f6fe0; }
-QPushButton#primaryBtn:disabled { background: #2c3a52; color: #8aa0c4; }
+QPushButton:hover { background: #353535; border-color: #ffb74d; }
+QPushButton:pressed { background: #1f1f1f; }
+QPushButton:disabled { color: #555555; background: #1a1a1a; border-color: #2a2a2a; }
+QPushButton#primaryBtn { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffb74d, stop:1 #f57c00); border: none; color: #121212; font-weight: 700; }
+QPushButton#primaryBtn:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffcc80, stop:1 #fb8c00); }
+QPushButton#primaryBtn:pressed { background: #e65100; }
+QPushButton#primaryBtn:disabled { background: #3e2723; color: #8d6e63; }
 
 QComboBox, QLineEdit, QAbstractSpinBox {
-    background: #2c2c30; border: 1px solid #3d3d42; border-radius: 7px;
-    padding: 5px 8px; min-height: 18px; selection-background-color: #3b82f6;
+    background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
+    padding: 6px 10px; min-height: 20px; selection-background-color: #ff9800;
 }
-QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #4d4d55; }
-QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #3b82f6; }
-QComboBox:disabled, QAbstractSpinBox:disabled { color: #6a6a6e; background: #262629; }
-QComboBox::drop-down { border: none; width: 20px; }
+QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #ffb74d; }
+QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #ff9800; }
+QComboBox:disabled, QAbstractSpinBox:disabled { color: #555555; background: #1a1a1a; }
+QComboBox::drop-down { border: none; width: 24px; }
 QComboBox QAbstractItemView {
-    background: #2c2c30; border: 1px solid #3d3d42; border-radius: 6px;
-    selection-background-color: #3b82f6; outline: none;
+    background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
+    selection-background-color: #ff9800; selection-color: #121212; outline: none;
 }
 
-QCheckBox { spacing: 8px; background: transparent; color: #c2c5cb; }
+QCheckBox { spacing: 10px; background: transparent; color: #e4e4e6; font-weight: 500; }
+QCheckBox:hover { color: #ffb74d; }
+QCheckBox:pressed { color: #ff9800; }
+QCheckBox:checked { color: #ff9800; }
+QCheckBox:checked:hover { color: #ffb74d; }
 QCheckBox::indicator {
-    width: 17px; height: 17px; border-radius: 5px;
-    border: 1px solid #4d4d55; background: #2c2c30;
+    width: 18px; height: 18px; border-radius: 4px;
+    border: 1px solid #4a4a4a; background: #242424;
 }
-QCheckBox::indicator:hover { border-color: #5a8de0; }
-QCheckBox::indicator:checked { background: #3b82f6; border-color: #3b82f6; }
-QCheckBox#advancedToggle { color: #8a9099; font-weight: 600; padding: 4px 2px; }
+QCheckBox::indicator:hover { border-color: #ffb74d; }
+QCheckBox::indicator:checked { background: #ff9800; border-color: #ff9800; image: url(data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23121212" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>); }
+QCheckBox::indicator:checked:hover { background: #ffb74d; border-color: #ffb74d; }
 
-QTabWidget::pane { border: 1px solid #37373a; border-radius: 8px; top: -1px; background: #252527; }
+QTabWidget::pane { border: 1px solid #2e2e2e; border-radius: 8px; top: -1px; background: #1e1e1e; }
 QTabBar::tab {
-    background: transparent; color: #8a9099; padding: 7px 16px; margin-right: 2px;
-    border-top-left-radius: 7px; border-top-right-radius: 7px;
+    background: transparent; color: #a0a0a5; padding: 8px 18px; margin-right: 2px;
+    border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: 600;
 }
 QTabBar::tab:selected {
-    background: #252527; color: #e4e4e6;
-    border: 1px solid #37373a; border-bottom: none;
+    background: #1e1e1e; color: #ff9800;
+    border: 1px solid #2e2e2e; border-bottom: none;
 }
+QTabBar::tab:hover:!selected { color: #e4e4e6; }
 
-QScrollBar:vertical { background: transparent; width: 11px; margin: 2px; }
-QScrollBar::handle:vertical { background: #3d3d42; border-radius: 5px; min-height: 30px; }
-QScrollBar::handle:vertical:hover { background: #4d4d55; }
+QScrollBar:vertical { background: transparent; width: 12px; margin: 2px; }
+QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 6px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: #4a4a4a; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-QSlider::groove:horizontal { height: 4px; background: #3d3d42; border-radius: 2px; }
+QSlider::groove:horizontal { height: 4px; background: #3a3a3a; border-radius: 2px; }
 QSlider::handle:horizontal {
-    background: #3b82f6; width: 14px; margin: -6px 0; border-radius: 7px;
+    background: #ff9800; width: 16px; margin: -6px 0; border-radius: 8px;
 }
-QSlider::handle:horizontal:hover { background: #4f8ff7; }
+QSlider::handle:horizontal:hover { background: #ffb74d; }
 
-QStatusBar { background: #1a1a1a; color: #8a9099; }
+QStatusBar { background: #121212; color: #a0a0a5; font-weight: 500; }
 QToolTip {
-    color: #e4e4e6; background-color: #2c2c30; border: 1px solid #4d4d55;
-    border-radius: 4px; padding: 4px 6px;
+    color: #e4e4e6; background-color: #242424; border: 1px solid #3a3a3a;
+    border-radius: 6px; padding: 6px 8px; font-size: 12px;
 }
 """
-
 
 def apply_dark_theme(app):
     app.setStyle("Fusion")
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(30, 30, 30))
+    palette.setColor(QPalette.Window, QColor(18, 18, 18))
     palette.setColor(QPalette.WindowText, QColor(228, 228, 230))
-    palette.setColor(QPalette.Base, QColor(44, 44, 48))
-    palette.setColor(QPalette.AlternateBase, QColor(37, 37, 39))
-    palette.setColor(QPalette.ToolTipBase, QColor(44, 44, 48))
+    palette.setColor(QPalette.Base, QColor(36, 36, 36))
+    palette.setColor(QPalette.AlternateBase, QColor(30, 30, 30))
+    palette.setColor(QPalette.ToolTipBase, QColor(36, 36, 36))
     palette.setColor(QPalette.ToolTipText, QColor(228, 228, 230))
     palette.setColor(QPalette.Text, QColor(228, 228, 230))
-    palette.setColor(QPalette.Button, QColor(49, 49, 53))
+    palette.setColor(QPalette.Button, QColor(42, 42, 42))
     palette.setColor(QPalette.ButtonText, QColor(228, 228, 230))
     palette.setColor(QPalette.BrightText, Qt.red)
-    palette.setColor(QPalette.Link, QColor(59, 130, 246))
-    palette.setColor(QPalette.Highlight, QColor(59, 130, 246))
-    palette.setColor(QPalette.HighlightedText, Qt.white)
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(106, 106, 110))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(106, 106, 110))
+    palette.setColor(QPalette.Link, QColor(255, 152, 0))
+    palette.setColor(QPalette.Highlight, QColor(255, 152, 0))
+    palette.setColor(QPalette.HighlightedText, QColor(18, 18, 18))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(85, 85, 85))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(85, 85, 85))
     app.setPalette(palette)
     app.setStyleSheet(_STYLESHEET)
 
@@ -1528,7 +1635,20 @@ def main():
         _configure_opengl()
     app = QApplication.instance() or QApplication([])
     apply_dark_theme(app)
-    win = MainWindow(); win.show()
+    win = MainWindow()
+    
+    # Preload requested gerber folder and set double-sided
+    try:
+        default_gerber = r"C:\Users\s246132\62768-energy-system\hardware\kicad\production\c2000_feedback\gerbers"
+        import os
+        if os.path.exists(default_gerber):
+            win.load_folder(default_gerber)
+            win.double_sided_chk.setChecked(True)
+            win.generate_preview()
+    except Exception as e:
+        print(f"Failed to preload gerbers: {e}")
+        
+    win.show()
     return app.exec()
 
 if __name__ == "__main__":
