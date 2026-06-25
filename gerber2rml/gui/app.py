@@ -150,6 +150,14 @@ class MainWindow(QMainWindow):
         self.export_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_btn.clicked.connect(self._on_export_clicked)
 
+        self.diag_btn = QPushButton("Diagnostics")
+        self.diag_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        self.diag_btn.setToolTip(
+            "Pre-flight checks before cutting: does it fit the bed, does the "
+            "deepest cut fit the SRM-20 Z range (probe Z first), holes vs bit. "
+            "Run this before a full-bed job.")
+        self.diag_btn.clicked.connect(self._on_diagnostics)
+
         self.export_img_btn = QPushButton("Export image")
         self.export_img_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
         self.export_img_btn.clicked.connect(self._on_export_image)
@@ -587,6 +595,7 @@ class MainWindow(QMainWindow):
         # ===== BASIC: the things you set every time =====
         board_group, bl = _group("Board")
         bl.addRow(_row(self.load_btn, self.export_btn))
+        bl.addRow(_row(self.diag_btn))
         bl.addRow("Name", self.name_edit)
         bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
                                  self.save_preset_btn, stretch_first=True))
@@ -1571,6 +1580,54 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(
             f"Wrote leveled {path.name} — run it (then the cut-out)", 10000)
+
+    def _diag_bounds(self):
+        """Placed job bounds (board + dowels) in the cut/machine frame, for the
+        bed-fit check. Includes both sides' outlines for double-sided."""
+        if self.double_sided_chk.isChecked():
+            mlay = self._machine_layout()
+            xs = [mlay.outline.bounds, mlay.top_outline.bounds]
+            x0 = min(b[0] for b in xs); y0 = min(b[1] for b in xs)
+            x1 = max(b[2] for b in xs); y1 = max(b[3] for b in xs)
+            holes = mlay.align_holes
+        else:
+            x0, y0, x1, y1 = self.state.board.outline.bounds
+            holes = self.state.board.holes
+        for hx, hy, hd in holes:
+            r = max(hd, 0.1) / 2.0
+            x0, y0 = min(x0, hx - r), min(y0, hy - r)
+            x1, y1 = max(x1, hx + r), max(y1, hy + r)
+        return (x0, y0, x1, y1)
+
+    def _on_diagnostics(self):
+        """Run pre-flight checks (bed fit, Z reach, holes vs bit) and show them."""
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        self._sync_state()
+        from gerber2rml.engine.diagnostics import (cut_depths, preflight,
+                                                   format_report, worst)
+        dowel_depth = None
+        if self.double_sided_chk.isChecked() and self._dowel_spec().mode == "fresh":
+            dowel_depth = self.thickness_spin.value() + self.fresh_bed_spin.value()
+        depths = cut_depths(self.state.trace, self.state.drill, self.state.cutout,
+                            dowel_depth)
+        holes = (self._machine_layout().holes if self.double_sided_chk.isChecked()
+                 else self.state.board.holes)
+        checks = preflight(depths=depths, bed=BACKENDS[self.state.machine].bed,
+                           design_bounds=self._diag_bounds(), surface_z=self._z_zero,
+                           holes=holes, bit_diameter=self.state.drill.bit_diameter)
+        lvl = worst(checks)
+        box = QMessageBox(self)
+        box.setWindowTitle("Pre-flight diagnostics")
+        box.setIcon({"ok": QMessageBox.Information, "warn": QMessageBox.Warning,
+                     "fail": QMessageBox.Critical}[lvl])
+        box.setText("Pre-flight checks — "
+                    + {"ok": "all clear", "warn": "review the warnings",
+                       "fail": "FIX before cutting"}[lvl])
+        box.setInformativeText(format_report(checks))
+        box.exec()
+        self.statusBar().showMessage(f"Diagnostics: {lvl.upper()}", 8000)
 
     def _on_export_image(self):
         if self.state.board is None:

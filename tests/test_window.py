@@ -301,6 +301,19 @@ def test_probe_grid_lays_over_displayed_outline_double_sided():
     assert xy and all(x0 <= x <= x1 and y0 <= y <= y1 for (x, y) in xy)  # all on the board
 
 
+def test_diagnostics_runs(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    seen = {}
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: seen.update(
+        text=self.text(), info=self.informativeText()) or 0)
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    w._z_zero = -58.0                              # pretend we probed a low surface
+    w.double_sided_chk.setChecked(True)
+    w._on_diagnostics()
+    assert "Pre-flight" in seen["text"]
+    assert "Z range" in seen["info"] or "reach" in seen["info"].lower()
+
+
 def test_copper_stock_overlay_and_fit_check():
     w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
     # enter a copper piece and show it
