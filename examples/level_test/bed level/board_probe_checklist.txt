@@ -1,0 +1,16 @@
+BED-LEVELING PROBE: board  (9 points)
+
+Queue all the _probe_NN.nc files in VPanel. Zero Z on the copper at
+point 1 (the datum) — its Z is 0. At each point, jog Z down to touch,
+read the Z, and write it below. Then enter these in the GUI.
+
+  #        X        Y   measured Z
+  1  118.000    6.000     ________
+  2  156.000    6.000     ________
+  3  194.000    6.000     ________
+  4  118.000   34.000     ________
+  5  156.000   34.000     ________
+  6  194.000   34.000     ________
+  7  118.000   62.000     ________
+  8  156.000   62.000     ________
+  9  194.000   62.000     ________
