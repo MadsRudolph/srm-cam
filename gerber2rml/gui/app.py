@@ -204,9 +204,12 @@ class MainWindow(QMainWindow):
         self.place_x_spin = QDoubleSpinBox()
         self.place_y_spin = QDoubleSpinBox()
         for sp, ax in ((self.place_x_spin, "right (+X)"), (self.place_y_spin, "back (+Y)")):
-            sp.setRange(0.0, 500.0); sp.setSingleStep(1.0); sp.setDecimals(1)
+            # allow negative: the board sits ~2 mm in from home, so a small negative
+            # value reclaims that margin / pulls a design back off the far edge.
+            sp.setRange(-500.0, 500.0); sp.setSingleStep(1.0); sp.setDecimals(1)
             sp.setSuffix(" mm")
-            sp.setToolTip(f"Move the whole job {ax} on the bed from the front-left home")
+            sp.setToolTip(f"Move the whole job {ax} on the bed from the front-left "
+                          f"home (negative = toward/past home; off-bed shows red)")
             sp.valueChanged.connect(self.generate_preview)
         self._place_row = QWidget()
         _pl = QHBoxLayout(self._place_row); _pl.setContentsMargins(0, 0, 0, 0)
@@ -1804,10 +1807,10 @@ class MainWindow(QMainWindow):
     def _on_move_delta(self, dx, dy):
         """Drag committed in the preview -> fold the shift into the placement."""
         self.place_x_spin.blockSignals(True)
-        self.place_x_spin.setValue(max(0.0, self.place_x_spin.value() + dx))
+        self.place_x_spin.setValue(self.place_x_spin.value() + dx)  # spinbox clamps to range
         self.place_x_spin.blockSignals(False)
         # setting Y triggers a single regenerate_preview at the new placement
-        self.place_y_spin.setValue(max(0.0, self.place_y_spin.value() + dy))
+        self.place_y_spin.setValue(self.place_y_spin.value() + dy)
 
     # ---- copper stock alignment -----------------------------------------
     def _update_stock_preview(self, *_):
@@ -1861,9 +1864,9 @@ class MainWindow(QMainWindow):
         tx = self.stock_x_spin.value() + self.stock_w_spin.value() / 2.0
         ty = self.stock_y_spin.value() + self.stock_h_spin.value() / 2.0
         self.place_x_spin.blockSignals(True)
-        self.place_x_spin.setValue(max(0.0, self.place_x_spin.value() + (tx - cx)))
+        self.place_x_spin.setValue(self.place_x_spin.value() + (tx - cx))
         self.place_x_spin.blockSignals(False)
-        self.place_y_spin.setValue(max(0.0, self.place_y_spin.value() + (ty - cy)))
+        self.place_y_spin.setValue(self.place_y_spin.value() + (ty - cy))
         self.statusBar().showMessage("Design centred on the copper stock", 5000)
 
     def _on_selection_changed(self, bbox):
