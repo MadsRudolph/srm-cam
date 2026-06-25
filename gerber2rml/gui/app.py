@@ -1547,11 +1547,15 @@ class MainWindow(QMainWindow):
             return
         hmap = self._level_heightmap_preview()
         _xy, xyz = self._table_points()
-        if hmap is None:
+        # Sample over the DISPLAYED footprint (the same _level_bounds the probe grid
+        # is laid over), NOT state.board.outline — for a mirrored bottom side or a
+        # placed board those frames differ and the heatmap would land offset.
+        bounds = self._level_bounds()
+        if hmap is None or bounds is None:
             self.preview.set_level_overlay(None)
             return
         import numpy as np
-        x0, y0, x1, y1 = self.state.board.outline.bounds
+        x0, y0, x1, y1 = bounds
         xs = np.linspace(x0, x1, 48); ys = np.linspace(y0, y1, 48)
         X, Y = np.meshgrid(xs, ys)
         Z = [[hmap(float(x), float(y)) for x in xs] for y in ys]
@@ -1560,12 +1564,13 @@ class MainWindow(QMainWindow):
     def _on_bed_3d(self):
         """Open the probed surface as a rotatable 3D mesh (OctoPrint-style)."""
         hmap = self._level_heightmap_preview()
-        if hmap is None or self.state.board is None:
+        bounds = self._level_bounds()
+        if hmap is None or bounds is None or self.state.board is None:
             QMessageBox.warning(self, "No height map",
                                 "Probe or enter at least 3 points first.")
             return
         import numpy as np
-        x0, y0, x1, y1 = self.state.board.outline.bounds
+        x0, y0, x1, y1 = bounds          # displayed frame — matches the probe points
         xs = np.linspace(x0, x1, 40)
         ys = np.linspace(y0, y1, 40)
         Z = np.array([[hmap(float(x), float(y)) for y in ys] for x in xs])  # (nx, ny)
