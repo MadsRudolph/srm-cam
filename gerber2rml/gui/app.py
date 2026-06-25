@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
     QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea,
     QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QListWidget, QStackedWidget
+    QListWidget, QStackedWidget, QProgressBar
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
@@ -412,6 +412,31 @@ class MainWindow(QMainWindow):
             "clips connected to mean anything.")
         self.touch_label.setStyleSheet(
             "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+        # ---- live run-progress bar (driven by the DRO position) ----
+        self.run_op_combo = QComboBox()
+        self.run_op_combo.addItems(["Traces", "Drill", "Cut-out"])
+        self.run_op_combo.setToolTip(
+            "Which job is running on the mill — its estimated time drives the bar.")
+        self.run_rework_chk = QCheckBox("selection")
+        self.run_rework_chk.setToolTip(
+            "Track the rework selection (the clipped 2nd pass) instead of the whole "
+            "job. Needs an active 'Select area' box.")
+        self.run_track_btn = QPushButton("Track run")
+        self.run_track_btn.setCheckable(True)
+        self.run_track_btn.setToolTip(
+            "Start tracking progress from the live tool position. Connect the "
+            "machine, hit Run in VPanel, then press this — the bar follows the bit "
+            "and counts down the time left.")
+        self.run_track_btn.toggled.connect(self._on_track_run)
+        self.run_bar = QProgressBar()
+        self.run_bar.setRange(0, 100)
+        self.run_bar.setValue(0)
+        self.run_bar.setTextVisible(True)
+        self.run_eta_lbl = QLabel("—")
+        self.run_eta_lbl.setStyleSheet(
+            "color:#aab; font-family:Consolas,monospace; font-size:13px; padding:0 8px;")
+        self._run_progress = None   # engine.progress.RunProgress while tracking
+
         self._dro = None            # _DROPoller when connected
         self._tool_xyz = None       # last good (x, y, z) mm
         self._dro_rejects = 0       # consecutive implausible reads (re-sync guard)
@@ -765,11 +790,24 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.connect_btn)
         _mb.addWidget(self.stop_btn)
 
+        # Live run-progress bar across the top, under the machine readout.
+        progress_bar_row = QWidget()
+        progress_bar_row.setObjectName("progressBar")
+        _pb = QHBoxLayout(progress_bar_row)
+        _pb.setContentsMargins(8, 2, 8, 2)
+        _pb.addWidget(QLabel("Run:"))
+        _pb.addWidget(self.run_op_combo)
+        _pb.addWidget(self.run_rework_chk)
+        _pb.addWidget(self.run_track_btn)
+        _pb.addWidget(self.run_bar, 1)
+        _pb.addWidget(self.run_eta_lbl)
+
         central = QWidget()
         _cv = QVBoxLayout(central)
         _cv.setContentsMargins(0, 0, 0, 0)
         _cv.setSpacing(0)
         _cv.addWidget(machine_bar)
+        _cv.addWidget(progress_bar_row)
         _cv.addWidget(splitter, 1)
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready", 5000)
@@ -1397,6 +1435,61 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Jog {dx:+.1f} {dy:+.1f} mm  ->  X {nx:.1f}  Y {ny:.1f} mm", 3000)
 
+    _RUN_OP = {"Traces": "traces", "Drill": "drill", "Cut-out": "cutout"}
+
+    def _on_track_run(self, on):
+        """Arm/disarm live run-progress tracking from the DRO position."""
+        if not on:
+            self._run_progress = None
+            self.run_bar.setValue(0)
+            self.run_eta_lbl.setText("—")
+            self.run_track_btn.setText("Track run")
+            return
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            self.run_track_btn.setChecked(False)
+            return
+        self._sync_state()
+        op = self._RUN_OP[self.run_op_combo.currentText()]
+        try:
+            toolpaths = self._toolpaths_for(op)
+            if self.run_rework_chk.isChecked():
+                bbox = self.preview.selection_bbox()
+                if bbox is None:
+                    QMessageBox.warning(self, "No selection",
+                                        "Tick off 'selection', or drag a rework box "
+                                        "first.")
+                    self.run_track_btn.setChecked(False)
+                    return
+                toolpaths, _lv = self._rework_clip(toolpaths, bbox)
+        except Exception as e:
+            QMessageBox.warning(self, "Can't track", f"No toolpaths for {op}: {e}")
+            self.run_track_btn.setChecked(False)
+            return
+        from gerber2rml.engine.progress import RunProgress
+        from gerber2rml.engine.estimate import format_duration
+        job = self._job_for_op(op)
+        self._run_progress = RunProgress(toolpaths, job.xy_feed, job.plunge_feed)
+        self.run_bar.setValue(0)
+        self.run_track_btn.setText("Tracking…")
+        total = format_duration(self._run_progress.total)
+        if self._dro is None:
+            self.run_eta_lbl.setText(f"{total} — connect to track")
+        else:
+            self.run_eta_lbl.setText(f"{total} total")
+
+    def _update_run_progress(self, x, y, z):
+        if self._run_progress is None:
+            return
+        from gerber2rml.engine.estimate import format_duration
+        frac, _el, rem = self._run_progress.update(x, y, z)
+        pct = int(round(frac * 100))
+        self.run_bar.setValue(pct)
+        if frac >= 0.999:
+            self.run_eta_lbl.setText("done")
+        else:
+            self.run_eta_lbl.setText(f"{format_duration(rem)} left")
+
     _TOUCH_ON = "color:#ff3b3b; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
     _TOUCH_OFF = "color:#39ff14; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
 
@@ -1420,6 +1513,7 @@ class MainWindow(QMainWindow):
         self.touch_label.setText("bit ● TOUCHING" if touching else "bit ○ clear")
         self.touch_label.setStyleSheet(self._TOUCH_ON if touching else self._TOUCH_OFF)
         self.preview.set_tool_position(x, y, touching)
+        self._update_run_progress(x, y, z)
 
     def _on_probe_z(self):
         """Probe down from the current XY until the bit touches, then zero Z there."""
@@ -1971,26 +2065,36 @@ class MainWindow(QMainWindow):
         return [tp for _fname, paths in drill_jobs(holes, self.state.drill, "x")
                 for tp in paths]
 
-    def _current_toolpaths(self):
-        """(op, toolpaths) for the active tab/mode -- what the preview shows."""
-        op = _OPS[self.tabs.currentIndex()]
+    def _toolpaths_for(self, op):
+        """Bed/machine-frame toolpaths for ``op`` in the current mode (the same
+        frame the preview and the live DRO marker use)."""
         if self.double_sided_chk.isChecked():
             side = self._ds_side()
             if side is not None and op != "drill":
                 # single side: machine-frame paths for that side (matches preview)
-                return op, self._ds_side_toolpaths(op, side)
+                return self._ds_side_toolpaths(op, side)
             from gerber2rml.engine.traces import isolate
             from gerber2rml.engine.cutout import cut_outline
             lay = self._double_sided_layout()
             if op == "traces":
-                return op, isolate(lay.bottom_copper, self.state.trace,
-                                   outline=lay.outline)
+                return isolate(lay.bottom_copper, self.state.trace,
+                               outline=lay.outline)
             if op == "cutout":
-                return op, cut_outline(lay.outline, self.state.cutout)
-            return op, self._drill_toolpaths(lay.holes)
+                return cut_outline(lay.outline, self.state.cutout)
+            return self._drill_toolpaths(lay.holes)
         if op == "drill":
-            return op, self._drill_toolpaths(self.state.board.holes)
-        return op, self.state.toolpaths(op)
+            return self._drill_toolpaths(self.state.board.holes)
+        return self.state.toolpaths(op)
+
+    def _job_for_op(self, op):
+        """The job config (feeds/depths) for ``op``."""
+        return {"traces": self.state.trace, "drill": self.state.drill,
+                "cutout": self.state.cutout}[op]
+
+    def _current_toolpaths(self):
+        """(op, toolpaths) for the active tab/mode -- what the preview shows."""
+        op = _OPS[self.tabs.currentIndex()]
+        return op, self._toolpaths_for(op)
 
     def _sim_board_bounds(self):
         """PCB outline bounds (x0, y0, x1, y1) for the side currently shown, so
@@ -2320,6 +2424,16 @@ QPushButton#primaryBtn:disabled { background: #3e2723; color: #8d6e63; }
 QPushButton#stopBtn { background: #c0392b; border: none; color: #ffffff; font-weight: 700; }
 QPushButton#stopBtn:hover { background: #e04434; }
 QPushButton#stopBtn:pressed { background: #962d22; }
+
+#progressBar { background: #181818; border-bottom: 1px solid #2a2a2a; }
+QProgressBar {
+    background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
+    min-height: 18px; text-align: center; color: #e4e4e6;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffb74d, stop:1 #f57c00);
+    border-radius: 5px;
+}
 
 QComboBox, QLineEdit, QAbstractSpinBox {
     background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
