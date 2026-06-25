@@ -721,6 +721,7 @@ class MainWindow(QMainWindow):
     def load_folder(self, folder):
         self._sync_state()
         self.state.load(folder)
+        self.preview._view_limits = None        # new board -> fit (clear any zoom)
 
     def _dowel_spec(self):
         """Build a DowelSpec from the registration controls."""

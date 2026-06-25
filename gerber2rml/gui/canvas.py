@@ -1,5 +1,6 @@
 """Matplotlib preview canvas: draws cut/rapid polylines, or drill holes as circles."""
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QSlider
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSlider,
+                               QPushButton)
 from PySide6.QtCore import Qt
 from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection
@@ -28,10 +29,26 @@ class PreviewCanvas(QWidget):
         self.slider.setToolTip("Scrub through the toolpath (Live Preview)")
         self.slider.valueChanged.connect(self._on_slider)
 
+        self.fit_btn = QPushButton("Fit")
+        self.fit_btn.setToolTip(
+            "Reset the zoom to fit the whole job.\n"
+            "Scroll to zoom (finer mm grid + more precise click-to-jog as you zoom "
+            "in); right-drag to pan.")
+        self.fit_btn.setMaximumWidth(60)
+        self.fit_btn.clicked.connect(self.fit_view)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas)
-        layout.addWidget(self.slider)
+        _bottom = QHBoxLayout(); _bottom.setContentsMargins(0, 0, 0, 0)
+        _bottom.addWidget(self.fit_btn)
+        _bottom.addWidget(self.slider, 1)
+        layout.addLayout(_bottom)
+
+        # Zoom/pan view override: when set, used instead of the auto-fit limits so
+        # the zoom survives redraws (slider scrub, regenerate). Cleared by Fit.
+        self._view_limits = None
+        self._panning = False
 
         self._full_cuts = []
         self._full_rapids = []
@@ -125,6 +142,7 @@ class PreviewCanvas(QWidget):
         self.canvas.mpl_connect("figure_enter_event", self._on_enter)
         self.canvas.mpl_connect("figure_leave_event", self._on_leave)
         self.canvas.mpl_connect("key_press_event", self._on_key)
+        self.canvas.mpl_connect("scroll_event", self._on_scroll)
 
     def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
         """Store the toolpaths and update the display based on the slider.
@@ -294,7 +312,7 @@ class PreviewCanvas(QWidget):
         y0, y1 = sorted(self.ax.get_ylim())
         span = max(x1 - x0, y1 - y0, 1.0)
         major = self._nice_step(span / 8.0)         # ~8 labeled divisions across
-        minor = max(major / 10.0, 0.1)              # fine ticks (1 mm when major=10)
+        minor = max(major / 10.0, 0.001)            # fine ticks (down to the step size)
         for axis in (self.ax.xaxis, self.ax.yaxis):
             axis.set_major_locator(MultipleLocator(major))
             axis.set_minor_locator(MultipleLocator(minor))
@@ -302,6 +320,41 @@ class PreviewCanvas(QWidget):
         self.ax.grid(True, which="minor", color="#2b2b2e", linewidth=0.4, alpha=0.7)
         self.ax.tick_params(which="major", length=5, colors="#d4d4d4", labelsize=8)
         self.ax.tick_params(which="minor", length=2, colors="#666666")
+
+    # ---- zoom / pan -----------------------------------------------------
+    _MIN_SPAN_MM = 0.2          # don't zoom in past ~0.2 mm (well under a step)
+
+    def _set_view(self, x0, x1, y0, y1):
+        """Apply a zoom/pan view and remember it so redraws keep it."""
+        self._view_limits = (x0, x1, y0, y1)
+        self.ax.set_xlim(x0, x1)
+        self.ax.set_ylim(y0, y1)
+        self._apply_ruler_grid()
+        self.canvas.draw_idle()
+
+    def fit_view(self):
+        """Reset the zoom to fit the whole job (clears any zoom/pan)."""
+        self._view_limits = None
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    reset_view = fit_view
+
+    def _on_scroll(self, event):
+        """Scroll wheel zooms about the cursor; the mm grid refines as you zoom
+        in, and click-to-jog gets finer (clicks resolve in data/mm coordinates)."""
+        if event.inaxes != self.ax or event.xdata is None:
+            return
+        zoom_in = event.button == "up"
+        scale = 1 / 1.25 if zoom_in else 1.25
+        x0, x1 = self.ax.get_xlim()
+        y0, y1 = self.ax.get_ylim()
+        cx, cy = event.xdata, event.ydata
+        nx0, nx1 = cx + (x0 - cx) * scale, cx + (x1 - cx) * scale
+        ny0, ny1 = cy + (y0 - cy) * scale, cy + (y1 - cy) * scale
+        if zoom_in and (abs(nx1 - nx0) < self._MIN_SPAN_MM
+                        or abs(ny1 - ny0) < self._MIN_SPAN_MM):
+            return                                  # already at max zoom
+        self._set_view(nx0, nx1, ny0, ny1)
 
     def _on_slider(self, val):
         self._draw_fraction(val / 1000.0)
@@ -390,7 +443,11 @@ class PreviewCanvas(QWidget):
         if self._pins:
             self.ax.scatter([p[0] for p in self._pins], [p[1] for p in self._pins],
                             s=80, c="#ffd700", marker="+", zorder=6)
-        if self._limits:
+        if self._view_limits is not None:    # user zoom/pan overrides the auto-fit
+            x0, x1, y0, y1 = self._view_limits
+            self.ax.set_xlim(x0, x1)
+            self.ax.set_ylim(y0, y1)
+        elif self._limits:
             x0, x1, y0, y1 = self._limits
             # flip_x reverses the x-axis to show the un-mirrored "as designed"
             # orientation; the data underneath is unchanged.
@@ -491,7 +548,13 @@ class PreviewCanvas(QWidget):
         self.canvas.draw_idle()
 
     def _on_press(self, event):
-        if event.button != 1 or event.inaxes != self.ax:
+        if event.inaxes != self.ax:
+            return
+        if event.button == 3:                    # right-drag = pan
+            self._panning = True
+            self.ax.start_pan(event.x, event.y, 1)   # button 1 => pan (not zoom)
+            return
+        if event.button != 1:
             return
         if self._jogging:
             if self.on_jog_to and event.xdata is not None and event.ydata is not None:
@@ -508,6 +571,12 @@ class PreviewCanvas(QWidget):
             self._move_bbox0 = self._design_bounds()
 
     def _on_motion(self, event):
+        if self._panning and event.x is not None:
+            self.ax.drag_pan(1, event.key, event.x, event.y)
+            self._view_limits = (*self.ax.get_xlim(), *self.ax.get_ylim())
+            self._apply_ruler_grid()
+            self.canvas.draw_idle()
+            return
         if event.xdata is None or event.ydata is None:
             return
         if self._measure_start is not None:
@@ -525,6 +594,10 @@ class PreviewCanvas(QWidget):
                                   event.ydata - self._move_start[1])
 
     def _on_release(self, event):
+        if self._panning:
+            self.ax.end_pan()
+            self._panning = False
+            return
         if self._measure_start is not None:
             self._measure_start = None       # keep the finished ruler displayed
             return
