@@ -57,6 +57,12 @@ class PreviewCanvas(QWidget):
         # toolpaths inside it. None = hidden.
         self._outline_xy = None
 
+        # Physical copper stock: (x0, y0, w, h) mm on the bed — the actual piece of
+        # copper you measured, drawn so you can line the design (and dowels) up
+        # inside it. None = hidden.
+        self._stock = None
+        self._stock_fits = True
+
         # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
         # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
         # can eyeball the tilt/warp before cutting. None = hidden.
@@ -153,6 +159,12 @@ class PreviewCanvas(QWidget):
         """Set the board's Edge.Cuts boundary as a list of (x, y) vertices (open
         ring), or ``None`` to hide it. Stored; drawn on the next redraw."""
         self._outline_xy = outline_xy or None
+
+    def set_stock(self, rect):
+        """Show the physical copper stock as ``(x0, y0, w, h)`` mm on the bed, or
+        ``None`` to hide it. Redraws so the change is immediate."""
+        self._stock = rect if (rect and rect[2] > 0 and rect[3] > 0) else None
+        self._draw_fraction(self.slider.value() / 1000.0)
 
     def set_level_overlay(self, X=None, Y=None, Z=None, points=None):
         """Show (or clear, with no args) the height-map heatmap. ``X``/``Y``/``Z``
@@ -277,6 +289,19 @@ class PreviewCanvas(QWidget):
                                         edgecolor=bed_color, linewidth=1.5, zorder=1))
             self.ax.scatter([0], [0], s=40, c=bed_color, marker="s", zorder=2)  # home
 
+        self._stock_fits = True
+        if self._stock:
+            sx, sy, sw, sh = self._stock
+            db = self._design_bounds()
+            # design (incl. dowels) must sit inside the copper
+            self._stock_fits = db is None or (
+                db[0] >= sx - 1e-6 and db[1] >= sy - 1e-6
+                and db[2] <= sx + sw + 1e-6 and db[3] <= sy + sh + 1e-6)
+            edge = "#d9943f" if self._stock_fits else "#ff4444"
+            self.ax.add_patch(Rectangle((sx, sy), sw, sh, facecolor="#b87333",
+                                        alpha=0.16, edgecolor=edge, linewidth=1.6,
+                                        zorder=0.5))
+
         if self._outline_xy:
             # the board edge (Edge.Cuts) — a subtle closed boundary so the PCB
             # outline is always visible, not just the cuts inside it
@@ -354,6 +379,11 @@ class PreviewCanvas(QWidget):
         if self._bed and not self._bed_fits:
             self.ax.text(0.98, 0.02, "DESIGN EXCEEDS BED", transform=self.ax.transAxes,
                          va="bottom", ha="right", fontsize=9, color="#1e1e1e", zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#ff4444",
+                                   edgecolor="none", alpha=0.95))
+        if self._stock and not self._stock_fits:
+            self.ax.text(0.02, 0.02, "DESIGN EXCEEDS COPPER", transform=self.ax.transAxes,
+                         va="bottom", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
                          bbox=dict(boxstyle="round,pad=0.3", facecolor="#ff4444",
                                    edgecolor="none", alpha=0.95))
         self.canvas.draw_idle()
