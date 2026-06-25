@@ -25,3 +25,6 @@ Thumbs.db
 !tests/**/*.rml
 out/
 out_ds/
+
+# Large vendor reference manuals — kept locally, not in the repo (tens of MB)
+docs/*.pdf

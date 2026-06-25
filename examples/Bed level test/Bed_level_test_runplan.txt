@@ -1,0 +1,7 @@
+SRM-20 run plan: Bed_level_test  [Roland SRM-20 (G-code)]
+Send each file via VPanel: Cut -> Add -> Output (set the work XY/Z origin first; G-code references that as G54).
+Order: 1) traces  2) drill  3) cutout. Re-set Z-zero after each bit change; keep XY origin.
+1. traces  — bit 0.8 mm, 1 offsets, cut 0.15 mm/pass, feed 4.0 mm/s
+2. drill  — Bed_level_test_drill.nc: one 0.8 mm bit, plunge holes that fit + interpolate larger ones, total 1.7 mm
+3. cutout  — bit 0.8 mm, 4 tabs x 1.5 mm, total 1.7 mm
+Board mirrored for bottom-up milling: True.
