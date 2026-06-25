@@ -50,6 +50,74 @@ def test_probe_grid_parses_results_and_closes():
     assert fake["s"].closed                                     # serial always closed
 
 
+def test_probe_grid_abort_stops_early_and_lifts():
+    sent = []
+    class Rec(FakeSerial):
+        def write(self, data):
+            sent.append(data); super().write(data)
+    s = Rec()
+    res = probe_grid("COM5", [(0, 0, 0), (1, 10000, 0)],
+                     serial_factory=lambda p, b, t: s, startup_wait=0,
+                     should_abort=lambda: True)        # abort before the first point
+    assert res == []                                   # nothing probed
+    assert b"!\n" in sent                              # firmware told to lift
+    assert s.closed                                    # port still closed
+
+
+def test_probe_grid_outlier_z_aborts_and_lifts():
+    # point 1 touches at the surface; point 2 comes back far deeper (missed copper
+    # -> runaway). The grid must stop there and send '!' to lift.
+    sent = []
+    class Deep(FakeSerial):
+        def write(self, data):
+            sent.append(data)
+            s = data.decode().strip()
+            if s == "D":
+                self._out.append(b"D 0 0 -50000\n")
+            elif s.startswith("P"):
+                _, pid, x, y = s.split()
+                z = -56000 if pid == "0" else -59000   # 3 mm deeper on point 1
+                self._out.append(f"R {pid} {x} {y} {z}\n".encode())
+    s = Deep()
+    res = probe_grid("COM5", [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                     serial_factory=lambda p, b, t: s, startup_wait=0, outlier_mm=1.5)
+    assert len(res) == 2                              # stopped after the runaway point
+    assert "runaway" in str(res[1].get("error", "")).lower()
+    assert res[1]["z"] is None                        # the bad reading is discarded
+    assert b"!\n" in sent                             # tool told to lift
+
+
+def test_probe_grid_firmware_runaway_reply_aborts():
+    sent = []
+    class FwRunaway(FakeSerial):
+        def write(self, data):
+            sent.append(data)
+            s = data.decode().strip()
+            if s == "D":
+                self._out.append(b"D 0 0 -50000\n")
+            elif s.startswith("P"):
+                pid = s.split()[1]
+                self._out.append((b"R 0 0 0 -56000\n" if pid == "0"
+                                  else f"E {pid} RUNAWAY\n".encode()))
+    s = FwRunaway()
+    res = probe_grid("COM5", [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                     serial_factory=lambda p, b, t: s, startup_wait=0)
+    assert len(res) == 2 and b"!\n" in sent           # firmware RUNAWAY -> stop + lift
+
+
+def test_touch_off_abort_lifts_and_returns_none():
+    from gerber2rml.engine.spi_probe import touch_off
+    sent = []
+    class Rec(FakeSerial):
+        def write(self, data):
+            sent.append(data); super().write(data)
+        def readline(self):
+            return b""                                 # board never replies
+    s = Rec()
+    r = touch_off(s, timeout=2.0, should_abort=lambda: True)
+    assert r is None and b"!\n" in sent                # aborted -> lift, no contact
+
+
 def test_probe_grid_raises_without_datum_ack():
     class NoAck(FakeSerial):
         def write(self, data):

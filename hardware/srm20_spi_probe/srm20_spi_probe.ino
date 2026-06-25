@@ -26,6 +26,11 @@
  *                       XY travel never drags, then moves; replies 'J x y'
  *     T                 touch-off: descend Z from HERE until the probe contacts,
  *                       then STOP at the surface; replies 'T x y z' (um)
+ *     !                 ABORT: stop any descent immediately and lift to safe Z.
+ *                       Also honoured MID-probe — checked between every Z step
+ *                       and whenever a move fails to complete (e.g. the lid is
+ *                       opened, which pauses the machine), so it can never keep
+ *                       stepping the bit down into the work.
  *     Q                 quick position query -> 'Q x y z' (um, single read)
  *     G                 get the work origin -> 'G ox oy oz' (um)
  *     O                 setOrigin TEST: shift origin Z +1 mm, report actual+origin
@@ -45,11 +50,20 @@ SRM20SPIRemote srm20;
 
 const int  PROBE_PIN = 7;            // external touch probe; LOW = contact
 const long PROBE_STEP_UM = 25;       // descent step
-const long PROBE_MAX_DROP_UM = 6000; // safety floor: never drop > 6 mm from safe Z
+const long PROBE_MAX_DROP_UM = 6000; // absolute floor: never drop > 6 mm from safe Z
+const long OUTLIER_MARGIN_UM = 1200; // runaway guard: once a surface is known, never
+                                     // descend more than this past it without contact.
+                                     // A real board's surface varies far less; going
+                                     // this much deeper means we missed copper.
 const long MOVE_SPEED = -1;          // library default
 
 long datX = 0, datY = 0, safeZ = 0;
 bool haveDatum = false;
+
+// First good touch Z = reference surface for the runaway guard above. Reset on
+// every new datum ('D'), i.e. at the start of each grid run.
+long refSurfaceZ = 0;
+bool haveRef = false;
 
 // setOrigin experiment: saved origin so the test can always restore it.
 long savedOX = 0, savedOY = 0, savedOZ = 0;
@@ -70,36 +84,70 @@ bool readPos(long &x, long &y, long &z) {
   return false;
 }
 
-void waitForMotorStop() {
-  unsigned long sys, rem, t0 = millis();
+// Scan any pending serial bytes for the '!' abort. Consumes them — during a
+// descent we don't expect other traffic, and stopping safely wins over parsing.
+bool gAbort = false;
+bool checkAbort() {
+  while (Serial.available()) {
+    if (Serial.read() == '!') gAbort = true;
+  }
+  return gAbort;
+}
+
+// Wait for motion to finish. Returns FALSE if the operator aborted (!) OR the
+// move never completed within the timeout — which is exactly what happens when
+// the lid is opened mid-probe (the machine pauses). Callers treat false as
+// "stop descending and lift", so a paused machine can never queue deeper moves.
+bool waitForMotorStop() {
+  unsigned long sys = 0, rem, t0 = millis();
   if (srm20.isReady()) {
     do {
       srm20.getStatus(sys, rem);
+      if (checkAbort()) return false;
       delay(40);
     } while ((sys & 0x00000800) && (millis() - t0 < 8000));
+    if (sys & 0x00000800) return false;        // timed out still moving -> abnormal
   }
+  return true;
 }
 
-// Probe at absolute machine (mx,my). Returns true + touchZ on contact.
-bool probeAt(long mx, long my, long &touchZ) {
-  srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);   // rapid above the point at safe Z
+// Best-effort lift to safe Z (used on abort / after a probe). Never descends.
+void liftSafe(long mx, long my) {
+  srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);
   waitForMotorStop();
-  if (digitalRead(PROBE_PIN) == LOW) return false;   // already touching: safe Z too low
-  long z = safeZ, floorZ = safeZ - PROBE_MAX_DROP_UM;
+}
+
+// Probe at absolute machine (mx,my). Returns 1 + touchZ on contact, 0 on no
+// contact (lifted), -1 if aborted (operator '!' or a move that didn't finish),
+// -2 if it ran away past the known surface (missed copper -> stopped early).
+int probeAt(long mx, long my, long &touchZ) {
+  srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);   // rapid above the point at safe Z
+  if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
+  if (digitalRead(PROBE_PIN) == LOW) return 0;   // already touching: safe Z too low
+  // Floor = absolute cap, tightened to refSurface - margin once a surface is known.
+  long floorZ = safeZ - PROBE_MAX_DROP_UM;
+  bool refLimited = false;
+  if (haveRef) {
+    long refFloor = refSurfaceZ - OUTLIER_MARGIN_UM;
+    if (refFloor > floorZ) { floorZ = refFloor; refLimited = true; }
+  }
+  long z = safeZ;
   while (z > floorZ) {
+    if (checkAbort()) { liftSafe(mx, my); return -1; }
     z -= PROBE_STEP_UM;
     srm20.jumpTo(mx, my, z, MOVE_SPEED);     // X,Y fixed — Z only
-    waitForMotorStop();
+    if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }   // paused/aborted -> stop
     if (digitalRead(PROBE_PIN) == LOW) {
       long tx, ty, tz;
       bool ok = readPos(tx, ty, tz);
-      srm20.jumpTo(mx, my, safeZ, MOVE_SPEED); waitForMotorStop();  // lift
-      if (!ok) return false;
-      touchZ = tz; return true;
+      liftSafe(mx, my);
+      if (!ok) return 0;
+      if (!haveRef) { refSurfaceZ = tz; haveRef = true; }   // first touch = surface ref
+      touchZ = tz; return 1;
     }
   }
-  srm20.jumpTo(mx, my, safeZ, MOVE_SPEED); waitForMotorStop();      // lift, no contact
-  return false;
+  liftSafe(mx, my);                          // hit the floor with no contact
+  return refLimited ? -2 : 0;                // past the known surface -> runaway
 }
 
 // ---- tiny line reader -----------------------------------------------------
@@ -111,6 +159,7 @@ void handleLine(char *s) {
     long x, y, z;
     if (!readPos(x, y, z)) { Serial.println("# datum read UNSTABLE"); return; }
     datX = x; datY = y; safeZ = z; haveDatum = true;
+    haveRef = false;                         // new run -> forget the surface reference
     Serial.print("D "); Serial.print(datX); Serial.print(' ');
     Serial.print(datY); Serial.print(' '); Serial.println(safeZ);
   } else if (s[0] == 'Z') {
@@ -138,12 +187,14 @@ void handleLine(char *s) {
       long x, y, z;
       if (!readPos(x, y, z)) { Serial.println("E T UNSTABLE"); }
       else {
+        gAbort = false;                      // fresh touch-off — clear any stale abort
         long floorZ = z - PROBE_MAX_DROP_UM;
-        bool hit = false;
+        bool hit = false, aborted = false;
         while (z > floorZ) {
+          if (checkAbort()) { aborted = true; break; }
           z -= PROBE_STEP_UM;
           srm20.jumpTo(x, y, z, MOVE_SPEED);   // X,Y fixed — Z only
-          waitForMotorStop();
+          if (!waitForMotorStop()) { aborted = true; break; }   // paused/aborted -> stop
           if (digitalRead(PROBE_PIN) == LOW) {
             long tx, ty, tz;
             if (readPos(tx, ty, tz)) {
@@ -153,7 +204,8 @@ void handleLine(char *s) {
             hit = true; break;
           }
         }
-        if (!hit) Serial.println("E T NOTOUCH");   // descended the full limit, no contact
+        if (aborted) { liftSafe(x, y); Serial.println("E T ABORT"); }
+        else if (!hit) { liftSafe(x, y); Serial.println("E T NOTOUCH"); }
       }
     }
   } else if (s[0] == 'Q') {        // fast live position + touch for the DRO
@@ -209,14 +261,25 @@ void handleLine(char *s) {
     long y  = strtol(p, &p, 10);
     if (!haveDatum) { Serial.print("E "); Serial.print(id); Serial.println(" NODATUM"); return; }
     if (digitalRead(PROBE_PIN) == LOW) { Serial.print("E "); Serial.print(id); Serial.println(" LOW"); return; }
+    gAbort = false;                          // fresh probe — clear any stale abort
     long tz;
-    if (probeAt(datX + x, datY + y, tz)) {
+    int r = probeAt(datX + x, datY + y, tz);
+    if (r == 1) {
       Serial.print("R "); Serial.print(id); Serial.print(' ');
       Serial.print(x); Serial.print(' '); Serial.print(y); Serial.print(' ');
       Serial.println(tz);
+    } else if (r == -1) {
+      Serial.print("E "); Serial.print(id); Serial.println(" ABORT");
+    } else if (r == -2) {
+      Serial.print("E "); Serial.print(id); Serial.println(" RUNAWAY");
     } else {
       Serial.print("E "); Serial.print(id); Serial.println(" NOTOUCH");
     }
+  } else if (s[0] == '!') {                  // ABORT: stop and lift to safe Z
+    gAbort = true;
+    long x, y, z;
+    if (readPos(x, y, z)) { srm20.jumpTo(x, y, safeZ, MOVE_SPEED); waitForMotorStop(); }
+    Serial.println("# ABORT lifted to safe Z");
   }
 }
 
