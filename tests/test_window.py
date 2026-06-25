@@ -635,9 +635,32 @@ def test_rework_export_uses_custom_depth(tmp_path, monkeypatch):
     w.tabs.setCurrentIndex(0)                          # traces op
     db = w.state.board.outline.bounds
     w.preview._selection_bbox = (db[0] - 1, db[1] - 1, db[2] + 1, db[3] + 1)
+    w.rework_level_chk.setChecked(False)              # flat for this case
     w.rework_depth_spin.setValue(0.42)
     w._on_export_selected()
     assert seen["cut_z"] == -0.42                      # exported deeper than the 1st pass
+
+
+def test_rework_follows_height_map_for_uniform_depth():
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
+    # a tilted surface (dz grows with x), so leveling warps the cut Z per point
+    w.level_nx_spin.setValue(3); w.level_ny_spin.setValue(3); w._on_build_level_grid()
+    for r in range(9):
+        x = float(w.level_table.item(r, 0).text())
+        w.level_table.setItem(r, 2, QTableWidgetItem(f"{0.01 * x:.4f}"))
+    db = w.state.board.outline.bounds
+    box = (db[0] - 1, db[1] - 1, db[2] + 1, db[3] + 1)
+    w.rework_depth_spin.setValue(0.20)
+    tps = w.state.toolpaths("traces")
+    w.rework_level_chk.setChecked(False)              # flat: every cut at exactly -0.20
+    flat, lv_f = w._rework_clip(tps, box)
+    assert not lv_f and all(abs(m.z + 0.20) < 1e-9 for tp in flat for m in tp if not m.rapid)
+    w.rework_level_chk.setChecked(True)               # leveled: cut Z varies with surface
+    lev, lv_t = w._rework_clip(tps, box)
+    zs = [m.z for tp in lev for m in tp if not m.rapid]
+    assert lv_t and max(zs) - min(zs) > 1e-3          # warped, no longer a single flat depth
+    assert max(zs) > -0.20 + 1e-3                     # surface-follow lifts some cuts upward
 
 
 def test_preview_orientation_badge_and_flip():

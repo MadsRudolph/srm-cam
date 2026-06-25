@@ -554,9 +554,17 @@ class MainWindow(QMainWindow):
         self.rework_depth_spin.setValue(0.15)
         self.rework_depth_spin.setSuffix(" mm")
         self.rework_depth_spin.setToolTip(
-            "Depth (below the surface zero) the rework pass cuts at. Defaults to the "
-            "normal trace depth; increase it to clear copper the first pass left "
-            "behind. Bed leveling is not applied to rework — this is a flat depth.")
+            "Uniform depth below the copper surface the rework pass cuts at. "
+            "Defaults to the normal trace depth; raise it past that to add 'even "
+            "more offset' so the traces are sure to cut through. With 'Follow "
+            "height map' on, the probed offset keeps this depth uniform across the "
+            "board's warp.")
+        self.rework_level_chk = QCheckBox("Follow height map")
+        self.rework_level_chk.setChecked(True)
+        self.rework_level_chk.setToolTip(
+            "Warp the rework pass by the probed height map so the cut follows the "
+            "real (tilted/bowed) surface and the track depth stays uniform. Needs a "
+            "probed/loaded height map (≥3 points); ignored if none is present.")
         self.export_sel_btn = QPushButton("Export selected NC...")
         self.export_sel_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
@@ -716,6 +724,7 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(self.select_chk, self.clear_sel_btn, stretch_first=True))
         _rl.addWidget(_row(QLabel("Rework depth"), self.rework_depth_spin,
                            stretch_first=True))
+        _rl.addWidget(self.rework_level_chk)
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
@@ -2045,9 +2054,7 @@ class MainWindow(QMainWindow):
         bbox = self.preview.selection_bbox()
         ds = self.double_sided_chk.isChecked()
         if bbox is not None and op != "drill" and (not ds or self._ds_side() is not None):
-            from gerber2rml.engine.select import clip_toolpaths_to_bbox
-            clipped = clip_toolpaths_to_bbox(toolpaths, bbox,
-                                             cut_z=-self.rework_depth_spin.value())
+            clipped, _leveled = self._rework_clip(toolpaths, bbox)
             if clipped:
                 toolpaths, label = clipped, f"{op} rework"
         if not toolpaths:
@@ -2194,9 +2201,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Selected {w:.1f} x {h:.1f} mm for {tag} rework", 6000)
 
+    def _rework_clip(self, toolpaths, bbox):
+        """Clip ``toolpaths`` to the rework box at the chosen uniform depth, then —
+        when 'Follow height map' is on and a probed map exists — warp by the
+        surface so the cut tracks the real tilt/bow and the depth stays uniform.
+        Returns ``(clipped, leveled)``."""
+        from gerber2rml.engine.select import clip_toolpaths_to_bbox
+        clipped = clip_toolpaths_to_bbox(toolpaths, bbox,
+                                         cut_z=-self.rework_depth_spin.value())
+        leveled = False
+        if clipped and self.rework_level_chk.isChecked():
+            hmap = self._level_heightmap_preview()
+            if hmap is not None:
+                from gerber2rml.engine.leveling import apply_leveling
+                clipped = apply_leveling(clipped, hmap)
+                leveled = True
+        return clipped, leveled
+
     def _on_export_selected(self):
         from pathlib import Path
-        from gerber2rml.engine.select import clip_toolpaths_to_bbox
         if self.state.board is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
@@ -2220,8 +2243,7 @@ class MainWindow(QMainWindow):
             return
         self._sync_state()
         toolpaths = self._ds_side_toolpaths(op, side) if ds else self.state.toolpaths(op)
-        clipped = clip_toolpaths_to_bbox(toolpaths, bbox,
-                                         cut_z=-self.rework_depth_spin.value())
+        clipped, leveled = self._rework_clip(toolpaths, bbox)
         if not clipped:
             QMessageBox.information(self, "Empty selection",
                                     "No toolpaths fall inside the selected box.")
@@ -2242,7 +2264,8 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(
             f"Wrote {path.name} ({len(clipped)} rework path(s) at "
-            f"{self.rework_depth_spin.value():.3f} mm deep)", 10000)
+            f"{self.rework_depth_spin.value():.3f} mm deep"
+            f"{', height-map leveled' if leveled else ''})", 10000)
 
 _STYLESHEET = """
 QWidget { color: #e4e4e6; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
