@@ -254,6 +254,13 @@ class MainWindow(QMainWindow):
             "Clear the measured Z values so you can re-probe (keeps the X/Y grid). "
             "Also turns off leveling and the height-map overlay.")
         self.level_clear_btn.clicked.connect(self._on_clear_level)
+        self.level_top_btn = QPushButton("Export top traces (leveled)")
+        self.level_top_btn.setEnabled(False)        # double-sided only
+        self.level_top_btn.setToolTip(
+            "TOP-side leveling (do this AFTER milling the bottom and flipping):\n"
+            "set View to 'Top', Build grid, Clear Z, probe the flipped board, then "
+            "click this to re-write <name>_top_traces warped to that surface.")
+        self.level_top_btn.clicked.connect(self._on_export_top_traces)
         # auto-probe over the SRM-20 SPI link (Arduino running srm20_spi_probe.ino)
         self.level_port_combo = QComboBox()
         self.level_port_combo.setMaximumWidth(90)
@@ -571,6 +578,7 @@ class MainWindow(QMainWindow):
                            self.level_gridshow_chk, self.level_show_chk,
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
+        _ll.addWidget(_row(self.level_top_btn))
         l_level.addWidget(level_group)
         l_level.addStretch(1)
 
@@ -757,6 +765,7 @@ class MainWindow(QMainWindow):
 
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
+        self.level_top_btn.setEnabled(checked)   # top-side leveling is DS-only
         self.generate_preview()
 
     def _on_reg_changed(self, *_):
@@ -997,10 +1006,11 @@ class MainWindow(QMainWindow):
 
     def _on_build_level_grid(self):
         from gerber2rml.engine.leveling import probe_points
-        # Double-sided: leveling is probed and applied in the BOTTOM-side setup,
-        # which is milled in the machine frame. Show that side so the grid, the
-        # overlay and the exported (leveled) toolpaths all share one frame.
-        if self.double_sided_chk.isChecked() and self._ds_side() != "Bottom":
+        # Double-sided: leveling is probed/applied in the machine frame of the
+        # side being milled. Show a single side so the grid, the overlay and the
+        # leveled toolpaths share one frame — keep Bottom/Top if already chosen
+        # (for top-side leveling), else default to Bottom (the first cut).
+        if self.double_sided_chk.isChecked() and self._ds_side() is None:
             self.view_combo.setCurrentText("Bottom")    # triggers generate_preview
         bounds = self._level_bounds()
         if bounds is None:
@@ -1461,6 +1471,48 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(
             f"Dowel holes only -> {path.name}  (keep the same XY origin)", 10000)
+
+    def _on_export_top_traces(self):
+        """Re-export the top traces warped to a fresh probe of the flipped board.
+        Run after milling the bottom, flipping, and probing the top in View=Top."""
+        if self.state.gerber_dir is None:
+            QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
+            return
+        if not self.double_sided_chk.isChecked():
+            QMessageBox.warning(self, "Double-sided only",
+                                "Top-side leveling only applies to double-sided boards.")
+            return
+        if self._ds_side() != "Top":
+            QMessageBox.warning(
+                self, "Set View to Top",
+                "Top-side leveling needs the Top side shown so the probe grid sits "
+                "in the top frame.\n\nSet View to 'Top', Build grid, Clear Z, probe "
+                "the flipped board, then export.")
+            return
+        level = self._level_heightmap_preview()      # from the (top) table; ignores the checkbox
+        if level is None:
+            QMessageBox.warning(
+                self, "Probe the top first",
+                "Probe at least 3 points on the flipped (top) surface before "
+                "exporting leveled top traces.")
+            return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
+        if not out:
+            return
+        self._sync_state()
+        from gerber2rml.doublesided import build_top_traces
+        try:
+            path = build_top_traces(
+                self.state.gerber_dir, out, self.state.name,
+                trace=self.state.trace, dowels=self._dowel_spec(),
+                machine=self.state.machine,
+                offset=(self.state.place_x, self.state.place_y),
+                rotate=self.state.rotate, level=level)
+        except Exception as e:
+            QMessageBox.critical(self, "Export failed", str(e))
+            return
+        self.statusBar().showMessage(
+            f"Wrote leveled {path.name} — run it (then the cut-out)", 10000)
 
     def _on_export_image(self):
         if self.state.board is None:

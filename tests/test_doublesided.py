@@ -161,6 +161,24 @@ def test_double_sided_leveling_warps_bottom_only(tmp_path):
     assert "BOTTOM-side" in (tmp_path / "lv_runplan.txt").read_text()
 
 
+def test_build_top_traces_leveled_re_export(tmp_path):
+    import re
+    from gerber2rml.doublesided import build_top_traces
+    from gerber2rml.config import TraceJob
+
+    def cut_zs(p):
+        zs = [float(m) for m in re.findall(r"Z(-?[0-9.]+)", p.read_text())]
+        return {round(z, 3) for z in zs if z < 0.4}
+
+    flat = build_top_traces(FIXT, tmp_path / "a", "tt", trace=TraceJob(),
+                            machine="Roland SRM-20 (G-code)", level=None)
+    lvl = build_top_traces(FIXT, tmp_path / "b", "tt", trace=TraceJob(),
+                           machine="Roland SRM-20 (G-code)", level=lambda x, y: -0.003 * x)
+    assert flat.name == "tt_top_traces.nc"           # overwrites the full-export file
+    assert len(cut_zs(flat)) <= 2                     # unleveled -> flat depth
+    assert len(cut_zs(lvl)) > 5                       # leveled -> warped Z
+
+
 def test_grid_mode_build_and_runplan(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     written = build_double_sided(FIXT, tmp_path, name="g", machine="Roland SRM-20",
