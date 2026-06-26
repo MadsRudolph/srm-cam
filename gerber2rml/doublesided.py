@@ -373,6 +373,13 @@ def _align_drill(drill, dowels, align_depth, board_thickness,
     return replace(drill, total_depth=align_depth, single_bit=True), align_depth
 
 
+def _fiducial_align_drill(drill, fiducials, board_thickness):
+    """Drill spec for fiducial holes: through the stock + a small breakthrough,
+    single bit. NO bed bite (that is the dowel-only behaviour)."""
+    depth = board_thickness + fiducials.breakthrough
+    return replace(drill, total_depth=depth, single_bit=True), depth
+
+
 def build_align_only(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
                      align_depth: float = None, board_thickness: float = 1.6,
                      machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0,
@@ -403,7 +410,8 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
                        dowels: DowelSpec = None, align_depth: float = None,
                        board_thickness: float = 1.6, machine=DEFAULT_MACHINE,
                        offset=(0.0, 0.0), level=None, rotate=0,
-                       bed_depth=DOWEL_BED_DEPTH):
+                       bed_depth=DOWEL_BED_DEPTH,
+                       registration="dowel", fiducials: FiducialSpec = None):
     """Build all job files for a double-sided board + a text run plan.
 
     ``machine`` selects the output backend (RML or G-code). Returns a list of
@@ -423,10 +431,16 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     cutout = cutout or CutoutJob()
     backend = BACKENDS[machine]          # (render fn, file extension)
     ext = backend.ext
-    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate,
+                              registration=registration, fiducials=fiducials)
     top_outline = lay.top_outline
-    align_drill, align_depth = _align_drill(drill, dowels, align_depth,
-                                            board_thickness, bed_depth)
+    if registration == "fiducial":
+        fiducials = fiducials or FiducialSpec()
+        align_drill, align_depth = _fiducial_align_drill(drill, fiducials,
+                                                         board_thickness)
+    else:
+        align_drill, align_depth = _align_drill(drill, dowels, align_depth,
+                                                board_thickness, bed_depth)
     from gerber2rml.engine.estimate import estimate_toolpaths_seconds, format_duration
     written = []
     est = {}                                     # fname -> estimated seconds
@@ -463,31 +477,49 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
                            for fn in (p.name for p in written) if fn in est)
                  + f"   TOTAL: ~{format_duration(sum(est.values()))}\n")
     runplan = out_dir / f"{name}_runplan.txt"
-    runplan.write_text(_runplan_text(name, machine, lay, dowels, drill_step,
-                                     align_depth, board_thickness) + est_block,
-                       encoding="utf-8")
+    if registration == "fiducial":
+        rp = _fiducial_runplan_text(name, machine, lay, fiducials or FiducialSpec(),
+                                    drill_step, align_depth, board_thickness)
+    else:
+        rp = _runplan_text(name, machine, lay, dowels, drill_step,
+                           align_depth, board_thickness)
+    runplan.write_text(rp + est_block, encoding="utf-8")
     written.append(runplan)
     return written
 
 
 def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None,
-                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0, level=None):
-    """Re-export ONLY the top (F.Cu) isolation traces, optionally warped to a
-    fresh height map probed on the FLIPPED board.
+                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0, level=None,
+                     registration="dowel", fiducials: FiducialSpec = None,
+                     measured_fiducials=None, allow_scale=False):
+    """Re-export ONLY the top (F.Cu) isolation traces, optionally warped by a
+    fiducial fit and/or a fresh height map probed on the FLIPPED board.
 
     Top-side leveling is a two-phase thing: the full export writes the top traces
     UNleveled (you can't probe that face until you flip). After the flip + a
     top-side probe you call this to overwrite ``<name>_top_traces`` with a copy
     warped to the just-measured surface. ``level`` is a height map in the TOP
-    machine frame (the frame the top traces are cut in). Returns the Path written.
+    machine frame (the frame the top traces are cut in).
+
+    For FIDUCIAL registration, pass ``measured_fiducials`` (the probed X/Y of the
+    corner holes after the flip): the top toolpaths are first warped by the
+    best-fit transform (rotation + translation, plus uniform scale if
+    ``allow_scale``) from the nominal top-frame fiducials to the measured ones,
+    then leveled. XY comes from the fit; Z from leveling. Returns the Path written.
     """
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     trace = trace or TraceJob()
     backend = BACKENDS[machine]
-    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate)
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate,
+                              registration=registration, fiducials=fiducials)
     paths = isolate(lay.top_copper, trace, outline=lay.top_outline)
+    if measured_fiducials:
+        from gerber2rml.engine.fiducial import fit_transform, apply_to_toolpaths
+        nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
+        t = fit_transform(nom, measured_fiducials, allow_scale=allow_scale)
+        paths = apply_to_toolpaths(paths, t)   # warp XY to the measured flip
     if level is not None:
         from gerber2rml.engine.leveling import apply_leveling
         paths = apply_leveling(paths, level)   # warp Z to the flipped-side surface
@@ -553,6 +585,35 @@ def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness
         f"   the {ps:.1f} mm pin {hi.lower()}; firm in the bed, slip-fit in the board.\n"
         f"2. Bottom side: {drill_step}. Then {name}_bottom_traces.\n"
         + common_tail)
+
+
+def _fiducial_runplan_text(name, machine, lay, fiducials, drill_step,
+                           align_depth, thickness):
+    nom = nominal_top_fiducials(lay)
+    rows = "".join(f"    fiducial {i + 1}: X{x:.3f} Y{y:.3f}\n"
+                   for i, (x, y) in enumerate(nom))
+    where = ("inside the board corners" if fiducials.placement == "onboard"
+             else "in the waste beyond the board corners")
+    scale = ("rotation + translation + uniform scale" if fiducials.allow_scale
+             else "rotation + translation")
+    return (
+        f"DOUBLE-SIDED run plan: {name}  [{machine}]  registration: FIDUCIAL\n\n"
+        f"FIDUCIAL mode: {len(nom)} reference holes {where}, drilled "
+        f"{align_depth:.2f} mm (through the {thickness:.1f} mm stock only - NOT "
+        f"into the bed). Onboard holes stay in the finished board; pick corners "
+        f"clear of copper.\n\n"
+        f"0. Set XY zero ONCE and do NOT re-zero XY for the bottom side.\n"
+        f"1. {name}_align: drills the {len(nom)} fiducial holes. Bottom side: "
+        f"{drill_step}. Then {name}_bottom_traces.\n"
+        f"2. FLIP the board left-to-right and re-place it (no pins needed).\n"
+        f"   Re-zero Z on the new surface.\n"
+        f"3. Probe each fiducial and record its measured X/Y. Nominal (perfect-\n"
+        f"   flip) positions to probe near:\n{rows}"
+        f"4. In the app, enter/capture the measured X/Y and 'Fit & export top\n"
+        f"   traces' (fit: {scale}). Check the RMS - a high value means a bad\n"
+        f"   re-placement; re-seat and re-probe before cutting.\n"
+        f"5. {name}_top_traces (now warped to the fit): cut it.\n"
+        f"6. {name}_cutout LAST.\n")
 
 
 def _drill_runplan_line(drill_files, drill):
