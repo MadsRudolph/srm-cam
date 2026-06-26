@@ -85,3 +85,32 @@ def test_disjoint_runs_split_into_separate_paths():
     out = clip_toolpaths_to_bbox([tp], (-1, 4, 11, 6))   # horizontal mid-band
     # the band crosses the two vertical edges -> at least two runs
     assert len(out) >= 2
+
+
+# ---- multi-region rework -------------------------------------------------
+
+from gerber2rml.engine.select import clip_toolpaths_to_regions
+
+
+def test_regions_concatenate_each_at_its_depth():
+    tp = _ring([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    # box A over the bottom edge at -0.20, box B over the top edge at -0.40
+    regions = [((-1, -1, 11, 1), -0.20), ((-1, 9, 11, 11), -0.40)]
+    out = clip_toolpaths_to_regions([tp], regions)
+    cut_zs = {round(m.z, 3) for path in out for m in path if not m.rapid}
+    assert cut_zs == {-0.20, -0.40}                 # both depths present
+    pts = _cut_points(out)
+    assert (0, 0) in pts and (0, 10) in pts          # geometry from both boxes
+
+
+def test_regions_skip_empty_boxes():
+    tp = _ring([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    regions = [((-1, -1, 11, 1), -0.2), ((50, 50, 60, 60), -0.2)]  # 2nd misses
+    out = clip_toolpaths_to_regions([tp], regions)
+    # only the bottom edge survives; the empty box contributes nothing
+    assert out and all((m.x, m.y) != (10, 10) for path in out for m in path)
+
+
+def test_regions_empty_list_is_empty():
+    tp = _ring([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)])
+    assert clip_toolpaths_to_regions([tp], []) == []
