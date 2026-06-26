@@ -770,8 +770,9 @@ class MainWindow(QMainWindow):
         sc_layout.setSpacing(0)
         sc_layout.addWidget(self.sidebar)
         sc_layout.addWidget(self.stacked_widget)
-        # Min width is computed from the real (styled) field content at the end of
-        # __init__ (see _size_settings_panel) so fields are never pushed off-screen
+        # The panel is sized to the current page's field content by
+        # _autofit_panel (on show + each page switch) so fields are never pushed
+        # off-screen
         # behind a horizontal scrollbar.
 
         self.preview = PreviewCanvas()
@@ -836,19 +837,34 @@ class MainWindow(QMainWindow):
         # open with the first preset applied (FR-4 conservative) so the form
         # values match the selected preset in the dropdown
         self.apply_selected_preset()
-        self._size_settings_panel()
+        self.sidebar.currentRowChanged.connect(self._autofit_panel)
+        self._autofit_panel()
 
-    def _size_settings_panel(self):
-        """Make the settings panel at least as wide as its field content, so the
-        fields are never pushed off-screen behind a horizontal scrollbar. Width
-        is read from the actual (styled) page size hints, excluding the wide
-        Bed-Leveling probe table (page 2), which scrolls on its own page."""
-        form_pages = [self.stacked_widget.widget(i).widget() for i in (0, 1, 3)]
-        content_w = max(p.sizeHint().width() for p in form_pages)
+    _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
+
+    def _autofit_panel(self, *_):
+        """Size the settings panel to fit the CURRENT page's field content, so its
+        fields are never pushed off-screen behind a horizontal scrollbar — and
+        narrow pages give the preview more room. Pages differ a lot (the
+        Bed-Leveling probe table is far wider than the others), so a single fixed
+        width can't serve them; this re-fits on every page switch. Width is read
+        from the live (styled) size hints, so it adapts to the stylesheet/DPI. A
+        page wider than the window keeps ``_MIN_PREVIEW`` px for the preview and
+        scrolls the remainder."""
+        if self.panel_toggle.isChecked():       # panel collapsed -> nothing to size
+            return
+        inner = self.stacked_widget.currentWidget().widget()
         gutter = self.style().pixelMetric(QStyle.PM_ScrollBarExtent) + 8
-        panel_w = self.sidebar.minimumWidth() + content_w + gutter
-        self._settings_container.setMinimumWidth(panel_w)
-        self._splitter.setSizes([panel_w, max(panel_w, 1100)])
+        need = self.sidebar.minimumWidth() + inner.sizeHint().width() + gutter
+        total = self._splitter.width() or self.width() or 1400
+        panel_w = max(360, min(need, total - self._MIN_PREVIEW))
+        self._settings_container.setMinimumWidth(min(need, panel_w))
+        self._splitter.setSizes([panel_w, max(self._MIN_PREVIEW, total - panel_w)])
+
+    def showEvent(self, event):
+        # Re-fit once real geometry exists (splitter width is 0 before first show).
+        super().showEvent(event)
+        self._autofit_panel()
 
     def _sync_state(self):
         self.state.name = self.name_edit.text() or "board"
@@ -951,6 +967,8 @@ class MainWindow(QMainWindow):
         """Hide the settings panel for a full-width preview, or restore it."""
         self._settings_container.setVisible(not collapsed)
         self.panel_toggle.setText("▶" if collapsed else "◀")
+        if not collapsed:
+            self._autofit_panel()        # restore at the current page's fit width
 
     def _update_ds_controls(self):
         """Reveal the registration controls only when double-sided is on, enable

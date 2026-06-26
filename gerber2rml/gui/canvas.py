@@ -17,6 +17,9 @@ class PreviewCanvas(QWidget):
         self.canvas = FigureCanvasQTAgg(self.figure)
         
         self.ax = self.figure.add_subplot(111)
+        # Trim the dark border around the plot: tiny top/right margins (no labels
+        # there) and just enough left/bottom for the axis tick labels + titles.
+        self.figure.subplots_adjust(left=0.085, right=0.99, top=0.99, bottom=0.075)
         self.ax.set_aspect("equal")
         self.ax.set_facecolor('#1e1e1e')
         self.ax.tick_params(colors='#d4d4d4')
