@@ -29,6 +29,13 @@ def test_canvas_show_holes_empty():
     canvas.show_holes([])                            # redraw empty must not raise
     assert len(canvas.ax.patches) == 0
 
+def test_canvas_set_estimate():
+    canvas = PreviewCanvas()
+    canvas.set_estimate("est ~3m 44s")
+    assert canvas.est_lbl.text() == "est ~3m 44s"
+    canvas.set_estimate("")                          # clear
+    assert canvas.est_lbl.text() == ""
+
 def _n_cut_segments(canvas):
     from matplotlib.collections import LineCollection
     for c in canvas.ax.collections:

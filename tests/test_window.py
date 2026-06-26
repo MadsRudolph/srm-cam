@@ -963,3 +963,35 @@ def test_single_sided_preview_has_no_pins():
     w.generate_preview()                  # double-sided unchecked
     assert w.preview._pins == []
     assert w.preview._full_top_cuts == []
+
+
+def test_preview_shows_persistent_estimate_per_op():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.tabs.setCurrentIndex(0); w.generate_preview()       # Traces
+    traces_est = w.preview.est_lbl.text()
+    assert "~" in traces_est                              # a duration is shown
+    w.tabs.setCurrentIndex(1); w.generate_preview()       # Drill
+    assert "~" in w.preview.est_lbl.text()
+    assert w.preview.est_lbl.text() != traces_est         # differs per op
+
+
+def test_3d_viewer_tab_exists_with_launchers():
+    w = MainWindow()
+    titles = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
+    assert "3D Viewer" in titles                          # 5th sidebar entry
+    for b in (w.view3d_sim_btn, w.view3d_file_btn, w.view3d_bed_btn):
+        assert b is not None
+
+
+def test_3d_viewer_buttons_call_handlers(monkeypatch):
+    # No board / no height map -> the handlers' guards warn instead of opening a
+    # GL window, which proves each button is wired to its handler.
+    from PySide6.QtWidgets import QMessageBox
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warned.append(a[1])))
+    w = MainWindow()                                       # nothing loaded
+    w.view3d_sim_btn.click()                               # -> _on_simulate_3d guard
+    w.view3d_bed_btn.click()                               # -> _on_bed_3d guard
+    assert len(warned) == 2
