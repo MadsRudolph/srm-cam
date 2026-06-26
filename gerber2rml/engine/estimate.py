@@ -8,6 +8,25 @@ feed rates give the speeds. Cut/plunge moves run at their programmed feed; rapid
 The estimate excludes things the geometry can't see — spindle spin-up, tool
 changes, VPanel pauses, and acceleration/deceleration ramps — so the real run is
 a little longer. It's meant for planning ("~4 min vs ~40 min"), not billing.
+
+TODO (calibration — known underestimate): an operator report (2026-06-26) puts
+the real run ~20-50% LONGER than this estimate. The dominant missing factor is
+accel/decel: trace toolpaths are thousands of short segments with constant
+direction changes, so the SRM-20 rarely reaches the programmed feed before it
+must slow for the next corner — pure distance/speed therefore always runs low.
+
+To fix properly, model a trapezoidal velocity profile per move with an
+acceleration constant ``a`` (mm/s^2). A full-stop-at-every-vertex model is
+per-segment-independent (segment time depends only on its own length/speed), so
+it can be FACTORED INTO A SHARED HELPER used by BOTH this module and
+``engine.progress.RunProgress`` — which today mirrors this timing exactly so the
+live run-progress bar lands on the planner's total. Keep them in sync or the bar
+will diverge.
+
+We can't pick ``a`` yet — it needs ONE real measured run time to fit against
+(a job from ``examples/`` + its planner estimate + stopwatch wall-clock). Until
+that data exists the constant stays uncalibrated, so behaviour here is unchanged
+(no guessed constant). See the ``estimator-underestimates-no-accel`` memory note.
 """
 from math import sqrt
 
