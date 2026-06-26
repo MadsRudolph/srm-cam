@@ -36,6 +36,14 @@ def test_canvas_set_estimate():
     canvas.set_estimate("")                          # clear
     assert canvas.est_lbl.text() == ""
 
+def test_canvas_demo_badge():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (1, 0)]], [])
+    canvas.set_demo(True)
+    assert any("DEMO BOARD" in t.get_text() for t in canvas.ax.texts)
+    canvas.set_demo(False)
+    assert not any("DEMO BOARD" in t.get_text() for t in canvas.ax.texts)
+
 def test_canvas_takes_vertical_stretch():
     # Regression: the plot canvas must get the spare vertical space (stretch 1),
     # so the control row with the estimate label can't balloon into a black box.

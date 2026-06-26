@@ -85,6 +85,10 @@ class PreviewCanvas(QWidget):
         self._frame_color = "#ffb000"
         self._flip_x = False
 
+        # Persistent "DEMO BOARD" badge (top-right) shown when the bundled demo is
+        # loaded on launch; cleared when the operator loads their own Gerbers.
+        self._demo = False
+
         # Machine bed: when set to (width, height) mm the work area is drawn from
         # the origin (front-left corner) and the design is checked to fit inside.
         self._bed = None
@@ -206,6 +210,11 @@ class PreviewCanvas(QWidget):
         self._frame_label = label
         self._frame_color = color
         self._flip_x = bool(flip_x)
+
+    def set_demo(self, on):
+        """Show/hide the persistent 'DEMO BOARD' badge and redraw."""
+        self._demo = bool(on)
+        self._draw_fraction(self.slider.value() / 1000.0)
 
     def set_bed(self, size):
         """Set the machine work area to ``(width, height)`` mm (origin at the
@@ -554,6 +563,12 @@ class PreviewCanvas(QWidget):
             self.ax.text(0.02, 0.98, self._frame_label, transform=self.ax.transAxes,
                          va="top", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
                          bbox=dict(boxstyle="round,pad=0.3", facecolor=self._frame_color,
+                                   edgecolor="none", alpha=0.95))
+        if self._demo:
+            self.ax.text(0.98, 0.98, "DEMO BOARD — load your own Gerbers",
+                         transform=self.ax.transAxes, va="top", ha="right",
+                         fontsize=9, color="#1e1e1e", zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#26c6da",
                                    edgecolor="none", alpha=0.95))
         if self._bed and not self._bed_fits:
             self.ax.text(0.98, 0.02, "DESIGN EXCEEDS BED", transform=self.ax.transAxes,

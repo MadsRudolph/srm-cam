@@ -18,8 +18,11 @@ silently does nothing — replace it.
   - Resolve the demo folder relative to the repo root:
     `Path(__file__).resolve().parents[2] / "examples" / "preload_example"`
     (stored as `_DEMO_DIR`).
-  - If it's a directory: `win.load_folder(...)`, `win.generate_preview()`, and a
-    status hint: "Loaded demo board — click 'Load Gerber folder' to start your own."
+  - If it's a directory: `win.load_folder(...)`, `win.generate_preview()`, and
+    `win.preview.set_demo(True)` — a **persistent** "DEMO BOARD" badge in the
+    preview's top-right corner (a transient status-bar hint was rejected because
+    it auto-clears). The badge clears in `_on_load_clicked` when the operator
+    loads their own Gerbers; internal reloads (mirror toggle) leave it on.
   - Best-effort: wrapped in try/except; if the folder is missing (e.g. an
     installed copy without `examples/`) or load fails, the app starts empty —
     never crashes.

@@ -1024,3 +1024,15 @@ def test_preload_demo_missing_dir_is_safe(monkeypatch):
     w = MainWindow()
     appmod._preload_demo(w)                                 # must not raise
     assert w.state.board is None                            # stays empty
+
+
+def test_demo_badge_set_and_cleared_on_user_load(monkeypatch):
+    from gerber2rml.gui.app import _preload_demo
+    from PySide6.QtWidgets import QFileDialog
+    w = MainWindow()
+    _preload_demo(w)
+    assert w.preview._demo is True                          # badge on for the demo
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(FIXT)))
+    w._on_load_clicked()                                    # operator loads own board
+    assert w.preview._demo is False                         # badge cleared
