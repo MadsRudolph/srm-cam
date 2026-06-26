@@ -289,3 +289,52 @@ def test_double_sided_honours_gcode_backend(tmp_path):
     assert not any(p.suffix == ".rml" for p in written)
     nc = (tmp_path / "ds_top_traces.nc").read_text()
     assert nc.startswith("%") and "G54" in nc and nc.rstrip().endswith("%")
+
+
+# ---- fiducial registration -----------------------------------------------
+
+from gerber2rml.doublesided import FiducialSpec, nominal_top_fiducials
+
+
+def test_fiducial_count_and_onboard_inside_outline():
+    lay = layout_double_sided(FIXT, registration="fiducial",
+                              fiducials=FiducialSpec(count=4, placement="onboard",
+                                                     edge_offset=3.0))
+    assert len(lay.align_holes) == 4
+    ox0, oy0, ox1, oy1 = lay.outline.bounds
+    for (x, y, d) in lay.align_holes:
+        assert ox0 - 1e-6 <= x <= ox1 + 1e-6        # inside the board
+        assert oy0 - 1e-6 <= y <= oy1 + 1e-6
+        assert abs(d - 0.8) < 1e-6
+
+
+def test_fiducial_waste_outside_outline():
+    lay = layout_double_sided(FIXT, registration="fiducial",
+                              fiducials=FiducialSpec(count=4, placement="waste",
+                                                     edge_offset=5.0))
+    ox0, oy0, ox1, oy1 = lay.outline.bounds
+    xs = [h[0] for h in lay.align_holes]
+    ys = [h[1] for h in lay.align_holes]
+    assert min(xs) < ox0 and max(xs) > ox1          # corners straddle the board
+    assert min(ys) < oy0 and max(ys) > oy1
+
+
+def test_fiducial_count_two_is_diagonal():
+    lay = layout_double_sided(FIXT, registration="fiducial",
+                              fiducials=FiducialSpec(count=2, placement="onboard"))
+    assert len(lay.align_holes) == 2
+    (ax, ay, _), (bx, by, _) = lay.align_holes
+    assert ax != bx and ay != by                    # opposite corners, not an edge
+
+
+def test_nominal_top_fiducials_are_reflected():
+    lay = layout_double_sided(FIXT, registration="fiducial",
+                              fiducials=FiducialSpec(count=4))
+    nom = nominal_top_fiducials(lay)
+    for (hx, hy, _), (nx, ny) in zip(lay.align_holes, nom):
+        assert abs(nx - (2 * lay.flip_pos - hx)) < 1e-6 and abs(ny - hy) < 1e-6
+
+
+def test_dowel_still_default():
+    lay = layout_double_sided(FIXT)                  # no registration kwarg
+    assert len(lay.align_holes) == 2                 # unchanged dowel behaviour

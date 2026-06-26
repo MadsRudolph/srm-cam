@@ -89,6 +89,59 @@ class DowelSpec:
     margin: float = 6.0                 # positive-quadrant / left clearance (mm)
 
 
+@dataclass
+class FiducialSpec:
+    """2-4 corner reference holes for measured (non-dowel) registration.
+
+    ``placement='onboard'`` insets the holes ``edge_offset`` mm inside the board
+    corners (permanent holes, no oversized stock — works for full-bed boards);
+    ``'waste'`` outsets them ``edge_offset`` mm beyond the corners (clean board,
+    needs larger stock). Holes are through-holes drilled stock-only (board
+    thickness + ``breakthrough``); they never take the dowel bed bite.
+    """
+    count: int = 4                     # 2..4
+    placement: str = "onboard"         # "onboard" | "waste"
+    edge_offset: float = 4.0           # inset (onboard) / outset (waste), mm
+    hole_diameter: float = 0.8         # mm (drilled with the single bit)
+    breakthrough: float = 0.3          # mm past the board, for a clean through-hole
+    allow_scale: bool = False          # fit uniform scale too?
+    margin: float = 6.0                # positive-quadrant clearance (mm)
+
+
+# corner order: FL, FR, BR, BL. count=2 -> FL,BR (diagonal); 3 -> FL,FR,BL.
+_CORNER_PICK = {2: (0, 2), 3: (0, 1, 3), 4: (0, 1, 2, 3)}
+
+
+def _place_fiducials(gx0, gy0, gx1, gy1, spec):
+    """Return (align_holes, flip_pos, dx, dy) for fiducial registration.
+
+    Corners are insets (onboard) or outsets (waste) of the framed board box; the
+    whole job is then shifted into the positive quadrant with ``margin``. The
+    flip axis stays the board's vertical centre line so the top reflects exactly
+    as in the dowel layout."""
+    off = spec.edge_offset
+    s = -1.0 if spec.placement == "onboard" else 1.0   # onboard insets inward
+    corners = [(gx0 - s * off, gy0 - s * off),         # FL
+               (gx1 + s * off, gy0 - s * off),         # FR
+               (gx1 + s * off, gy1 + s * off),         # BR
+               (gx0 - s * off, gy1 + s * off)]         # BL
+    n = max(2, min(4, spec.count))
+    picked = [corners[i] for i in _CORNER_PICK[n]]
+    cx = (gx0 + gx1) / 2.0
+    allminx = min(gx0, min(x for x, _ in picked))
+    allminy = min(gy0, min(y for _, y in picked))
+    dx, dy = spec.margin - allminx, spec.margin - allminy
+    align = [(x + dx, y + dy, spec.hole_diameter) for (x, y) in picked]
+    return align, cx + dx, dx, dy
+
+
+def nominal_top_fiducials(lay):
+    """The registration holes reflected into the top-cut frame — where a perfect
+    flip puts them, and the ``nominal`` points for ``engine.fiducial.fit_transform``."""
+    return [(x, y) for (x, y, _d) in
+            reflect_holes(lay.align_holes, lay.axis, lay.flip_pos)]
+
+
 def _axis_of(spec):
     """Flip-axis orientation implied by the dowel placement: dowels on the
     top/bottom edges flip left-right about a VERTICAL axis; dowels on the
@@ -241,15 +294,19 @@ def _load_rotated(folder, rotate):
 
 
 def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
-                        rotate=0):
+                        rotate=0, registration="dowel", fiducials: FiducialSpec = None):
     dowels = dowels or DowelSpec()
     folder = Path(folder)
-    axis = _axis_of(dowels)
+    axis = "vertical" if registration == "fiducial" else _axis_of(dowels)
     b = _load_rotated(folder, rotate)
     copper, copper_top, outline_g, holes_raw = _mirror_all(b, axis)  # bottom-up mirror
     geoms = [g for g in (copper, outline_g) if not g.is_empty]
     gx0, gy0, gx1, gy1 = _frame(geoms)
-    align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
+    if registration == "fiducial":
+        align_holes, flip_pos, dx, dy = _place_fiducials(
+            gx0, gy0, gx1, gy1, fiducials or FiducialSpec())
+    else:
+        align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
     bottom_copper = translate(copper, xoff=dx, yoff=dy)
     top_src = translate(copper_top, xoff=dx, yoff=dy)
     outline = translate(outline_g, xoff=dx, yoff=dy)
@@ -278,7 +335,8 @@ class PreviewLayout:
 
 
 def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
-                                rotate=0):
+                                rotate=0, registration="dowel",
+                                fiducials: FiducialSpec = None):
     """Layout for the preview: load WITHOUT mirroring so both copper layers and
     the holes sit in the same design frame and overlay correctly."""
     dowels = dowels or DowelSpec()
@@ -286,15 +344,20 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0
     b = _load_rotated(folder, rotate)      # design frame: F.Cu true, B.Cu X-ray
     geoms = [g for g in (b.copper, b.outline) if not g.is_empty]
     gx0, gy0, gx1, gy1 = _frame(geoms)
-    align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
+    if registration == "fiducial":
+        align_holes, flip_pos, dx, dy = _place_fiducials(
+            gx0, gy0, gx1, gy1, fiducials or FiducialSpec())
+    else:
+        align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
     bottom_copper = translate(b.copper, xoff=dx, yoff=dy)
     top_copper = translate(b.copper_top, xoff=dx, yoff=dy)
     outline = translate(b.outline, xoff=dx, yoff=dy)
     holes = [(x + dx, y + dy, d) for (x, y, d) in b.holes]
     align_holes = [(x, y, d) for (x, y, d) in align_holes]
+    axis = "vertical" if registration == "fiducial" else _axis_of(dowels)
     return _offset_layout(
         PreviewLayout(bottom_copper, top_copper, outline, holes,
-                      align_holes, _axis_of(dowels), flip_pos), offset)
+                      align_holes, axis, flip_pos), offset)
 
 
 def _align_drill(drill, dowels, align_depth, board_thickness,
