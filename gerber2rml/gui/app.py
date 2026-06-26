@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
 from pathlib import Path
+import sys
 import time
 
 from gerber2rml.app.state import ProjectState
@@ -2971,9 +2972,16 @@ def _configure_opengl():
     QSurfaceFormat.setDefaultFormat(fmt)
 
 
-# Demo board loaded on launch so the GUI isn't empty (repo-relative; absent in a
-# bare installed copy, in which case the app just starts empty).
-_DEMO_DIR = Path(__file__).resolve().parents[2] / "examples" / "preload_example"
+# Demo board loaded on launch so the GUI isn't empty. Resolves both from a source
+# checkout (repo-root/examples) and from a PyInstaller build, where bundled data
+# lands under sys._MEIPASS. Absent in a bare copy -> the app just starts empty.
+def _demo_dir():
+    base = getattr(sys, "_MEIPASS", None)
+    root = Path(base) if base else Path(__file__).resolve().parents[2]
+    return root / "examples" / "preload_example"
+
+
+_DEMO_DIR = _demo_dir()
 
 
 def _preload_demo(win):
