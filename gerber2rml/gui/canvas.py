@@ -58,7 +58,7 @@ class PreviewCanvas(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.canvas)
+        layout.addWidget(self.canvas, 1)        # canvas takes all spare height
         _bottom = QHBoxLayout(); _bottom.setContentsMargins(0, 0, 0, 0)
         _bottom.addWidget(self.panel_btn)
         _bottom.addWidget(self.fit_btn)

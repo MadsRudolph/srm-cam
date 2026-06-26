@@ -36,6 +36,14 @@ def test_canvas_set_estimate():
     canvas.set_estimate("")                          # clear
     assert canvas.est_lbl.text() == ""
 
+def test_canvas_takes_vertical_stretch():
+    # Regression: the plot canvas must get the spare vertical space (stretch 1),
+    # so the control row with the estimate label can't balloon into a black box.
+    canvas = PreviewCanvas()
+    lay = canvas.layout()
+    assert lay.itemAt(0).widget() is canvas.canvas    # canvas is the first item
+    assert lay.stretch(0) == 1                         # ...and gets the stretch
+
 def _n_cut_segments(canvas):
     from matplotlib.collections import LineCollection
     for c in canvas.ax.collections:
