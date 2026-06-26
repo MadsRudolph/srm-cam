@@ -780,6 +780,9 @@ class MainWindow(QMainWindow):
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
         self.preview.on_jog_step = self._on_jog_step
+        # The panel collapse toggle lives on the viewer's control bar.
+        self.preview.on_toggle_panel = self._on_toggle_panel
+        self.panel_toggle = self.preview.panel_btn   # alias for autofit/state checks
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._settings_container)
@@ -795,12 +798,6 @@ class MainWindow(QMainWindow):
         machine_bar.setObjectName("machineBar")
         _mb = QHBoxLayout(machine_bar)
         _mb.setContentsMargins(8, 2, 8, 2)
-        self.panel_toggle = QPushButton("◀")
-        self.panel_toggle.setCheckable(True)
-        self.panel_toggle.setFixedWidth(28)
-        self.panel_toggle.setToolTip("Hide / show the settings panel")
-        self.panel_toggle.toggled.connect(self._on_toggle_panel)
-        _mb.addWidget(self.panel_toggle)
         _mb.addWidget(self.dro_label)
         _mb.addWidget(self.touch_label)
         _mb.addStretch(1)
@@ -965,9 +962,9 @@ class MainWindow(QMainWindow):
         pass
 
     def _on_toggle_panel(self, collapsed):
-        """Hide the settings panel for a full-width preview, or restore it."""
+        """Hide the settings panel for a full-width preview, or restore it.
+        Triggered by the viewer's panel button (which manages its own label)."""
         self._settings_container.setVisible(not collapsed)
-        self.panel_toggle.setText("▶" if collapsed else "◀")
         if not collapsed:
             self._autofit_panel()        # restore at the current page's fit width
 

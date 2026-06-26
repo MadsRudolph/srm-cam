@@ -775,12 +775,16 @@ def test_settings_panel_autofits_per_page():
 
 
 def test_settings_panel_collapse_toggle():
+    # The collapse control lives on the viewer's bar; toggling it hides/shows
+    # the settings panel (and never the preview).
     w = MainWindow()
-    w._on_toggle_panel(True)                                # collapse
+    w.preview.panel_btn.setChecked(True)                    # collapse via viewer button
     assert w._settings_container.isHidden()                 # panel hidden
     assert not w.preview.isHidden()                         # preview never hidden
-    w._on_toggle_panel(False)                               # restore
+    assert "Show panel" in w.preview.panel_btn.text()       # label flipped
+    w.preview.panel_btn.setChecked(False)                   # restore
     assert not w._settings_container.isHidden()
+    assert "Hide panel" in w.preview.panel_btn.text()
 
 
 def test_move_on_bed_on_by_default():
