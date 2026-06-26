@@ -786,10 +786,11 @@ class MainWindow(QMainWindow):
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(180)
         self.sidebar.addItems([
-            "Project & Tools", 
-            "Double-Sided", 
-            "Bed Leveling", 
-            "Rework"
+            "Project & Tools",
+            "Double-Sided",
+            "Bed Leveling",
+            "Rework",
+            "3D Viewer"
         ])
         
         self.stacked_widget = QStackedWidget()
@@ -818,6 +819,11 @@ class MainWindow(QMainWindow):
         l_double = _make_page("Configure how the board is flipped to mill the second side. You can use fresh-milled dowel holes or a pre-installed M4 pin grid for perfect registration.")
         l_level = _make_page("Compensate for an uneven bed or bowed PCB. Probe the copper surface to generate a height map so the engraving depth remains perfectly consistent.")
         l_rework = _make_page("Missed some copper isolation? Select an area in the 3D preview and generate toolpaths only for that specific region to clear remaining shorts.")
+        l_3dview = _make_page("Open the 3D views. They open in their own windows, so "
+                              "use these to re-open one after you close it. The "
+                              "toolpath simulations need a loaded board; the bed view "
+                              "needs a probed (or loaded) height map. The 3D views "
+                              "require PyOpenGL.")
 
         self.sidebar.setCurrentRow(0)
 
@@ -911,6 +917,26 @@ class MainWindow(QMainWindow):
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
+
+        # ===== 3D VIEWER (a hub to re-open the windowed 3D views) =====
+        view3d_group = QGroupBox("3D views")
+        _v3 = QVBoxLayout(view3d_group); _v3.setContentsMargins(14, 16, 14, 12); _v3.setSpacing(8)
+        self.view3d_sim_btn = QPushButton("Simulate 3D (toolpaths)")
+        self.view3d_sim_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.view3d_sim_btn.setToolTip("Open the 3D toolpath simulation for the current job (needs a loaded board).")
+        self.view3d_sim_btn.clicked.connect(self._on_simulate_3d)
+        self.view3d_file_btn = QPushButton("Open && simulate file...")
+        self.view3d_file_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self.view3d_file_btn.setToolTip("Pick an exported .nc/.rml and simulate it in 3D.")
+        self.view3d_file_btn.clicked.connect(self._on_simulate_file)
+        self.view3d_bed_btn = QPushButton("3D bed / height-map view")
+        self.view3d_bed_btn.setToolTip("Open the probed surface as a 3D mesh (needs a probed or loaded height map).")
+        self.view3d_bed_btn.clicked.connect(self._on_bed_3d)
+        _v3.addWidget(self.view3d_sim_btn)
+        _v3.addWidget(self.view3d_file_btn)
+        _v3.addWidget(self.view3d_bed_btn)
+        l_3dview.addWidget(view3d_group)
+        l_3dview.addStretch(1)
 
         self._settings_container = QWidget()
         sc_layout = QHBoxLayout(self._settings_container)
@@ -1279,6 +1305,7 @@ class MainWindow(QMainWindow):
         # keep the rework export button in sync with the active tab / mode
         self.export_sel_btn.setEnabled(self._rework_export_ok())
         if self.state.board is None:
+            self.preview.set_estimate("")
             return
         self._sync_state()
         self._apply_preview_frame()
@@ -1295,19 +1322,27 @@ class MainWindow(QMainWindow):
             msg = (f"Double-sided preview (both sides + dowels) in {time.time() - t0:.2f}s"
                    if op != "drill" else self._drill_status())
             self.statusBar().showMessage(msg, 8000)
+            side = self._ds_side()
+            if side is not None and op != "drill":
+                job = self.state.trace if op == "traces" else self.state.cutout
+                self.preview.set_estimate(self._est_text(self._ds_side_toolpaths(op, side), job))
+            else:
+                self.preview.set_estimate("—")   # both-sides registration view
             return
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)
-            est = self._estimate_str(self._drill_toolpaths(self.state.board.holes),
-                                     self.state.drill)
+            drill_tps = self._drill_toolpaths(self.state.board.holes)
+            est = self._estimate_str(drill_tps, self.state.drill)
+            self.preview.set_estimate(self._est_text(drill_tps, self.state.drill))
             self.statusBar().showMessage(self._drill_status() + est, 8000)
             return
         tps = self.state.toolpaths(op)
         cuts, rapids = toolpath_segments(tps)
         self.preview.show_segments(cuts, rapids)
-        est = self._estimate_str(tps, self.state.trace if op == "traces"
-                                 else self.state.cutout)
+        job = self.state.trace if op == "traces" else self.state.cutout
+        est = self._estimate_str(tps, job)
+        self.preview.set_estimate(self._est_text(tps, job))
         if op == "traces":
             from gerber2rml.analysis import find_narrow_gaps
             gaps = find_narrow_gaps(self.state.board.copper,
@@ -1334,6 +1369,19 @@ class MainWindow(QMainWindow):
             return f"  ·  est. run ~{format_duration(s)}"
         except Exception:
             return ""
+
+    def _est_text(self, toolpaths, job):
+        """Persistent control-bar estimate, e.g. 'est ~3m 44s', or '—' if there's
+        nothing to estimate for the current op."""
+        if not toolpaths:
+            return "—"
+        try:
+            from gerber2rml.engine.estimate import (estimate_toolpaths_seconds,
+                                                     format_duration)
+            s = estimate_toolpaths_seconds(toolpaths, job.xy_feed, job.plunge_feed)
+            return f"est ~{format_duration(s)}"
+        except Exception:
+            return "—"
 
     def apply_selected_preset(self):
         from gerber2rml.app.presets import apply_preset

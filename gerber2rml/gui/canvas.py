@@ -1,7 +1,7 @@
 """Matplotlib preview canvas: draws cut/rapid polylines, or drill holes as circles."""
 import math
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSlider,
-                               QPushButton)
+                               QPushButton, QLabel)
 from PySide6.QtCore import Qt
 from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection
@@ -49,6 +49,13 @@ class PreviewCanvas(QWidget):
         self.on_toggle_panel = None          # callback(collapsed) set by the app
         self.panel_btn.toggled.connect(self._on_panel_btn)
 
+        # Persistent run-time estimate for the previewed op (set by the app).
+        self.est_lbl = QLabel("")
+        self.est_lbl.setStyleSheet("color: #9a9a9a;")
+        self.est_lbl.setToolTip(
+            "Estimated cut time — optimistic; excludes spin-up, tool changes, "
+            "pauses and accel/decel.")
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas)
@@ -56,6 +63,7 @@ class PreviewCanvas(QWidget):
         _bottom.addWidget(self.panel_btn)
         _bottom.addWidget(self.fit_btn)
         _bottom.addWidget(self.slider, 1)
+        _bottom.addWidget(self.est_lbl)
         layout.addLayout(_bottom)
 
         # Zoom/pan view override: when set, used instead of the auto-fit limits so
@@ -170,6 +178,10 @@ class PreviewCanvas(QWidget):
         self.panel_btn.setText("▶  Show panel" if collapsed else "◀  Hide panel")
         if self.on_toggle_panel:
             self.on_toggle_panel(collapsed)
+
+    def set_estimate(self, text):
+        """Show a persistent run-time estimate on the control bar (or clear it)."""
+        self.est_lbl.setText(text or "")
 
     def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
         """Store the toolpaths and update the display based on the slider.
