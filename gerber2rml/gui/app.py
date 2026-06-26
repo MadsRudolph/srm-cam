@@ -770,7 +770,11 @@ class MainWindow(QMainWindow):
         sc_layout.setSpacing(0)
         sc_layout.addWidget(self.sidebar)
         sc_layout.addWidget(self.stacked_widget)
-        self._settings_container.setMinimumWidth(520)   # sidebar 180 + fields ~340
+        # Wide enough to show the field content without a horizontal scrollbar:
+        # sidebar 180 + the Project page's widest group (~620) + a v-scrollbar
+        # gutter. Measured from the real pages; the Bed-Leveling probe table is
+        # wider still and scrolls horizontally on that page only.
+        self._settings_container.setMinimumWidth(820)
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
@@ -785,7 +789,7 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setCollapsible(0, True)      # panel may be hidden by the toggle
         splitter.setCollapsible(1, False)     # preview can never collapse
-        splitter.setSizes([520, 10000])       # panel at fit-width, preview the rest
+        splitter.setSizes([820, 1200])        # panel at fit-width, preview the rest
 
         # Machine bar across the top: live DRO readout + connect toggle.
         machine_bar = QWidget()
