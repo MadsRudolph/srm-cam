@@ -1006,3 +1006,21 @@ def test_double_sided_enable_refits_panel():
     before = w._settings_container.minimumWidth()
     w.double_sided_chk.setChecked(True); _app.processEvents()
     assert w._settings_container.minimumWidth() > before   # re-fit wider
+
+
+def test_preload_demo_loads_board():
+    from gerber2rml.gui.app import _preload_demo
+    w = MainWindow()
+    assert w.state.board is None                            # empty on construction
+    _preload_demo(w)
+    assert w.state.board is not None                        # demo loaded
+    assert not w.state.board.outline.is_empty
+
+
+def test_preload_demo_missing_dir_is_safe(monkeypatch):
+    from pathlib import Path
+    import gerber2rml.gui.app as appmod
+    monkeypatch.setattr(appmod, "_DEMO_DIR", Path("does/not/exist"))
+    w = MainWindow()
+    appmod._preload_demo(w)                                 # must not raise
+    assert w.state.board is None                            # stays empty

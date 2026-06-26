@@ -2970,24 +2970,32 @@ def _configure_opengl():
     QSurfaceFormat.setDefaultFormat(fmt)
 
 
+# Demo board loaded on launch so the GUI isn't empty (repo-relative; absent in a
+# bare installed copy, in which case the app just starts empty).
+_DEMO_DIR = Path(__file__).resolve().parents[2] / "examples" / "preload_example"
+
+
+def _preload_demo(win):
+    """Open the GUI with a demo board loaded + previewed. Best-effort: silently
+    starts empty if the demo folder is missing or fails to load."""
+    try:
+        if _DEMO_DIR.is_dir():
+            win.load_folder(str(_DEMO_DIR))
+            win.generate_preview()
+            win.statusBar().showMessage(
+                "Loaded demo board — click 'Load Gerber folder' to start your own.",
+                8000)
+    except Exception:
+        pass
+
+
 def main():
     if QApplication.instance() is None:
         _configure_opengl()
     app = QApplication.instance() or QApplication([])
     apply_dark_theme(app)
     win = MainWindow()
-    
-    # Preload requested gerber folder and set double-sided
-    try:
-        default_gerber = r"C:\Users\s246132\62768-energy-system\hardware\kicad\production\c2000_feedback\gerbers"
-        import os
-        if os.path.exists(default_gerber):
-            win.load_folder(default_gerber)
-            win.double_sided_chk.setChecked(True)
-            win.generate_preview()
-    except Exception as e:
-        print(f"Failed to preload gerbers: {e}")
-        
+    _preload_demo(win)
     win.show()
     return app.exec()
 
