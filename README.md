@@ -192,7 +192,12 @@ Setting **offsets = -1** on the **Traces** tab now fully clears the background c
 
 ## Double-sided boards
 
-For two-sided PCBs, gerber2rml uses **dowel-pin registration** to align the top and bottom milling passes — it references machine-located holes, never the board edge (sheared FR-4 is never truly square). Tick the **Double-sided** checkbox in the GUI before exporting (requires an **F.Cu** layer) and pick a registration mode in the **Reg.** dropdown.
+For two-sided PCBs, gerber2rml aligns the top and bottom milling passes off machine-located holes, never the board edge (sheared FR-4 is never truly square). Tick the **Double-sided** checkbox in the GUI before exporting (requires an **F.Cu** layer), then pick a **Method**:
+
+- **Dowel pins** (default, proven) — mechanical registration: the mill drills holes through the stock *into the sacrificial bed*, you seat pins and flip the board onto them. Zero measurement, sub-0.1 mm. Covered below.
+- **Fiducial holes** (new) — measured registration: the mill drills 2–4 *stock-only* corner holes, you flip and re-place the board freely (no pins), probe where the holes actually landed, and the top traces are warped to the best-fit transform. No bed drilling and you can re-align any time; accuracy depends on how precisely you find each hole centre. See **[docs/2026-06-26-fiducial-registration.md](docs/2026-06-26-fiducial-registration.md)**.
+
+The rest of this section describes the dowel method in detail.
 
 ### How the flip works
 
