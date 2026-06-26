@@ -839,6 +839,7 @@ class MainWindow(QMainWindow):
         self.apply_selected_preset()
         self.sidebar.currentRowChanged.connect(self._autofit_panel)
         self._autofit_panel()
+        self.move_chk.setChecked(True)   # move-on-bed drag on by default
 
     _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
 

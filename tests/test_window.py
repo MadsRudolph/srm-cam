@@ -783,6 +783,12 @@ def test_settings_panel_collapse_toggle():
     assert not w._settings_container.isHidden()
 
 
+def test_move_on_bed_on_by_default():
+    w = MainWindow()
+    assert w.move_chk.isChecked()                           # drag-to-move enabled
+    assert w.preview._moving is True                        # preview in move mode
+
+
 class _Evt:
     def __init__(self, ax, x, y, button=1):
         self.xdata, self.ydata, self.button, self.inaxes = x, y, button, ax
