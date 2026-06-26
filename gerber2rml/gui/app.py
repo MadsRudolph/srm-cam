@@ -764,13 +764,13 @@ class MainWindow(QMainWindow):
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
 
-        settings_container = QWidget()
-        sc_layout = QHBoxLayout(settings_container)
+        self._settings_container = QWidget()
+        sc_layout = QHBoxLayout(self._settings_container)
         sc_layout.setContentsMargins(0, 0, 0, 0)
         sc_layout.setSpacing(0)
         sc_layout.addWidget(self.sidebar)
         sc_layout.addWidget(self.stacked_widget)
-        settings_container.setMinimumWidth(450)
+        self._settings_container.setMinimumWidth(520)   # sidebar 180 + fields ~340
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
@@ -779,17 +779,25 @@ class MainWindow(QMainWindow):
         self.preview.on_jog_step = self._on_jog_step
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(settings_container)
+        splitter.addWidget(self._settings_container)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([550, 550])     # centered initially
+        splitter.setCollapsible(0, True)      # panel may be hidden by the toggle
+        splitter.setCollapsible(1, False)     # preview can never collapse
+        splitter.setSizes([520, 10000])       # panel at fit-width, preview the rest
 
         # Machine bar across the top: live DRO readout + connect toggle.
         machine_bar = QWidget()
         machine_bar.setObjectName("machineBar")
         _mb = QHBoxLayout(machine_bar)
         _mb.setContentsMargins(8, 2, 8, 2)
+        self.panel_toggle = QPushButton("◀")
+        self.panel_toggle.setCheckable(True)
+        self.panel_toggle.setFixedWidth(28)
+        self.panel_toggle.setToolTip("Hide / show the settings panel")
+        self.panel_toggle.toggled.connect(self._on_toggle_panel)
+        _mb.addWidget(self.panel_toggle)
         _mb.addWidget(self.dro_label)
         _mb.addWidget(self.touch_label)
         _mb.addStretch(1)
@@ -923,6 +931,11 @@ class MainWindow(QMainWindow):
 
     def _on_advanced_toggled(self, on):
         pass
+
+    def _on_toggle_panel(self, collapsed):
+        """Hide the settings panel for a full-width preview, or restore it."""
+        self._settings_container.setVisible(not collapsed)
+        self.panel_toggle.setText("▶" if collapsed else "◀")
 
     def _update_ds_controls(self):
         """Reveal the registration controls only when double-sided is on, enable
