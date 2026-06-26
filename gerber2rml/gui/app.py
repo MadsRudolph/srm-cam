@@ -912,26 +912,34 @@ class MainWindow(QMainWindow):
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
 
-        settings_container = QWidget()
-        sc_layout = QHBoxLayout(settings_container)
+        self._settings_container = QWidget()
+        sc_layout = QHBoxLayout(self._settings_container)
         sc_layout.setContentsMargins(0, 0, 0, 0)
         sc_layout.setSpacing(0)
         sc_layout.addWidget(self.sidebar)
         sc_layout.addWidget(self.stacked_widget)
-        settings_container.setMinimumWidth(450)
+        # The panel is sized to the current page's field content by
+        # _autofit_panel (on show + each page switch) so fields are never pushed
+        # off-screen
+        # behind a horizontal scrollbar.
 
         self.preview = PreviewCanvas()
         self.preview.on_region_added = self._on_region_added
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
         self.preview.on_jog_step = self._on_jog_step
+        # The panel collapse toggle lives on the viewer's control bar.
+        self.preview.on_toggle_panel = self._on_toggle_panel
+        self.panel_toggle = self.preview.panel_btn   # alias for autofit/state checks
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(settings_container)
+        splitter.addWidget(self._settings_container)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([550, 550])     # centered initially
+        splitter.setCollapsible(0, True)      # panel may be hidden by the toggle
+        splitter.setCollapsible(1, False)     # preview can never collapse
+        self._splitter = splitter             # _size_settings_panel sets its sizes
 
         # Machine bar across the top: live DRO readout + connect toggle.
         machine_bar = QWidget()
@@ -974,6 +982,35 @@ class MainWindow(QMainWindow):
         # open with the first preset applied (FR-4 conservative) so the form
         # values match the selected preset in the dropdown
         self.apply_selected_preset()
+        self.sidebar.currentRowChanged.connect(self._autofit_panel)
+        self._autofit_panel()
+        self.move_chk.setChecked(True)   # move-on-bed drag on by default
+
+    _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
+
+    def _autofit_panel(self, *_):
+        """Size the settings panel to fit the CURRENT page's field content, so its
+        fields are never pushed off-screen behind a horizontal scrollbar — and
+        narrow pages give the preview more room. Pages differ a lot (the
+        Bed-Leveling probe table is far wider than the others), so a single fixed
+        width can't serve them; this re-fits on every page switch. Width is read
+        from the live (styled) size hints, so it adapts to the stylesheet/DPI. A
+        page wider than the window keeps ``_MIN_PREVIEW`` px for the preview and
+        scrolls the remainder."""
+        if self.panel_toggle.isChecked():       # panel collapsed -> nothing to size
+            return
+        inner = self.stacked_widget.currentWidget().widget()
+        gutter = self.style().pixelMetric(QStyle.PM_ScrollBarExtent) + 8
+        need = self.sidebar.minimumWidth() + inner.sizeHint().width() + gutter
+        total = self._splitter.width() or self.width() or 1400
+        panel_w = max(360, min(need, total - self._MIN_PREVIEW))
+        self._settings_container.setMinimumWidth(min(need, panel_w))
+        self._splitter.setSizes([panel_w, max(self._MIN_PREVIEW, total - panel_w)])
+
+    def showEvent(self, event):
+        # Re-fit once real geometry exists (splitter width is 0 before first show).
+        super().showEvent(event)
+        self._autofit_panel()
 
     def _sync_state(self):
         self.state.name = self.name_edit.text() or "board"
@@ -1075,6 +1112,13 @@ class MainWindow(QMainWindow):
 
     def _on_advanced_toggled(self, on):
         pass
+
+    def _on_toggle_panel(self, collapsed):
+        """Hide the settings panel for a full-width preview, or restore it.
+        Triggered by the viewer's panel button (which manages its own label)."""
+        self._settings_container.setVisible(not collapsed)
+        if not collapsed:
+            self._autofit_panel()        # restore at the current page's fit width
 
     def _set_ds_row(self, widget, vis):
         """Show/hide a Double-Sided form row (label + field), tolerant of Qt
