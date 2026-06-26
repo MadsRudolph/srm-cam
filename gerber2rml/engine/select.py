@@ -119,3 +119,18 @@ def clip_toolpaths_to_bbox(toolpaths, bbox, cut_z=None):
         if run:
             result.append(_run_to_toolpath(run, run_cut_z, travel_z))
     return result
+
+
+def clip_toolpaths_to_regions(toolpaths, regions):
+    """Clip ``toolpaths`` to several rework rectangles and concatenate.
+
+    ``regions`` is ``[(bbox, cut_z), ...]`` (bbox in board mm, any corner order;
+    cut_z in machine mm, negative for below the surface). Each region is clipped
+    independently via :func:`clip_toolpaths_to_bbox` and the results are joined
+    into one program, regions in the given order. Regions that capture no cut
+    geometry contribute nothing. Returns a flat list of ``Move`` toolpaths.
+    """
+    out = []
+    for bbox, cut_z in regions:
+        out.extend(clip_toolpaths_to_bbox(toolpaths, bbox, cut_z=cut_z))
+    return out

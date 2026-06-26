@@ -190,6 +190,20 @@ The **Export image** button saves the current preview as `<name>_preview.png` pl
 
 Setting **offsets = -1** on the **Traces** tab now fully clears the background copper (concentric pocketing clipped to the board outline, terminating when done) instead of just cutting isolation channels. This is the laser-equivalent "rubout", useful for ground-pour boards. It is slower (many passes).
 
+## Rework (multi-region 2nd pass)
+
+When a first pass leaves copper not fully isolated, mark **all** the spots to
+re-cut at once and export them as a **single** G-code file. On the **Rework**
+page: tick **Add areas**, then drag a box over each spot — every box appears as a
+distinct coloured square and a row in the table. Each row has its **own depth**
+(the **New-box depth** spin sets the default for the next box; edit any row after)
+and its own **height-map follow** toggle (`lvl`), so stubborn areas can cut deeper
+while the rest repeat the first pass. **Export rework NC** writes one
+`<name>_<side>_<op>_rework.nc` covering every region; **Clear all** or the per-row
+**X** remove regions. The live run-progress bar and the 3D simulation both cover
+the whole multi-region job. See
+[docs/2026-06-26-multi-region-rework.md](docs/2026-06-26-multi-region-rework.md).
+
 ## Double-sided boards
 
 For two-sided PCBs, gerber2rml aligns the top and bottom milling passes off machine-located holes, never the board edge (sheared FR-4 is never truly square). Tick the **Double-sided** checkbox in the GUI before exporting (requires an **F.Cu** layer), then pick a **Method**:

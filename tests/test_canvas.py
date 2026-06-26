@@ -88,31 +88,45 @@ def _simulate_box(canvas, x0, y0, x1, y1):
     canvas._on_release(_Evt(x1, y1))
 
 
-def test_box_selection_records_bbox_and_persists():
+def test_region_drag_fires_callback():
     canvas = PreviewCanvas()
     canvas.show_segments([[(0, 0), (10, 0), (10, 10)]], [])
+    seen = {}
+    canvas.on_region_added = lambda bbox: seen.setdefault("bbox", bbox)
     canvas.set_selecting(True)
     _simulate_box(canvas, 1, 2, 6, 7)
-    assert canvas.selection_bbox() == (1, 2, 6, 7)     # normalised corners
-    canvas.slider.setValue(400)                         # a redraw must not lose it
-    assert canvas.selection_bbox() == (1, 2, 6, 7)
-    assert any(isinstance(p, type(canvas._rect_artist)) for p in canvas.ax.patches)
+    assert seen["bbox"] == (1, 2, 6, 7)                 # normalised corners reported
 
 
-def test_box_selection_ignored_when_not_selecting():
+def test_region_drag_ignored_when_not_selecting():
     canvas = PreviewCanvas()
     canvas.show_segments([[(0, 0), (10, 0)]], [])
+    seen = {}
+    canvas.on_region_added = lambda bbox: seen.setdefault("bbox", bbox)
     _simulate_box(canvas, 1, 1, 5, 5)                   # selection mode off
-    assert canvas.selection_bbox() is None
+    assert "bbox" not in seen
 
 
-def test_clear_selection():
+def test_set_rework_regions_draws_and_persists():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (10, 0), (10, 10)]], [])
+    canvas.set_rework_regions([
+        ((0, 0, 4, 4), "#ff5252", "0.20 mm"),
+        ((6, 6, 9, 9), "#42a5f5", "0.40 mm"),
+    ])
+    rects = [p for p in canvas.ax.patches if p.__class__.__name__ == "Rectangle"]
+    assert len(rects) >= 2                              # one per region
+    canvas.slider.setValue(400)                         # a redraw must not lose them
+    rects = [p for p in canvas.ax.patches if p.__class__.__name__ == "Rectangle"]
+    assert len(rects) >= 2
+
+
+def test_set_rework_regions_empty_clears():
     canvas = PreviewCanvas()
     canvas.show_segments([[(0, 0), (10, 0)]], [])
-    canvas.set_selecting(True)
-    _simulate_box(canvas, 1, 1, 5, 5)
-    canvas.clear_selection()
-    assert canvas.selection_bbox() is None
+    canvas.set_rework_regions([((0, 0, 4, 4), "#ff5252", "0.20 mm")])
+    canvas.set_rework_regions([])                       # must not raise
+    assert canvas._rework_artists == []
 
 
 def test_slider_frame_stays_fixed_while_scrubbing():
