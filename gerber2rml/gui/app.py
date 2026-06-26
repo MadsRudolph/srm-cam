@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
     QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea,
     QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QListWidget, QStackedWidget, QProgressBar
+    QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
@@ -133,6 +133,93 @@ class _DROPoller(QThread):
     def stop(self):
         self._run = False
         self.wait(3000)
+
+
+class _FiducialAlignDialog(QDialog):
+    """Enter or capture the probed X/Y of each fiducial after the flip, preview
+    the fit quality (RMS), and accept to export the warped top traces.
+
+    ``nominal`` is the list of (x, y) top-frame fiducial positions (where a
+    perfect flip lands them). Capture pulls the parent's live DRO position."""
+
+    def __init__(self, parent, nominal):
+        super().__init__(parent)
+        self.setWindowTitle("Fiducial alignment")
+        self._parent = parent
+        self._nominal = nominal
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel(
+            "Probe each fiducial on the flipped board and enter (or Capture) its\n"
+            "measured X/Y. Nominal = where a perfect flip would put it."))
+        self.table = QTableWidget(len(nominal), 5)
+        self.table.setHorizontalHeaderLabels(["nom X", "nom Y", "meas X", "meas Y", ""])
+        for r, (nx, ny) in enumerate(nominal):
+            for c, val in ((0, nx), (1, ny)):
+                it = QTableWidgetItem(f"{val:.3f}")
+                it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(r, c, it)
+            self.table.setItem(r, 2, QTableWidgetItem(""))
+            self.table.setItem(r, 3, QTableWidgetItem(""))
+            btn = QPushButton("Capture")
+            btn.clicked.connect(lambda _=False, row=r: self._capture(row))
+            self.table.setCellWidget(r, 4, btn)
+        v.addWidget(self.table)
+        self.fit_lbl = QLabel("Fit: —")
+        v.addWidget(self.fit_lbl)
+        fit_btn = QPushButton("Compute fit")
+        fit_btn.clicked.connect(self._show_fit)
+        v.addWidget(fit_btn)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._accept_if_valid)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    def _capture(self, row):
+        xyz = getattr(self._parent, "_tool_xyz", None)
+        if xyz is None:
+            QMessageBox.warning(self, "Not connected",
+                                "Connect the machine to capture the live position.")
+            return
+        x, y, _z = xyz
+        self.table.setItem(row, 2, QTableWidgetItem(f"{x:.3f}"))
+        self.table.setItem(row, 3, QTableWidgetItem(f"{y:.3f}"))
+
+    def measured(self):
+        """The filled-in (x, y) measured rows, in order; rows left blank are skipped."""
+        out = []
+        for r in range(self.table.rowCount()):
+            mx, my = self.table.item(r, 2), self.table.item(r, 3)
+            if mx and my and mx.text().strip() and my.text().strip():
+                try:
+                    out.append((float(mx.text()), float(my.text())))
+                except ValueError:
+                    pass
+        return out
+
+    def _show_fit(self):
+        import math
+        from gerber2rml.engine.fiducial import fit_transform, rms
+        m = self.measured()
+        if len(m) < 2:
+            self.fit_lbl.setText("Fit: need at least 2 measured points")
+            return
+        try:
+            allow = self._parent.fid_scale_chk.isChecked()
+            t = fit_transform(self._nominal[:len(m)], m, allow_scale=allow)
+            err = rms(t, self._nominal[:len(m)], m)
+        except ValueError as e:
+            self.fit_lbl.setText(f"Fit failed: {e}")
+            return
+        self.fit_lbl.setText(
+            f"Fit: RMS {err * 1000:.0f} um · rot {math.degrees(t.theta):.3f}° · "
+            f"scale {t.scale:.5f}  (n={len(m)})")
+
+    def _accept_if_valid(self):
+        if len(self.measured()) < 2:
+            QMessageBox.warning(self, "Not enough points",
+                                "Enter at least 2 measured fiducials.")
+            return
+        self.accept()
 
 
 class MainWindow(QMainWindow):
@@ -563,6 +650,54 @@ class MainWindow(QMainWindow):
         _fresh_row_l.addWidget(self.align_only_btn)
         self._fresh_row.setEnabled(False)   # enabled only in fresh mode
 
+        # ---- registration METHOD: dowel pins (above) vs fiducial holes ----
+        self.regmethod_combo = QComboBox()
+        self.regmethod_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.regmethod_combo.setMinimumWidth(100)
+        self.regmethod_combo.addItems(["Dowel pins", "Fiducial holes"])
+        self.regmethod_combo.setEnabled(False)
+        self.regmethod_combo.setToolTip(
+            "Dowel pins: drill 2 holes into the bed, seat pins, flip onto them "
+            "(mechanical, proven). Fiducial holes: drill 2-4 stock-only corner "
+            "holes, flip, probe them, and the top traces are warped to the measured "
+            "fit (no bed drilling, re-alignable any time).")
+        self.regmethod_combo.currentIndexChanged.connect(self._on_reg_changed)
+        self.fid_count_spin = QSpinBox(); self.fid_count_spin.setRange(2, 4)
+        self.fid_count_spin.setValue(4)
+        self.fid_count_spin.setToolTip("How many corner fiducial holes (2-4).")
+        self.fid_count_spin.valueChanged.connect(self._on_reg_changed)
+        self.fid_place_combo = QComboBox()
+        self.fid_place_combo.addItems(["On board", "In waste"])
+        self.fid_place_combo.setToolTip(
+            "On board: holes inset inside the corners (permanent, works full-bed). "
+            "In waste: holes outset beyond the board (clean board, bigger stock).")
+        self.fid_place_combo.currentIndexChanged.connect(self._on_reg_changed)
+        self.fid_offset_spin = QDoubleSpinBox()
+        self.fid_offset_spin.setRange(0.5, 30.0); self.fid_offset_spin.setSingleStep(0.5)
+        self.fid_offset_spin.setDecimals(1); self.fid_offset_spin.setValue(4.0)
+        self.fid_offset_spin.setSuffix(" mm")
+        self.fid_offset_spin.setToolTip("Inset (on board) / outset (waste) from each corner.")
+        self.fid_offset_spin.valueChanged.connect(self._on_reg_changed)
+        self.fid_scale_chk = QCheckBox("scale")
+        self.fid_scale_chk.setToolTip(
+            "Also fit uniform scale (absorbs thermal/measurement scale). Off = "
+            "rigid rotation+translation, like the dowel constraint.")
+        self.fid_align_btn = QPushButton("Fit & export top...")
+        self.fid_align_btn.setToolTip(
+            "After milling the bottom, flipping and re-placing the board: enter or "
+            "capture the probed X/Y of each fiducial; the top traces are warped to "
+            "the best-fit transform and exported. Shows the RMS fit error.")
+        self.fid_align_btn.clicked.connect(self._on_fiducial_align)
+        self._fid_row = QWidget()
+        _fid_row_l = QHBoxLayout(self._fid_row)
+        _fid_row_l.setContentsMargins(0, 0, 0, 0)
+        _fid_row_l.addWidget(QLabel("n")); _fid_row_l.addWidget(self.fid_count_spin)
+        _fid_row_l.addWidget(self.fid_place_combo)
+        _fid_row_l.addWidget(self.fid_offset_spin)
+        _fid_row_l.addWidget(self.fid_scale_chk)
+        _fid_row_l.addWidget(self.fid_align_btn)
+        self._fid_row.setEnabled(False)   # enabled only in fiducial mode
+
         from gerber2rml.app.presets import load_presets
         self._presets = load_presets()
         self.preset_combo = QComboBox()
@@ -744,10 +879,13 @@ class MainWindow(QMainWindow):
         _dsf.setContentsMargins(0, 6, 0, 0); _dsf.setSpacing(8)
         _dsf.setLabelAlignment(Qt.AlignRight)
         _dsf.addRow("View", self.view_combo)
+        _dsf.addRow("Method", self.regmethod_combo)
         _dsf.addRow("Reg.", self.reg_combo)
         _dsf.addRow("Dowels", self.place_combo)
         _dsf.addRow("Grid", self._grid_row)
         _dsf.addRow("Fresh", self._fresh_row)
+        _dsf.addRow("Fiducial", self._fid_row)
+        self._dsf = _dsf                         # kept so rows can be shown/hidden
         self._ds_controls.setVisible(False)
         _dl.addWidget(self._ds_controls)
         l_double.addWidget(ds_group)
@@ -871,15 +1009,17 @@ class MainWindow(QMainWindow):
         pads, top plain). The export uses the machine-frame layout separately.
         Cached by folder + registration choice so live edits don't re-read disk."""
         from gerber2rml.doublesided import preview_layout_double_sided
+        reg = self._registration_mode()
         spec = self._dowel_spec()
+        fid = self._fiducial_spec_from_ui()
         off = (self.state.place_x, self.state.place_y)
-        key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.clearance_large, spec.clearance_small, off,
-               self.state.rotate)
+        key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
+               spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
+               fid.count, fid.placement, fid.edge_offset, off, self.state.rotate)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
-                rotate=self.state.rotate))
+                rotate=self.state.rotate, registration=reg, fiducials=fid))
         return self._ds_cache[1]
 
     def _machine_layout(self):
@@ -888,15 +1028,17 @@ class MainWindow(QMainWindow):
         on-screen box maps to the real toolpath coordinates, not the design-frame
         X-ray used by the 'Both sides' registration view."""
         from gerber2rml.doublesided import layout_double_sided
+        reg = self._registration_mode()
         spec = self._dowel_spec()
+        fid = self._fiducial_spec_from_ui()
         off = (self.state.place_x, self.state.place_y)
-        key = (str(self.state.gerber_dir), spec.mode, spec.placement, spec.pitch_x,
-               spec.grid_pin, spec.clearance_large, spec.clearance_small, off,
-               self.state.rotate)
+        key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
+               spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
+               fid.count, fid.placement, fid.edge_offset, off, self.state.rotate)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
-                rotate=self.state.rotate))
+                rotate=self.state.rotate, registration=reg, fiducials=fid))
         return self._ds_mcache[1]
 
     def _ds_side(self):
@@ -924,17 +1066,51 @@ class MainWindow(QMainWindow):
     def _on_advanced_toggled(self, on):
         pass
 
+    def _set_ds_row(self, widget, vis):
+        """Show/hide a Double-Sided form row (label + field), tolerant of Qt
+        versions without QFormLayout.setRowVisible."""
+        try:
+            self._dsf.setRowVisible(widget, vis)
+        except (AttributeError, TypeError):
+            widget.setVisible(vis)
+
+    def _registration_mode(self):
+        """'fiducial' if the Method combo selects fiducial holes, else 'dowel'."""
+        return "fiducial" if self.regmethod_combo.currentIndex() == 1 else "dowel"
+
+    def _select_registration(self, mode):
+        """Set the registration method programmatically ('dowel'|'fiducial')."""
+        self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
+        self._update_ds_controls()
+
+    def _fiducial_spec_from_ui(self):
+        from gerber2rml.doublesided import FiducialSpec
+        return FiducialSpec(
+            count=self.fid_count_spin.value(),
+            placement=("waste" if self.fid_place_combo.currentIndex() == 1
+                       else "onboard"),
+            edge_offset=self.fid_offset_spin.value(),
+            allow_scale=self.fid_scale_chk.isChecked())
+
     def _update_ds_controls(self):
-        """Reveal the registration controls only when double-sided is on, enable
-        the View/Reg/Dowels selectors with it, and show the grid/fresh fields
-        only for the matching mode."""
+        """Reveal the registration controls only when double-sided is on, show the
+        dowel rows or the fiducial row per the Method, and enable the grid/fresh
+        fields only for the matching dowel sub-mode."""
         ds = self.double_sided_chk.isChecked()
         self._ds_controls.setVisible(ds)            # hide the sub-controls until on
-        for w in (self.view_combo, self.reg_combo, self.place_combo):
+        fiducial = self._registration_mode() == "fiducial"
+        for w in (self.view_combo, self.regmethod_combo):
             w.setEnabled(ds)                        # were disabled at init; enable with DS
+        for w in (self.reg_combo, self.place_combo):
+            w.setEnabled(ds and not fiducial)
         is_grid = self.reg_combo.currentIndex() == 1
-        self._grid_row.setEnabled(ds and is_grid)
-        self._fresh_row.setEnabled(ds and not is_grid)
+        self._grid_row.setEnabled(ds and not fiducial and is_grid)
+        self._fresh_row.setEnabled(ds and not fiducial and not is_grid)
+        self._fid_row.setEnabled(ds and fiducial)
+        # dowel rows only in dowel mode; the fiducial row only in fiducial mode
+        for w in (self.reg_combo, self.place_combo, self._grid_row, self._fresh_row):
+            self._set_ds_row(w, not fiducial)
+        self._set_ds_row(self._fid_row, fiducial)
 
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
@@ -1151,7 +1327,9 @@ class MainWindow(QMainWindow):
                 dowels=self._dowel_spec(), machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
                 board_thickness=self.thickness_spin.value(), level=level,
-                rotate=self.state.rotate, bed_depth=self.fresh_bed_spin.value())
+                rotate=self.state.rotate, bed_depth=self.fresh_bed_spin.value(),
+                registration=self._registration_mode(),
+                fiducials=self._fiducial_spec_from_ui())
         return self.state.export(out_dir, level=self._height_map())
 
     # ---- bed leveling -----------------------------------------------------
@@ -1891,6 +2069,51 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(
             f"Wrote leveled {path.name} — run it (then the cut-out)", 10000)
+
+    def _on_fiducial_align(self):
+        """Fiducial top-side alignment: measure the flipped board's fiducials,
+        fit the transform, and export the warped top traces. Run after milling the
+        bottom, flipping and re-placing the board (no pins)."""
+        if self.state.gerber_dir is None:
+            QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
+            return
+        if not self.double_sided_chk.isChecked() or self._registration_mode() != "fiducial":
+            QMessageBox.warning(self, "Fiducial mode only",
+                                "Enable double-sided and set Method to 'Fiducial holes'.")
+            return
+        self._sync_state()
+        from gerber2rml.doublesided import layout_double_sided, nominal_top_fiducials
+        fid = self._fiducial_spec_from_ui()
+        lay = layout_double_sided(
+            self.state.gerber_dir, offset=(self.state.place_x, self.state.place_y),
+            rotate=self.state.rotate, registration="fiducial", fiducials=fid)
+        nominal = nominal_top_fiducials(lay)
+        dlg = _FiducialAlignDialog(self, nominal)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        measured = dlg.measured()
+        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
+        if not out:
+            return
+        import math
+        from gerber2rml.doublesided import build_top_traces
+        from gerber2rml.engine.fiducial import fit_transform, rms
+        try:
+            t = fit_transform(nominal[:len(measured)], measured,
+                              allow_scale=fid.allow_scale)
+            err = rms(t, nominal[:len(measured)], measured)
+            path = build_top_traces(
+                self.state.gerber_dir, out, self.state.name,
+                trace=self.state.trace, machine=self.state.machine,
+                offset=(self.state.place_x, self.state.place_y),
+                rotate=self.state.rotate, registration="fiducial", fiducials=fid,
+                measured_fiducials=measured, allow_scale=fid.allow_scale)
+        except Exception as e:
+            QMessageBox.critical(self, "Fit/export failed", str(e))
+            return
+        self.statusBar().showMessage(
+            f"Wrote {path.name} — fit RMS {err * 1000:.0f} um, "
+            f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}", 12000)
 
     # ---- save / load the whole setup -----------------------------------
     def _collect_setup(self):

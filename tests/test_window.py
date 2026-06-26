@@ -757,6 +757,38 @@ def test_placement_moves_design_and_can_exceed_bed():
     assert w.preview._bed_fits is False        # now off the 203 mm-wide bed
 
 
+def test_fiducial_mode_selectable_and_spec():
+    w = MainWindow()
+    w._select_registration("fiducial")
+    assert w._registration_mode() == "fiducial"
+    spec = w._fiducial_spec_from_ui()
+    assert spec.count in (2, 3, 4)
+    assert spec.placement in ("onboard", "waste")
+    w._select_registration("dowel")            # round-trips to the proven default
+    assert w._registration_mode() == "dowel"
+
+
+def test_fiducial_export_writes_align_and_runplan(tmp_path):
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w._select_registration("fiducial")
+    written = w.export_to(tmp_path)
+    names = {p.name for p in written}
+    assert any(n.endswith("_align.nc") for n in names)
+    plan = next(p for p in written if p.name.endswith("_runplan.txt"))
+    assert "FIDUCIAL" in plan.read_text(encoding="utf-8")
+
+
+def test_fiducial_preview_shows_four_pins():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w._select_registration("fiducial")
+    w.generate_preview()
+    assert len(w.preview._pins) == 4           # 4 corner fiducials drawn
+
+
 class _Evt:
     def __init__(self, ax, x, y, button=1):
         self.xdata, self.ydata, self.button, self.inaxes = x, y, button, ax
