@@ -223,6 +223,9 @@ class _FiducialAlignDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
+    _REWORK_COLORS = ["#ff5252", "#42a5f5", "#66bb6a", "#ffa726",
+                      "#ab47bc", "#26c6da", "#ec407a", "#d4e157"]
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("gerber2rml - Premium CAM")
@@ -280,6 +283,7 @@ class MainWindow(QMainWindow):
         self.double_sided_chk.toggled.connect(self._on_double_sided_toggled)
         self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
         self._ds_mcache = None  # machine-frame layout cache (single-side rework/preview)
+        self._rework_regions = []  # [{bbox, depth, follow, color}] multi-region rework
 
         # single-sided preview orientation: the milled (mirrored) cut, or the
         # KiCad design view for a sanity check. Affects ONLY the preview.
@@ -711,12 +715,14 @@ class MainWindow(QMainWindow):
 
         # Rework (2nd pass): box-select an area of the previewed toolpath and
         # export NC for just that part, to re-cut traces left not fully isolated.
-        self.select_chk = QCheckBox("Select area")
+        self.select_chk = QCheckBox("Add areas")
+        self.select_chk.setToolTip("Drag boxes over each spot to re-cut; each box "
+                                   "is added to the list below.")
         self.select_chk.toggled.connect(self._on_select_toggled)
-        self.clear_sel_btn = QPushButton("Clear")
-        self.clear_sel_btn.clicked.connect(lambda: self.preview.clear_selection())
-        # Depth the rework pass cuts at — independent of the original job so you
-        # can re-cut a missed area deeper without disturbing the first pass.
+        self.clear_sel_btn = QPushButton("Clear all")
+        self.clear_sel_btn.clicked.connect(self._clear_rework)
+        # Default depth for the NEXT box you draw — independent of the original job
+        # so you can re-cut a missed area deeper; edit any box's depth in the table.
         self.rework_depth_spin = QDoubleSpinBox()
         self.rework_depth_spin.setRange(0.0, 5.0)
         self.rework_depth_spin.setSingleStep(0.01)
@@ -724,18 +730,21 @@ class MainWindow(QMainWindow):
         self.rework_depth_spin.setValue(0.15)
         self.rework_depth_spin.setSuffix(" mm")
         self.rework_depth_spin.setToolTip(
-            "Uniform depth below the copper surface the rework pass cuts at. "
-            "Defaults to the normal trace depth; raise it past that to add 'even "
-            "more offset' so the traces are sure to cut through. With 'Follow "
-            "height map' on, the probed offset keeps this depth uniform across the "
-            "board's warp.")
+            "Default depth for the NEXT box you draw. Edit any box's depth in the "
+            "table. Raise past the trace depth to be sure stubborn copper cuts "
+            "through. With each box's 'lvl' on, the probed offset keeps that depth "
+            "uniform across the board's warp.")
         self.rework_level_chk = QCheckBox("Follow height map")
         self.rework_level_chk.setChecked(True)
         self.rework_level_chk.setToolTip(
-            "Warp the rework pass by the probed height map so the cut follows the "
-            "real (tilted/bowed) surface and the track depth stays uniform. Needs a "
-            "probed/loaded height map (≥3 points); ignored if none is present.")
-        self.export_sel_btn = QPushButton("Export selected NC...")
+            "Default for new boxes: warp the box to the probed surface so its depth "
+            "stays uniform over the board's warp. Toggle per box ('lvl') in the "
+            "table. Needs a probed/loaded height map (>=3 points).")
+        self.rework_table = QTableWidget(0, 5)
+        self.rework_table.setHorizontalHeaderLabels(["#", "size (mm)", "depth", "lvl", ""])
+        self.rework_table.horizontalHeader().setStretchLastSection(True)
+        self.rework_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.export_sel_btn = QPushButton("Export rework NC...")
         self.export_sel_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_sel_btn.clicked.connect(self._on_export_selected)
@@ -895,9 +904,10 @@ class MainWindow(QMainWindow):
         rework_group = QGroupBox("Rework (2nd pass)")
         _rl = QVBoxLayout(rework_group); _rl.setContentsMargins(14, 16, 14, 12); _rl.setSpacing(8)
         _rl.addWidget(_row(self.select_chk, self.clear_sel_btn, stretch_first=True))
-        _rl.addWidget(_row(QLabel("Rework depth"), self.rework_depth_spin,
+        _rl.addWidget(_row(QLabel("New-box depth"), self.rework_depth_spin,
                            stretch_first=True))
         _rl.addWidget(self.rework_level_chk)
+        _rl.addWidget(self.rework_table)
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
@@ -911,7 +921,7 @@ class MainWindow(QMainWindow):
         settings_container.setMinimumWidth(450)
 
         self.preview = PreviewCanvas()
-        self.preview.on_selection_changed = self._on_selection_changed
+        self.preview.on_region_added = self._on_region_added
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
         self.preview.on_jog_step = self._on_jog_step
@@ -1223,7 +1233,7 @@ class MainWindow(QMainWindow):
 
     def generate_preview(self):
         # keep the rework export button in sync with the active tab / mode
-        self._on_selection_changed(self.preview.selection_bbox())
+        self.export_sel_btn.setEnabled(self._rework_export_ok())
         if self.state.board is None:
             return
         self._sync_state()
@@ -1652,14 +1662,13 @@ class MainWindow(QMainWindow):
         try:
             toolpaths = self._toolpaths_for(op)
             if self.run_rework_chk.isChecked():
-                bbox = self.preview.selection_bbox()
-                if bbox is None:
+                if not self._rework_regions:
                     if not silent:
-                        QMessageBox.warning(self, "No selection",
-                                            "Tick off 'selection', or drag a rework "
-                                            "box first.")
+                        QMessageBox.warning(self, "No regions",
+                                            "Tick off 'selection', or add rework "
+                                            "boxes first.")
                     return False
-                toolpaths, _lv = self._rework_clip(toolpaths, bbox)
+                toolpaths, _lv = self._rework_clip_regions(toolpaths)
         except Exception as e:
             if not silent:
                 QMessageBox.warning(self, "Can't track", f"No toolpaths for {op}: {e}")
@@ -2427,13 +2436,12 @@ class MainWindow(QMainWindow):
         self._sync_state()
         op, toolpaths = self._current_toolpaths()
         label = op
-        # an active rework box on a clippable op -> simulate just that part.
+        # active rework regions on a clippable op -> simulate just those parts.
         # Double-sided is reworkable only when a single side (Bottom/Top) is
         # shown; _current_toolpaths already returns that side's machine paths.
-        bbox = self.preview.selection_bbox()
         ds = self.double_sided_chk.isChecked()
-        if bbox is not None and op != "drill" and (not ds or self._ds_side() is not None):
-            clipped, _leveled = self._rework_clip(toolpaths, bbox)
+        if self._rework_regions and op != "drill" and (not ds or self._ds_side() is not None):
+            clipped, _leveled = self._rework_clip_regions(toolpaths)
             if clipped:
                 toolpaths, label = clipped, f"{op} rework"
         if not toolpaths:
@@ -2566,54 +2574,101 @@ class MainWindow(QMainWindow):
         self.place_y_spin.setValue(self.place_y_spin.value() + (ty - cy))
         self.statusBar().showMessage("Design centred on the copper stock", 5000)
 
-    def _on_selection_changed(self, bbox):
+    def _rework_export_ok(self):
+        """True when there is at least one region and the current op/side is
+        reworkable (traces/cutout, single side for double-sided)."""
+        if not self._rework_regions:
+            return False
         op = _OPS[self.tabs.currentIndex()]
-        ds = self.double_sided_chk.isChecked()
-        # reworkable single-sided, or double-sided with one side (Bottom/Top) shown
-        has_box = (bbox is not None and op != "drill"
-                   and (not ds or self._ds_side() is not None))
-        self.export_sel_btn.setEnabled(has_box)
-        if bbox is not None:
-            w = abs(bbox[2] - bbox[0]); h = abs(bbox[3] - bbox[1])
-            side = self._ds_side()
-            tag = f"{side.lower()} {op}" if side else op
-            self.statusBar().showMessage(
-                f"Selected {w:.1f} x {h:.1f} mm for {tag} rework", 6000)
+        if op == "drill":
+            return False
+        if self.double_sided_chk.isChecked() and self._ds_side() is None:
+            return False
+        return True
 
-    def _rework_clip(self, toolpaths, bbox):
-        """Clip ``toolpaths`` to the rework box at the chosen uniform depth, then —
-        when 'Follow height map' is on and a probed map exists — warp by the
-        surface so the cut tracks the real tilt/bow and the depth stays uniform.
-        Returns ``(clipped, leveled)``."""
-        from gerber2rml.engine.select import clip_toolpaths_to_bbox
-        clipped = clip_toolpaths_to_bbox(toolpaths, bbox,
-                                         cut_z=-self.rework_depth_spin.value())
-        leveled = False
-        if clipped and self.rework_level_chk.isChecked():
-            hmap = self._level_heightmap_preview()
-            if hmap is not None:
+    def _on_region_added(self, bbox):
+        """A drag committed a box -> add a region at the current defaults."""
+        color = self._REWORK_COLORS[len(self._rework_regions) % len(self._REWORK_COLORS)]
+        self._rework_regions.append({
+            "bbox": bbox, "depth": self.rework_depth_spin.value(),
+            "follow": self.rework_level_chk.isChecked(), "color": color})
+        self._refresh_rework()
+
+    def _clear_rework(self):
+        self._rework_regions = []
+        self._refresh_rework()
+
+    def _delete_rework_region(self, i):
+        if 0 <= i < len(self._rework_regions):
+            del self._rework_regions[i]
+            self._refresh_rework()
+
+    def _rework_draw_list(self):
+        return [(r["bbox"], r["color"], f'{r["depth"]:.3f} mm')
+                for r in self._rework_regions]
+
+    def _refresh_rework(self):
+        """Rebuild the region table and push the draw list to the canvas."""
+        from PySide6.QtWidgets import QDoubleSpinBox, QCheckBox, QPushButton
+        t = self.rework_table
+        t.setRowCount(len(self._rework_regions))
+        for i, r in enumerate(self._rework_regions):
+            x0, y0, x1, y1 = r["bbox"]
+            sw = QTableWidgetItem("●"); sw.setForeground(QColor(r["color"]))
+            t.setItem(i, 0, sw)
+            t.setItem(i, 1, QTableWidgetItem(f"{abs(x1 - x0):.1f}x{abs(y1 - y0):.1f}"))
+            ds = QDoubleSpinBox(); ds.setRange(0.0, 5.0); ds.setSingleStep(0.01)
+            ds.setDecimals(3); ds.setValue(r["depth"]); ds.setSuffix(" mm")
+            ds.valueChanged.connect(lambda v, i=i: self._set_region_depth(i, v))
+            t.setCellWidget(i, 2, ds)
+            cb = QCheckBox(); cb.setChecked(r["follow"])
+            cb.toggled.connect(lambda on, i=i: self._set_region_follow(i, on))
+            t.setCellWidget(i, 3, cb)
+            dl = QPushButton("X")
+            dl.clicked.connect(lambda _=False, i=i: self._delete_rework_region(i))
+            t.setCellWidget(i, 4, dl)
+        self.preview.set_rework_regions(self._rework_draw_list())
+        self.export_sel_btn.setEnabled(self._rework_export_ok())
+
+    def _set_region_depth(self, i, v):
+        if 0 <= i < len(self._rework_regions):
+            self._rework_regions[i]["depth"] = v
+            self.preview.set_rework_regions(self._rework_draw_list())  # relabel box
+
+    def _set_region_follow(self, i, on):
+        if 0 <= i < len(self._rework_regions):
+            self._rework_regions[i]["follow"] = bool(on)
+
+    def _rework_clip_regions(self, toolpaths):
+        """Clip ``toolpaths`` to every rework region at its own depth, applying
+        each region's height-map follow if set. Returns ``(paths, n_leveled)``."""
+        from gerber2rml.engine.select import clip_toolpaths_to_regions
+        hmap = self._level_heightmap_preview()
+        paths, n_leveled = [], 0
+        for r in self._rework_regions:
+            clip = clip_toolpaths_to_regions(toolpaths, [(r["bbox"], -r["depth"])])
+            if clip and r["follow"] and hmap is not None:
                 from gerber2rml.engine.leveling import apply_leveling
-                clipped = apply_leveling(clipped, hmap)
-                leveled = True
-        return clipped, leveled
+                clip = apply_leveling(clip, hmap)
+                n_leveled += 1
+            paths.extend(clip)
+        return paths, n_leveled
 
     def _on_export_selected(self):
         from pathlib import Path
         if self.state.board is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
-        bbox = self.preview.selection_bbox()
-        if bbox is None:
-            QMessageBox.warning(self, "No selection",
-                                "Enable 'Select area' and drag a box first.")
+        if not self._rework_regions:
+            QMessageBox.warning(self, "No regions",
+                                "Enable 'Add areas' and drag one or more boxes first.")
             return
         op = _OPS[self.tabs.currentIndex()]
         ds = self.double_sided_chk.isChecked()
         side = self._ds_side()
         if op == "drill":
             QMessageBox.warning(self, "Not available",
-                                "Rework export works on the traces or cutout "
-                                "preview, not drilling.")
+                                "Rework works on the traces or cutout preview, not drilling.")
             return
         if ds and side is None:
             QMessageBox.warning(self, "Pick a side",
@@ -2622,10 +2677,10 @@ class MainWindow(QMainWindow):
             return
         self._sync_state()
         toolpaths = self._ds_side_toolpaths(op, side) if ds else self.state.toolpaths(op)
-        clipped, leveled = self._rework_clip(toolpaths, bbox)
+        clipped, n_leveled = self._rework_clip_regions(toolpaths)
         if not clipped:
             QMessageBox.information(self, "Empty selection",
-                                    "No toolpaths fall inside the selected box.")
+                                    "No toolpaths fall inside the boxes.")
             return
         out = QFileDialog.getExistingDirectory(self, "Select output folder")
         if not out:
@@ -2642,9 +2697,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export failed", str(e))
             return
         self.statusBar().showMessage(
-            f"Wrote {path.name} ({len(clipped)} rework path(s) at "
-            f"{self.rework_depth_spin.value():.3f} mm deep"
-            f"{', height-map leveled' if leveled else ''})", 10000)
+            f"Wrote {path.name}: {len(self._rework_regions)} region(s), "
+            f"{len(clipped)} path(s)"
+            f"{f', {n_leveled} height-map leveled' if n_leveled else ''}", 10000)
 
 _STYLESHEET = """
 QWidget { color: #e4e4e6; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }

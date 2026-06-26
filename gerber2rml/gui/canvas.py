@@ -104,14 +104,15 @@ class PreviewCanvas(QWidget):
         self._tool_trail_on = True
         self._tool_trail_artist = None
 
-        # Rework box-selection state. When selecting, a left-drag draws a
-        # rectangle that persists across redraws/scrubbing; the chosen bbox is
-        # read back by the app to clip a second-pass program.
+        # Rework box-selection state. While selecting, a left-drag draws a
+        # rubber-band; on release the committed box is reported to the app, which
+        # appends it to the region list and pushes the draw list back here.
         self._selecting = False
-        self._selection_bbox = None       # (x0, y0, x1, y1) or None
         self._drag_start = None
-        self._rect_artist = None
-        self.on_selection_changed = None  # callback(bbox) set by the app
+        self._drag_bbox = None             # live rubber-band during a drag
+        self._rework_regions = []          # list of (bbox, color, label) to draw
+        self._rework_artists = []          # matplotlib artists for those regions
+        self.on_region_added = None        # callback(bbox) set by the app
 
         # Move-on-bed state: left-drag translates the whole design. A dashed
         # ghost shows the target footprint; the committed (dx, dy) is reported
@@ -511,8 +512,8 @@ class PreviewCanvas(QWidget):
         self._apply_ruler_grid()             # mm ruler grid, sized to the view
         # ax.clear() above dropped the selection rectangle; re-add it so the
         # picked area stays visible while scrubbing or regenerating the preview.
-        self._rect_artist = None
-        self._add_selection_patch()
+        self._rework_artists = []
+        self._add_rework_patches()
         self._tool_artists = []          # ax.clear() dropped them; re-add live marker
         self._tool_trail_artist = None   # and the breadcrumb trail under it
         self._add_tool_trail()
@@ -572,36 +573,44 @@ class PreviewCanvas(QWidget):
                 pass
             self._move_ghost = None
 
-    def selection_bbox(self):
-        """The current (x0, y0, x1, y1) selection in board mm, or None."""
-        return self._selection_bbox
-
-    def clear_selection(self):
-        self._selection_bbox = None
-        self._drag_start = None
+    def set_rework_regions(self, regions):
+        """Store the rework regions to draw -- ``[(bbox, color, label), ...]`` --
+        and redraw. Pass ``[]`` to clear them."""
+        self._rework_regions = list(regions)
         self._draw_fraction(self.slider.value() / 1000.0)
-        if self.on_selection_changed:
-            self.on_selection_changed(None)
 
-    def _add_selection_patch(self):
-        if not self._selection_bbox:
-            return
-        x0, y0, x1, y1 = self._selection_bbox
-        self._rect_artist = Rectangle(
-            (min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
-            fill=False, edgecolor="#00ff00", linestyle="--", linewidth=1.5,
-            zorder=10)
-        self.ax.add_patch(self._rect_artist)
+    def _add_rework_patches(self):
+        """Draw every stored region in its colour (dashed) with a depth label,
+        plus the live rubber-band during a drag."""
+        self._rework_artists = []
+        for (bbox, color, label) in self._rework_regions:
+            x0, y0, x1, y1 = bbox
+            rect = Rectangle((min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
+                             fill=False, edgecolor=color, linestyle="--",
+                             linewidth=1.5, zorder=10)
+            self.ax.add_patch(rect)
+            self._rework_artists.append(rect)
+            if label:
+                t = self.ax.text(min(x0, x1), max(y0, y1), label, va="bottom",
+                                 ha="left", fontsize=8, color=color, zorder=11)
+                self._rework_artists.append(t)
+        if self._drag_bbox:
+            x0, y0, x1, y1 = self._drag_bbox
+            live = Rectangle((min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
+                             fill=False, edgecolor="#ffffff", linestyle=":",
+                             linewidth=1.2, zorder=12)
+            self.ax.add_patch(live)
+            self._rework_artists.append(live)
 
-    def _redraw_selection_only(self):
-        """Cheap update of just the rectangle during a live drag."""
-        if self._rect_artist is not None:
+    def _redraw_rework_only(self):
+        """Cheap update of just the rework rectangles during a live drag."""
+        for a in self._rework_artists:
             try:
-                self._rect_artist.remove()
+                a.remove()
             except (ValueError, NotImplementedError):
                 pass
-            self._rect_artist = None
-        self._add_selection_patch()
+        self._rework_artists = []
+        self._add_rework_patches()
         self.canvas.draw_idle()
 
     def _on_press(self, event):
@@ -644,8 +653,8 @@ class PreviewCanvas(QWidget):
             return
         if self._drag_start is not None:
             x0, y0 = self._drag_start
-            self._selection_bbox = (x0, y0, event.xdata, event.ydata)
-            self._redraw_selection_only()
+            self._drag_bbox = (x0, y0, event.xdata, event.ydata)
+            self._redraw_rework_only()
         elif self._move_start is not None:
             self._draw_move_ghost(event.xdata - self._move_start[0],
                                   event.ydata - self._move_start[1])
@@ -673,14 +682,14 @@ class PreviewCanvas(QWidget):
         x1 = event.xdata if event.xdata is not None else x0
         y1 = event.ydata if event.ydata is not None else y0
         self._drag_start = None
+        self._drag_bbox = None
         if abs(x1 - x0) < 1e-6 or abs(y1 - y0) < 1e-6:
-            self._selection_bbox = None       # a click, not a box
-        else:
-            self._selection_bbox = (min(x0, x1), min(y0, y1),
-                                    max(x0, x1), max(y0, y1))
-        self._redraw_selection_only()
-        if self.on_selection_changed:
-            self.on_selection_changed(self._selection_bbox)
+            self._redraw_rework_only()        # a click, not a box
+            return
+        bbox = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+        self._redraw_rework_only()
+        if self.on_region_added:
+            self.on_region_added(bbox)
 
     # ---- Arrow-key carriage jog (active while the mouse is over the canvas) ----
     _JOG_KEYS = {"left": (-1, 0), "right": (1, 0), "up": (0, 1), "down": (0, -1)}
