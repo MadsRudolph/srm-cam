@@ -7,6 +7,13 @@ Hover a probe marker to read its exact X/Y and Z deviation.
 Mirrors the Qt/OpenGL pattern of :mod:`gerber2rml.gui.sim3d`.
 """
 import math
+import os
+
+# pyqtgraph must use the SAME Qt binding as the app (PySide6); otherwise it
+# defaults to a stray PyQt6/PyQt5 in the env and loads a second, mismatched Qt
+# runtime, crashing with "DLL load failed ... procedure not found". Set before
+# pyqtgraph is imported.
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
 
 import numpy as np
 import pyqtgraph.opengl as gl
