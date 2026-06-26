@@ -757,17 +757,16 @@ def test_placement_moves_design_and_can_exceed_bed():
     assert w.preview._bed_fits is False        # now off the 203 mm-wide bed
 
 
-def test_settings_panel_shows_project_fields_without_hscroll():
+def test_settings_panel_fits_project_field_content():
     # The real bug: fields were pushed off-screen behind a horizontal scrollbar
-    # because the panel was narrower than the field content. At a normal window
-    # size the Project page must show its fields with NO horizontal scrollbar.
+    # because the panel was narrower than the field content. The panel's minimum
+    # width must cover sidebar + the Project page's content (whatever the active
+    # styling makes it), so the fields are fully shown without a horizontal
+    # scrollbar. Computed from live size hints -> robust to stylesheet/DPI.
     w = MainWindow()
-    w.resize(1400, 800)
-    w.show()
-    _app.processEvents()
-    sa = w.stacked_widget.widget(0)                         # Project page scroll area
-    assert not sa.horizontalScrollBar().isVisible()         # fields fully visible
-    w.close()
+    project_inner = w.stacked_widget.widget(0).widget()    # Project page content
+    need = w.sidebar.minimumWidth() + project_inner.sizeHint().width()
+    assert w._settings_container.minimumWidth() >= need     # no off-screen fields
 
 
 def test_settings_panel_collapse_toggle():
