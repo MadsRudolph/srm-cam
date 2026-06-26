@@ -757,6 +757,16 @@ def test_placement_moves_design_and_can_exceed_bed():
     assert w.preview._bed_fits is False        # now off the 203 mm-wide bed
 
 
+def test_settings_panel_fit_width_and_collapse():
+    w = MainWindow()
+    assert w._settings_container.minimumWidth() >= 520      # fits fields, no clip
+    w._on_toggle_panel(True)                                # collapse
+    assert w._settings_container.isHidden()                 # panel hidden
+    assert not w.preview.isHidden()                         # preview never hidden
+    w._on_toggle_panel(False)                               # restore
+    assert not w._settings_container.isHidden()
+
+
 class _Evt:
     def __init__(self, ax, x, y, button=1):
         self.xdata, self.ydata, self.button, self.inaxes = x, y, button, ax
