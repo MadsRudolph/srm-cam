@@ -995,3 +995,14 @@ def test_3d_viewer_buttons_call_handlers(monkeypatch):
     w.view3d_sim_btn.click()                               # -> _on_simulate_3d guard
     w.view3d_bed_btn.click()                               # -> _on_bed_3d guard
     assert len(warned) == 2
+
+
+def test_double_sided_enable_refits_panel():
+    # Enabling double-sided reveals the (wide) registration controls; the panel
+    # must re-fit so they aren't clipped.
+    w = MainWindow()
+    w.resize(1916, 1000); w.show(); _app.processEvents()
+    w.sidebar.setCurrentRow(1); _app.processEvents()       # Double-Sided page
+    before = w._settings_container.minimumWidth()
+    w.double_sided_chk.setChecked(True); _app.processEvents()
+    assert w._settings_container.minimumWidth() > before   # re-fit wider

@@ -1023,6 +1023,8 @@ class MainWindow(QMainWindow):
         from the live (styled) size hints, so it adapts to the stylesheet/DPI. A
         page wider than the window keeps ``_MIN_PREVIEW`` px for the preview and
         scrolls the remainder."""
+        if not hasattr(self, "_splitter"):      # called early during __init__
+            return
         if self.panel_toggle.isChecked():       # panel collapsed -> nothing to size
             return
         inner = self.stacked_widget.currentWidget().widget()
@@ -1195,10 +1197,12 @@ class MainWindow(QMainWindow):
     def _on_double_sided_toggled(self, checked):
         self._update_ds_controls()
         self.level_top_btn.setEnabled(checked)   # top-side leveling is DS-only
+        self._autofit_panel()                    # the revealed controls widen the page
         self.generate_preview()
 
     def _on_reg_changed(self, *_):
         self._update_ds_controls()
+        self._autofit_panel()                    # dowel/grid/fresh/fiducial rows differ in width
         if self.double_sided_chk.isChecked():
             self.generate_preview()
 
