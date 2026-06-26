@@ -1,0 +1,12 @@
+# Runtime deps for the packaged SRM-CAM app, plus PyInstaller itself.
+# build.ps1 creates an isolated venv from these so the installer bundles ONLY
+# what the app needs — building from a fat conda base drags in torch/scipy/
+# pygame and balloons the bundle to multiple GB.
+gerbonara>=1.0
+shapely>=2.0
+PySide6>=6.5
+matplotlib>=3.7
+pyqtgraph>=0.13
+PyOpenGL>=3.1
+pyserial>=3.5
+pyinstaller>=6.0
