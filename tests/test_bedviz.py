@@ -13,6 +13,13 @@ FIXT = Path(__file__).parent / "fixtures" / "mosfet_test"
 _app = QApplication.instance() or QApplication([])
 
 
+def test_pyqtgraph_uses_pyside6():
+    # Regression: pyqtgraph must use the app's Qt binding (PySide6); a stray
+    # PyQt6/PyQt5 in the env loads a second Qt runtime and crashes the 3D views.
+    from pyqtgraph.Qt import QT_LIB
+    assert QT_LIB == "PySide6"
+
+
 def _bowl():
     xs = np.linspace(0, 80, 30); ys = np.linspace(0, 60, 30)
     Z = np.array([[-3e-5 * ((x - 40) ** 2 + (y - 30) ** 2) for y in ys] for x in xs])

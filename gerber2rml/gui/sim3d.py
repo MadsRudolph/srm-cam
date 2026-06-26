@@ -10,6 +10,14 @@ as the machine will run it.
 The heavy lifting (path flattening, arc-length interpolation) lives in
 :mod:`gerber2rml.engine.simulate`; this module is the Qt/OpenGL shell.
 """
+import os
+
+# pyqtgraph must use the SAME Qt binding as the app (PySide6); otherwise it
+# defaults to a stray PyQt6/PyQt5 in the env and loads a second, mismatched Qt
+# runtime, crashing with "DLL load failed ... procedure not found". Set before
+# pyqtgraph is imported.
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
+
 import numpy as np
 import pyqtgraph.opengl as gl
 from pyqtgraph import Vector
