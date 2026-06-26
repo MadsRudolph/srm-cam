@@ -338,3 +338,40 @@ def test_nominal_top_fiducials_are_reflected():
 def test_dowel_still_default():
     lay = layout_double_sided(FIXT)                  # no registration kwarg
     assert len(lay.align_holes) == 2                 # unchanged dowel behaviour
+
+
+from gerber2rml.doublesided import build_double_sided, build_top_traces
+
+
+def test_fiducial_build_writes_files_and_runplan(tmp_path):
+    files = build_double_sided(FIXT, tmp_path, "fid", registration="fiducial",
+                               fiducials=FiducialSpec(count=4))
+    names = {p.name for p in files}
+    assert "fid_align.nc" in names and "fid_runplan.txt" in names
+    plan = (tmp_path / "fid_runplan.txt").read_text(encoding="utf-8")
+    assert "fiducial" in plan.lower()
+    assert "X" in plan and "Y" in plan          # nominal probe coords listed
+
+
+def test_fiducial_align_drill_is_stock_only(tmp_path):
+    """Fiducial align holes go through the stock + small breakthrough, NOT the
+    dowel ~5 mm bed bite."""
+    build_double_sided(FIXT, tmp_path, "fid", registration="fiducial",
+                       fiducials=FiducialSpec(count=4, breakthrough=0.3),
+                       board_thickness=1.6)
+    plan = (tmp_path / "fid_runplan.txt").read_text(encoding="utf-8")
+    assert "1.90" in plan or "1.9" in plan       # 1.6 + 0.3, no bed bite
+
+
+def test_fiducial_top_traces_apply_measured_transform(tmp_path):
+    lay = layout_double_sided(FIXT, registration="fiducial",
+                              fiducials=FiducialSpec(count=4))
+    nom = nominal_top_fiducials(lay)
+    measured = [(x + 1.0, y + 0.5) for (x, y) in nom]   # pure 1.0/0.5 shift
+    out = build_top_traces(FIXT, tmp_path, "fid", registration="fiducial",
+                           fiducials=FiducialSpec(count=4),
+                           measured_fiducials=measured)
+    shifted = out.read_text()
+    base = build_top_traces(FIXT, tmp_path, "base", registration="fiducial",
+                            fiducials=FiducialSpec(count=4))
+    assert shifted != base.read_text()          # transform changed the output
