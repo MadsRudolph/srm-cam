@@ -41,10 +41,19 @@ class PreviewCanvas(QWidget):
         self.fit_btn.setMaximumWidth(60)
         self.fit_btn.clicked.connect(self.fit_view)
 
+        # Collapse/expand the settings panel for a wider preview. Lives on the
+        # viewer's control bar (not a bare icon in the corner) so it's findable.
+        self.panel_btn = QPushButton("◀  Hide panel")
+        self.panel_btn.setCheckable(True)
+        self.panel_btn.setToolTip("Hide the settings panel for a wider preview")
+        self.on_toggle_panel = None          # callback(collapsed) set by the app
+        self.panel_btn.toggled.connect(self._on_panel_btn)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.canvas)
         _bottom = QHBoxLayout(); _bottom.setContentsMargins(0, 0, 0, 0)
+        _bottom.addWidget(self.panel_btn)
         _bottom.addWidget(self.fit_btn)
         _bottom.addWidget(self.slider, 1)
         layout.addLayout(_bottom)
@@ -154,6 +163,12 @@ class PreviewCanvas(QWidget):
         self.canvas.mpl_connect("figure_leave_event", self._on_leave)
         self.canvas.mpl_connect("key_press_event", self._on_key)
         self.canvas.mpl_connect("scroll_event", self._on_scroll)
+
+    def _on_panel_btn(self, collapsed):
+        """Viewer's settings-panel collapse toggle: flip the label and report it."""
+        self.panel_btn.setText("▶  Show panel" if collapsed else "◀  Hide panel")
+        if self.on_toggle_panel:
+            self.on_toggle_panel(collapsed)
 
     def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
         """Store the toolpaths and update the display based on the slider.
