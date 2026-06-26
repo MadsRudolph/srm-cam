@@ -2084,6 +2084,7 @@ class MainWindow(QMainWindow):
         if folder:
             try:
                 self.load_folder(folder)
+                self.preview.set_demo(False)   # the operator's own board, not the demo
                 self.generate_preview()
             except Exception as e:
                 QMessageBox.critical(self, "Load failed", str(e))
@@ -2982,9 +2983,7 @@ def _preload_demo(win):
         if _DEMO_DIR.is_dir():
             win.load_folder(str(_DEMO_DIR))
             win.generate_preview()
-            win.statusBar().showMessage(
-                "Loaded demo board — click 'Load Gerber folder' to start your own.",
-                8000)
+            win.preview.set_demo(True)      # persistent badge until they load their own
     except Exception:
         pass
 
