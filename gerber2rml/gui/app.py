@@ -770,11 +770,9 @@ class MainWindow(QMainWindow):
         sc_layout.setSpacing(0)
         sc_layout.addWidget(self.sidebar)
         sc_layout.addWidget(self.stacked_widget)
-        # Wide enough to show the field content without a horizontal scrollbar:
-        # sidebar 180 + the Project page's widest group (~620) + a v-scrollbar
-        # gutter. Measured from the real pages; the Bed-Leveling probe table is
-        # wider still and scrolls horizontally on that page only.
-        self._settings_container.setMinimumWidth(820)
+        # Min width is computed from the real (styled) field content at the end of
+        # __init__ (see _size_settings_panel) so fields are never pushed off-screen
+        # behind a horizontal scrollbar.
 
         self.preview = PreviewCanvas()
         self.preview.on_selection_changed = self._on_selection_changed
@@ -789,7 +787,7 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setCollapsible(0, True)      # panel may be hidden by the toggle
         splitter.setCollapsible(1, False)     # preview can never collapse
-        splitter.setSizes([820, 1200])        # panel at fit-width, preview the rest
+        self._splitter = splitter             # _size_settings_panel sets its sizes
 
         # Machine bar across the top: live DRO readout + connect toggle.
         machine_bar = QWidget()
@@ -838,6 +836,19 @@ class MainWindow(QMainWindow):
         # open with the first preset applied (FR-4 conservative) so the form
         # values match the selected preset in the dropdown
         self.apply_selected_preset()
+        self._size_settings_panel()
+
+    def _size_settings_panel(self):
+        """Make the settings panel at least as wide as its field content, so the
+        fields are never pushed off-screen behind a horizontal scrollbar. Width
+        is read from the actual (styled) page size hints, excluding the wide
+        Bed-Leveling probe table (page 2), which scrolls on its own page."""
+        form_pages = [self.stacked_widget.widget(i).widget() for i in (0, 1, 3)]
+        content_w = max(p.sizeHint().width() for p in form_pages)
+        gutter = self.style().pixelMetric(QStyle.PM_ScrollBarExtent) + 8
+        panel_w = self.sidebar.minimumWidth() + content_w + gutter
+        self._settings_container.setMinimumWidth(panel_w)
+        self._splitter.setSizes([panel_w, max(panel_w, 1100)])
 
     def _sync_state(self):
         self.state.name = self.name_edit.text() or "board"
