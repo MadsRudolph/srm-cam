@@ -861,6 +861,42 @@ def test_rework_export_refused_with_no_regions(tmp_path, monkeypatch):
     assert "w" in warned
 
 
+def test_settings_panel_autofits_per_page():
+    # The real bug: fields were pushed off-screen behind a horizontal scrollbar
+    # because the panel was narrower than the field content. Pages differ a lot
+    # in width, so the panel re-fits to the CURRENT page: Project must fully fit
+    # its content, and switching to the much wider Bed-Leveling page must widen
+    # the panel. Needs a real (shown) width so the fit isn't capped by Qt's tiny
+    # pre-show default geometry.
+    w = MainWindow()
+    w.resize(1700, 900); w.show(); _app.processEvents()
+    project_inner = w.stacked_widget.widget(0).widget()
+    project_min = w._settings_container.minimumWidth()      # fitted on show (page 0)
+    assert project_min >= w.sidebar.minimumWidth() + project_inner.sizeHint().width()
+    w.sidebar.setCurrentRow(2); _app.processEvents()        # Bed Leveling: wider
+    assert w._settings_container.minimumWidth() > project_min   # re-fit wider
+    w.close()
+
+
+def test_settings_panel_collapse_toggle():
+    # The collapse control lives on the viewer's bar; toggling it hides/shows
+    # the settings panel (and never the preview).
+    w = MainWindow()
+    w.preview.panel_btn.setChecked(True)                    # collapse via viewer button
+    assert w._settings_container.isHidden()                 # panel hidden
+    assert not w.preview.isHidden()                         # preview never hidden
+    assert "Show panel" in w.preview.panel_btn.text()       # label flipped
+    w.preview.panel_btn.setChecked(False)                   # restore
+    assert not w._settings_container.isHidden()
+    assert "Hide panel" in w.preview.panel_btn.text()
+
+
+def test_move_on_bed_on_by_default():
+    w = MainWindow()
+    assert w.move_chk.isChecked()                           # drag-to-move enabled
+    assert w.preview._moving is True                        # preview in move mode
+
+
 class _Evt:
     def __init__(self, ax, x, y, button=1):
         self.xdata, self.ydata, self.button, self.inaxes = x, y, button, ax
