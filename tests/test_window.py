@@ -604,18 +604,19 @@ def test_double_sided_rework_export_enabled_per_side():
     w.load_folder(str(FIXT))
     w.double_sided_chk.setChecked(True)
     box = (0, 0, 200, 200)                         # covers the whole placed board
+    w._on_region_added(box)                         # one rework region present
     # Both sides: can't rework two sides at once -> export stays disabled
     w.view_combo.setCurrentText("Both sides")
-    w._on_selection_changed(box)
+    w.generate_preview()
     assert w._ds_side() is None and not w.export_sel_btn.isEnabled()
     # Bottom: export enabled, and the bottom side's MACHINE-frame paths clip
     w.view_combo.setCurrentText("Bottom")
-    w._on_selection_changed(box)
+    w.generate_preview()
     assert w._ds_side() == "Bottom" and w.export_sel_btn.isEnabled()
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Bottom"), box)
     # Top: its own side paths (reflected) also clip
     w.view_combo.setCurrentText("Top")
-    w._on_selection_changed(box)
+    w.generate_preview()
     assert w._ds_side() == "Top" and w.export_sel_btn.isEnabled()
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Top"), box)
 
@@ -634,9 +635,9 @@ def test_rework_export_uses_custom_depth(tmp_path, monkeypatch):
     w = MainWindow(); w.load_folder(str(FIXT)); w.generate_preview()
     w.tabs.setCurrentIndex(0)                          # traces op
     db = w.state.board.outline.bounds
-    w.preview._selection_bbox = (db[0] - 1, db[1] - 1, db[2] + 1, db[3] + 1)
     w.rework_level_chk.setChecked(False)              # flat for this case
-    w.rework_depth_spin.setValue(0.42)
+    w.rework_depth_spin.setValue(0.42)               # default for the next box
+    w._on_region_added((db[0] - 1, db[1] - 1, db[2] + 1, db[3] + 1))
     w._on_export_selected()
     assert seen["cut_z"] == -0.42                      # exported deeper than the 1st pass
 
@@ -651,15 +652,20 @@ def test_rework_follows_height_map_for_uniform_depth():
         w.level_table.setItem(r, 2, QTableWidgetItem(f"{0.01 * x:.4f}"))
     db = w.state.board.outline.bounds
     box = (db[0] - 1, db[1] - 1, db[2] + 1, db[3] + 1)
-    w.rework_depth_spin.setValue(0.20)
     tps = w.state.toolpaths("traces")
-    w.rework_level_chk.setChecked(False)              # flat: every cut at exactly -0.20
-    flat, lv_f = w._rework_clip(tps, box)
-    assert not lv_f and all(abs(m.z + 0.20) < 1e-9 for tp in flat for m in tp if not m.rapid)
-    w.rework_level_chk.setChecked(True)               # leveled: cut Z varies with surface
-    lev, lv_t = w._rework_clip(tps, box)
+    # flat region: every cut at exactly -0.20
+    w.rework_depth_spin.setValue(0.20)
+    w.rework_level_chk.setChecked(False)
+    w._on_region_added(box)
+    flat, lv_f = w._rework_clip_regions(tps)
+    assert lv_f == 0 and all(abs(m.z + 0.20) < 1e-9 for tp in flat for m in tp if not m.rapid)
+    # leveled region: cut Z varies with the surface
+    w._clear_rework()
+    w.rework_level_chk.setChecked(True)
+    w._on_region_added(box)
+    lev, lv_t = w._rework_clip_regions(tps)
     zs = [m.z for tp in lev for m in tp if not m.rapid]
-    assert lv_t and max(zs) - min(zs) > 1e-3          # warped, no longer a single flat depth
+    assert lv_t == 1 and max(zs) - min(zs) > 1e-3     # warped, no longer a single flat depth
     assert max(zs) > -0.20 + 1e-3                     # surface-follow lifts some cuts upward
 
 
@@ -755,6 +761,72 @@ def test_placement_moves_design_and_can_exceed_bed():
     moved = w.preview._design_bounds()
     assert moved[0] > base[0] + 300            # design shifted right by ~400 mm
     assert w.preview._bed_fits is False        # now off the 203 mm-wide bed
+
+
+def test_rework_add_and_delete_regions():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w.rework_depth_spin.setValue(0.20)
+    w._on_region_added((0.0, 0.0, 4.0, 4.0))
+    w.rework_depth_spin.setValue(0.40)
+    w._on_region_added((6.0, 6.0, 9.0, 9.0))
+    assert len(w._rework_regions) == 2
+    assert w.rework_table.rowCount() == 2
+    assert abs(w._rework_regions[0]["depth"] - 0.20) < 1e-9
+    assert abs(w._rework_regions[1]["depth"] - 0.40) < 1e-9
+    w._delete_rework_region(0)
+    assert len(w._rework_regions) == 1
+    assert abs(w._rework_regions[0]["depth"] - 0.40) < 1e-9
+
+
+def test_rework_clear_empties_all():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w._on_region_added((0.0, 0.0, 4.0, 4.0))
+    w._clear_rework()
+    assert w._rework_regions == [] and w.rework_table.rowCount() == 0
+
+
+def test_rework_edit_region_depth_in_table():
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w._on_region_added((0.0, 0.0, 4.0, 4.0))
+    w._set_region_depth(0, 0.33)
+    assert abs(w._rework_regions[0]["depth"] - 0.33) < 1e-9
+
+
+def test_rework_export_two_regions_one_file(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()      # traces tab, single-sided
+    b = w.state.board.outline.bounds
+    cx = (b[0] + b[2]) / 2; cy = (b[1] + b[3]) / 2
+    w.rework_level_chk.setChecked(False)
+    w.rework_depth_spin.setValue(0.20)
+    w._on_region_added((b[0], b[1], cx, cy))            # lower-left quadrant
+    w.rework_depth_spin.setValue(0.40)
+    w._on_region_added((cx, cy, b[2], b[3]))            # upper-right quadrant
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    w._on_export_selected()
+    files = list(tmp_path.glob("*_rework.nc"))
+    assert len(files) == 1                               # ONE file for all regions
+    text = files[0].read_text()
+    assert "Z-0.2\n" in text and "Z-0.4\n" in text       # both depths in one program
+
+
+def test_rework_export_refused_with_no_regions(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    warned = {}
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warned.setdefault("w", a)))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    w = MainWindow()
+    w.load_folder(str(FIXT)); w.generate_preview()
+    w._on_export_selected()                              # no regions
+    assert list(tmp_path.glob("*_rework.nc")) == []     # nothing written
+    assert "w" in warned
 
 
 class _Evt:
