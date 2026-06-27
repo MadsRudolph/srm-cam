@@ -831,6 +831,19 @@ class MainWindow(QMainWindow):
                               "needs a probed (or loaded) height map. The 3D views "
                               "require PyOpenGL.")
 
+        # Per-page "Guide" buttons jump straight into that section's mini-tour,
+        # so you don't have to walk the whole core flow to reach it. Wired to the
+        # TourController once it exists (end of __init__).
+        def _page_guide(layout, label):
+            b = QPushButton(label)
+            b.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+            b.setToolTip("Show the guided walkthrough for this section.")
+            layout.addWidget(b)
+            return b
+        self.guide_double_btn = _page_guide(l_double, "Guide: Double-sided")
+        self.guide_level_btn = _page_guide(l_level, "Guide: Bed leveling")
+        self.guide_rework_btn = _page_guide(l_rework, "Guide: Rework")
+
         self.sidebar.setCurrentRow(0)
 
         # ===== BASIC: the things you set every time =====
@@ -1022,6 +1035,9 @@ class MainWindow(QMainWindow):
         # First-launch guided walkthrough (replayable via the Guide button).
         self.tour = TourController(self)
         self.guide_btn.clicked.connect(lambda: self.tour.start())
+        self.guide_double_btn.clicked.connect(lambda: self.tour.start_branch("Double-sided"))
+        self.guide_level_btn.clicked.connect(lambda: self.tour.start_branch("Bed leveling"))
+        self.guide_rework_btn.clicked.connect(lambda: self.tour.start_branch("Rework"))
 
     _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
 
