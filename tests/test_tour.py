@@ -146,6 +146,26 @@ def test_bed_leveling_branch_covers_hardware():
     assert "-50" in body or "−50" in body                       # machine-Z safety floor
 
 
+def test_page_guide_buttons_jump_to_their_branch(tmp_path):
+    win = MainWindow()
+    win.tour.settings = _settings(tmp_path)        # don't touch real settings
+    for btn, name in [(win.guide_level_btn, "Bed leveling"),
+                      (win.guide_rework_btn, "Rework"),
+                      (win.guide_double_btn, "Double-sided")]:
+        btn.click()
+        assert win.tour.active
+        assert win.tour._steps == BRANCHES[name][1]   # started that section directly
+        win.tour.skip()
+        assert not win.tour.active
+
+
+def test_start_branch_ignores_unknown_name(tmp_path):
+    win = MainWindow()
+    tc = TourController(win, settings=_settings(tmp_path))
+    tc.start_branch("Nope")
+    assert not tc.active
+
+
 def test_branch_reveal_ticks_checkbox(tmp_path):
     win = MainWindow()
     win.double_sided_chk.setChecked(False)

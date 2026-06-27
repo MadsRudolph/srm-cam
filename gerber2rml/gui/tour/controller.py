@@ -125,6 +125,12 @@ class TourController(QObject):
         )
         self._place_centered()
 
+    def start_branch(self, name):
+        """Jump straight into one section's mini-tour (per-page Guide buttons), so
+        you don't have to walk the whole core flow to reach it."""
+        if name in BRANCHES:
+            self._start_branch(name)
+
     def _start_branch(self, name):
         _page, steps = BRANCHES[name]
         self.start(steps=steps, is_branch=True)
