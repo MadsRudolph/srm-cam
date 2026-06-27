@@ -131,12 +131,13 @@ BRANCHES = {
         TourStep(
             target="dro_label", page=2, placement="below", explain_only=True,
             title="3 · Set the G54 Z origin",
-            body="Set the Command Set to NC Code (Setup dialog) so G54 is active. In "
-                 "the Set-origin-point selector pick G54, jog with the feed buttons "
-                 "until the bit just touches the copper, then click [X/Y] and [Z] "
-                 "under 'set origin point' to zero it — the manual says align Z0 with "
-                 "the material surface. ⚠ Watch the MACHINE Z: never let it drop "
-                 "below −50 mm or you hit the travel limit. Then click Next.",
+            body="Set the Command Set to NC Code (Setup dialog) so G54 is active. "
+                 "Leave X/Y alone — they're already at the machine's origin point, "
+                 "which is what we use, so you only set Z. Pick G54, jog with the feed "
+                 "buttons until the bit just touches the copper, then click [Z] under "
+                 "'set origin point' to zero it (align Z0 with the surface). ⚠ Watch "
+                 "the MACHINE Z: never let it drop below −50 mm or you hit the travel "
+                 "limit. Then click Next.",
         ),
         TourStep(
             page=2, explain_only=True,
