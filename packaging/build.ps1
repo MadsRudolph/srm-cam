@@ -87,5 +87,15 @@ if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed (exit $LASTEXITCODE)" }
 
 $Setup = Get-ChildItem "dist_installer\SRM-CAM-Setup-*.exe" -ErrorAction SilentlyContinue |
          Sort-Object LastWriteTime | Select-Object -Last 1
-if ($Setup) { Write-Host "`nDone -> $($Setup.FullName)" -ForegroundColor Green }
-else { Write-Host "`nDone (installer step ran; check dist_installer\)." }
+if ($Setup) {
+    # Also drop a version-less copy. The DTU-PCB-prototyping guide links to
+    # releases/latest/download/SRM-CAM-Setup.exe, which only resolves if every
+    # release ships an asset with this exact un-versioned name. Upload BOTH this
+    # copy and the versioned installer when you publish a release (see README).
+    $Stable = Join-Path $Setup.DirectoryName "SRM-CAM-Setup.exe"
+    Copy-Item $Setup.FullName $Stable -Force
+    Write-Host "`nDone -> $($Setup.FullName)" -ForegroundColor Green
+    Write-Host "      + $Stable  (version-less; upload it too for the latest-download link)" -ForegroundColor Green
+} else {
+    Write-Host "`nDone (installer step ran; check dist_installer\)."
+}
