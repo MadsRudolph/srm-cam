@@ -68,10 +68,32 @@ from `gerber2rml/examples/calibration.py` (`write_coupon(out_dir)`).
 ## Bed leveling
 
 Probe the copper surface to build a height map so engrave depth follows an uneven
-bed or bowed board. Connect the Arduino probe, set the **G54 Z** origin in VPanel
-(only Z — X/Y stay at the machine origin; keep machine Z above −50 mm), clip
-**red → copper plate, black → drill bit**, then build a grid and probe. See
-[2026-06-25-srm20-spi-and-bed-leveling.md](2026-06-25-srm20-spi-and-bed-leveling.md).
+bed or bowed board. Set the **G54 Z** origin in VPanel (only Z — X/Y stay at the
+machine origin; keep machine Z above −50 mm), then build a grid and probe.
+
+### Hardware setup (one-time)
+
+Auto bed leveling drives the machine over its internal SPI bus and senses contact
+with a touch probe, so it needs a small board fitted inside the SRM-20:
+
+1. **Open the SRM-20's back panel** and install an **Arduino Nano**, wired to the
+   controller's SPI bus (full wiring in
+   [2026-06-25-srm20-spi-and-bed-leveling.md](2026-06-25-srm20-spi-and-bed-leveling.md)).
+2. **Flash the provided firmware:** `hardware/srm20_spi_probe/srm20_spi_probe.ino`
+   (needs the bundled `hardware/SRM20SPIRemote` library).
+3. **Probe wiring:** connect **D7 → the copper board** (the workpiece — it floats
+   HIGH on the Nano's internal pull-up) and **GND → the tool / collet**. Put paper
+   or tape under the board so it's **electrically isolated from the bed**: the only
+   path to ground is the bit touching copper, which pulls D7 LOW = contact.
+
+> Equivalently, with alligator clips during probing: **red → copper board, black →
+> drill bit** (D7 is the red/signal side, GND the black side).
+
+### Probing
+
+In the GUI, connect to the Nano, build a grid, and **Probe over SPI** — the bit
+taps each point and records its true height into the table; the engrave depth then
+follows the surface. You can also save/load the height map as CSV.
 
 ## Rework (multi-region 2nd pass)
 
