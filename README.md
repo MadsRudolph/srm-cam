@@ -6,6 +6,8 @@ replacing the mods site and FlatCAM.
 
 > Python package name: `gerber2rml`.
 
+![SRM-CAM main window](docs/Readme_photos/srmcam_GUI_MainPage.png)
+
 ## Install
 
 **Just run it (Windows):** download the latest installer from
@@ -32,6 +34,28 @@ After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 - **3D views** — toolpath simulation + bed height-map.
 - **Guided tour** — launches on first run; replay via the **Guide** button (and
   per-section buttons). A demo board loads so new users can follow along.
+
+## Showcase
+
+<table>
+<tr>
+<td width="50%"><img src="docs/Readme_photos/srmcam_3dview_traces.png" alt="3D toolpath simulation"><br><sub><b>3D toolpath simulation</b> — orbit and play back the whole job before cutting.</sub></td>
+<td width="50%"><img src="docs/Readme_photos/srmcam_BedLeveling_3DView.png" alt="3D bed height-map"><br><sub><b>Bed height-map</b> — probe the surface so the cut depth follows the board.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/Readme_photos/srmcam_doublesided.png" alt="Double-sided registration"><br><sub><b>Double-sided</b> — dowel-pin or measured-fiducial registration for the flip.</sub></td>
+<td width="50%"><img src="docs/Readme_photos/rework_example.png" alt="Multi-region rework"><br><sub><b>Rework</b> — box every spot to re-cut, each with its own depth, in one pass.</sub></td>
+</tr>
+</table>
+
+You can also do **perfect double-sided PCBs** with srm-cam — both layers registered off dowel pins or fiducials. A finished board, held to the light:
+
+<table>
+<tr>
+<td width="50%"><img src="docs/Readme_photos/doublesided_bcu.jpg" alt="Bottom copper (B.Cu)"><br><sub><b>Bottom — B.Cu</b></sub></td>
+<td width="50%"><img src="docs/Readme_photos/doublesided_fcu.jpg" alt="Top copper (F.Cu)"><br><sub><b>Top — F.Cu</b></sub></td>
+</tr>
+</table>
 
 ## More
 
