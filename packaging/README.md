@@ -48,10 +48,30 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Recreate
 
 | Goal | Command |
 |---|---|
-| Full installer | `build.ps1` |
+| Full installer (+ version-less copy) | `build.ps1` |
 | App folder only (skip Inno) | `build.ps1 -SkipInstaller` |
 | Rebuild venv after dep change | `build.ps1 -Recreate` |
 | Bump version | edit `MyAppVersion` in `installer.iss` (and `pyproject.toml`) |
+
+## Publishing a release
+
+`build.ps1` produces **two** files in `dist_installer\`:
+
+- `SRM-CAM-Setup-<version>.exe` — the normal versioned installer.
+- `SRM-CAM-Setup.exe` — an identical **version-less** copy.
+
+**Upload both** as assets when you cut a GitHub release. The DTU-PCB-prototyping
+guide links to a permanent one-click URL —
+`https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe`
+— which only resolves if the latest release contains an asset named **exactly**
+`SRM-CAM-Setup.exe`. Skip it and that download link 404s.
+
+```powershell
+# after build.ps1, from the repo root:
+gh release create v<version> --target main `
+  "dist_installer\SRM-CAM-Setup-<version>.exe" `
+  "dist_installer\SRM-CAM-Setup.exe"
+```
 
 ## Files
 
