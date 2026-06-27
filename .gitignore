@@ -30,6 +30,9 @@ out_ds/
 
 # Large vendor reference manuals — kept locally, not in the repo (tens of MB)
 docs/*.pdf
+# ...except the SRM-20 manual: it's the source of truth for the onboarding tour's
+# VPanel/machine wording, so it travels with the repo.
+!docs/SRM-20_USE_EN_R4.pdf
 
 # Throwaway preview renders generated while developing
 examples/*.png
