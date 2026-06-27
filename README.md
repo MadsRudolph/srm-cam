@@ -59,6 +59,7 @@ You can also do **perfect double-sided PCBs** with srm-cam — both layers regis
 
 ## More
 
+- **Step-by-step guide (KiCad → milled board), with photos:** [DTU Ballerup PCB prototyping — Roland CNC router](https://github.com/DTU-EKB/DTU-PCB-prototyping#making-pcbs-with-the-roland-cnc-router)
 - Full usage & feature reference: [`docs/usage.md`](docs/usage.md)
 - Build the installer: [`packaging/README.md`](packaging/README.md)
 - Run the tests: `pytest`
