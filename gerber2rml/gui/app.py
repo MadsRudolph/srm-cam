@@ -17,6 +17,7 @@ from gerber2rml.app.preview import toolpath_segments
 from gerber2rml.backends import BACKENDS
 from gerber2rml.gui.form import DataclassForm
 from gerber2rml.gui.canvas import PreviewCanvas
+from gerber2rml.gui.tour import TourController
 
 _OPS = ["traces", "drill", "cutout"]
 
@@ -249,6 +250,10 @@ class MainWindow(QMainWindow):
             "deepest cut fit the SRM-20 Z range (probe Z first), holes vs bit. "
             "Run this before a full-bed job.")
         self.diag_btn.clicked.connect(self._on_diagnostics)
+
+        self.guide_btn = QPushButton("Guide")
+        self.guide_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        self.guide_btn.setToolTip("Replay the guided walkthrough of the whole workflow.")
 
         self.save_setup_btn = QPushButton("Save setup...")
         self.save_setup_btn.setToolTip(
@@ -973,6 +978,7 @@ class MainWindow(QMainWindow):
         machine_bar.setObjectName("machineBar")
         _mb = QHBoxLayout(machine_bar)
         _mb.setContentsMargins(8, 2, 8, 2)
+        _mb.addWidget(self.guide_btn)
         _mb.addWidget(self.dro_label)
         _mb.addWidget(self.touch_label)
         _mb.addStretch(1)
@@ -1012,6 +1018,10 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self._autofit_panel)
         self._autofit_panel()
         self.move_chk.setChecked(True)   # move-on-bed drag on by default
+
+        # First-launch guided walkthrough (replayable via the Guide button).
+        self.tour = TourController(self)
+        self.guide_btn.clicked.connect(lambda: self.tour.start())
 
     _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
 
@@ -3000,10 +3010,13 @@ def main():
     if QApplication.instance() is None:
         _configure_opengl()
     app = QApplication.instance() or QApplication([])
+    app.setOrganizationName("srm-cam")
+    app.setApplicationName("SRM-CAM")
     apply_dark_theme(app)
     win = MainWindow()
     _preload_demo(win)
     win.show()
+    win.tour.maybe_autostart()       # runs the guided walkthrough on first launch
     return app.exec()
 
 if __name__ == "__main__":
