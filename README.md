@@ -48,6 +48,15 @@ After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 </tr>
 </table>
 
+You can also do **perfect double-sided PCBs** with srm-cam — both layers registered off dowel pins or fiducials. A finished board, held to the light:
+
+<table>
+<tr>
+<td width="50%"><img src="docs/Readme_photos/doublesided_bcu.jpg" alt="Bottom copper (B.Cu)"><br><sub><b>Bottom — B.Cu</b></sub></td>
+<td width="50%"><img src="docs/Readme_photos/doublesided_fcu.jpg" alt="Top copper (F.Cu)"><br><sub><b>Top — F.Cu</b></sub></td>
+</tr>
+</table>
+
 ## More
 
 - Full usage & feature reference: [`docs/usage.md`](docs/usage.md)
