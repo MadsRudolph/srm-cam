@@ -62,5 +62,5 @@ You can also do **perfect double-sided PCBs** with srm-cam — both layers regis
 - **Step-by-step guide (KiCad → milled board), with photos:** [DTU Ballerup PCB prototyping — Roland CNC router](https://github.com/DTU-EKB/DTU-PCB-prototyping#making-pcbs-with-the-roland-cnc-router)
 - Full usage & feature reference: [`docs/usage.md`](docs/usage.md)
 - Build the installer: [`packaging/README.md`](packaging/README.md)
-- Bed-leveling probe firmware (Arduino Nano): [`hardware/srm20_spi_probe/`](hardware/srm20_spi_probe) — flash it before using auto bed leveling (wiring in [`docs/usage.md`](docs/usage.md#bed-leveling)).
+- Bed-leveling probe firmware (Arduino UNO): [`hardware/srm20_spi_probe/`](hardware/srm20_spi_probe) — flash it before using auto bed leveling (wiring in [`docs/usage.md`](docs/usage.md#bed-leveling)).
 - Run the tests: `pytest`
