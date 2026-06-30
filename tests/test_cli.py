@@ -33,6 +33,17 @@ def test_build_jobs_single_bit_makes_one_drill_file(tmp_path):
     assert drills == ["m_drill.rml"]            # one combined single-bit file
 
 
+def test_lead_in_on_by_default_ramps_traces(tmp_path):
+    from gerber2rml.engine.leadin import RAMP_CLEARANCE
+    on = build_jobs(FIXT, tmp_path / "on", name="m")          # default lead_in=True
+    off = build_jobs(FIXT, tmp_path / "off", name="m", lead_in=False)
+    tag = f"Z{RAMP_CLEARANCE:g}"                                # ramp's clearance hop
+    traces_on = next(p for p in on if p.name == "m_traces.nc").read_text()
+    traces_off = next(p for p in off if p.name == "m_traces.nc").read_text()
+    assert tag in traces_on                                     # ramp present
+    assert tag not in traces_off                                # straight plunge
+
+
 def test_cli_multi_bit_flag_splits_per_diameter(tmp_path):
     from gerber2rml.cli import main
     main([str(FIXT), "-o", str(tmp_path), "-n", "m", "-m", "Roland SRM-20",

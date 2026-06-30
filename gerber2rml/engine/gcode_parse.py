@@ -41,6 +41,8 @@ def parse_nc(text):
         gset = _gvals(codes)
         if 28 in gset:                                  # homing -> not toolpath
             continue
+        if 4 in gset:                                   # G04 dwell: its X<sec> arg
+            continue                                    # is a time, not a coordinate
         if 90 in gset:
             absolute = True
         if 91 in gset:

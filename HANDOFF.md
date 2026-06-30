@@ -1,5 +1,29 @@
 # Handoff — Rework selection + 3D toolpath viewer
 
+> **2026-06-30 update — V-bit (engraving bit) support landed.** Traces can now be
+> cut with a V-shaped engraving bit for tight (~0.2 mm) SMD isolation, alongside
+> the existing flat endmill. The width is computed dynamically from the plunge
+> depth (`W = T + 2*D*tan(theta/2)`), driven **width-first** (set a target width,
+> the depth is back-solved). Because a V-bit's width is hyper-sensitive to depth,
+> the pre-flight warns if you run one without bed leveling. Full design + rationale:
+> [`docs/2026-06-30-vbit-engraving-support.md`](docs/2026-06-30-vbit-engraving-support.md).
+> Key entry points: `TraceJob` geometry methods in `gerber2rml/config.py`;
+> `isolate()` in `gerber2rml/engine/traces.py` (uses `effective_diameter()` /
+> `effective_cut_depth()`); V-bit check in `gerber2rml/engine/diagnostics.py`;
+> tool-type combo + `_sync_vbit_fields()` in `gerber2rml/gui/app.py`; built-in
+> preset `SRM-20 V-bit 30deg / 0.1 mm tip`. Suite: 322 passing.
+
+> **2026-06-30 update — spindle spin-up settle + ramped lead-in.** To kill the
+> torque spike when the bit first hits copper: the NC header now dwells (`G04
+> X<sec>`, default 2 s) after `M3` so the spindle reaches full RPM before any
+> motion (the SRM-20's `M3` doesn't wait, and it has no programmable spindle
+> *speed* — RPM is a VPanel setting). And cut paths (traces, cut-out) now enter
+> with a ramped lead-in (`gerber2rml/engine/leadin.py`, `apply_lead_in`) instead
+> of a vertical plunge; drills stay vertical. Both on by default
+> (`build_jobs(..., lead_in=)`, `gcode.render(..., spinup_s=)`). Full rationale:
+> [`docs/2026-06-30-spindle-spinup-and-lead-in.md`](docs/2026-06-30-spindle-spinup-and-lead-in.md).
+> Suite: 334 passing.
+
 Branch: `feature/3d-toolpath-viewer-and-rework`
 
 This branch adds three GUI features plus a Windows OpenGL fix. **Status: the 3D

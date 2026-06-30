@@ -11,13 +11,19 @@ from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
                mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None,
-               rotate=0):
+               rotate=0, lead_in=True):
     """``level`` (optional) is a callable ``hmap(x, y) -> dz`` from
     :mod:`gerber2rml.engine.leveling`; when given, every job's Z is warped to
     follow the measured surface (applied AFTER placement, in machine coords).
 
     ``rotate`` (degrees, 0/90/180/270) reorients the whole board before
-    toolpaths are generated, so the exported cut comes out rotated."""
+    toolpaths are generated, so the exported cut comes out rotated.
+
+    ``lead_in`` (default on) ramps the entry plunge of the cutting passes (traces,
+    cut-out) into the copper instead of plunging straight down, to avoid a torque
+    spike at engagement. Drill plunges are left vertical."""
+    from gerber2rml.engine.leadin import apply_lead_in
+    _leadin = apply_lead_in if lead_in else (lambda p: p)
     from gerber2rml.toolpath import offset as offset_paths
     gerber_dir, out_dir = Path(gerber_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -46,11 +52,12 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
         est[fname] = estimate_toolpaths_seconds(placed, job.xy_feed, job.plunge_feed)
         written.append(p)
 
-    _write(f"{name}_traces{ext}", isolate(board.copper, trace, outline=board.outline), trace)
+    _write(f"{name}_traces{ext}",
+           _leadin(isolate(board.copper, trace, outline=board.outline)), trace)
     drill_files = drill_jobs(board.holes, drill, f"{name}_drill", ext=ext)
     for fname, paths in drill_files:
-        _write(fname, paths, drill)
-    _write(f"{name}_cutout{ext}", cut_outline(board.outline, cutout), cutout)
+        _write(fname, paths, drill)               # drills stay vertical (no lead-in)
+    _write(f"{name}_cutout{ext}", _leadin(cut_outline(board.outline, cutout)), cutout)
 
     # Drill run-plan line depends on the mode
     if drill.single_bit:

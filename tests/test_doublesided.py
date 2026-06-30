@@ -145,11 +145,14 @@ def test_double_sided_leveling_warps_bottom_only(tmp_path):
     from gerber2rml.doublesided import build_double_sided
     from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
-    # an X-tilt height map (deeper as x grows), in the bottom-side machine frame
+    # an X-tilt height map (deeper as x grows), in the bottom-side machine frame.
+    # lead_in off: this test is about leveling, and the ramp would add its own Z
+    # variation that masks the leveled-vs-flat distinction (lead-in has its own tests).
     level = lambda x, y: -0.003 * x
     written = build_double_sided(
         FIXT, tmp_path, name="lv", machine="Roland SRM-20 (G-code)",
-        trace=TraceJob(), drill=DrillJob(), cutout=CutoutJob(), level=level)
+        trace=TraceJob(), drill=DrillJob(), cutout=CutoutJob(), level=level,
+        lead_in=False)
 
     def cut_zs(name):
         t = (tmp_path / name).read_text()
@@ -170,10 +173,13 @@ def test_build_top_traces_leveled_re_export(tmp_path):
         zs = [float(m) for m in re.findall(r"Z(-?[0-9.]+)", p.read_text())]
         return {round(z, 3) for z in zs if z < 0.4}
 
+    # lead_in off: this test isolates leveling; the ramp's Z steps are tested
+    # separately in test_leadin.py.
     flat = build_top_traces(FIXT, tmp_path / "a", "tt", trace=TraceJob(),
-                            machine="Roland SRM-20 (G-code)", level=None)
+                            machine="Roland SRM-20 (G-code)", level=None, lead_in=False)
     lvl = build_top_traces(FIXT, tmp_path / "b", "tt", trace=TraceJob(),
-                           machine="Roland SRM-20 (G-code)", level=lambda x, y: -0.003 * x)
+                           machine="Roland SRM-20 (G-code)", level=lambda x, y: -0.003 * x,
+                           lead_in=False)
     assert flat.name == "tt_top_traces.nc"           # overwrites the full-export file
     assert len(cut_zs(flat)) <= 2                     # unleveled -> flat depth
     assert len(cut_zs(lvl)) > 5                       # leveled -> warped Z
