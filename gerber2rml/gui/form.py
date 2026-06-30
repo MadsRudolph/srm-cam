@@ -1,9 +1,16 @@
 from dataclasses import fields, replace
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget, QFormLayout, QDoubleSpinBox, QSpinBox, QCheckBox
+from PySide6.QtWidgets import (QWidget, QFormLayout, QDoubleSpinBox, QSpinBox,
+                               QCheckBox, QComboBox, QLineEdit)
 
 _TOOLTIPS = {
     "bit_diameter": "Diameter of the endmill or drill bit.",
+    "tool_type": ("Flat endmill (constant width) or V-bit engraver (width grows "
+                  "with depth — set a target width and the depth is derived)."),
+    "tip_diameter": "V-bit only: the flat width at the very tip of the V (T).",
+    "included_angle": "V-bit only: the full included angle of the V tip in degrees.",
+    "target_width": ("V-bit only: desired effective cut width. The plunge depth is "
+                     "back-solved from this via W = T + 2*D*tan(angle/2)."),
     "single_bit": ("Use ONE bit for all holes: plunge holes that match the bit, "
                    "interpolate (mill a circle) for larger ones, in a single file. "
                    "Off = one file per hole diameter, plunged with a matching bit."),
@@ -21,10 +28,11 @@ _TOOLTIPS = {
 class DataclassForm(QWidget):
     valueChanged = Signal()
 
-    def __init__(self, instance, parent=None):
+    def __init__(self, instance, parent=None, choices=None):
         super().__init__(parent)
         self._instance = instance
         self._editors = {}
+        self._choices = choices or {}      # {field_name: [allowed str values]}
         self._updating = False
         layout = QFormLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -37,6 +45,14 @@ class DataclassForm(QWidget):
             elif isinstance(val, int):
                 w = QSpinBox(); w.setRange(-1, 100000); w.setValue(val)
                 w.valueChanged.connect(self._on_changed)
+            elif isinstance(val, str):
+                if f.name in self._choices:
+                    w = QComboBox(); w.addItems(self._choices[f.name])
+                    w.setCurrentText(val)
+                    w.currentTextChanged.connect(self._on_changed)
+                else:
+                    w = QLineEdit(val)
+                    w.textChanged.connect(self._on_changed)
             else:  # float
                 w = QDoubleSpinBox(); w.setDecimals(3); w.setRange(-1000.0, 100000.0)
                 w.setSingleStep(0.1); w.setValue(float(val))
@@ -54,12 +70,20 @@ class DataclassForm(QWidget):
         w = self._editors[name]
         if isinstance(w, QCheckBox):
             return w.isChecked()
+        if isinstance(w, QComboBox):
+            return w.currentText()
+        if isinstance(w, QLineEdit):
+            return w.text()
         return w.value()
 
     def set_field(self, name, value):
         w = self._editors[name]
         if isinstance(w, QCheckBox):
             w.setChecked(bool(value))
+        elif isinstance(w, QComboBox):
+            w.setCurrentText(str(value))
+        elif isinstance(w, QLineEdit):
+            w.setText(str(value))
         else:
             w.setValue(value)
 

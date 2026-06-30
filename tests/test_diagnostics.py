@@ -52,3 +52,34 @@ def test_holes_smaller_than_bit_warns():
 def test_format_report_is_ascii():
     report = format_report(preflight(depths=_depths(), surface_z=-58.0))
     assert report.isascii() and "[FAIL]" in report
+
+
+# -- V-bit checks ----------------------------------------------------------
+
+def test_cut_depths_uses_vbit_derived_depth():
+    vbit = TraceJob(tool_type="vbit", tip_diameter=0.1, included_angle=30.0,
+                    target_width=0.2)
+    d = cut_depths(vbit, DrillJob(), CutoutJob())
+    assert abs(d["traces"] - vbit.effective_cut_depth()) < 1e-9
+    assert d["traces"] != vbit.cut_depth
+
+
+def test_vbit_without_leveling_warns():
+    vbit = TraceJob(tool_type="vbit")
+    checks = preflight(depths=_depths(dowel=None), surface_z=-50.0,
+                       trace=vbit, leveled=False)
+    assert any(c.level == "warn" and "level" in c.title.lower() for c in checks)
+
+
+def test_vbit_with_leveling_is_ok():
+    vbit = TraceJob(tool_type="vbit")
+    checks = preflight(depths=_depths(dowel=None), surface_z=-50.0,
+                       trace=vbit, leveled=True)
+    vbit_checks = [c for c in checks if "v-bit" in c.title.lower()]
+    assert vbit_checks and all(c.level == "ok" for c in vbit_checks)
+
+
+def test_flat_tool_adds_no_vbit_check():
+    checks = preflight(depths=_depths(dowel=None), surface_z=-50.0,
+                       trace=TraceJob(), leveled=False)
+    assert not any("v-bit" in c.title.lower() for c in checks)
