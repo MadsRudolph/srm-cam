@@ -3,11 +3,20 @@ from gerber2rml.app.presets import load_presets, apply_preset, save_user_preset,
 from gerber2rml.app.state import ProjectState
 
 
-def test_only_one_builtin_preset():
-    # We ship a single profile: the SRM-20 0.8 mm flat endmill.
-    assert len(BUILTIN_PRESETS) == 1
-    name = next(iter(BUILTIN_PRESETS))
-    assert name.startswith("SRM-20")
+def test_builtin_presets_are_the_flat_and_vbit_profiles():
+    # We ship two profiles: the 0.8 mm flat endmill (default, first) and the
+    # V-bit engraver for tight SMD traces.
+    assert len(BUILTIN_PRESETS) == 2
+    names = list(BUILTIN_PRESETS)
+    assert all(n.startswith("SRM-20") for n in names)
+    assert names[0].startswith("SRM-20 0.8 mm flat")     # default stays first
+
+
+def test_vbit_builtin_preset_is_width_first():
+    vbit = [p for n, p in BUILTIN_PRESETS.items() if "V-bit" in n][0]
+    assert vbit["trace"]["tool_type"] == "vbit"
+    assert vbit["trace"]["target_width"] == 0.2
+    assert vbit["trace"]["included_angle"] == 30.0
 
 
 def test_srm20_preset_depths_and_feeds():

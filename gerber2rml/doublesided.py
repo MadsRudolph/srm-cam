@@ -411,7 +411,8 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
                        board_thickness: float = 1.6, machine=DEFAULT_MACHINE,
                        offset=(0.0, 0.0), level=None, rotate=0,
                        bed_depth=DOWEL_BED_DEPTH,
-                       registration="dowel", fiducials: FiducialSpec = None):
+                       registration="dowel", fiducials: FiducialSpec = None,
+                       lead_in=True):
     """Build all job files for a double-sided board + a text run plan.
 
     ``machine`` selects the output backend (RML or G-code). Returns a list of
@@ -442,6 +443,8 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
         align_drill, align_depth = _align_drill(drill, dowels, align_depth,
                                                 board_thickness, bed_depth)
     from gerber2rml.engine.estimate import estimate_toolpaths_seconds, format_duration
+    from gerber2rml.engine.leadin import apply_lead_in
+    _leadin = apply_lead_in if lead_in else (lambda p: p)
     written = []
     est = {}                                     # fname -> estimated seconds
 
@@ -462,10 +465,13 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     for fname, paths in bottom_drill_files:
         _write(fname, paths, drill, leveled=True)
     _write(f"{name}_bottom_traces{ext}",
-           isolate(lay.bottom_copper, trace, outline=lay.outline), trace, leveled=True)
+           _leadin(isolate(lay.bottom_copper, trace, outline=lay.outline)),
+           trace, leveled=True)
     _write(f"{name}_top_traces{ext}",
-           isolate(lay.top_copper, trace, outline=top_outline), trace, leveled=False)
-    _write(f"{name}_cutout{ext}", cut_outline(lay.outline, cutout), cutout, leveled=True)
+           _leadin(isolate(lay.top_copper, trace, outline=top_outline)),
+           trace, leveled=False)
+    _write(f"{name}_cutout{ext}",
+           _leadin(cut_outline(lay.outline, cutout)), cutout, leveled=True)
 
     drill_step = _drill_runplan_line(bottom_drill_files, drill)
     level_block = ("Bed leveling applied to the BOTTOM-side jobs (align, drill, "
@@ -491,7 +497,7 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
 def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None,
                      machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0, level=None,
                      registration="dowel", fiducials: FiducialSpec = None,
-                     measured_fiducials=None, allow_scale=False):
+                     measured_fiducials=None, allow_scale=False, lead_in=True):
     """Re-export ONLY the top (F.Cu) isolation traces, optionally warped by a
     fiducial fit and/or a fresh height map probed on the FLIPPED board.
 
@@ -515,6 +521,9 @@ def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None
     lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate,
                               registration=registration, fiducials=fiducials)
     paths = isolate(lay.top_copper, trace, outline=lay.top_outline)
+    if lead_in:
+        from gerber2rml.engine.leadin import apply_lead_in
+        paths = apply_lead_in(paths)
     if measured_fiducials:
         from gerber2rml.engine.fiducial import fit_transform, apply_to_toolpaths
         nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
