@@ -27,6 +27,11 @@ from gerber2rml.toolpath import Move
 
 DEFAULT_RAPID = 15.0   # mm/s (informational; G0 uses the machine rapid rate)
 DEFAULT_RPM = 7000     # SRM-20 spindle tops out ~7000 rpm
+DEFAULT_SPINUP_S = 2.0 # s to dwell (G04) after M3 so the spindle reaches full RPM
+                       # BEFORE the bit engages copper. The SRM-20's M3 starts the
+                       # spindle "at the same time as the operation in the block"
+                       # (manual R4 p.116) -- it does NOT wait -- so without this
+                       # the first plunge can cut at part-RPM = a torque spike.
 PLUNGE_CLEARANCE = 0.5 # mm above the work surface (Z0) to rapid down to before a
                        # plunge, so we don't creep through air at the plunge feed
 EPS = 1e-6
@@ -43,7 +48,7 @@ def _f(v: float) -> str:
 
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID, rpm: int = DEFAULT_RPM,
-           travel_z: float = 2.0) -> str:
+           travel_z: float = 2.0, spinup_s: float = DEFAULT_SPINUP_S) -> str:
     xy_fpm = xy_feed * 60.0          # mm/s -> mm/min for G94
     plunge_fpm = plunge_feed * 60.0
 
@@ -60,6 +65,11 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
         "G54",                       # work coordinate origin (set in VPanel)
         "M3",                        # spindle on, clockwise (RPM from VPanel)
     ]
+    if spinup_s > 0:
+        # Let the spindle reach full RPM before any motion. Dwell time is X<sec>:
+        # the SRM-20 has no P word (manual R4 word list), so X carries the seconds.
+        out.append(f"( spindle spin-up settle {_f(spinup_s)} s before first cut )")
+        out.append(f"G04 X{_f(spinup_s)}")
 
     cx = cy = cz = None              # current machine position (work coords)
     feed = None                      # current modal feedrate

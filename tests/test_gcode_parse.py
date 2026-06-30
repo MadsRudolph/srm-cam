@@ -34,6 +34,15 @@ def test_nc_skips_homing_moves():
     assert all(z <= 2.0 + 1e-6 for z in zs)  # no machine-home Z jump captured
 
 
+def test_parse_skips_dwell_line():
+    # A G04 dwell carries an X<seconds> arg that must NOT be read as an X coord.
+    nc = "\n".join(["%", "O0001", "G90 G21", "M3", "G04 X2.",
+                    "G0 X0. Y0.", "G1 Z-0.1 F60.", "G1 X5. Y0. F240.", "M30", "%"])
+    pts = [(m.x, m.y) for m in parse_nc(nc)[0]]
+    assert (2.0, 0.0) not in pts             # the dwell's X2. is not a move
+    assert (5.0, 0.0) in pts                  # the real cut still parses
+
+
 def test_nc_marks_rapid_vs_cut():
     nc = gcode.render(_square_ring(), xy_feed=4.0, plunge_feed=1.0)
     parsed = parse_nc(nc)[0]
