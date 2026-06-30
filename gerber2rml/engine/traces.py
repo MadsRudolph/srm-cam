@@ -23,9 +23,12 @@ def _ring_to_toolpath(coords, cut_z, travel_z):
 
 
 def isolate(copper, job, outline=None):
-    r = job.bit_diameter / 2.0
-    step = job.stepover * job.bit_diameter
-    cut_z, travel_z = -job.cut_depth, job.travel_z
+    # Effective width/depth so a V-bit isolates by its (depth-dependent) cut
+    # width while a flat endmill keeps using its diameter (see TraceJob).
+    width = job.effective_diameter()
+    r = width / 2.0
+    step = job.stepover * width
+    cut_z, travel_z = -job.effective_cut_depth(), job.travel_z
     paths = []
     if job.offsets == -1:
         clip = outline if (outline is not None and not outline.is_empty) else copper.envelope

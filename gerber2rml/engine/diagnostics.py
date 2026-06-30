@@ -28,7 +28,7 @@ def cut_depths(trace, drill, cutout, dowel_depth=None):
     """Commanded cut depth (mm below Z0) per operation. Traces engrave at a
     single shallow ``cut_depth``; drill/cut-out peck to ``total_depth``; dowels
     (double-sided) go ``dowel_depth`` (stock + bed bite)."""
-    d = {"traces": trace.cut_depth, "drill": drill.total_depth,
+    d = {"traces": trace.effective_cut_depth(), "drill": drill.total_depth,
          "cutout": cutout.total_depth}
     if dowel_depth is not None:
         d["dowels"] = dowel_depth
@@ -36,12 +36,15 @@ def cut_depths(trace, drill, cutout, dowel_depth=None):
 
 
 def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
-              holes=None, bit_diameter=None, z_floor=SRM20_Z_FLOOR):
+              holes=None, bit_diameter=None, trace=None, leveled=False,
+              z_floor=SRM20_Z_FLOOR):
     """Run the checks and return a list of :class:`Check`.
 
     ``depths``: {op: mm} from :func:`cut_depths`. ``design_bounds``: placed
     (x0,y0,x1,y1) incl. dowels. ``surface_z``: probed surface in MACHINE mm
-    (negative); without it the Z-reach check can only advise."""
+    (negative); without it the Z-reach check can only advise. ``trace`` (the
+    :class:`TraceJob`) + ``leveled`` (is a bed height-map being applied?) drive
+    the V-bit flatness check."""
     checks = []
 
     # --- fits the bed -------------------------------------------------------
@@ -98,6 +101,25 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
                 checks.append(Check("ok", "Holes fit the bit",
                                     f"smallest hole {dmin:.2f} mm >= {bit_diameter:.2f} "
                                     f"mm bit."))
+
+    # --- V-bit: cut width is depth-sensitive, so the bed MUST be levelled ----
+    if trace is not None and getattr(trace, "tool_type", "flat") == "vbit":
+        sens = trace.width_sensitivity()
+        depth = trace.effective_cut_depth()
+        width = trace.effective_diameter()
+        if not leveled:
+            checks.append(Check(
+                "warn", "V-bit without bed leveling",
+                f"cut width {width:.3f} mm at {depth:.3f} mm depth, but a "
+                f"{sens:.2f}x depth->width sensitivity means a 0.05 mm surface "
+                f"error becomes a {sens * 0.05:.3f} mm width error. Probe a height "
+                f"map and enable leveling before running a V-bit."))
+        else:
+            checks.append(Check(
+                "ok", "V-bit leveling on",
+                f"cut width {width:.3f} mm held by the height map (depth "
+                f"{depth:.3f} mm, {sens:.2f}x sensitivity). Use a dense mesh so "
+                f"between-point interpolation stays inside your width budget."))
 
     return checks
 

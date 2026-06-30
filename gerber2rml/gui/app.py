@@ -757,11 +757,16 @@ class MainWindow(QMainWindow):
         self.export_sel_btn.setEnabled(False)
 
         # Operation parameters (hidden, managed by presets)
-        self.forms = {"traces": DataclassForm(self.state.trace),
+        self.forms = {"traces": DataclassForm(self.state.trace,
+                                              choices={"tool_type": ["flat", "vbit"]}),
                       "drill": DataclassForm(self.state.drill),
                       "cutout": DataclassForm(self.state.cutout)}
         for op in _OPS:
             self.forms[op].valueChanged.connect(self.generate_preview)
+        # A V-bit derives its depth from the target width, so grey out the fields
+        # that no longer apply and show the derived depth live.
+        self.forms["traces"].valueChanged.connect(self._sync_vbit_fields)
+        self._sync_vbit_fields()
 
         # Preview mode toggle
         from PySide6.QtWidgets import QTabBar
@@ -1378,7 +1383,7 @@ class MainWindow(QMainWindow):
             from gerber2rml.analysis import find_narrow_gaps
             gaps = find_narrow_gaps(self.state.board.copper,
                                     self.state.board.outline,
-                                    self.state.trace.bit_diameter)
+                                    self.state.trace.effective_diameter())
             if not gaps.is_empty:
                 self.preview.show_gaps(gaps)
                 self.statusBar().showMessage(
@@ -1424,6 +1429,7 @@ class MainWindow(QMainWindow):
         self.forms["drill"].set_instance(self.state.drill)
         self.forms["cutout"].set_instance(self.state.cutout)
         self._apply_auto_depth()      # auto-depth wins over the preset's depth
+        self._sync_vbit_fields()      # grey/derive the V-bit fields for this profile
         # default the rework depth to this profile's trace depth (user can override)
         self.rework_depth_spin.setValue(self.state.trace.cut_depth)
         if self.state.board is not None:
@@ -2438,9 +2444,12 @@ class MainWindow(QMainWindow):
                             dowel_depth)
         holes = (self._machine_layout().holes if self.double_sided_chk.isChecked()
                  else self.state.board.holes)
+        leveled = (self.level_chk.isChecked()
+                   and self._level_heightmap_preview() is not None)
         checks = preflight(depths=depths, bed=BACKENDS[self.state.machine].bed,
                            design_bounds=self._diag_bounds(), surface_z=self._z_zero,
-                           holes=holes, bit_diameter=self.state.drill.bit_diameter)
+                           holes=holes, bit_diameter=self.state.drill.bit_diameter,
+                           trace=self.state.trace, leveled=leveled)
         lvl = worst(checks)
         box = QMessageBox(self)
         box.setWindowTitle("Pre-flight diagnostics")
@@ -2624,6 +2633,24 @@ class MainWindow(QMainWindow):
     def _on_depth_source_changed(self, *_):
         self._apply_auto_depth()
         self.generate_preview()
+
+    def _sync_vbit_fields(self, *_):
+        """For a V-bit, the cut depth and effective width are DERIVED from the
+        target width, so grey those fields out and mirror the computed values
+        into them. For a flat endmill, leave everything editable (the original
+        behaviour). Uses ``set_field_value`` so this never re-fires valueChanged."""
+        form = self.forms["traces"]
+        job = form.value()
+        vbit = job.tool_type == "vbit"
+        # cut_depth and bit_diameter are meaningless for a vbit -> derived/greyed.
+        form.enable_field("cut_depth", not vbit)
+        form.enable_field("bit_diameter", not vbit)
+        # tip/angle/target only matter for a vbit.
+        for name in ("tip_diameter", "included_angle", "target_width"):
+            form.enable_field(name, vbit)
+        if vbit:
+            form.set_field_value("cut_depth", round(job.effective_cut_depth(), 3))
+            form.set_field_value("bit_diameter", round(job.effective_diameter(), 3))
 
     def _on_move_toggled(self, checked):
         self.preview.set_moving(checked)
