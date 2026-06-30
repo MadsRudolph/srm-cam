@@ -40,6 +40,31 @@ def test_two_separate_pads_each_get_isolated():
     assert len(paths) == 2                     # one isolation ring per pad
 
 
+def test_vbit_cuts_at_the_derived_depth():
+    # width-first vbit: Z is the depth back-solved from target_width, not cut_depth
+    copper = Point(0, 0).buffer(1.0)
+    job = TraceJob(tool_type="vbit", tip_diameter=0.1, included_angle=30.0,
+                   target_width=0.2, offsets=1)
+    paths = isolate(copper, job)
+    cut_z = min(m.z for tp in paths for m in tp if not m.rapid)
+    assert abs(cut_z - (-job.effective_cut_depth())) < 1e-9
+    assert cut_z != -job.cut_depth          # NOT the flat-endmill depth
+
+
+def test_vbit_offset_matches_equivalent_flat_bit():
+    # isolating with a vbit of effective width W == isolating with a flat bit of
+    # diameter W: the first ring lands at the same radius.
+    copper = Point(0, 0).buffer(1.0)
+    flat = TraceJob(bit_diameter=0.4, offsets=1, stepover=0.5)
+    # bit_diameter is deliberately NOT 0.4 here: a vbit must ignore it and isolate
+    # by its effective (target) width, so this only matches if the engine switched.
+    vbit = TraceJob(bit_diameter=0.8, tool_type="vbit", tip_diameter=0.1,
+                    included_angle=30.0, target_width=0.4, offsets=1, stepover=0.5)
+    rf = max(abs(m.x) for m in isolate(copper, flat)[0] if not m.rapid)
+    rv = max(abs(m.x) for m in isolate(copper, vbit)[0] if not m.rapid)
+    assert abs(rf - rv) < 1e-6
+
+
 def test_clear_all_terminates_and_stays_in_outline():
     from shapely.geometry import box, Point
     outline = box(0, 0, 20, 20)
