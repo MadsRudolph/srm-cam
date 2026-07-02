@@ -1273,24 +1273,39 @@ class MainWindow(QMainWindow):
             outline = mlay.top_outline if side == "Top" else mlay.outline
             self.preview.set_board_outline(self._poly_xy(outline))
             if side == "Top":
-                self.preview.show_segments([], [], top_cuts=cuts, pins=mlay.align_holes)
+                self.preview.show_segments([], [], top_cuts=cuts, pins=mlay.align_holes,
+                                           copper=[(mlay.top_copper, "#ff55ff")])
             else:
-                self.preview.show_segments(cuts, rapids, pins=mlay.align_holes)
+                self.preview.show_segments(cuts, rapids, pins=mlay.align_holes,
+                                           copper=[(mlay.bottom_copper, "#00ffff")])
             return
         # Both sides (or the drill tab): design-frame X-ray for registration.
         lay = self._double_sided_layout()
         self.preview.set_board_outline(self._poly_xy(lay.outline))
         view = self.view_combo.currentText()
         bottom_cuts, bottom_rapids, top_cuts = [], [], []
+        copper = []
         if view in ("Both sides", "Bottom"):
-            bottom_cuts, bottom_rapids = toolpath_segments(
-                isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
+            copper.append((lay.bottom_copper, "#00ffff"))
         if view in ("Both sides", "Top"):
-            top_cuts, _ = toolpath_segments(
-                isolate(lay.top_copper, self.state.trace, outline=lay.outline))
+            copper.append((lay.top_copper, "#ff55ff"))
+        if op == "cutout":
+            # The edge cut is one job around the outline (run from the bottom
+            # side), not a per-layer isolation — show it instead of the traces.
+            from gerber2rml.engine.cutout import cut_outline
+            bottom_cuts, bottom_rapids = toolpath_segments(
+                cut_outline(lay.outline, self.state.cutout))
+        else:
+            if view in ("Both sides", "Bottom"):
+                bottom_cuts, bottom_rapids = toolpath_segments(
+                    isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
+            if view in ("Both sides", "Top"):
+                top_cuts, _ = toolpath_segments(
+                    isolate(lay.top_copper, self.state.trace, outline=lay.outline))
         holes = lay.holes if op == "drill" else None
         self.preview.show_segments(bottom_cuts, bottom_rapids, holes=holes,
-                                   top_cuts=top_cuts, pins=lay.align_holes)
+                                   top_cuts=top_cuts, pins=lay.align_holes,
+                                   copper=copper)
 
     def _drill_status(self):
         """Human summary of the hole diameters and what export will produce,
@@ -1359,7 +1374,11 @@ class MainWindow(QMainWindow):
                    if op != "drill" else self._drill_status())
             self.statusBar().showMessage(msg, 8000)
             side = self._ds_side()
-            if side is not None and op != "drill":
+            if op == "cutout":
+                # the edge cut is the same single job whichever view is selected
+                self.preview.set_estimate(self._est_text(
+                    self._ds_side_toolpaths(op, side), self.state.cutout))
+            elif side is not None and op != "drill":
                 job = self.state.trace if op == "traces" else self.state.cutout
                 self.preview.set_estimate(self._est_text(self._ds_side_toolpaths(op, side), job))
             else:
@@ -1367,7 +1386,8 @@ class MainWindow(QMainWindow):
             return
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
-            self.preview.show_segments(cuts, rapids, holes=self.state.board.holes)
+            self.preview.show_segments(cuts, rapids, holes=self.state.board.holes,
+                                       copper=[(self.state.board.copper, "#00ffff")])
             drill_tps = self._drill_toolpaths(self.state.board.holes)
             est = self._estimate_str(drill_tps, self.state.drill)
             self.preview.set_estimate(self._est_text(drill_tps, self.state.drill))
