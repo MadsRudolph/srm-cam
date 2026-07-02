@@ -155,6 +155,30 @@ Four holes ≈ 2 minutes, no operator jogging. Combined with hole-based
 registration (above), the fiducial flip becomes LESS labor than dowels:
 flip → auto-align → cut.
 
+## Flagship feature: the Blind Flip (self-registering double-sided)
+
+Goal (user, 2026-07-03): dowel-grade ease for boards that can't fit dowels.
+Dowels are easy because the BED holds the knowledge; every fiducial method
+fails by making the OPERATOR the information carrier. After drilling, the
+BOARD holds the knowledge: its hole pattern is an asymmetric fingerprint the
+machine can read electrically (rim probing works on unplated holes).
+
+Flow: flip any way, place anywhere reasonable, clamp, click Auto-align:
+1. Coarse: probe falls-in/cone signatures near 2-3 large nominal holes;
+   constellation-match against the known hole set under BOTH flip hypotheses —
+   board content is asymmetric, so the wrong axis misses by mm while the right
+   one matches to um. Flip direction is DETECTED, never chosen (kills the
+   2026-07-03 symmetry trap structurally).
+2. Fine: drive to 3-4 well-spread holes, centre-find (V-bit cone probe or
+   smaller-bit window search — rim contact only), fit_transform.
+3. Auto: travel-limit check FIRST ("slide 10 mm right" before probing),
+   then the leveling grid over the as-placed board, then export leveled +
+   warped top traces. AS PLACED preview + jog-verify as the human check.
+
+No extra drilling, no typing, no direction choice, one button. Ingredients
+all exist: spi_probe touch_off/jog_to, rim-probe methods (above), fit
+pipeline, AS PLACED views, offline travel check (validated 2026-07-03).
+
 ## Open questions
 
 - Step schema: encode bit/spindle per step in presets, or infer from jobs?
