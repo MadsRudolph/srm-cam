@@ -498,6 +498,17 @@ class MainWindow(QMainWindow):
             "surface, and set that Z as the work-surface zero. Needs the touch "
             "clips connected; start a few mm above the surface.")
         self.zero_btn.clicked.connect(self._on_probe_z)
+        self.align_btn = QPushButton("Align overlay")
+        self.align_btn.setCheckable(True)
+        self.align_btn.setEnabled(False)      # only meaningful while connected
+        self.align_btn.setToolTip(
+            "Fix the live overlay when the machine's work origin (G54) is not "
+            "where the design sits on screen: arm this, then click the design "
+            "point the bit is PHYSICALLY at (e.g. the hole it is drilling). "
+            "Display + click-to-jog + progress tracking only — exports and job "
+            "coordinates are untouched. Ctrl+click on the canvas clears the trim.")
+        self.align_btn.toggled.connect(self._on_align_mode_toggled)
+        self._overlay_trim = (0.0, 0.0)   # design frame - machine frame (mm)
         self._z_zero = None         # captured surface Z (machine mm), or None
         self._touching = False      # last reported probe contact state
         self.dro_label = QLabel("○  machine offline")
@@ -983,6 +994,7 @@ class MainWindow(QMainWindow):
         self.preview.on_region_added = self._on_region_added
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
+        self.preview.on_align_pick = self._on_align_pick
         self.preview.on_pin_moved = self._on_fid_pin_moved
         self.preview.on_jog_step = self._on_jog_step
         # The panel collapse toggle lives on the viewer's control bar.
@@ -1010,6 +1022,7 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.trail_chk)
         _mb.addWidget(self.trail_clear_btn)
         _mb.addWidget(self.zero_btn)
+        _mb.addWidget(self.align_btn)
         _mb.addWidget(self.jog_chk)
         _mb.addWidget(self.connect_btn)
         _mb.addWidget(self.stop_btn)
@@ -1744,6 +1757,7 @@ class MainWindow(QMainWindow):
         self.connect_btn.setText("Disconnect")
         self.jog_chk.setEnabled(True)
         self.zero_btn.setEnabled(True)
+        self.align_btn.setEnabled(True)
         self.dro_label.setText(f"●  connecting on {port}…")
         self.dro_label.setStyleSheet(self._DRO_ON)
         self.statusBar().showMessage(
@@ -1763,6 +1777,9 @@ class MainWindow(QMainWindow):
         self.jog_chk.setEnabled(False)
         self.preview.set_jogging(False)
         self.zero_btn.setEnabled(False)
+        self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
+        self.align_btn.setEnabled(False)
+        self.preview.set_align_pick(False)
         self._z_zero = None
         if self.connect_btn.isChecked():
             self.connect_btn.blockSignals(True)
@@ -1815,15 +1832,57 @@ class MainWindow(QMainWindow):
             self.select_chk.setChecked(False)
             self.move_chk.setChecked(False)
             self.measure_chk.setChecked(False)
+            self.align_btn.setChecked(False)
             self.statusBar().showMessage(
                 "Click a point on the preview to jog the tool there", 6000)
 
     def _on_jog_to(self, x, y):
         if self._dro is None:
             return
+        # the canvas point is in the DESIGN frame; the machine target must be in
+        # the MACHINE frame — undo the overlay trim so the bit lands where clicked
+        tx, ty = self._overlay_trim
+        mx, my = x - tx, y - ty
         self._last_jog_t = time.time()       # our own motion — don't auto-start on it
-        self._dro.request_move(round(x * 1000), round(y * 1000))
+        self._dro.request_move(round(mx * 1000), round(my * 1000))
         self.statusBar().showMessage(f"Jogging to X {x:.1f}  Y {y:.1f} mm", 4000)
+
+    def _on_align_mode_toggled(self, on):
+        """Arm the one-shot overlay-align pick (see the button tooltip)."""
+        if on and self._tool_xyz is None:
+            self.statusBar().showMessage(
+                "Connect the machine and wait for a live position first", 6000)
+            self.align_btn.setChecked(False)
+            return
+        self.preview.set_align_pick(on)
+        if on:                                   # exclusive with the other click modes
+            self.jog_chk.setChecked(False)
+            self.select_chk.setChecked(False)
+            self.move_chk.setChecked(False)
+            self.measure_chk.setChecked(False)
+            self.statusBar().showMessage(
+                "Click the design point the bit is PHYSICALLY at (Ctrl+click "
+                "clears the trim)", 10000)
+
+    def _on_align_pick(self, x, y, key):
+        """The user clicked where the bit really is: trim = clicked design point
+        minus the live machine position. Display/jog/progress only — never the
+        exported job coordinates."""
+        self.align_btn.setChecked(False)         # one-shot; also disarms the canvas
+        if "ctrl" in (key or ""):
+            self._overlay_trim = (0.0, 0.0)
+            self.preview.clear_tool_trail()
+            self.statusBar().showMessage("Overlay trim cleared", 6000)
+            return
+        if self._tool_xyz is None:
+            return
+        mx, my, _mz = self._tool_xyz
+        self._overlay_trim = (x - mx, y - my)
+        self.preview.clear_tool_trail()          # old crumbs are in the old frame
+        tx, ty = self._overlay_trim
+        self.statusBar().showMessage(
+            f"Overlay trimmed by dX {tx:+.2f}  dY {ty:+.2f} mm (display, jog and "
+            "progress only — the job itself is untouched)", 10000)
 
     def _on_jog_step(self, dx, dy):
         """Arrow-key relative jog from the preview: move the carriage by (dx, dy)
@@ -1958,12 +2017,17 @@ class MainWindow(QMainWindow):
         txt = f"●  X {x:8.2f}   Y {y:8.2f}   Z {z:8.2f}   mm"
         if self._z_zero is not None:
             txt += f"   surf {z - self._z_zero:+.2f}"     # depth below the zeroed surface
+        tx, ty = self._overlay_trim
+        if tx or ty:
+            txt += f"   Δ {tx:+.2f}/{ty:+.2f}"       # active overlay trim
         self.dro_label.setText(txt)
         self.dro_label.setStyleSheet(self._DRO_ON)
         self.touch_label.setText("bit ● TOUCHING" if touching else "bit ○ clear")
         self.touch_label.setStyleSheet(self._TOUCH_ON if touching else self._TOUCH_OFF)
-        self.preview.set_tool_position(x, y, touching)
-        self._update_run_progress(x, y, z)
+        # overlay, trail and progress matching live in the DESIGN frame — apply
+        # the trim; the label above keeps the RAW machine readout (VPanel-equal)
+        self.preview.set_tool_position(x + tx, y + ty, touching)
+        self._update_run_progress(x + tx, y + ty, z)
 
     def _on_probe_z(self):
         """Probe down from the current XY until the bit touches, then zero Z there."""
@@ -2371,6 +2435,7 @@ class MainWindow(QMainWindow):
             "clr_small": self.fresh_clear_small_edit.text(),
             "bed_bite": self.fresh_bed_spin.value(),
             "reg_method": self.regmethod_combo.currentIndex(),
+            "overlay_trim": list(self._overlay_trim),
             "fid": {"count": self.fid_count_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
@@ -2439,6 +2504,8 @@ class MainWindow(QMainWindow):
         self.fresh_clear_small_edit.setText(d.get("clr_small", "0.15"))
         _spin(self.fresh_bed_spin, d.get("bed_bite", 5.0))
         _combo(self.regmethod_combo, d.get("reg_method", 0))
+        trim = d.get("overlay_trim", [0.0, 0.0])
+        self._overlay_trim = (float(trim[0]), float(trim[1]))
         fd = d.get("fid", {})
         _spin(self.fid_count_spin, fd.get("count", 4))
         _combo(self.fid_place_combo, fd.get("place", 0))
@@ -2687,6 +2754,7 @@ class MainWindow(QMainWindow):
         if checked:
             self.move_chk.setChecked(False)   # rework-select and move are exclusive
             self.measure_chk.setChecked(False)
+            self.align_btn.setChecked(False)
             self.statusBar().showMessage(
                 "Rework: drag a box over the area to re-cut, then Export selected NC",
                 8000)
@@ -2708,6 +2776,7 @@ class MainWindow(QMainWindow):
         if checked:                           # ruler is exclusive with the drag modes
             self.select_chk.setChecked(False)
             self.move_chk.setChecked(False)
+            self.align_btn.setChecked(False)
             if self.jog_chk.isChecked():
                 self.jog_chk.setChecked(False)
             self.statusBar().showMessage(
@@ -2753,6 +2822,7 @@ class MainWindow(QMainWindow):
         if checked:
             self.select_chk.setChecked(False)
             self.measure_chk.setChecked(False)
+            self.align_btn.setChecked(False)
             self.statusBar().showMessage(
                 "Move: drag the design to reposition it on the bed", 8000)
 
