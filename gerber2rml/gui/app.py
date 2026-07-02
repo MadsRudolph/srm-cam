@@ -1548,21 +1548,21 @@ class MainWindow(QMainWindow):
         AMBER, GREEN = "#ffb000", "#33cc88"
         ds = self.double_sided_chk.isChecked()
         # Mirror + preview-frame are single-sided controls; in double-sided mode
-        # the View selector (Both/Bottom/Top) owns the frame, so grey these out
-        # rather than let them look like they do something.
+        # the frame resolver owns the frame, so grey these out rather than let
+        # them look like they do something.
         self.mirror_chk.setEnabled(not ds)
+        mode, side = self._resolve_frame()
         if ds:
             self.frame_combo.setEnabled(False)
-            side = self._ds_side()
-            if side == "Bottom":
-                self.preview.set_frame("AS MILLED  ·  bottom (mirrored)", AMBER)
-            elif side == "Top" and self._top_fit is not None:
-                self.preview.set_frame("AS PLACED  ·  top (fiducial fit)", GREEN)
-            elif side == "Top":
-                self.preview.set_frame("AS MILLED  ·  top (reflected)", AMBER)
-            else:
+            if mode == "xray":
                 self.preview.set_frame(
                     "AS DESIGNED  ·  X-ray, both layers register", GREEN)
+            elif side == "Bottom":
+                self.preview.set_frame("AS MILLED  ·  bottom (mirrored)", AMBER)
+            elif self._top_fit is not None:
+                self.preview.set_frame("AS PLACED  ·  top (fiducial fit)", GREEN)
+            else:
+                self.preview.set_frame("AS MILLED  ·  top (reflected)", AMBER)
             return
         mirror = self.mirror_chk.isChecked()
         self.frame_combo.setEnabled(mirror)   # only meaningful when mirroring
