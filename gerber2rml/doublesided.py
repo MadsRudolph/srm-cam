@@ -96,41 +96,62 @@ class FiducialSpec:
     ``placement='onboard'`` insets the holes ``edge_offset`` mm inside the board
     corners (permanent holes, no oversized stock — works for full-bed boards);
     ``'waste'`` outsets them ``edge_offset`` mm beyond the corners (clean board,
-    needs larger stock). Holes are through-holes drilled stock-only (board
+    needs larger stock). ``'manual'`` places them at ``points`` — free positions
+    for when neither corner scheme fits the stock (e.g. a large board with waste
+    only on some edges). Holes are through-holes drilled stock-only (board
     thickness + ``breakthrough``); they never take the dowel bed bite.
     """
     count: int = 4                     # 2..4
-    placement: str = "onboard"         # "onboard" | "waste"
+    placement: str = "onboard"         # "onboard" | "waste" | "manual"
     edge_offset: float = 4.0           # inset (onboard) / outset (waste), mm
     hole_diameter: float = 0.8         # mm (drilled with the single bit)
     breakthrough: float = 0.3          # mm past the board, for a clean through-hole
     allow_scale: bool = False          # fit uniform scale too?
     margin: float = 6.0                # positive-quadrant clearance (mm)
+    # manual placement: (x, y) pairs in DESIGN-frame board coordinates, relative
+    # to the framed board box's lower-left corner. May be negative / beyond the
+    # box to sit in the waste. The registration math only needs >=2 points with
+    # some spread; the flip axis stays the board centre either way.
+    points: tuple = ()
 
 
 # corner order: FL, FR, BR, BL. count=2 -> FL,BR (diagonal); 3 -> FL,FR,BL.
 _CORNER_PICK = {2: (0, 2), 3: (0, 1, 3), 4: (0, 1, 2, 3)}
 
 
-def _place_fiducials(gx0, gy0, gx1, gy1, spec):
+def _place_fiducials(gx0, gy0, gx1, gy1, spec, mirrored=False):
     """Return (align_holes, flip_pos, dx, dy) for fiducial registration.
 
     Corners are insets (onboard) or outsets (waste) of the framed board box; the
     whole job is then shifted into the positive quadrant with ``margin``. The
     flip axis stays the board's vertical centre line so the top reflects exactly
-    as in the dowel layout."""
-    off = spec.edge_offset
-    s = -1.0 if spec.placement == "onboard" else 1.0   # onboard insets inward
-    corners = [(gx0 - s * off, gy0 - s * off),         # FL
-               (gx1 + s * off, gy0 - s * off),         # FR
-               (gx1 + s * off, gy1 + s * off),         # BR
-               (gx0 - s * off, gy1 + s * off)]         # BL
-    n = max(2, min(4, spec.count))
-    picked = [corners[i] for i in _CORNER_PICK[n]]
+    as in the dowel layout.
+
+    ``placement='manual'`` uses ``spec.points`` (design-frame, relative to the
+    box's lower-left) verbatim. ``mirrored=True`` says the caller's box is the
+    bottom-up MACHINE frame, so manual points are mirrored across the box to
+    keep the physical holes where the design-frame preview showed them. Manual
+    fiducials are excluded from the positive-quadrant shift — dragging a pin
+    must not move the whole job; the bed/stock-fit checks flag out-of-range
+    pins instead."""
     cx = (gx0 + gx1) / 2.0
-    allminx = min(gx0, min(x for x, _ in picked))
-    allminy = min(gy0, min(y for _, y in picked))
-    dx, dy = spec.margin - allminx, spec.margin - allminy
+    if spec.placement == "manual" and spec.points:
+        w = gx1 - gx0
+        picked = [(gx0 + (w - px if mirrored else px), gy0 + py)
+                  for (px, py) in spec.points]
+        dx, dy = spec.margin - gx0, spec.margin - gy0     # board box only
+    else:
+        off = spec.edge_offset
+        s = -1.0 if spec.placement == "onboard" else 1.0   # onboard insets inward
+        corners = [(gx0 - s * off, gy0 - s * off),         # FL
+                   (gx1 + s * off, gy0 - s * off),         # FR
+                   (gx1 + s * off, gy1 + s * off),         # BR
+                   (gx0 - s * off, gy1 + s * off)]         # BL
+        n = max(2, min(4, spec.count))
+        picked = [corners[i] for i in _CORNER_PICK[n]]
+        allminx = min(gx0, min(x for x, _ in picked))
+        allminy = min(gy0, min(y for _, y in picked))
+        dx, dy = spec.margin - allminx, spec.margin - allminy
     align = [(x + dx, y + dy, spec.hole_diameter) for (x, y) in picked]
     return align, cx + dx, dx, dy
 
@@ -263,6 +284,7 @@ class DoubleSidedLayout:
     align_holes: list      # 2 dowel pins on the flip axis (the two waste edges)
     axis: str              # "vertical" (left-right flip) | "horizontal" (top-bottom)
     flip_pos: float        # the flip axis: constant x if vertical, constant y if horizontal
+    frame0: tuple = (0.0, 0.0)  # placed lower-left of the framed board box (mm)
 
 
 def _offset_layout(lay, offset):
@@ -275,7 +297,8 @@ def _offset_layout(lay, offset):
     h = lambda holes: [(x + dx, y + dy, d) for (x, y, d) in holes]
     kw = dict(bottom_copper=t(lay.bottom_copper), top_copper=t(lay.top_copper),
               outline=t(lay.outline), holes=h(lay.holes),
-              align_holes=h(lay.align_holes))
+              align_holes=h(lay.align_holes),
+              frame0=(lay.frame0[0] + dx, lay.frame0[1] + dy))
     if hasattr(lay, "top_outline"):
         kw["top_outline"] = t(lay.top_outline)
     return replace(lay, **kw)
@@ -304,7 +327,7 @@ def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
     gx0, gy0, gx1, gy1 = _frame(geoms)
     if registration == "fiducial":
         align_holes, flip_pos, dx, dy = _place_fiducials(
-            gx0, gy0, gx1, gy1, fiducials or FiducialSpec())
+            gx0, gy0, gx1, gy1, fiducials or FiducialSpec(), mirrored=True)
     else:
         align_holes, flip_pos, dx, dy = _place(gx0, gy0, gx1, gy1, dowels)
     bottom_copper = translate(copper, xoff=dx, yoff=dy)
@@ -315,7 +338,8 @@ def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
     top_outline = _reflect_geom(outline, axis, flip_pos)
     return _offset_layout(
         DoubleSidedLayout(bottom_copper, top_copper, outline, top_outline,
-                          holes, align_holes, axis, flip_pos), offset)
+                          holes, align_holes, axis, flip_pos,
+                          frame0=(gx0 + dx, gy0 + dy)), offset)
 
 
 @dataclass
@@ -332,6 +356,7 @@ class PreviewLayout:
     align_holes: list      # 2 dowel pins on the flip axis (the two waste edges)
     axis: str
     flip_pos: float
+    frame0: tuple = (0.0, 0.0)  # placed lower-left of the framed board box (mm)
 
 
 def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
@@ -357,7 +382,8 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0
     axis = "vertical" if registration == "fiducial" else _axis_of(dowels)
     return _offset_layout(
         PreviewLayout(bottom_copper, top_copper, outline, holes,
-                      align_holes, axis, flip_pos), offset)
+                      align_holes, axis, flip_pos,
+                      frame0=(gx0 + dx, gy0 + dy)), offset)
 
 
 def _align_drill(drill, dowels, align_depth, board_thickness,
