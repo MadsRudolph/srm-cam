@@ -104,6 +104,26 @@ spike (known GL-embedding quirk documented in `_open_sim_window`).
 - 3D remains a separate window for now.
 - Migration is incremental PRs on main, no long-lived rewrite branch.
 
+## Queued feature: hole-based flip registration
+
+Requested 2026-07-02: when fiducials can't be used (no waste for them, or the
+operator simply didn't plan them), align the two sides using **already-drilled
+board holes** as the reference points.
+
+- The math is already in place: `engine.fiducial.fit_transform` accepts any
+  2-4 point pairs with spread; the nominal positions of drilled holes after
+  the flip are `reflect_holes(mlay.holes, axis, flip_pos)` — exactly what the
+  Top drill view already renders.
+- UI sketch: in the flip-alignment flow, a "use board holes" option — pick
+  2-4 holes by clicking them on the preview (phase-1 snap-to-hole makes the
+  pick exact). Auto-suggest well-spread large-diameter holes (spread drives
+  fit accuracy; the probe/bit must fit the hole, so prefer >= bit diameter).
+  The dialog then works exactly like the fiducial one: jog the bit into each
+  hole on the flipped board, Capture, fit, warp the top traces.
+- Guidance to bake into the flow: far-apart holes, larger diameters, and the
+  Top view (reflected frame) to identify the same physical hole after the
+  flip.
+
 ## Open questions
 
 - Step schema: encode bit/spindle per step in presets, or infer from jobs?
