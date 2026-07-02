@@ -1280,6 +1280,25 @@ class MainWindow(QMainWindow):
         self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
         self._update_ds_controls()
 
+    # ---- GUI 2.0 phase 3: single frame resolver ---------------------------
+    def _resolve_frame(self):
+        """The ONE place that decides what frame the canvas shows.
+
+        Returns ``(mode, side)``: mode is ``"bed"`` (machine coordinates, as
+        cut/as placed — where jog, snap, rework and the probe grid are
+        truthful) or ``"xray"`` (un-mirrored design inspection); ``side`` is
+        ``"Bottom"``/``"Top"`` for double-sided bed views, else ``None``.
+
+        Phase-3 seam: initially derived from the legacy controls
+        (double_sided_chk + view_combo), so behaviour is unchanged while the
+        branch points migrate onto this. The frame_switch control replaces
+        the derivation in a later step.
+        """
+        if not self.double_sided_chk.isChecked():
+            return ("bed", None)
+        side = self._ds_side()
+        return ("bed", side) if side is not None else ("xray", None)
+
     _FID_PLACEMENTS = ("onboard", "waste", "manual")
 
     def _fiducial_spec_from_ui(self):

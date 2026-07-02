@@ -807,6 +807,21 @@ def test_top_view_pins_reflect_before_the_fit():
         assert abs(px - ex) < 1e-9 and abs(py - ey) < 1e-9
 
 
+def test_frame_resolver_truth_table():
+    # GUI 2.0 phase 3 seam: one function decides the canvas frame. Initially
+    # derived from the legacy controls with identical behaviour.
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    assert w._resolve_frame() == ("bed", None)          # single-sided = as milled
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Both sides")
+    assert w._resolve_frame() == ("xray", None)         # registration inspection
+    w.view_combo.setCurrentText("Bottom")
+    assert w._resolve_frame() == ("bed", "Bottom")
+    w.view_combo.setCurrentText("Top")
+    assert w._resolve_frame() == ("bed", "Top")
+
+
 def test_top_fit_survives_setup_roundtrip():
     from gerber2rml.engine.fiducial import Transform
     w = MainWindow()
