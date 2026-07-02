@@ -783,6 +783,30 @@ def test_fiducial_dialog_prefills_previous_measurements():
     assert dlg.measured() == [(11.5, 21.5), (31.5, 41.5)]
 
 
+def test_top_view_pins_reflect_before_the_fit():
+    # Regression: manual (asymmetric) fiducial pins rendered in the Top view
+    # without the flip reflection, so the AS PLACED fit pushed them mirrored —
+    # off the board and even outside the bed. Pins must be reflected into the
+    # top frame first, exactly like the drill holes.
+    from gerber2rml.engine.fiducial import Transform
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.fid_count_spin.setValue(2)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+    w.fid_place_combo.setCurrentIndex(2)            # manual placement
+    w._fid_points = [[-3.0, 5.0], [20.0, 30.0]]     # asymmetric about the axis
+    w.view_combo.setCurrentText("Top")
+    w.tabs.setCurrentIndex(1)                       # drill tab (draws pins too)
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)
+    w.generate_preview()
+    mlay = w._machine_layout()
+    exp = [(2 * mlay.flip_pos - x - 8.7, y + 14.3) for (x, y, _d) in mlay.align_holes]
+    assert len(w.preview._pins) == 2
+    for (px, py, _pd), (ex, ey) in zip(w.preview._pins, exp):
+        assert abs(px - ex) < 1e-9 and abs(py - ey) < 1e-9
+
+
 def test_top_fit_survives_setup_roundtrip():
     from gerber2rml.engine.fiducial import Transform
     w = MainWindow()
