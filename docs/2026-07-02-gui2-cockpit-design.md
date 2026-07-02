@@ -128,14 +128,32 @@ board holes** as the reference points.
 
 The manual fiducial capture (jog, drop the bit into each hole, Capture) is the
 most tedious step of the fiducial flip — requested repeatedly during the first
-real fiducial run (2026-07-02). Automate it with the existing SPI touch
-detection: for each nominal position, descend into the hole (no touch =
-inside), probe +X/−X/+Y/−Y until contact, compute the hole centre from the
-four touches, lift, next. Four holes ≈ 2 minutes, no operator jogging, more
-precise than a visual bit-drop. Combined with hole-based registration (above),
-this makes the fiducial flip LESS labor than dowels: flip → auto-align → cut.
-Pieces that already exist: `spi_probe.touch_off`, `spi_probe.jog_to`, the
-fit/export pipeline, and the AS PLACED preview.
+real fiducial run (2026-07-02).
+
+**Constraint that rules out wall-probing:** milled holes are NOT plated — the
+hole wall is bare FR-4, an insulator, so lateral touches inside the hole give
+no electrical signal. All probing must contact the TOP COPPER only. (Also,
+the standard 0.8 mm fiducial equals the bit diameter: zero lateral clearance.)
+
+Two rim-probing methods that respect this, using only ``touch_off``/``jog_to``:
+
+- **V-bit cone probing** (tool already loaded for V-bit jobs): the cone maps
+  lateral offset to contact HEIGHT — centred, it descends deepest before the
+  flank meets the copper rim; off-centre, contact comes earlier. Touch off in
+  a small cross/star around the nominal (~5–9 points), fit the Z bowl, its
+  minimum is the centre. A 30° cone amplifies offset→Z by ~1/tan(15°) ≈ 3.7×,
+  so ~0.01 mm centring is realistic.
+- **Flat-bit window search** (bit strictly smaller than the hole, e.g. 0.4 mm
+  in a 0.8 fiducial, or 0.8 mm in ≥1.2 mm board holes for hole-based
+  registration): touch depth is binary — rim contact at surface height until
+  the whole face is inside, then a deep plunge. Binary-search the X and Y
+  edges of the falls-in window; the midpoints are the centre.
+
+A same-size bit in a same-size hole (0.8 in 0.8) is the one degenerate case —
+the flow should detect it and ask for the V-bit or bigger reference holes.
+Four holes ≈ 2 minutes, no operator jogging. Combined with hole-based
+registration (above), the fiducial flip becomes LESS labor than dowels:
+flip → auto-align → cut.
 
 ## Open questions
 
