@@ -153,6 +153,15 @@ class PreviewCanvas(QWidget):
         self._jogging = False
         self.on_jog_to = None             # callback(x, y) set by the app
 
+        # Fiducial pin drag (manual fiducial placement): when enabled, a
+        # left-drag that starts on one of the gold pins moves it; the final
+        # position is reported so the app can persist it. Off by default —
+        # the app turns it on only for manual fiducial mode.
+        self._pin_drag = False
+        self._pin_drag_idx = None
+        self._pin_artists = []
+        self.on_pin_moved = None          # callback(index, x, y) set by the app
+
         # Arrow-key carriage jog: while the mouse is over the preview, the arrow
         # keys nudge the machine in X/Y. on_jog_step(dx, dy) reports a signed
         # step in board mm; the app turns it into a relative machine move.
@@ -570,12 +579,8 @@ class PreviewCanvas(QWidget):
                             s=15, c="#ff5555", marker="+")
         # dowel/alignment holes: always drawn in full (registration features,
         # never scrubbed away) and clearly distinct from the board's own holes
-        for (x, y, d) in self._pins:
-            self.ax.add_patch(Circle((x, y), max(d, 0.1) / 2.0, fill=False,
-                                     edgecolor="#ffd700", linewidth=2.0, zorder=6))
-        if self._pins:
-            self.ax.scatter([p[0] for p in self._pins], [p[1] for p in self._pins],
-                            s=80, c="#ffd700", marker="+", zorder=6)
+        self._pin_artists = []
+        self._add_pins()
         if self._view_limits is not None:    # user zoom/pan overrides the auto-fit
             x0, x1, y0, y1 = self._view_limits
             self.ax.set_xlim(x0, x1)
@@ -619,6 +624,54 @@ class PreviewCanvas(QWidget):
                          bbox=dict(boxstyle="round,pad=0.3", facecolor="#ff4444",
                                    edgecolor="none", alpha=0.95))
         self.canvas.draw_idle()
+
+    # ---- Fiducial pin drag (manual placement) -----------------------------
+    def _add_pins(self):
+        """Draw the dowel/fiducial pins (gold), remembering the artists so a
+        live pin drag can redraw just them."""
+        for (x, y, d) in self._pins:
+            c = Circle((x, y), max(d, 0.1) / 2.0, fill=False,
+                       edgecolor="#ffd700", linewidth=2.0, zorder=6)
+            self.ax.add_patch(c)
+            self._pin_artists.append(c)
+        if self._pins:
+            self._pin_artists.append(self.ax.scatter(
+                [p[0] for p in self._pins], [p[1] for p in self._pins],
+                s=80, c="#ffd700", marker="+", zorder=6))
+
+    def _redraw_pins_only(self):
+        """Cheap update of just the pin markers during a live drag."""
+        for a in self._pin_artists:
+            try:
+                a.remove()
+            except (ValueError, NotImplementedError):
+                pass
+        self._pin_artists = []
+        self._add_pins()
+        self.canvas.draw_idle()
+
+    def set_pin_drag(self, on):
+        """Allow left-dragging the gold pins (manual fiducial placement). Unlike
+        the other modes this is passive: a drag that does not start on a pin
+        falls through to whatever else is active."""
+        self._pin_drag = bool(on)
+        if not on:
+            self._pin_drag_idx = None
+
+    def _pin_hit(self, x, y):
+        """Index of the pin under (x, y) within a view-relative tolerance, or
+        None. Tolerance matches the ruler snap so pins are grabbable zoomed out."""
+        if x is None or y is None or not self._pins:
+            return None
+        x0, x1 = sorted(self.ax.get_xlim())
+        y0, y1 = sorted(self.ax.get_ylim())
+        tol = 0.03 * max(x1 - x0, y1 - y0, 1e-6)
+        best, bestd = None, tol
+        for i, (px, py, _d) in enumerate(self._pins):
+            d = math.hypot(x - px, y - py)
+            if d < bestd:
+                bestd, best = d, i
+        return best
 
     # ---- Rework box-selection -------------------------------------------
     def set_selecting(self, on):
@@ -705,6 +758,12 @@ class PreviewCanvas(QWidget):
             return
         if event.button != 1:
             return
+        if self._pin_drag and not (self._jogging or self._measuring
+                                   or self._selecting or self._moving):
+            hit = self._pin_hit(event.xdata, event.ydata)
+            if hit is not None:
+                self._pin_drag_idx = hit
+                return
         if self._jogging:
             if self.on_jog_to and event.xdata is not None and event.ydata is not None:
                 self.on_jog_to(event.xdata, event.ydata)
@@ -728,6 +787,11 @@ class PreviewCanvas(QWidget):
             return
         if event.xdata is None or event.ydata is None:
             return
+        if self._pin_drag_idx is not None:
+            i = self._pin_drag_idx
+            self._pins[i] = (event.xdata, event.ydata, self._pins[i][2])
+            self._redraw_pins_only()
+            return
         if self._measure_start is not None:
             sx, sy, _ = self._snap(event.xdata, event.ydata)
             x0, y0 = self._measure_start
@@ -746,6 +810,12 @@ class PreviewCanvas(QWidget):
         if self._panning:
             self.ax.end_pan()
             self._panning = False
+            return
+        if self._pin_drag_idx is not None:
+            i, self._pin_drag_idx = self._pin_drag_idx, None
+            px, py, _d = self._pins[i]
+            if self.on_pin_moved:
+                self.on_pin_moved(i, px, py)
             return
         if self._measure_start is not None:
             self._measure_start = None       # keep the finished ruler displayed

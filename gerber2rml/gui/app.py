@@ -677,10 +677,16 @@ class MainWindow(QMainWindow):
         self.fid_count_spin.setToolTip("How many corner fiducial holes (2-4).")
         self.fid_count_spin.valueChanged.connect(self._on_reg_changed)
         self.fid_place_combo = QComboBox()
-        self.fid_place_combo.addItems(["On board", "In waste"])
+        self.fid_place_combo.addItems(["On board", "In waste", "Manual (drag pins)"])
+        # manual fiducial positions, board-relative design-frame mm (lower-left
+        # of the framed board box = (0, 0)); seeded from the corner placement
+        # when Manual is first selected, then edited by dragging the gold pins.
+        self._fid_points = []
         self.fid_place_combo.setToolTip(
             "On board: holes inset inside the corners (permanent, works full-bed). "
-            "In waste: holes outset beyond the board (clean board, bigger stock).")
+            "In waste: holes outset beyond the board (clean board, bigger stock). "
+            "Manual: drag the gold pins on the preview to place each hole freely "
+            "— for large boards where the corner schemes don't fit the stock.")
         self.fid_place_combo.currentIndexChanged.connect(self._on_reg_changed)
         self.fid_offset_spin = QDoubleSpinBox()
         self.fid_offset_spin.setRange(0.5, 30.0); self.fid_offset_spin.setSingleStep(0.5)
@@ -977,6 +983,7 @@ class MainWindow(QMainWindow):
         self.preview.on_region_added = self._on_region_added
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
+        self.preview.on_pin_moved = self._on_fid_pin_moved
         self.preview.on_jog_step = self._on_jog_step
         # The panel collapse toggle lives on the viewer's control bar.
         self.preview.on_toggle_panel = self._on_toggle_panel
@@ -1122,7 +1129,8 @@ class MainWindow(QMainWindow):
         off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
                spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
-               fid.count, fid.placement, fid.edge_offset, off, self.state.rotate)
+               fid.count, fid.placement, fid.edge_offset, fid.points,
+               off, self.state.rotate)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
@@ -1141,7 +1149,8 @@ class MainWindow(QMainWindow):
         off = (self.state.place_x, self.state.place_y)
         key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
                spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
-               fid.count, fid.placement, fid.edge_offset, off, self.state.rotate)
+               fid.count, fid.placement, fid.edge_offset, fid.points,
+               off, self.state.rotate)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
@@ -1197,14 +1206,51 @@ class MainWindow(QMainWindow):
         self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
         self._update_ds_controls()
 
+    _FID_PLACEMENTS = ("onboard", "waste", "manual")
+
     def _fiducial_spec_from_ui(self):
         from gerber2rml.doublesided import FiducialSpec
+        placement = self._FID_PLACEMENTS[self.fid_place_combo.currentIndex()]
         return FiducialSpec(
             count=self.fid_count_spin.value(),
-            placement=("waste" if self.fid_place_combo.currentIndex() == 1
-                       else "onboard"),
+            placement=placement,
             edge_offset=self.fid_offset_spin.value(),
-            allow_scale=self.fid_scale_chk.isChecked())
+            allow_scale=self.fid_scale_chk.isChecked(),
+            points=(tuple(tuple(p) for p in self._fid_points)
+                    if placement == "manual" else ()))
+
+    def _seed_fid_points(self):
+        """Start manual fiducials where the corner placement would put them:
+        compute a waste-corner layout and convert its pins to board-relative
+        coordinates. Called when Manual is selected with no (or a mismatched
+        number of) stored points."""
+        from gerber2rml.doublesided import preview_layout_double_sided, FiducialSpec
+        if self.state.board is None or self.state.gerber_dir is None:
+            return
+        spec = FiducialSpec(count=self.fid_count_spin.value(), placement="waste",
+                            edge_offset=self.fid_offset_spin.value())
+        lay = preview_layout_double_sided(
+            self.state.gerber_dir, dowels=self._dowel_spec(),
+            offset=(self.state.place_x, self.state.place_y),
+            rotate=self.state.rotate, registration="fiducial", fiducials=spec)
+        fx0, fy0 = lay.frame0
+        self._fid_points = [[x - fx0, y - fy0] for (x, y, _d) in lay.align_holes]
+
+    def _on_fid_pin_moved(self, index, x, y):
+        """A gold pin was dragged on the preview (manual fiducial mode): store
+        its new board-relative position and rebuild the preview so the layouts
+        (and the export) pick it up."""
+        if (self._FID_PLACEMENTS[self.fid_place_combo.currentIndex()] != "manual"
+                or index >= len(self._fid_points)):
+            return
+        lay = self._double_sided_layout()
+        fx0, fy0 = lay.frame0
+        self._fid_points[index] = [x - fx0, y - fy0]
+        self.generate_preview()
+        px, py = self._fid_points[index]
+        self.statusBar().showMessage(
+            f"Fiducial {index + 1} -> ({px:+.2f}, {py:+.2f}) mm from the board's "
+            "lower-left corner", 8000)
 
     def _update_ds_controls(self):
         """Reveal the registration controls only when double-sided is on, show the
@@ -1235,6 +1281,15 @@ class MainWindow(QMainWindow):
     def _on_reg_changed(self, *_):
         self._update_ds_controls()
         self._autofit_panel()                    # dowel/grid/fresh/fiducial rows differ in width
+        manual = self.fid_place_combo.currentIndex() == 2
+        self.fid_offset_spin.setEnabled(not manual)   # offset is corner-mode only
+        if (manual and self._registration_mode() == "fiducial"
+                and self.double_sided_chk.isChecked()
+                and len(self._fid_points) != self.fid_count_spin.value()):
+            self._seed_fid_points()              # start from the corner positions
+            self.statusBar().showMessage(
+                "Manual fiducials: drag the gold pins on the preview to place "
+                "them (anywhere with stock under them).", 10000)
         if self.double_sided_chk.isChecked():
             self.generate_preview()
 
@@ -1264,6 +1319,7 @@ class MainWindow(QMainWindow):
         drill tab only."""
         from gerber2rml.engine.traces import isolate
         side = self._ds_side()
+        self.preview.set_pin_drag(False)   # re-enabled by the X-ray branch below
         if side is not None and op != "drill":
             # Single side: show it in the MACHINE frame (as actually cut) so a
             # rework box maps to real toolpath coordinates. Keep the channel
@@ -1306,6 +1362,11 @@ class MainWindow(QMainWindow):
         self.preview.show_segments(bottom_cuts, bottom_rapids, holes=holes,
                                    top_cuts=top_cuts, pins=lay.align_holes,
                                    copper=copper)
+        # manual fiducials are dragged in THIS (design-frame) view only — the
+        # single-side machine-frame views stay read-only
+        self.preview.set_pin_drag(
+            self._registration_mode() == "fiducial"
+            and self.fid_place_combo.currentIndex() == 2)
 
     def _drill_status(self):
         """Human summary of the hole diameters and what export will produce,
@@ -1360,6 +1421,7 @@ class MainWindow(QMainWindow):
             return
         self._sync_state()
         self._apply_preview_frame()
+        self.preview.set_pin_drag(False)      # only the DS X-ray view re-enables it
         bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
         self.preview.set_bed(bed)
         oxy, holes = self._snap_geometry()
@@ -2308,6 +2370,12 @@ class MainWindow(QMainWindow):
             "clr_large": self.fresh_clear_large_edit.text(),
             "clr_small": self.fresh_clear_small_edit.text(),
             "bed_bite": self.fresh_bed_spin.value(),
+            "reg_method": self.regmethod_combo.currentIndex(),
+            "fid": {"count": self.fid_count_spin.value(),
+                    "place": self.fid_place_combo.currentIndex(),
+                    "offset": self.fid_offset_spin.value(),
+                    "scale": self.fid_scale_chk.isChecked(),
+                    "points": [list(p) for p in self._fid_points]},
             "stock": {"w": self.stock_w_spin.value(), "h": self.stock_h_spin.value(),
                       "x": self.stock_x_spin.value(), "y": self.stock_y_spin.value(),
                       "show": self.stock_show_chk.isChecked()},
@@ -2370,6 +2438,14 @@ class MainWindow(QMainWindow):
         self.fresh_clear_large_edit.setText(d.get("clr_large", "0.2"))
         self.fresh_clear_small_edit.setText(d.get("clr_small", "0.15"))
         _spin(self.fresh_bed_spin, d.get("bed_bite", 5.0))
+        _combo(self.regmethod_combo, d.get("reg_method", 0))
+        fd = d.get("fid", {})
+        _spin(self.fid_count_spin, fd.get("count", 4))
+        _combo(self.fid_place_combo, fd.get("place", 0))
+        _spin(self.fid_offset_spin, fd.get("offset", 4.0))
+        _chk(self.fid_scale_chk, fd.get("scale", False))
+        self._fid_points = [list(p) for p in fd.get("points", [])]
+        self.fid_offset_spin.setEnabled(self.fid_place_combo.currentIndex() != 2)
         _combo(self.view_combo, d.get("view", 0))
         _chk(self.double_sided_chk, d.get("double_sided", False))
         self._update_ds_controls()
