@@ -484,7 +484,9 @@ class MainWindow(QMainWindow):
         self.jog_chk.setEnabled(False)        # only meaningful while connected
         self.jog_chk.setToolTip(
             "Click a point on the preview to move the tool there (lifts ~5 mm "
-            "first, then travels XY). Needs the machine connected.")
+            "first, then travels XY). Clicks snap to the nearest drill hole or "
+            "dowel/fiducial pin when one is close — Ctrl+click for the exact "
+            "clicked position. Needs the machine connected.")
         self.jog_chk.toggled.connect(self._on_jog_mode_toggled)
         self.trail_chk = QCheckBox("Trail")
         self.trail_chk.setChecked(True)

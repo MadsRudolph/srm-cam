@@ -191,6 +191,47 @@ def test_copper_fill_handles_empty_and_none():
     assert _copper_patches(canvas) == []
 
 
+class _JogEvt:
+    def __init__(self, canvas, x, y, key=None):
+        self.xdata, self.ydata = x, y
+        self.button = 1
+        self.inaxes = canvas.ax
+        self.key = key
+
+
+def test_jog_click_snaps_to_displayed_hole():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (100, 0)]], [],
+                         holes=[(40.0, 20.0, 0.8)], pins=[(70.0, 5.0, 4.0)])
+    seen = []
+    canvas.on_jog_to = lambda x, y: seen.append((x, y))
+    canvas.set_jogging(True)
+    canvas._on_press(_JogEvt(canvas, 40.6, 20.4))       # near the hole -> snaps
+    assert seen[-1] == (40.0, 20.0)
+    canvas._on_press(_JogEvt(canvas, 70.8, 5.5))        # near the pin -> snaps
+    assert seen[-1] == (70.0, 5.0)
+
+
+def test_jog_click_far_from_features_is_raw():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (100, 0)]], [], holes=[(40.0, 20.0, 0.8)])
+    seen = []
+    canvas.on_jog_to = lambda x, y: seen.append((x, y))
+    canvas.set_jogging(True)
+    canvas._on_press(_JogEvt(canvas, 90.0, 60.0))       # nothing nearby
+    assert seen[-1] == (90.0, 60.0)
+
+
+def test_jog_ctrl_click_bypasses_snap():
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (100, 0)]], [], holes=[(40.0, 20.0, 0.8)])
+    seen = []
+    canvas.on_jog_to = lambda x, y: seen.append((x, y))
+    canvas.set_jogging(True)
+    canvas._on_press(_JogEvt(canvas, 40.6, 20.4, key="control"))
+    assert seen[-1] == (40.6, 20.4)                     # exact clicked position
+
+
 def test_bed_fit_flag_and_view_includes_bed():
     canvas = PreviewCanvas()
     canvas.set_bed((203.2, 152.4))
