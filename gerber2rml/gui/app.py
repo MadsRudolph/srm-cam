@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
 from pathlib import Path
+import math
 import sys
 import time
 
@@ -294,6 +295,11 @@ class MainWindow(QMainWindow):
         self.double_sided_chk.toggled.connect(self._on_double_sided_toggled)
         self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
         self._ds_mcache = None  # machine-frame layout cache (single-side rework/preview)
+        # Measured top-side placement (engine.fiducial.Transform) from the last
+        # fiducial fit: where the flipped board REALLY sits. When set, the Top
+        # views render AS PLACED — warped by it — so click-to-jog, snapping,
+        # rework boxes and run tracking land on the physical board.
+        self._top_fit = None
         self._rework_regions = []  # [{bbox, depth, follow, color}] multi-region rework
 
         # single-sided preview orientation: the milled (mirrored) cut, or the
@@ -1143,6 +1149,8 @@ class MainWindow(QMainWindow):
         self._sync_state()
         self.state.load(folder)
         self.preview._view_limits = None        # new board -> fit (clear any zoom)
+        self._top_fit = None                    # placement is per-physical-board
+        # (a setup restore re-applies its saved fit after this call)
         # any successful load clears the DEMO badge — this covers Load setup /
         # session restore too, not just the Load Gerber folder button. The
         # launch-time preload re-sets the badge right after this call.
@@ -1216,14 +1224,18 @@ class MainWindow(QMainWindow):
     def _ds_side_toolpaths(self, op, side):
         """Machine-frame toolpaths for one side of a double-sided board — exactly
         what that side's exported job cuts, so a rework box clips against the real
-        paths and the result runs in the same frame as the full job."""
+        paths and the result runs in the same frame as the full job. The Top side
+        is warped by the measured fiducial fit when one exists, matching the
+        as-placed export — so top-side rework and run tracking follow the board's
+        REAL position, not the nominal flip."""
         from gerber2rml.engine.traces import isolate
         from gerber2rml.engine.cutout import cut_outline
         mlay = self._machine_layout()
         if op == "cutout":
             return cut_outline(mlay.outline, self.state.cutout)
         if side == "Top":
-            return isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline)
+            return self._top_fit_paths(
+                isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline))
         return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
 
     def _on_advanced_toggled(self, on):
@@ -1358,6 +1370,28 @@ class MainWindow(QMainWindow):
             return None, None
         return self._poly_xy(b.outline), b.holes
 
+    # ---- measured top-side placement (fiducial fit) ------------------------
+    def _top_fit_paths(self, paths):
+        """Warp toolpaths by the measured top placement (identity when unset)."""
+        if self._top_fit is None:
+            return paths
+        from gerber2rml.engine.fiducial import apply_to_toolpaths
+        return apply_to_toolpaths(paths, self._top_fit)
+
+    def _top_fit_holes(self, holes):
+        if self._top_fit is None:
+            return holes
+        return [(*self._top_fit.apply(x, y), d) for (x, y, d) in holes]
+
+    def _top_fit_geom(self, g):
+        if self._top_fit is None or g is None:
+            return g
+        from shapely.affinity import affine_transform
+        t = self._top_fit
+        c, s = math.cos(t.theta), math.sin(t.theta)
+        return affine_transform(g, [t.scale * c, -t.scale * s,
+                                    t.scale * s, t.scale * c, t.tx, t.ty])
+
     def _preview_double_sided(self, op):
         """Show the registered board with the two dowel/alignment holes so the
         operator can check the flip registration and pin placement before
@@ -1376,29 +1410,40 @@ class MainWindow(QMainWindow):
             from gerber2rml.doublesided import reflect_holes
             mlay = self._machine_layout()
             if side == "Top":
-                # after the flip the holes appear reflected into the top frame
-                holes = reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)
-                outline, copper = mlay.top_outline, (mlay.top_copper, "#ff55ff")
+                # after the flip the holes appear reflected into the top frame;
+                # a measured fiducial fit then places them where the board
+                # REALLY sits (AS PLACED), so jog-to-hole is physically true
+                holes = self._top_fit_holes(
+                    reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos))
+                outline = self._top_fit_geom(mlay.top_outline)
+                copper = (self._top_fit_geom(mlay.top_copper), "#ff55ff")
+                pins = self._top_fit_holes(mlay.align_holes)
             else:
                 holes = mlay.holes
                 outline, copper = mlay.outline, (mlay.bottom_copper, "#00ffff")
+                pins = mlay.align_holes
             cuts, rapids = toolpath_segments(self._drill_toolpaths(holes))
             self.preview.set_board_outline(self._poly_xy(outline))
             self.preview.show_segments(cuts, rapids, holes=holes,
-                                       pins=mlay.align_holes, copper=[copper])
+                                       pins=pins, copper=[copper])
             return
         if side is not None and op != "drill":
             # Single side: show it in the MACHINE frame (as actually cut) so a
             # rework box maps to real toolpath coordinates. Keep the channel
-            # contract: Bottom -> bottom cuts, Top -> top cuts.
+            # contract: Bottom -> bottom cuts, Top -> top cuts. The Top side is
+            # additionally warped by the measured fiducial fit when one exists
+            # (the toolpaths come pre-warped from _ds_side_toolpaths).
             mlay = self._machine_layout()
             cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
-            outline = mlay.top_outline if side == "Top" else mlay.outline
-            self.preview.set_board_outline(self._poly_xy(outline))
             if side == "Top":
-                self.preview.show_segments([], [], top_cuts=cuts, pins=mlay.align_holes,
-                                           copper=[(mlay.top_copper, "#ff55ff")])
+                self.preview.set_board_outline(
+                    self._poly_xy(self._top_fit_geom(mlay.top_outline)))
+                self.preview.show_segments(
+                    [], [], top_cuts=cuts,
+                    pins=self._top_fit_holes(mlay.align_holes),
+                    copper=[(self._top_fit_geom(mlay.top_copper), "#ff55ff")])
             else:
+                self.preview.set_board_outline(self._poly_xy(mlay.outline))
                 self.preview.show_segments(cuts, rapids, pins=mlay.align_holes,
                                            copper=[(mlay.bottom_copper, "#00ffff")])
             return
@@ -1469,6 +1514,8 @@ class MainWindow(QMainWindow):
             side = self._ds_side()
             if side == "Bottom":
                 self.preview.set_frame("AS MILLED  ·  bottom (mirrored)", AMBER)
+            elif side == "Top" and self._top_fit is not None:
+                self.preview.set_frame("AS PLACED  ·  top (fiducial fit)", GREEN)
             elif side == "Top":
                 self.preview.set_frame("AS MILLED  ·  top (reflected)", AMBER)
             else:
@@ -2480,11 +2527,16 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Fit/export failed", str(e))
             return
+        # remember the measured placement: the Top views now render AS PLACED,
+        # so jog/snap/rework/tracking land on the physical board
+        self._top_fit = t
+        self.generate_preview()
         self.statusBar().showMessage(
             f"Wrote {path.name} — fit RMS {err * 1000:.0f} um, "
             f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}"
             + (", leveled to the top probe" if level is not None
-               else ", UNLEVELED"), 12000)
+               else ", UNLEVELED")
+            + " — Top views now show the board AS PLACED", 12000)
 
     # ---- save / load the whole setup -----------------------------------
     def _collect_setup(self):
@@ -2522,6 +2574,9 @@ class MainWindow(QMainWindow):
             "bed_bite": self.fresh_bed_spin.value(),
             "reg_method": self.regmethod_combo.currentIndex(),
             "overlay_trim": list(self._overlay_trim),
+            "top_fit": ([self._top_fit.theta, self._top_fit.scale,
+                         self._top_fit.tx, self._top_fit.ty]
+                        if self._top_fit is not None else None),
             "fid": {"count": self.fid_count_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
@@ -2592,6 +2647,10 @@ class MainWindow(QMainWindow):
         _combo(self.regmethod_combo, d.get("reg_method", 0))
         trim = d.get("overlay_trim", [0.0, 0.0])
         self._overlay_trim = (float(trim[0]), float(trim[1]))
+        tf = d.get("top_fit")
+        if tf:
+            from gerber2rml.engine.fiducial import Transform
+            self._top_fit = Transform(*[float(v) for v in tf])
         fd = d.get("fid", {})
         _spin(self.fid_count_spin, fd.get("count", 4))
         _combo(self.fid_place_combo, fd.get("place", 0))
