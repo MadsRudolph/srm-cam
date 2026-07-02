@@ -2451,6 +2451,21 @@ class MainWindow(QMainWindow):
         import math
         from gerber2rml.doublesided import build_top_traces
         from gerber2rml.engine.fiducial import fit_transform, rms
+        # XY comes from the fiducial fit; Z from a top-side height map when one
+        # has been probed. Exporting unleveled on a warped bed can air-cut, so
+        # make skipping it an explicit choice.
+        level = self._level_heightmap_preview()
+        if level is None:
+            if QMessageBox.question(
+                    self, "No top-side height map",
+                    "No probed height map — the top traces would be exported "
+                    "UNLEVELED.\n\nOn an uneven bed this can cut too shallow "
+                    "(air) or too deep. Probe the flipped board first "
+                    "(View=Top, Build grid, Probe over SPI), or export "
+                    "unleveled anyway?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    ) != QMessageBox.Yes:
+                return
         try:
             t = fit_transform(nominal[:len(measured)], measured,
                               allow_scale=fid.allow_scale)
@@ -2460,13 +2475,16 @@ class MainWindow(QMainWindow):
                 trace=self.state.trace, machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
                 rotate=self.state.rotate, registration="fiducial", fiducials=fid,
-                measured_fiducials=measured, allow_scale=fid.allow_scale)
+                measured_fiducials=measured, allow_scale=fid.allow_scale,
+                level=level)
         except Exception as e:
             QMessageBox.critical(self, "Fit/export failed", str(e))
             return
         self.statusBar().showMessage(
             f"Wrote {path.name} — fit RMS {err * 1000:.0f} um, "
-            f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}", 12000)
+            f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}"
+            + (", leveled to the top probe" if level is not None
+               else ", UNLEVELED"), 12000)
 
     # ---- save / load the whole setup -----------------------------------
     def _collect_setup(self):
