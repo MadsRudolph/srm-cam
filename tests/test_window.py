@@ -585,6 +585,56 @@ def test_double_sided_preview_shows_both_sides_and_dowels():
     for (px, py, _d) in w.preview._pins:
         assert x0 <= px <= x1 and y0 <= py <= y1
 
+def test_manual_fiducials_seed_drag_and_persist(tmp_path):
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+    w.fid_place_combo.setCurrentIndex(2)            # Manual (drag pins)
+    # switching to Manual seeds one point per fiducial from the corner layout
+    assert len(w._fid_points) == w.fid_count_spin.value()
+    assert w.preview._pin_drag is True              # pins are draggable in X-ray
+    assert not w.fid_offset_spin.isEnabled()        # corner offset is moot now
+    # drag pin 0 somewhere else on the canvas: the layout must follow it exactly
+    lay = w._double_sided_layout()
+    tx, ty = lay.frame0[0] - 3.0, lay.frame0[1] + 12.0   # into the left waste
+    w._on_fid_pin_moved(0, tx, ty)
+    lay2 = w._double_sided_layout()
+    assert abs(lay2.align_holes[0][0] - tx) < 1e-6
+    assert abs(lay2.align_holes[0][1] - ty) < 1e-6
+    assert abs(lay2.flip_pos - lay.flip_pos) < 1e-6      # flip axis unmoved
+    # the machine (export) layout drills the same physical hole: mirrored x
+    mlay = w._machine_layout()
+    px = tx - lay2.frame0[0]                             # board-relative x
+    mx = mlay.align_holes[0][0] - mlay.frame0[0]
+    bw = ((lay2.align_holes[1][0] - lay2.frame0[0])
+          + (mlay.align_holes[1][0] - mlay.frame0[0]))   # box width invariant
+    assert abs((px + mx) - bw) < 1e-6
+    # settings + points survive a session save/load round trip
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2.fid_place_combo.currentIndex() == 2
+    assert w2.regmethod_combo.currentIndex() == 1
+    assert len(w2._fid_points) == len(w._fid_points)
+    assert abs(w2._fid_points[0][0] - w._fid_points[0][0]) < 1e-6
+
+
+def test_pin_drag_disabled_outside_manual_fiducial_mode():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial, corner placement
+    w.generate_preview()
+    assert w.preview._pin_drag is False
+    w.regmethod_combo.setCurrentIndex(0)            # dowels
+    w.generate_preview()
+    assert w.preview._pin_drag is False
+    w.double_sided_chk.setChecked(False)            # single-sided
+    w.generate_preview()
+    assert w.preview._pin_drag is False
+
+
 def test_double_sided_cutout_tab_shows_edge_cut_not_traces():
     # Regression: in double-sided 'Both sides' view the Cutout tab used to keep
     # drawing the trace isolation; it must show the edge-cut path instead.

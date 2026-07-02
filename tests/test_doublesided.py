@@ -346,6 +346,56 @@ def test_dowel_still_default():
     assert len(lay.align_holes) == 2                 # unchanged dowel behaviour
 
 
+def test_fiducial_manual_points_land_where_placed():
+    # manual points are board-relative (design frame, lower-left of the framed
+    # box); the machine layout mirrors them so the PHYSICAL holes match what the
+    # design-frame preview shows.
+    from gerber2rml.doublesided import preview_layout_double_sided
+    pts = ((-3.0, -3.0), (10.0, 25.0))               # one in waste, one on board
+    spec = FiducialSpec(count=2, placement="manual", points=pts)
+    prev = preview_layout_double_sided(FIXT, registration="fiducial", fiducials=spec)
+    fx0, fy0 = prev.frame0
+    for (px, py), (hx, hy, _d) in zip(pts, prev.align_holes):
+        assert abs(hx - (fx0 + px)) < 1e-6 and abs(hy - (fy0 + py)) < 1e-6
+    # machine frame: same physical spots -> x mirrored across the board box, so
+    # (dist from box left in preview) + (dist from box left in machine) is the
+    # box width — one constant for every point; y is untouched.
+    mach = layout_double_sided(FIXT, registration="fiducial", fiducials=spec)
+    mx0, my0 = mach.frame0
+    sums = [(hp[0] - fx0) + (hm[0] - mx0)
+            for hp, hm in zip(prev.align_holes, mach.align_holes)]
+    assert abs(sums[0] - sums[1]) < 1e-6
+    for (px, py), (hx, hy, _d) in zip(pts, mach.align_holes):
+        assert abs(hy - (my0 + py)) < 1e-6
+
+
+def test_fiducial_manual_flip_pos_stays_board_centre():
+    # the realignment reflection must not move when fiducials are dragged
+    spec_a = FiducialSpec(count=2, placement="manual",
+                          points=((-3.0, -3.0), (10.0, 25.0)))
+    spec_b = FiducialSpec(count=2, placement="manual",
+                          points=((-8.0, 2.0), (30.0, 12.0)))
+    lay_a = layout_double_sided(FIXT, registration="fiducial", fiducials=spec_a)
+    lay_b = layout_double_sided(FIXT, registration="fiducial", fiducials=spec_b)
+    assert abs(lay_a.flip_pos - lay_b.flip_pos) < 1e-6
+    assert lay_a.outline.bounds == lay_b.outline.bounds   # board did not move
+
+
+def test_fiducial_manual_empty_points_falls_back_to_corners():
+    spec = FiducialSpec(count=4, placement="manual", points=())
+    lay = layout_double_sided(FIXT, registration="fiducial", fiducials=spec)
+    assert len(lay.align_holes) == 4                 # graceful corner fallback
+
+
+def test_fiducial_manual_nominal_top_still_reflected():
+    spec = FiducialSpec(count=2, placement="manual",
+                        points=((-4.0, 5.0), (22.0, 30.0)))
+    lay = layout_double_sided(FIXT, registration="fiducial", fiducials=spec)
+    nom = nominal_top_fiducials(lay)
+    for (hx, hy, _), (nx, ny) in zip(lay.align_holes, nom):
+        assert abs(nx - (2 * lay.flip_pos - hx)) < 1e-6 and abs(ny - hy) < 1e-6
+
+
 from gerber2rml.doublesided import build_double_sided, build_top_traces
 
 
