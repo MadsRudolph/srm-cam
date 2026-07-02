@@ -585,6 +585,45 @@ def test_double_sided_preview_shows_both_sides_and_dowels():
     for (px, py, _d) in w.preview._pins:
         assert x0 <= px <= x1 and y0 <= py <= y1
 
+def test_overlay_trim_pick_apply_and_clear():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    # simulate a live machine position, then pick where the bit REALLY is
+    w._tool_xyz = (50.0, 40.0, -1.0)
+    w._on_align_pick(53.5, 38.0, "")
+    assert w._overlay_trim == (3.5, -2.0)
+    # the live overlay is drawn in the design frame (machine + trim)...
+    w._on_position(50.0, 40.0, -1.0, False)
+    assert w.preview._tool_pos == (53.5, 38.0)
+    # ...while the DRO label keeps the raw machine readout plus the trim tag
+    assert "X    50.00" in w.dro_label.text()
+    assert "+3.50" in w.dro_label.text()
+    # click-to-jog inverts the trim so the bit lands where the user clicked
+    sent = {}
+    class _FakeDRO:
+        def request_move(self, ux, uy): sent["um"] = (ux, uy)
+    w._dro = _FakeDRO()
+    w._on_jog_to(53.5, 38.0)
+    assert sent["um"] == (50000, 40000)          # microns, back in machine frame
+    w._dro = None
+    # trim survives a session round trip
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2._overlay_trim == (3.5, -2.0)
+    # Ctrl+click clears it
+    w._on_align_pick(0.0, 0.0, "ctrl")
+    assert w._overlay_trim == (0.0, 0.0)
+
+
+def test_overlay_trim_zero_is_passthrough():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._on_position(12.0, 34.0, -0.5, False)
+    assert w.preview._tool_pos == (12.0, 34.0)   # no trim -> untouched mapping
+    assert "Δ" not in w.dro_label.text()
+
+
 def test_manual_fiducials_seed_drag_and_persist(tmp_path):
     w = MainWindow()
     w.load_folder(str(FIXT))
@@ -633,6 +672,29 @@ def test_pin_drag_disabled_outside_manual_fiducial_mode():
     w.double_sided_chk.setChecked(False)            # single-sided
     w.generate_preview()
     assert w.preview._pin_drag is False
+
+
+def test_drill_tab_bottom_view_shows_machine_frame_holes():
+    # Regression: the drill tab used to always draw the design-frame X-ray, so
+    # with View=Bottom the on-screen holes were mirrored versus the physical
+    # cut (only the on-axis dowels lined up) and click-to-jog missed them.
+    from gerber2rml.doublesided import reflect_holes
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.tabs.setCurrentIndex(1)                       # drill tab
+    w.view_combo.setCurrentText("Bottom")
+    w.generate_preview()
+    mlay = w._machine_layout()
+    assert w.preview._full_holes == mlay.holes      # as physically drilled
+    w.view_combo.setCurrentText("Top")
+    w.generate_preview()
+    exp = reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)
+    assert w.preview._full_holes == exp             # as seen after the flip
+    w.view_combo.setCurrentText("Both sides")
+    w.generate_preview()
+    lay = w._double_sided_layout()
+    assert w.preview._full_holes == lay.holes       # X-ray keeps design frame
 
 
 def test_double_sided_cutout_tab_shows_edge_cut_not_traces():
