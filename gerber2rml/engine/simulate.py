@@ -88,3 +88,44 @@ def position_at(points, cum, dist):
 def total_length(toolpaths):
     _p, _r, cum = build_path(toolpaths)
     return cum[-1] if cum else 0.0
+
+
+def advance_along(points, cum, x, y, prev_dist=0.0, window=400):
+    """Forward-only live tracking: project the machine's ``(x, y)`` onto the
+    path and return the arc length reached, never less than ``prev_dist``.
+
+    XY-only on purpose: the DRO's Z is in machine coordinates (an arbitrary
+    constant away from the job's surface-zero), so matching in XY and reading
+    the path's own Z is both frame-proof and what the viewer wants to render.
+
+    ``prev_dist <= 0`` searches the whole path (latch on mid-run); afterwards
+    only ``window`` vertices ahead of the last match are scanned, so a rapid
+    back over already-cut copper cannot snap the tool marker backwards --
+    mirroring :class:`gerber2rml.engine.progress.RunProgress`.
+    """
+    n = len(points)
+    if n < 2:
+        return prev_dist
+    if prev_dist <= 0.0:
+        k0, k1 = 0, n - 1
+    else:
+        k0 = max(0, index_at(cum, prev_dist) - 1)
+        k1 = min(n - 1, k0 + window)
+    best_d = None
+    best_dist = prev_dist
+    for k in range(k0, k1):
+        ax, ay = points[k][0], points[k][1]
+        bx, by = points[k + 1][0], points[k + 1][1]
+        abx, aby = bx - ax, by - ay
+        denom = abx * abx + aby * aby
+        if denom < 1e-12:
+            t = 0.0
+        else:
+            t = ((x - ax) * abx + (y - ay) * aby) / denom
+            t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+        dx, dy = x - (ax + t * abx), y - (ay + t * aby)
+        d = dx * dx + dy * dy
+        if best_d is None or d < best_d:
+            best_d = d
+            best_dist = cum[k] + t * (cum[k + 1] - cum[k])
+    return max(prev_dist, best_dist)
