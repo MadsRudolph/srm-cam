@@ -726,6 +726,46 @@ def test_double_sided_view_toggle_bottom_and_top():
     assert w.preview._full_cuts == [] and len(w.preview._full_top_cuts) > 0
     assert len(w.preview._pins) == 2
 
+def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
+    # Regression: the fiducial-align export dropped the probed top-side height
+    # map (engine supports XY-from-fit + Z-from-leveling together). It must
+    # pass the map through, and refuse quietly-unleveled exports.
+    import gerber2rml.gui.app as appmod
+    import gerber2rml.doublesided as ds
+    from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+
+    class _StubDlg:                                  # auto-accept with a small shift
+        def __init__(self, parent, nominal): self._n = nominal
+        def exec(self): return QDialog.Accepted
+        def measured(self): return [(x + 0.1, y - 0.05) for (x, y) in self._n]
+
+    monkeypatch.setattr(appmod, "_FiducialAlignDialog", _StubDlg)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        return tmp_path / "x_top_traces.nc"
+
+    monkeypatch.setattr(ds, "build_top_traces", _fake_build)
+    sentinel = object()
+    monkeypatch.setattr(w, "_level_heightmap_preview", lambda: sentinel)
+    w._on_fiducial_align()
+    assert captured.get("level") is sentinel        # map passed to the export
+    # without a probed map, declining the explicit unleveled prompt aborts
+    captured.clear()
+    monkeypatch.setattr(w, "_level_heightmap_preview", lambda: None)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.No))
+    w._on_fiducial_align()
+    assert not captured
+
+
 def test_rework_export_always_enabled_and_explains(monkeypatch):
     # The button used to grey out silently when preconditions were missing (an
     # operator lost time to this). It now stays enabled and clicking explains
