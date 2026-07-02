@@ -1164,3 +1164,16 @@ def test_demo_badge_set_and_cleared_on_user_load(monkeypatch):
                         staticmethod(lambda *a, **k: str(FIXT)))
     w._on_load_clicked()                                    # operator loads own board
     assert w.preview._demo is False                         # badge cleared
+
+
+def test_demo_badge_cleared_by_load_setup():
+    # Regression: restoring a saved setup loads the board via load_folder
+    # directly (not the Load button), which used to leave the DEMO badge up.
+    from gerber2rml.gui.app import _preload_demo
+    w = MainWindow()
+    _preload_demo(w)
+    assert w.preview._demo is True
+    donor = MainWindow()
+    donor.load_folder(str(FIXT))
+    w._apply_setup(donor._collect_setup())                  # "Load setup..."
+    assert w.preview._demo is False                         # badge cleared
