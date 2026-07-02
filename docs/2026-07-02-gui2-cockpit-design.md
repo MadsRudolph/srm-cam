@@ -124,6 +124,19 @@ board holes** as the reference points.
   Top view (reflected frame) to identify the same physical hole after the
   flip.
 
+## Queued feature: auto-probe fiducials over SPI
+
+The manual fiducial capture (jog, drop the bit into each hole, Capture) is the
+most tedious step of the fiducial flip — requested repeatedly during the first
+real fiducial run (2026-07-02). Automate it with the existing SPI touch
+detection: for each nominal position, descend into the hole (no touch =
+inside), probe +X/−X/+Y/−Y until contact, compute the hole centre from the
+four touches, lift, next. Four holes ≈ 2 minutes, no operator jogging, more
+precise than a visual bit-drop. Combined with hole-based registration (above),
+this makes the fiducial flip LESS labor than dowels: flip → auto-align → cut.
+Pieces that already exist: `spi_probe.touch_off`, `spi_probe.jog_to`, the
+fit/export pipeline, and the AS PLACED preview.
+
 ## Open questions
 
 - Step schema: encode bit/spindle per step in presets, or infer from jobs?
