@@ -1726,8 +1726,8 @@ class MainWindow(QMainWindow):
         if self.state.board is None:
             return None
         if self.double_sided_chk.isChecked():
-            side = self._ds_side()
-            if side is not None:
+            mode, side = self._resolve_frame()
+            if mode == "bed":
                 mlay = self._machine_layout()
                 if side == "Top":
                     # AS PLACED: the probe grid must land on the board where it
