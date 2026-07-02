@@ -726,6 +726,49 @@ def test_double_sided_view_toggle_bottom_and_top():
     assert w.preview._full_cuts == [] and len(w.preview._full_top_cuts) > 0
     assert len(w.preview._pins) == 2
 
+def test_top_fit_places_the_top_views_on_the_real_board():
+    # After a fiducial fit, the Top views render AS PLACED: holes, pins and
+    # toolpaths warped by the measured transform so jog-to-hole is physical.
+    from gerber2rml.engine.fiducial import Transform
+    from gerber2rml.doublesided import reflect_holes
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Top")
+    w.tabs.setCurrentIndex(1)                       # drill tab
+    w.generate_preview()
+    nominal = list(w.preview._full_holes)
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)    # pure shift, like tonight's
+    w.generate_preview()
+    for (nx, ny, _d), (px, py, _d2) in zip(nominal, w.preview._full_holes):
+        assert abs(px - (nx - 8.7)) < 1e-9 and abs(py - (ny + 14.3)) < 1e-9
+    assert "AS PLACED" in w.preview._frame_label
+    # the side toolpaths (rework clipping / run tracking) are warped too
+    ref = w._ds_side_toolpaths("traces", "Top")
+    w._top_fit = None
+    unwarped = w._ds_side_toolpaths("traces", "Top")
+    assert abs(ref[0][0].x - (unwarped[0][0].x - 8.7)) < 1e-9
+    # the Bottom view is untouched by the fit
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)
+    w.view_combo.setCurrentText("Bottom")
+    w.generate_preview()
+    mlay = w._machine_layout()
+    assert w.preview._full_holes == mlay.holes
+    assert "AS MILLED" in w.preview._frame_label
+
+
+def test_top_fit_survives_setup_roundtrip():
+    from gerber2rml.engine.fiducial import Transform
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._top_fit = Transform(-0.0063, 1.0, -8.7, 14.3)
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2._top_fit is not None
+    assert abs(w2._top_fit.tx - -8.7) < 1e-9 and abs(w2._top_fit.theta - -0.0063) < 1e-9
+
+
 def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
     # Regression: the fiducial-align export dropped the probed top-side height
     # map (engine supports XY-from-fit + Z-from-leveling together). It must
@@ -757,6 +800,7 @@ def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
     monkeypatch.setattr(w, "_level_heightmap_preview", lambda: sentinel)
     w._on_fiducial_align()
     assert captured.get("level") is sentinel        # map passed to the export
+    assert w._top_fit is not None                   # placement remembered
     # without a probed map, declining the explicit unleveled prompt aborts
     captured.clear()
     monkeypatch.setattr(w, "_level_heightmap_preview", lambda: None)
