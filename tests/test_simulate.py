@@ -4,7 +4,8 @@ import math
 import pytest
 from gerber2rml.toolpath import Move
 from gerber2rml.engine.simulate import (
-    build_path, split_segments, index_at, position_at, total_length)
+    build_path, split_segments, index_at, position_at, total_length,
+    advance_along)
 
 
 def _tp(*pts):
@@ -83,3 +84,63 @@ def test_empty_toolpaths_are_safe():
     assert pts == [] and cum == [0.0]
     assert position_at(pts, cum, 1.0) is None
     assert total_length([]) == 0.0
+
+
+def test_advance_along_tracks_live_xy():
+    # straight 10 mm cut: the live XY halfway along lands at dist 5
+    pts, _r, cum = build_path([_tp((0, 0, 0, False), (10, 0, 0, False))])
+    d = advance_along(pts, cum, 5.0, 0.1)     # slightly off-path is fine
+    assert math.isclose(d, 5.0, abs_tol=0.01)
+
+
+def test_advance_along_is_forward_only():
+    pts, _r, cum = build_path([_tp((0, 0, 0, False), (10, 0, 0, False))])
+    d = advance_along(pts, cum, 8.0, 0.0)
+    assert math.isclose(d, 8.0, abs_tol=0.01)
+    # a rapid back over the start must not rewind the cursor
+    d2 = advance_along(pts, cum, 1.0, 0.0, prev_dist=d)
+    assert d2 >= d
+
+
+def test_advance_along_ignores_z_frame_offset():
+    # machine Z is tens of mm away from the path's job-frame Z — matching is
+    # XY-only, so tracking still works (this is the G54-vs-surface situation)
+    pts, _r, cum = build_path(
+        [_tp((0, 0, 2, True), (0, 0, -1.7, False), (0, 0, 2, True),
+             (5, 0, 2, True), (5, 0, -1.7, False))])
+    d = advance_along(pts, cum, 5.0, 0.0)     # bit over the second drill hole
+    pos = position_at(pts, cum, d)
+    assert math.isclose(pos[0], 5.0, abs_tol=0.01)
+
+
+def test_advance_along_latches_mid_run():
+    # prev_dist 0 searches the whole path: arming late still finds the spot
+    pts, _r, cum = build_path([_tp((0, 0, 0, False), (10, 0, 0, False),
+                                   (10, 10, 0, False))])
+    d = advance_along(pts, cum, 10.0, 7.0)    # already on the second leg
+    assert math.isclose(d, 17.0, abs_tol=0.01)
+
+
+def test_sim3d_live_mode_follows_and_scrub_detaches():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    try:
+        from gerber2rml.gui.sim3d import Simulation3DWindow
+        w = Simulation3DWindow([_tp((0, 0, 0, False), (10, 0, 0, False))])
+    except Exception as e:
+        pytest.skip(f"3D view unavailable: {e}")
+    assert not w.live_btn.isEnabled()          # off until the app enables it
+    w.set_live_enabled(True)
+    w.live_btn.setChecked(True)
+    w.set_live_position(4.0, 0.0)
+    assert math.isclose(w._dist, 4.0, abs_tol=0.01)   # following the machine
+    w.timeline.setValue(900)                   # user scrubs ahead ...
+    assert not w.live_btn.isChecked()          # ... detaches from live
+    assert math.isclose(w._dist, 9.0, abs_tol=0.01)
+    w.set_live_position(6.0, 0.0)              # live cursor keeps advancing
+    assert math.isclose(w._dist, 9.0, abs_tol=0.01)   # view stays where scrubbed
+    w.live_btn.setChecked(True)                # LIVE snaps back to the machine
+    assert math.isclose(w._dist, 6.0, abs_tol=0.01)
+    w.set_live_enabled(False)                  # disconnect drops follow mode
+    assert not w.live_btn.isChecked() and not w.live_btn.isEnabled()

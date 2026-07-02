@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 
-from gerber2rml.engine.simulate import build_path, split_segments, position_at, index_at
+from gerber2rml.engine.simulate import (build_path, split_segments, position_at,
+                                        index_at, advance_along)
 
 _TICK_MS = 30                      # ~33 fps animation timer
 _CUT_COLOR = (0.0, 1.0, 1.0, 1.0)   # cyan
@@ -67,6 +68,10 @@ class Simulation3DWindow(QMainWindow):
         self._total = self._cum[-1] if self._cum else 0.0
         self._dist = 0.0
         self._playing = False
+        # live tracking: the app feeds real machine XY here; _live_dist follows
+        # the run forward-only even while the user scrubs ahead, so LIVE always
+        # snaps back to where the bit actually is.
+        self._live_dist = 0.0
 
         self.view = gl.GLViewWidget()
         self.view.setBackgroundColor('#1e1e1e')
@@ -97,9 +102,25 @@ class Simulation3DWindow(QMainWindow):
         self.pos_label = QLabel()
         self.pos_label.setMinimumWidth(230)
 
+        # LIVE: follow the real bit (fed by the app over the machine link).
+        # Scrubbing the timeline or pressing play detaches to look ahead; this
+        # button snaps the view back onto the live position.
+        self.live_btn = QPushButton("● LIVE")
+        self.live_btn.setCheckable(True)
+        self.live_btn.setEnabled(False)
+        self.live_btn.setToolTip(
+            "Follow the actual bit in real time (needs the machine link "
+            "connected in the main window). Scrub the timeline or press play "
+            "to skip ahead and see what's coming — click LIVE to snap back "
+            "to where the machine really is.")
+        self.live_btn.setStyleSheet(
+            "QPushButton:checked { color: #ff5555; font-weight: bold; }")
+        self.live_btn.toggled.connect(self._on_live_toggled)
+
         controls = QHBoxLayout()
         controls.addWidget(self.play_btn)
         controls.addWidget(self.reset_btn)
+        controls.addWidget(self.live_btn)
         controls.addWidget(QLabel("Speed"))
         controls.addWidget(self.speed)
         controls.addWidget(self.timeline, 1)
@@ -222,6 +243,7 @@ class Simulation3DWindow(QMainWindow):
     def _play(self):
         if self._total <= 0:
             return
+        self.live_btn.setChecked(False)      # playing ahead detaches from live
         if self._dist >= self._total:        # restart from the top
             self._dist = 0.0
         self._playing = True
@@ -255,8 +277,32 @@ class Simulation3DWindow(QMainWindow):
         # only react to user drags, not our own programmatic updates
         if self.timeline.signalsBlocked():
             return
+        self.live_btn.setChecked(False)      # scrubbing ahead detaches from live
         self._dist = (val / 1000.0) * self._total
         self._update_tool()
+
+    # ---- live tracking ---------------------------------------------------
+    def set_live_enabled(self, on):
+        """The app enables this while the machine link is connected. Disabling
+        keeps the last live distance but drops out of follow mode."""
+        self.live_btn.setEnabled(bool(on))
+        if not on:
+            self.live_btn.setChecked(False)
+
+    def set_live_position(self, x, y):
+        """Feed one live machine XY (design-frame mm). Advances the forward-only
+        live cursor; in LIVE mode the view follows it."""
+        self._live_dist = advance_along(self._points, self._cum, x, y,
+                                        self._live_dist)
+        if self.live_btn.isChecked():
+            self._dist = self._live_dist
+            self._update_tool()
+
+    def _on_live_toggled(self, checked):
+        if checked:
+            self._pause()                    # live and playback are exclusive
+            self._dist = self._live_dist
+            self._update_tool()
 
     def _update_tool(self):
         pos = position_at(self._points, self._cum, self._dist)
