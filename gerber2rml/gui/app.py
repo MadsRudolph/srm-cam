@@ -1118,6 +1118,10 @@ class MainWindow(QMainWindow):
         self._sync_state()
         self.state.load(folder)
         self.preview._view_limits = None        # new board -> fit (clear any zoom)
+        # any successful load clears the DEMO badge — this covers Load setup /
+        # session restore too, not just the Load Gerber folder button. The
+        # launch-time preload re-sets the badge right after this call.
+        self.preview.set_demo(False)
 
     def _dowel_spec(self):
         """Build a DowelSpec from the registration controls."""
