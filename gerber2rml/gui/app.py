@@ -431,9 +431,13 @@ class MainWindow(QMainWindow):
             "click this to re-write <name>_top_traces warped to that surface.")
         self.level_top_btn.clicked.connect(self._on_export_top_traces)
         # auto-probe over the SRM-20 SPI link (Arduino running srm20_spi_probe.ino)
+        # Serial port for the Arduino link — shared by the DRO connect and the
+        # SPI probe. Shown in the machine dock; keeps its historical name.
         self.level_port_combo = QComboBox()
         self.level_port_combo.setMaximumWidth(90)
-        self.level_port_combo.setToolTip("Serial port of the Arduino prober (Device Manager > Ports).")
+        self.level_port_combo.setToolTip(
+            "Serial port of the Arduino (Device Manager > Ports). Used by both "
+            "Connect (live DRO) and the SPI bed probe.")
         self.level_port_combo.setEditable(True)
         try:
             import serial.tools.list_ports
@@ -778,7 +782,13 @@ class MainWindow(QMainWindow):
         self.export_sel_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_sel_btn.clicked.connect(self._on_export_selected)
-        self.export_sel_btn.setEnabled(False)
+        # Always enabled: a greyed-out button can't explain itself (a real
+        # operator lost time to this). Clicking with a missing precondition
+        # shows exactly what to fix (regions / op tab / side selection).
+        self.export_sel_btn.setToolTip(
+            "Write the rework pass for the drawn boxes. Needs: one or more "
+            "boxes, the Traces or Cutout preview, and (double-sided) View set "
+            "to Bottom or Top — clicking tells you what's missing.")
 
         # Live cross-section of the active trace tool (V-bit width/depth math
         # made visible). Created before the forms: _sync_vbit_fields feeds it.
@@ -931,7 +941,9 @@ class MainWindow(QMainWindow):
                            self.level_grid_btn, self.level_export_btn,
                            self.level_save_btn, self.level_load_btn,
                            self.level_clear_btn))
-        _ll.addWidget(_row(QLabel("port"), self.level_port_combo, self.level_probe_btn,
+        # the serial port selector lives in the machine dock (shared with the
+        # DRO connect); probing reads it from there
+        _ll.addWidget(_row(self.level_probe_btn,
                            self.level_gridshow_chk, self.level_show_chk,
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
@@ -1023,7 +1035,10 @@ class MainWindow(QMainWindow):
         splitter.setCollapsible(1, False)     # preview can never collapse
         self._splitter = splitter             # _size_settings_panel sets its sizes
 
-        # Machine bar across the top: live DRO readout + connect toggle.
+        # Machine dock (GUI 2.0 phase 2): everything about the physical machine
+        # in one persistent strip at the BOTTOM, visible from every page —
+        # connect + port, live DRO, probe, jog, align overlay, run tracking,
+        # STOP. The machine doesn't stop existing when you switch pages.
         machine_bar = QWidget()
         machine_bar.setObjectName("machineBar")
         _mb = QHBoxLayout(machine_bar)
@@ -1037,10 +1052,12 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.zero_btn)
         _mb.addWidget(self.align_btn)
         _mb.addWidget(self.jog_chk)
+        _mb.addWidget(QLabel("port"))
+        _mb.addWidget(self.level_port_combo)
         _mb.addWidget(self.connect_btn)
         _mb.addWidget(self.stop_btn)
 
-        # Live run-progress bar across the top, under the machine readout.
+        # Run-progress row: the dock's second line.
         progress_bar_row = QWidget()
         progress_bar_row.setObjectName("progressBar")
         _pb = QHBoxLayout(progress_bar_row)
@@ -1057,9 +1074,9 @@ class MainWindow(QMainWindow):
         _cv = QVBoxLayout(central)
         _cv.setContentsMargins(0, 0, 0, 0)
         _cv.setSpacing(0)
+        _cv.addWidget(splitter, 1)
         _cv.addWidget(machine_bar)
         _cv.addWidget(progress_bar_row)
-        _cv.addWidget(splitter, 1)
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready", 5000)
 
@@ -1469,8 +1486,6 @@ class MainWindow(QMainWindow):
             self.preview.set_frame("AS MILLED  ·  mirrored (bottom-up)", AMBER)
 
     def generate_preview(self):
-        # keep the rework export button in sync with the active tab / mode
-        self.export_sel_btn.setEnabled(self._rework_export_ok())
         if self.state.board is None:
             self.preview.set_estimate("")
             return
@@ -2947,18 +2962,6 @@ class MainWindow(QMainWindow):
         self.place_y_spin.setValue(self.place_y_spin.value() + (ty - cy))
         self.statusBar().showMessage("Design centred on the copper stock", 5000)
 
-    def _rework_export_ok(self):
-        """True when there is at least one region and the current op/side is
-        reworkable (traces/cutout, single side for double-sided)."""
-        if not self._rework_regions:
-            return False
-        op = _OPS[self.tabs.currentIndex()]
-        if op == "drill":
-            return False
-        if self.double_sided_chk.isChecked() and self._ds_side() is None:
-            return False
-        return True
-
     def _on_region_added(self, bbox):
         """A drag committed a box -> add a region at the current defaults."""
         color = self._REWORK_COLORS[len(self._rework_regions) % len(self._REWORK_COLORS)]
@@ -3001,7 +3004,6 @@ class MainWindow(QMainWindow):
             dl.clicked.connect(lambda _=False, i=i: self._delete_rework_region(i))
             t.setCellWidget(i, 4, dl)
         self.preview.set_rework_regions(self._rework_draw_list())
-        self.export_sel_btn.setEnabled(self._rework_export_ok())
 
     def _set_region_depth(self, i, v):
         if 0 <= i < len(self._rework_regions):
@@ -3128,7 +3130,8 @@ QPushButton#stopBtn { background: #c0392b; border: none; color: #ffffff; font-we
 QPushButton#stopBtn:hover { background: #e04434; }
 QPushButton#stopBtn:pressed { background: #962d22; }
 
-#progressBar { background: #181818; border-bottom: 1px solid #2a2a2a; }
+#machineBar { background: #181818; border-top: 1px solid #2a2a2a; }
+#progressBar { background: #181818; }
 QProgressBar {
     background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
     min-height: 18px; text-align: center; color: #e4e4e6;

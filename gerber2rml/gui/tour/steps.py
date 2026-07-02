@@ -110,15 +110,16 @@ BRANCHES = {
     ]),
     "Bed leveling": (2, [
         TourStep(
-            target="connect_btn", page=2, placement="below",
+            target="connect_btn", page=2, placement="above",
             advance_signal="connect_btn.clicked",
             title="1 · Connect the Arduino",
             body="Plug in the Arduino that reads the touch probe (close the Arduino "
-                 "Serial Monitor first — it holds the port). Click Connect in the top "
-                 "bar; the live X/Y/Z readout goes active. Click Connect to continue.",
+                 "Serial Monitor first — it holds the port). Pick the port and click "
+                 "Connect in the machine dock at the bottom; the live X/Y/Z readout "
+                 "goes active. Click Connect to continue.",
         ),
         TourStep(
-            target="dro_label", page=2, placement="below", explain_only=True,
+            target="dro_label", page=2, placement="above", explain_only=True,
             title="2 · The coordinate systems",
             body="VPanel's selector lists several; three matter here (per the SRM-20 "
                  "manual). MACHINE — machine-specific, its origin is FIXED and can't "
