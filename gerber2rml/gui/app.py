@@ -1417,12 +1417,16 @@ class MainWindow(QMainWindow):
             if side == "Top":
                 # after the flip the holes appear reflected into the top frame;
                 # a measured fiducial fit then places them where the board
-                # REALLY sits (AS PLACED), so jog-to-hole is physically true
+                # REALLY sits (AS PLACED), so jog-to-hole is physically true.
+                # Pins reflect too — dowels sit ON the axis so it never showed,
+                # but manual fiducials are asymmetric and MUST be reflected
+                # before the fit or they render mirrored off the board.
                 holes = self._top_fit_holes(
                     reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos))
                 outline = self._top_fit_geom(mlay.top_outline)
                 copper = (self._top_fit_geom(mlay.top_copper), "#ff55ff")
-                pins = self._top_fit_holes(mlay.align_holes)
+                pins = self._top_fit_holes(
+                    reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos))
             else:
                 holes = mlay.holes
                 outline, copper = mlay.outline, (mlay.bottom_copper, "#00ffff")
@@ -1441,11 +1445,13 @@ class MainWindow(QMainWindow):
             mlay = self._machine_layout()
             cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
             if side == "Top":
+                from gerber2rml.doublesided import reflect_holes
                 self.preview.set_board_outline(
                     self._poly_xy(self._top_fit_geom(mlay.top_outline)))
                 self.preview.show_segments(
                     [], [], top_cuts=cuts,
-                    pins=self._top_fit_holes(mlay.align_holes),
+                    pins=self._top_fit_holes(
+                        reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos)),
                     copper=[(self._top_fit_geom(mlay.top_copper), "#ff55ff")])
             else:
                 self.preview.set_board_outline(self._poly_xy(mlay.outline))
