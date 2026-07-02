@@ -778,6 +778,11 @@ class MainWindow(QMainWindow):
         self.export_sel_btn.clicked.connect(self._on_export_selected)
         self.export_sel_btn.setEnabled(False)
 
+        # Live cross-section of the active trace tool (V-bit width/depth math
+        # made visible). Created before the forms: _sync_vbit_fields feeds it.
+        from gerber2rml.gui.bitviz import BitProfileWidget
+        self.bit_viz = BitProfileWidget()
+
         # Operation parameters (hidden, managed by presets)
         self.forms = {"traces": DataclassForm(self.state.trace,
                                               choices={"tool_type": ["flat", "vbit"]}),
@@ -881,6 +886,7 @@ class MainWindow(QMainWindow):
         bl.addRow("Name", self.name_edit)
         bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
                                  self.save_preset_btn, stretch_first=True))
+        bl.addRow("Tool", self.bit_viz)
         bl.addRow("Stock", self.thickness_spin)
         bl.addRow("", self._auto_depth_row)
         l_proj.addWidget(board_group)
@@ -2583,6 +2589,7 @@ class MainWindow(QMainWindow):
         _chk(self.level_chk, lv.get("apply", False))
 
         self._apply_auto_depth()
+        self._sync_vbit_fields()      # grey/derive V-bit fields + tool graphic
         self._update_stock_preview()
         self._update_grid_overlay()
         self._update_level_overlay()
@@ -2862,6 +2869,7 @@ class MainWindow(QMainWindow):
         if vbit:
             form.set_field_value("cut_depth", round(job.effective_cut_depth(), 3))
             form.set_field_value("bit_diameter", round(job.effective_diameter(), 3))
+        self.bit_viz.set_job(job)          # keep the tool cross-section live
 
     def _on_move_toggled(self, checked):
         self.preview.set_moving(checked)
