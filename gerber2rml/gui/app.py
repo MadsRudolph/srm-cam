@@ -1435,9 +1435,9 @@ class MainWindow(QMainWindow):
         overlaid; the dowels are always shown. Board holes are shown on the
         drill tab only."""
         from gerber2rml.engine.traces import isolate
-        side = self._ds_side()
+        mode, side = self._resolve_frame()
         self.preview.set_pin_drag(False)   # re-enabled by the X-ray branch below
-        if side is not None and op == "drill":
+        if mode == "bed" and op == "drill":
             # Machine-frame drill view: the holes exactly as they are cut on the
             # bed (bottom-up mirror), so click-to-jog lands ON a physical hole.
             # The X-ray drill view shows the un-mirrored design frame, where the
@@ -1467,7 +1467,7 @@ class MainWindow(QMainWindow):
             self.preview.show_segments(cuts, rapids, holes=holes,
                                        pins=pins, copper=[copper])
             return
-        if side is not None and op != "drill":
+        if mode == "bed" and op != "drill":
             # Single side: show it in the MACHINE frame (as actually cut) so a
             # rework box maps to real toolpath coordinates. Keep the channel
             # contract: Bottom -> bottom cuts, Top -> top cuts. The Top side is
