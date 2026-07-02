@@ -1280,6 +1280,33 @@ class MainWindow(QMainWindow):
         self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
         self._update_ds_controls()
 
+    def _travel_check(self, toolpaths):
+        """Compare toolpath XY extents against the machine bed. Returns None
+        when everything is reachable, else a human suggestion of how far to
+        slide the board (the 2026-07-03 lesson: a crooked fiducial flip can
+        push a job partly outside the machine's travel while every fiducial
+        still measures fine)."""
+        bed = BACKENDS[self.state.machine].bed
+        if not bed or not toolpaths:
+            return None
+        xs = [m.x for tp in toolpaths for m in tp]
+        ys = [m.y for tp in toolpaths for m in tp]
+        over = []
+        if min(xs) < 0:
+            over.append(f"slide the board {abs(min(xs)):.1f} mm RIGHT")
+        if max(xs) > bed[0]:
+            over.append(f"slide the board {max(xs) - bed[0]:.1f} mm LEFT")
+        if min(ys) < 0:
+            over.append(f"slide the board {abs(min(ys)):.1f} mm BACK")
+        if max(ys) > bed[1]:
+            over.append(f"slide the board {max(ys) - bed[1]:.1f} mm FORWARD")
+        if not over:
+            return None
+        return (f"Job spans X {min(xs):.1f}..{max(xs):.1f}, "
+                f"Y {min(ys):.1f}..{max(ys):.1f} mm but the bed is "
+                f"{bed[0]:.1f} x {bed[1]:.1f} mm - " + " and ".join(over)
+                + ", then re-capture the fiducials and re-probe.")
+
     # ---- GUI 2.0 phase 3: single frame resolver ---------------------------
     def _resolve_frame(self):
         """The ONE place that decides what frame the canvas shows.
@@ -2554,6 +2581,11 @@ class MainWindow(QMainWindow):
             return
         self._top_fit = t
         self.generate_preview()
+        # Intelligence: immediately verify the AS PLACED top job still fits the
+        # machine's travel — BEFORE any probing time is invested.
+        warn = self._travel_check(self._ds_side_toolpaths("traces", "Top"))
+        if warn:
+            QMessageBox.warning(self, "Board partly out of reach", warn)
         # XY comes from the fiducial fit; Z from a top-side height map when one
         # has been probed. Exporting unleveled on a warped bed can air-cut, so
         # make skipping it an explicit choice — the recommended path is to stop

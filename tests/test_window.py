@@ -807,6 +807,20 @@ def test_top_view_pins_reflect_before_the_fit():
         assert abs(px - ex) < 1e-9 and abs(py - ey) < 1e-9
 
 
+def test_travel_check_flags_out_of_reach_and_suggests_slide():
+    from gerber2rml.toolpath import Move
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    inside = [[Move(10, 10, -0.1), Move(50, 50, -0.1)]]
+    assert w._travel_check(inside) is None
+    off_left = [[Move(-8.9, 10, -0.1), Move(50, 50, -0.1)]]
+    msg = w._travel_check(off_left)
+    assert msg and "8.9 mm RIGHT" in msg
+    off_back = [[Move(10, 10, -0.1), Move(50, 155.3, -0.1)]]
+    msg = w._travel_check(off_back)
+    assert msg and "FORWARD" in msg
+
+
 def test_frame_resolver_truth_table():
     # GUI 2.0 phase 3 seam: one function decides the canvas frame. Initially
     # derived from the legacy controls with identical behaviour.
