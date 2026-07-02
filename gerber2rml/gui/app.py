@@ -1333,6 +1333,26 @@ class MainWindow(QMainWindow):
         from gerber2rml.engine.traces import isolate
         side = self._ds_side()
         self.preview.set_pin_drag(False)   # re-enabled by the X-ray branch below
+        if side is not None and op == "drill":
+            # Machine-frame drill view: the holes exactly as they are cut on the
+            # bed (bottom-up mirror), so click-to-jog lands ON a physical hole.
+            # The X-ray drill view shows the un-mirrored design frame, where the
+            # bottom holes are reflected about the flip axis — only the on-axis
+            # dowels coincide, which reads as "the holes are mirrored".
+            from gerber2rml.doublesided import reflect_holes
+            mlay = self._machine_layout()
+            if side == "Top":
+                # after the flip the holes appear reflected into the top frame
+                holes = reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)
+                outline, copper = mlay.top_outline, (mlay.top_copper, "#ff55ff")
+            else:
+                holes = mlay.holes
+                outline, copper = mlay.outline, (mlay.bottom_copper, "#00ffff")
+            cuts, rapids = toolpath_segments(self._drill_toolpaths(holes))
+            self.preview.set_board_outline(self._poly_xy(outline))
+            self.preview.show_segments(cuts, rapids, holes=holes,
+                                       pins=mlay.align_holes, copper=[copper])
+            return
         if side is not None and op != "drill":
             # Single side: show it in the MACHINE frame (as actually cut) so a
             # rework box maps to real toolpath coordinates. Keep the channel
@@ -1453,6 +1473,10 @@ class MainWindow(QMainWindow):
                 # the edge cut is the same single job whichever view is selected
                 self.preview.set_estimate(self._est_text(
                     self._ds_side_toolpaths(op, side), self.state.cutout))
+            elif op == "drill" and side is not None:
+                self.preview.set_estimate(self._est_text(
+                    self._drill_toolpaths(self._machine_layout().holes),
+                    self.state.drill))
             elif side is not None and op != "drill":
                 job = self.state.trace if op == "traces" else self.state.cutout
                 self.preview.set_estimate(self._est_text(self._ds_side_toolpaths(op, side), job))

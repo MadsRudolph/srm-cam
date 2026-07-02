@@ -674,6 +674,29 @@ def test_pin_drag_disabled_outside_manual_fiducial_mode():
     assert w.preview._pin_drag is False
 
 
+def test_drill_tab_bottom_view_shows_machine_frame_holes():
+    # Regression: the drill tab used to always draw the design-frame X-ray, so
+    # with View=Bottom the on-screen holes were mirrored versus the physical
+    # cut (only the on-axis dowels lined up) and click-to-jog missed them.
+    from gerber2rml.doublesided import reflect_holes
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.tabs.setCurrentIndex(1)                       # drill tab
+    w.view_combo.setCurrentText("Bottom")
+    w.generate_preview()
+    mlay = w._machine_layout()
+    assert w.preview._full_holes == mlay.holes      # as physically drilled
+    w.view_combo.setCurrentText("Top")
+    w.generate_preview()
+    exp = reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)
+    assert w.preview._full_holes == exp             # as seen after the flip
+    w.view_combo.setCurrentText("Both sides")
+    w.generate_preview()
+    lay = w._double_sided_layout()
+    assert w.preview._full_holes == lay.holes       # X-ray keeps design frame
+
+
 def test_double_sided_cutout_tab_shows_edge_cut_not_traces():
     # Regression: in double-sided 'Both sides' view the Cutout tab used to keep
     # drawing the trace isolation; it must show the edge-cut path instead.
