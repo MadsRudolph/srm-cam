@@ -1792,6 +1792,8 @@ class MainWindow(QMainWindow):
         self.jog_chk.setEnabled(True)
         self.zero_btn.setEnabled(True)
         self.align_btn.setEnabled(True)
+        if self._sim_window is not None:
+            self._sim_window.set_live_enabled(True)
         self.dro_label.setText(f"●  connecting on {port}…")
         self.dro_label.setStyleSheet(self._DRO_ON)
         self.statusBar().showMessage(
@@ -1814,6 +1816,8 @@ class MainWindow(QMainWindow):
         self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
         self.align_btn.setEnabled(False)
         self.preview.set_align_pick(False)
+        if self._sim_window is not None:
+            self._sim_window.set_live_enabled(False)
         self._z_zero = None
         if self.connect_btn.isChecked():
             self.connect_btn.blockSignals(True)
@@ -2062,6 +2066,9 @@ class MainWindow(QMainWindow):
         # the trim; the label above keeps the RAW machine readout (VPanel-equal)
         self.preview.set_tool_position(x + tx, y + ty, touching)
         self._update_run_progress(x + tx, y + ty, z)
+        # feed the 3D viewer's live cursor (it follows only while LIVE is on)
+        if self._sim_window is not None and self._sim_window.isVisible():
+            self._sim_window.set_live_position(x + tx, y + ty)
 
     def _on_probe_z(self):
         """Probe down from the current XY until the bit touches, then zero Z there."""
@@ -2736,6 +2743,7 @@ class MainWindow(QMainWindow):
         # reference so it isn't garbage-collected.
         self._sim_window = Simulation3DWindow(toolpaths, title=label,
                                               board=board, bed=bed, thickness=thickness)
+        self._sim_window.set_live_enabled(self._dro is not None)
         self._sim_window.show()
         self._sim_window.raise_()
         self._sim_window.activateWindow()
