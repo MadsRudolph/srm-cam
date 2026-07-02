@@ -696,6 +696,22 @@ class PreviewCanvas(QWidget):
         self._jogging = bool(on)
         self.canvas.setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
 
+    def _jog_snap(self, x, y):
+        """Snap a jog click to the nearest DISPLAYED hole or dowel/fiducial pin
+        within the ruler's view-relative tolerance; return (x, y) unchanged when
+        nothing is near. Uses the canvas's own drawn markers — they are in the
+        canvas frame by construction, so 'jog to that hole' lands ON the hole
+        regardless of which layout produced them."""
+        x0, x1 = sorted(self.ax.get_xlim())
+        y0, y1 = sorted(self.ax.get_ylim())
+        tol = 0.03 * max(x1 - x0, y1 - y0, 1e-6)
+        best, bestd = None, tol
+        for (px, py, _d) in self._full_holes + self._pins:
+            d = math.hypot(x - px, y - py)
+            if d < bestd:
+                bestd, best = d, (px, py)
+        return best if best is not None else (x, y)
+
     def set_align_pick(self, on):
         """Arm/disarm the one-shot overlay-align pick (see ``on_align_pick``)."""
         self._align_pick = bool(on)
@@ -781,7 +797,11 @@ class PreviewCanvas(QWidget):
                 return
         if self._jogging:
             if self.on_jog_to and event.xdata is not None and event.ydata is not None:
-                self.on_jog_to(event.xdata, event.ydata)
+                x, y = event.xdata, event.ydata
+                key = getattr(event, "key", None) or ""
+                if "ctrl" not in key and "control" not in key:  # Ctrl = raw position
+                    x, y = self._jog_snap(x, y)
+                self.on_jog_to(x, y)
         elif self._measuring:
             sx, sy, _ = self._snap(event.xdata, event.ydata)
             if sx is not None:
