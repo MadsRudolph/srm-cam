@@ -108,6 +108,13 @@ class FiducialSpec:
     breakthrough: float = 0.3          # mm past the board, for a clean through-hole
     allow_scale: bool = False          # fit uniform scale too?
     margin: float = 6.0                # positive-quadrant clearance (mm)
+    # Which way the operator physically flips the board. "vertical" = flip
+    # left-right (about a vertical axis), "horizontal" = flip top-bottom.
+    # CRITICAL for corner fiducials: the fiducial RECTANGLE is symmetric, so
+    # the fit comes out tiny-RMS for BOTH directions — it validates the
+    # rectangle, not the flip. Pick the wrong one and every hole/trace is
+    # mirrored while the fiducials still "match perfectly".
+    flip_axis: str = "vertical"        # "vertical" | "horizontal"
     # manual placement: (x, y) pairs in DESIGN-frame board coordinates, relative
     # to the framed board box's lower-left corner. May be negative / beyond the
     # box to sit in the waste. The registration math only needs >=2 points with
@@ -135,10 +142,20 @@ def _place_fiducials(gx0, gy0, gx1, gy1, spec, mirrored=False):
     must not move the whole job; the bed/stock-fit checks flag out-of-range
     pins instead."""
     cx = (gx0 + gx1) / 2.0
+    cy = (gy0 + gy1) / 2.0
     if spec.placement == "manual" and spec.points:
-        w = gx1 - gx0
-        picked = [(gx0 + (w - px if mirrored else px), gy0 + py)
-                  for (px, py) in spec.points]
+        w, h = gx1 - gx0, gy1 - gy0
+        if mirrored:
+            # the caller's box is the bottom-up MACHINE frame: mirror across
+            # the box along the flip direction so the physical holes stay
+            # where the design-frame preview showed them
+            if spec.flip_axis == "horizontal":
+                pts = [(px, h - py) for (px, py) in spec.points]
+            else:
+                pts = [(w - px, py) for (px, py) in spec.points]
+        else:
+            pts = list(spec.points)
+        picked = [(gx0 + px, gy0 + py) for (px, py) in pts]
         dx, dy = spec.margin - gx0, spec.margin - gy0     # board box only
     else:
         off = spec.edge_offset
@@ -153,7 +170,8 @@ def _place_fiducials(gx0, gy0, gx1, gy1, spec, mirrored=False):
         allminy = min(gy0, min(y for _, y in picked))
         dx, dy = spec.margin - allminx, spec.margin - allminy
     align = [(x + dx, y + dy, spec.hole_diameter) for (x, y) in picked]
-    return align, cx + dx, dx, dy
+    flip_pos = (cy + dy) if spec.flip_axis == "horizontal" else (cx + dx)
+    return align, flip_pos, dx, dy
 
 
 def nominal_top_fiducials(lay):
@@ -320,7 +338,8 @@ def layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0.0),
                         rotate=0, registration="dowel", fiducials: FiducialSpec = None):
     dowels = dowels or DowelSpec()
     folder = Path(folder)
-    axis = "vertical" if registration == "fiducial" else _axis_of(dowels)
+    axis = ((fiducials or FiducialSpec()).flip_axis
+            if registration == "fiducial" else _axis_of(dowels))
     b = _load_rotated(folder, rotate)
     copper, copper_top, outline_g, holes_raw = _mirror_all(b, axis)  # bottom-up mirror
     geoms = [g for g in (copper, outline_g) if not g.is_empty]
@@ -379,7 +398,8 @@ def preview_layout_double_sided(folder, dowels: DowelSpec = None, offset=(0.0, 0
     outline = translate(b.outline, xoff=dx, yoff=dy)
     holes = [(x + dx, y + dy, d) for (x, y, d) in b.holes]
     align_holes = [(x, y, d) for (x, y, d) in align_holes]
-    axis = "vertical" if registration == "fiducial" else _axis_of(dowels)
+    axis = ((fiducials or FiducialSpec()).flip_axis
+            if registration == "fiducial" else _axis_of(dowels))
     return _offset_layout(
         PreviewLayout(bottom_copper, top_copper, outline, holes,
                       align_holes, axis, flip_pos,
