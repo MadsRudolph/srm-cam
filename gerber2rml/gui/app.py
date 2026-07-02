@@ -1286,13 +1286,22 @@ class MainWindow(QMainWindow):
         bottom_cuts, bottom_rapids, top_cuts = [], [], []
         copper = []
         if view in ("Both sides", "Bottom"):
-            bottom_cuts, bottom_rapids = toolpath_segments(
-                isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
             copper.append((lay.bottom_copper, "#00ffff"))
         if view in ("Both sides", "Top"):
-            top_cuts, _ = toolpath_segments(
-                isolate(lay.top_copper, self.state.trace, outline=lay.outline))
             copper.append((lay.top_copper, "#ff55ff"))
+        if op == "cutout":
+            # The edge cut is one job around the outline (run from the bottom
+            # side), not a per-layer isolation — show it instead of the traces.
+            from gerber2rml.engine.cutout import cut_outline
+            bottom_cuts, bottom_rapids = toolpath_segments(
+                cut_outline(lay.outline, self.state.cutout))
+        else:
+            if view in ("Both sides", "Bottom"):
+                bottom_cuts, bottom_rapids = toolpath_segments(
+                    isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
+            if view in ("Both sides", "Top"):
+                top_cuts, _ = toolpath_segments(
+                    isolate(lay.top_copper, self.state.trace, outline=lay.outline))
         holes = lay.holes if op == "drill" else None
         self.preview.show_segments(bottom_cuts, bottom_rapids, holes=holes,
                                    top_cuts=top_cuts, pins=lay.align_holes,
@@ -1365,7 +1374,11 @@ class MainWindow(QMainWindow):
                    if op != "drill" else self._drill_status())
             self.statusBar().showMessage(msg, 8000)
             side = self._ds_side()
-            if side is not None and op != "drill":
+            if op == "cutout":
+                # the edge cut is the same single job whichever view is selected
+                self.preview.set_estimate(self._est_text(
+                    self._ds_side_toolpaths(op, side), self.state.cutout))
+            elif side is not None and op != "drill":
                 job = self.state.trace if op == "traces" else self.state.cutout
                 self.preview.set_estimate(self._est_text(self._ds_side_toolpaths(op, side), job))
             else:

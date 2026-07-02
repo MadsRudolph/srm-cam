@@ -585,6 +585,22 @@ def test_double_sided_preview_shows_both_sides_and_dowels():
     for (px, py, _d) in w.preview._pins:
         assert x0 <= px <= x1 and y0 <= py <= y1
 
+def test_double_sided_cutout_tab_shows_edge_cut_not_traces():
+    # Regression: in double-sided 'Both sides' view the Cutout tab used to keep
+    # drawing the trace isolation; it must show the edge-cut path instead.
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.tabs.setCurrentIndex(2)                       # cutout tab
+    w.generate_preview()
+    assert len(w.preview._full_cuts) > 0            # the outline cut is drawn
+    assert w.preview._full_top_cuts == []           # ...and no top trace isolation
+    assert w.preview.est_lbl.text() not in ("", "—")  # cutout got a real estimate
+    n_cutout = len(w.preview._full_cuts)
+    w.tabs.setCurrentIndex(0)                       # traces op for comparison
+    w.generate_preview()
+    assert len(w.preview._full_cuts) > n_cutout     # isolation is far denser
+
 def test_double_sided_view_toggle_bottom_and_top():
     w = MainWindow()
     w.load_folder(str(FIXT))
