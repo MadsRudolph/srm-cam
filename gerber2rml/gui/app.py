@@ -284,6 +284,11 @@ class MainWindow(QMainWindow):
         self.machine_combo.setMinimumWidth(100)
         self.machine_combo.addItems(list(BACKENDS.keys()))
         self.mirror_chk = QCheckBox("Mirror (bottom-up)"); self.mirror_chk.setChecked(True)
+        self.mirror_chk.setToolTip(
+            "Single-sided only: mill the bottom copper mirrored (board is flipped "
+            "onto the bed). Greyed out in double-sided mode — there the View "
+            "selector (Both/Bottom/Top) picks the frame and mirroring is applied "
+            "per side automatically.")
         self.mirror_chk.toggled.connect(self._on_mirror_toggled)
         self.double_sided_chk = QCheckBox("Double-sided")
         self.double_sided_chk.toggled.connect(self._on_double_sided_toggled)
@@ -1425,7 +1430,12 @@ class MainWindow(QMainWindow):
         always obvious whether you're looking at the design or the mirrored
         as-milled cut. Never changes the exported geometry."""
         AMBER, GREEN = "#ffb000", "#33cc88"
-        if self.double_sided_chk.isChecked():
+        ds = self.double_sided_chk.isChecked()
+        # Mirror + preview-frame are single-sided controls; in double-sided mode
+        # the View selector (Both/Bottom/Top) owns the frame, so grey these out
+        # rather than let them look like they do something.
+        self.mirror_chk.setEnabled(not ds)
+        if ds:
             self.frame_combo.setEnabled(False)
             side = self._ds_side()
             if side == "Bottom":
