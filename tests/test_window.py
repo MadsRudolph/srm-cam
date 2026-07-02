@@ -757,6 +757,32 @@ def test_top_fit_places_the_top_views_on_the_real_board():
     assert "AS MILLED" in w.preview._frame_label
 
 
+def test_top_fit_moves_the_probe_grid_onto_the_placed_board():
+    # The leveling grid is built over the DISPLAYED outline; with a fiducial
+    # fit stored the Top outline is AS PLACED, so probe points land on the
+    # crooked board instead of the nominal position (off the stock = probing
+    # the bare bed).
+    from gerber2rml.engine.fiducial import Transform
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Top")
+    w.generate_preview()
+    b0 = w._level_bounds()
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)
+    b1 = w._level_bounds()
+    assert abs(b1[0] - (b0[0] - 8.7)) < 1e-9
+    assert abs(b1[1] - (b0[1] + 14.3)) < 1e-9
+
+
+def test_fiducial_dialog_prefills_previous_measurements():
+    from gerber2rml.gui.app import _FiducialAlignDialog
+    w = MainWindow()
+    dlg = _FiducialAlignDialog(w, [(10.0, 20.0), (30.0, 40.0)],
+                               initial=[(11.5, 21.5), (31.5, 41.5)])
+    assert dlg.measured() == [(11.5, 21.5), (31.5, 41.5)]
+
+
 def test_top_fit_survives_setup_roundtrip():
     from gerber2rml.engine.fiducial import Transform
     w = MainWindow()
@@ -782,7 +808,7 @@ def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
     w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
 
     class _StubDlg:                                  # auto-accept with a small shift
-        def __init__(self, parent, nominal): self._n = nominal
+        def __init__(self, parent, nominal, initial=None): self._n = nominal
         def exec(self): return QDialog.Accepted
         def measured(self): return [(x + 0.1, y - 0.05) for (x, y) in self._n]
 

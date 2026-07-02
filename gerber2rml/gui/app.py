@@ -145,7 +145,7 @@ class _FiducialAlignDialog(QDialog):
     ``nominal`` is the list of (x, y) top-frame fiducial positions (where a
     perfect flip lands them). Capture pulls the parent's live DRO position."""
 
-    def __init__(self, parent, nominal):
+    def __init__(self, parent, nominal, initial=None):
         super().__init__(parent)
         self.setWindowTitle("Fiducial alignment")
         self._parent = parent
@@ -156,13 +156,18 @@ class _FiducialAlignDialog(QDialog):
             "measured X/Y. Nominal = where a perfect flip would put it."))
         self.table = QTableWidget(len(nominal), 5)
         self.table.setHorizontalHeaderLabels(["nom X", "nom Y", "meas X", "meas Y", ""])
+        initial = initial or []
         for r, (nx, ny) in enumerate(nominal):
             for c, val in ((0, nx), (1, ny)):
                 it = QTableWidgetItem(f"{val:.3f}")
                 it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(r, c, it)
-            self.table.setItem(r, 2, QTableWidgetItem(""))
-            self.table.setItem(r, 3, QTableWidgetItem(""))
+            # pre-fill this run's earlier measurements so probe-then-refit
+            # doesn't mean typing (or re-jogging) everything again
+            mx = f"{initial[r][0]:.3f}" if r < len(initial) else ""
+            my = f"{initial[r][1]:.3f}" if r < len(initial) else ""
+            self.table.setItem(r, 2, QTableWidgetItem(mx))
+            self.table.setItem(r, 3, QTableWidgetItem(my))
             btn = QPushButton("Capture")
             btn.clicked.connect(lambda _=False, row=r: self._capture(row))
             self.table.setCellWidget(r, 4, btn)
@@ -1687,7 +1692,11 @@ class MainWindow(QMainWindow):
             side = self._ds_side()
             if side is not None:
                 mlay = self._machine_layout()
-                return mlay.top_outline if side == "Top" else mlay.outline
+                if side == "Top":
+                    # AS PLACED: the probe grid must land on the board where it
+                    # really sits (a crooked flip can shift it by many mm)
+                    return self._top_fit_geom(mlay.top_outline)
+                return mlay.outline
             return self._double_sided_layout().outline
         return self.state.board.outline
 
@@ -2488,35 +2497,52 @@ class MainWindow(QMainWindow):
             self.state.gerber_dir, offset=(self.state.place_x, self.state.place_y),
             rotate=self.state.rotate, registration="fiducial", fiducials=fid)
         nominal = nominal_top_fiducials(lay)
-        dlg = _FiducialAlignDialog(self, nominal)
+        dlg = _FiducialAlignDialog(self, nominal,
+                                   initial=getattr(self, "_fid_measured", None))
         if dlg.exec() != QDialog.Accepted:
             return
         measured = dlg.measured()
-        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
-        if not out:
-            return
-        import math
+        self._fid_measured = measured        # pre-fill the next run of this dialog
         from gerber2rml.doublesided import build_top_traces
         from gerber2rml.engine.fiducial import fit_transform, rms
-        # XY comes from the fiducial fit; Z from a top-side height map when one
-        # has been probed. Exporting unleveled on a warped bed can air-cut, so
-        # make skipping it an explicit choice.
-        level = self._level_heightmap_preview()
-        if level is None:
-            if QMessageBox.question(
-                    self, "No top-side height map",
-                    "No probed height map — the top traces would be exported "
-                    "UNLEVELED.\n\nOn an uneven bed this can cut too shallow "
-                    "(air) or too deep. Probe the flipped board first "
-                    "(View=Top, Build grid, Probe over SPI), or export "
-                    "unleveled anyway?",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-                    ) != QMessageBox.Yes:
-                return
+        # Fit FIRST and remember it: from here the Top views render AS PLACED
+        # (jog/snap/probe grid/rework/tracking follow the physical board) even
+        # if the export below is postponed.
         try:
             t = fit_transform(nominal[:len(measured)], measured,
                               allow_scale=fid.allow_scale)
             err = rms(t, nominal[:len(measured)], measured)
+        except Exception as e:
+            QMessageBox.critical(self, "Fit failed", str(e))
+            return
+        self._top_fit = t
+        self.generate_preview()
+        # XY comes from the fiducial fit; Z from a top-side height map when one
+        # has been probed. Exporting unleveled on a warped bed can air-cut, so
+        # make skipping it an explicit choice — the recommended path is to stop
+        # here, probe (the grid now follows the placed board), and re-run this
+        # dialog (your measurements are pre-filled).
+        level = self._level_heightmap_preview()
+        if level is None:
+            if QMessageBox.question(
+                    self, "No top-side height map",
+                    "Fit stored — the Top views now show the board AS PLACED "
+                    "and the probe grid will follow it.\n\nNo height map is "
+                    "probed yet, so the top traces would be exported "
+                    "UNLEVELED (air-cut risk on an uneven bed).\n\n"
+                    "Recommended: No — probe the top now (Build grid, Clear Z, "
+                    "Probe over SPI), then run Fit && export again (your "
+                    "measurements are kept). Export unleveled anyway?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    ) != QMessageBox.Yes:
+                self.statusBar().showMessage(
+                    "Fit stored (AS PLACED) — probe the top, then Fit & export "
+                    "again; your fiducial measurements are pre-filled", 12000)
+                return
+        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
+        if not out:
+            return
+        try:
             path = build_top_traces(
                 self.state.gerber_dir, out, self.state.name,
                 trace=self.state.trace, machine=self.state.machine,
@@ -2525,18 +2551,14 @@ class MainWindow(QMainWindow):
                 measured_fiducials=measured, allow_scale=fid.allow_scale,
                 level=level)
         except Exception as e:
-            QMessageBox.critical(self, "Fit/export failed", str(e))
+            QMessageBox.critical(self, "Export failed", str(e))
             return
-        # remember the measured placement: the Top views now render AS PLACED,
-        # so jog/snap/rework/tracking land on the physical board
-        self._top_fit = t
-        self.generate_preview()
         self.statusBar().showMessage(
             f"Wrote {path.name} — fit RMS {err * 1000:.0f} um, "
             f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}"
             + (", leveled to the top probe" if level is not None
                else ", UNLEVELED")
-            + " — Top views now show the board AS PLACED", 12000)
+            + " — Top views show the board AS PLACED", 12000)
 
     # ---- save / load the whole setup -----------------------------------
     def _collect_setup(self):
