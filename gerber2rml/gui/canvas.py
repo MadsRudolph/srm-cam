@@ -162,6 +162,12 @@ class PreviewCanvas(QWidget):
         self._pin_artists = []
         self.on_pin_moved = None          # callback(index, x, y) set by the app
 
+        # Overlay-align pick: one-shot mode — the next left-click reports the
+        # design point the tool is PHYSICALLY at, so the app can trim the live
+        # overlay onto the machine's actual work origin (display-only).
+        self._align_pick = False
+        self.on_align_pick = None         # callback(x, y, key) set by the app
+
         # Arrow-key carriage jog: while the mouse is over the preview, the arrow
         # keys nudge the machine in X/Y. on_jog_step(dx, dy) reports a signed
         # step in board mm; the app turns it into a relative machine move.
@@ -690,6 +696,11 @@ class PreviewCanvas(QWidget):
         self._jogging = bool(on)
         self.canvas.setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
 
+    def set_align_pick(self, on):
+        """Arm/disarm the one-shot overlay-align pick (see ``on_align_pick``)."""
+        self._align_pick = bool(on)
+        self.canvas.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+
     def _draw_move_ghost(self, dx, dy):
         self._clear_move_ghost()
         if self._move_bbox0 is None:
@@ -757,6 +768,10 @@ class PreviewCanvas(QWidget):
             self.ax.start_pan(event.x, event.y, 1)   # button 1 => pan (not zoom)
             return
         if event.button != 1:
+            return
+        if self._align_pick:
+            if self.on_align_pick and event.xdata is not None:
+                self.on_align_pick(event.xdata, event.ydata, event.key or "")
             return
         if self._pin_drag and not (self._jogging or self._measuring
                                    or self._selecting or self._moving):
