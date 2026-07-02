@@ -162,6 +162,35 @@ def test_slider_frame_stays_fixed_while_scrubbing():
     assert canvas.ax.get_xlim() == full           # view does not jump/rescale
 
 
+def _copper_patches(canvas):
+    return [p for p in canvas.ax.patches if p.__class__.__name__ == "PathPatch"]
+
+
+def test_copper_fill_drawn_under_toolpaths():
+    from shapely.geometry import Polygon
+    canvas = PreviewCanvas()
+    pour = Polygon([(0, 0), (20, 0), (20, 20), (0, 20)],
+                   holes=[[(8, 8), (12, 8), (12, 12), (8, 12)]])  # zone cutout
+    canvas.show_segments([[(0, 0), (20, 0)]], [],
+                         holes=[(5, 5, 0.8)],
+                         copper=[(pour, "#00ffff")])
+    patches = _copper_patches(canvas)
+    assert len(patches) == 1                       # one patch per layer
+    assert patches[0].get_zorder() < 1             # under outline + toolpaths
+    canvas.slider.setValue(500)                    # scrubbing keeps the copper
+    assert len(_copper_patches(canvas)) == 1
+
+
+def test_copper_fill_handles_empty_and_none():
+    from shapely.geometry import Polygon
+    canvas = PreviewCanvas()
+    canvas.show_segments([[(0, 0), (1, 1)]], [],
+                         copper=[(Polygon(), "#00ffff"), (None, "#ff55ff")])
+    assert _copper_patches(canvas) == []           # nothing drawn, nothing raised
+    canvas.show_segments([[(0, 0), (1, 1)]], [])   # omitted -> cleared
+    assert _copper_patches(canvas) == []
+
+
 def test_bed_fit_flag_and_view_includes_bed():
     canvas = PreviewCanvas()
     canvas.set_bed((203.2, 152.4))

@@ -76,6 +76,7 @@ class PreviewCanvas(QWidget):
         self._full_holes = []
         self._full_top_cuts = []
         self._pins = []
+        self._copper = []
         self._limits = None
 
         # Orientation badge + optional view-only horizontal flip. The flip shows
@@ -187,18 +188,26 @@ class PreviewCanvas(QWidget):
         """Show a persistent run-time estimate on the control bar (or clear it)."""
         self.est_lbl.setText(text or "")
 
-    def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None):
+    def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None,
+                      copper=None):
         """Store the toolpaths and update the display based on the slider.
 
         ``top_cuts`` are the reflected front-side isolation polylines (drawn in a
         second colour) and ``pins`` are the (x, y, d) dowel/alignment holes, both
         used for the double-sided preview. Both default empty, so the ordinary
-        single-sided callers are unaffected."""
+        single-sided callers are unaffected.
+
+        ``copper`` is a list of ``(shapely geometry, color)`` layers drawn as a
+        faint fill UNDER the toolpaths. Without it, pads and vias connected to a
+        copper pour have no isolation ring of their own, so their drill markers
+        look like stray holes in empty space — the fill shows the copper they
+        actually sit on."""
         self._full_cuts = cuts or []
         self._full_rapids = rapids or []
         self._full_holes = holes or []
         self._full_top_cuts = top_cuts or []
         self._pins = pins or []
+        self._copper = copper or []
         self._limits = self._compute_limits()
         self.slider.setValue(1000)
         self._draw_fraction(1.0)
@@ -342,6 +351,32 @@ class PreviewCanvas(QWidget):
                          bbox=dict(boxstyle="round,pad=0.3", facecolor="#88bbff",
                                    edgecolor="none", alpha=0.95))
 
+    def _add_copper_fills(self):
+        """Fill the stored copper layers as one PathPatch each (fast even for a
+        pour-heavy MultiPolygon), honoring interior rings so zone cutouts stay
+        dark. Drawn under the toolpaths as context only."""
+        from matplotlib.path import Path as MplPath
+        from matplotlib.patches import PathPatch
+        from shapely.geometry.polygon import orient
+        for geom, color in self._copper:
+            if geom is None or getattr(geom, "is_empty", True):
+                continue
+            polys = geom.geoms if hasattr(geom, "geoms") else [geom]
+            verts, codes = [], []
+            for p in polys:
+                if p.is_empty or p.geom_type != "Polygon":
+                    continue
+                p = orient(p)          # exterior CCW, interiors CW: rings render as holes
+                for ring in (p.exterior, *p.interiors):
+                    pts = list(ring.coords)
+                    verts.extend(pts)
+                    codes.extend([MplPath.MOVETO]
+                                 + [MplPath.LINETO] * (len(pts) - 2)
+                                 + [MplPath.CLOSEPOLY])
+            if verts:
+                self.ax.add_patch(PathPatch(MplPath(verts, codes), facecolor=color,
+                                            edgecolor="none", alpha=0.16, zorder=0.8))
+
     def _design_bounds(self):
         """(minx, miny, maxx, maxy) of all toolpath/hole/pin geometry, or None."""
         xs, ys = [], []
@@ -482,6 +517,9 @@ class PreviewCanvas(QWidget):
             self.ax.add_patch(Rectangle((sx, sy), sw, sh, facecolor="#b87333",
                                         alpha=0.16, edgecolor=edge, linewidth=1.6,
                                         zorder=0.5))
+
+        if self._copper:
+            self._add_copper_fills()
 
         if self._outline_xy:
             # the board edge (Edge.Cuts) — a subtle closed boundary so the PCB
