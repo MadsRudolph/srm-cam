@@ -726,27 +726,43 @@ def test_double_sided_view_toggle_bottom_and_top():
     assert w.preview._full_cuts == [] and len(w.preview._full_top_cuts) > 0
     assert len(w.preview._pins) == 2
 
-def test_double_sided_rework_export_enabled_per_side():
+def test_rework_export_always_enabled_and_explains(monkeypatch):
+    # The button used to grey out silently when preconditions were missing (an
+    # operator lost time to this). It now stays enabled and clicking explains
+    # exactly what to fix.
+    from PySide6.QtWidgets import QMessageBox
     from gerber2rml.engine.select import clip_toolpaths_to_bbox
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warnings.append(a[2])))
     w = MainWindow()
     w.load_folder(str(FIXT))
     w.double_sided_chk.setChecked(True)
-    box = (0, 0, 200, 200)                         # covers the whole placed board
-    w._on_region_added(box)                         # one rework region present
-    # Both sides: can't rework two sides at once -> export stays disabled
+    assert w.export_sel_btn.isEnabled()             # enabled from the start
+    w._on_export_selected()                         # no regions yet
+    assert "boxes" in warnings[-1]
+    box = (0, 0, 200, 200)                          # covers the whole placed board
+    w._on_region_added(box)
     w.view_combo.setCurrentText("Both sides")
     w.generate_preview()
-    assert w._ds_side() is None and not w.export_sel_btn.isEnabled()
-    # Bottom: export enabled, and the bottom side's MACHINE-frame paths clip
-    w.view_combo.setCurrentText("Bottom")
-    w.generate_preview()
-    assert w._ds_side() == "Bottom" and w.export_sel_btn.isEnabled()
+    assert w.export_sel_btn.isEnabled()             # still enabled...
+    w._on_export_selected()
+    assert "Bottom or Top" in warnings[-1]          # ...and it says what to fix
+    # with a side picked, both sides' MACHINE-frame paths clip as before
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Bottom"), box)
-    # Top: its own side paths (reflected) also clip
-    w.view_combo.setCurrentText("Top")
-    w.generate_preview()
-    assert w._ds_side() == "Top" and w.export_sel_btn.isEnabled()
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Top"), box)
+
+
+def test_machine_dock_at_bottom_with_port():
+    # GUI 2.0 phase 2: the machine strip + run progress live in a bottom dock,
+    # and the serial port selector sits in the dock next to Connect.
+    w = MainWindow()
+    lay = w.centralWidget().layout()
+    names = [lay.itemAt(i).widget().objectName() for i in range(lay.count())]
+    assert names[-2:] == ["machineBar", "progressBar"]   # dock is the bottom rows
+    bar = w.centralWidget().layout().itemAt(lay.count() - 2).widget()
+    assert w.level_port_combo in bar.findChildren(type(w.level_port_combo))
+    assert w.connect_btn in bar.findChildren(type(w.connect_btn))
 
 def test_rework_export_uses_custom_depth(tmp_path, monkeypatch):
     # the rework pass cuts at the spin's depth, not the original job's depth.
