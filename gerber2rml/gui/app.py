@@ -737,12 +737,22 @@ class MainWindow(QMainWindow):
             "capture the probed X/Y of each fiducial; the top traces are warped to "
             "the best-fit transform and exported. Shows the RMS fit error.")
         self.fid_align_btn.clicked.connect(self._on_fiducial_align)
+        self.fid_flip_combo = QComboBox()
+        self.fid_flip_combo.addItems(["Flip left-right", "Flip top-bottom"])
+        self.fid_flip_combo.setToolTip(
+            "Which way you physically flip the board. IMPORTANT with corner "
+            "fiducials: the fiducial rectangle is symmetric, so the fit reports "
+            "a tiny RMS for BOTH directions — it cannot detect a wrong choice. "
+            "Pick the one you actually did, then jog-verify a drilled hole in "
+            "the AS PLACED Top view before cutting.")
+        self.fid_flip_combo.currentIndexChanged.connect(self._on_reg_changed)
         self._fid_row = QWidget()
         _fid_row_l = QHBoxLayout(self._fid_row)
         _fid_row_l.setContentsMargins(0, 0, 0, 0)
         _fid_row_l.addWidget(QLabel("n")); _fid_row_l.addWidget(self.fid_count_spin)
         _fid_row_l.addWidget(self.fid_place_combo)
         _fid_row_l.addWidget(self.fid_offset_spin)
+        _fid_row_l.addWidget(self.fid_flip_combo)
         _fid_row_l.addWidget(self.fid_scale_chk)
         _fid_row_l.addWidget(self.fid_align_btn)
         self._fid_row.setEnabled(False)   # enabled only in fiducial mode
@@ -1190,7 +1200,7 @@ class MainWindow(QMainWindow):
         key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
                spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
                fid.count, fid.placement, fid.edge_offset, fid.points,
-               off, self.state.rotate)
+               fid.flip_axis, off, self.state.rotate)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
@@ -1210,7 +1220,7 @@ class MainWindow(QMainWindow):
         key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
                spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
                fid.count, fid.placement, fid.edge_offset, fid.points,
-               off, self.state.rotate)
+               fid.flip_axis, off, self.state.rotate)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
@@ -1280,6 +1290,8 @@ class MainWindow(QMainWindow):
             placement=placement,
             edge_offset=self.fid_offset_spin.value(),
             allow_scale=self.fid_scale_chk.isChecked(),
+            flip_axis=("horizontal" if self.fid_flip_combo.currentIndex() == 1
+                       else "vertical"),
             points=(tuple(tuple(p) for p in self._fid_points)
                     if placement == "manual" else ()))
 
@@ -2609,6 +2621,7 @@ class MainWindow(QMainWindow):
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
                     "scale": self.fid_scale_chk.isChecked(),
+                    "flip": self.fid_flip_combo.currentIndex(),
                     "points": [list(p) for p in self._fid_points]},
             "stock": {"w": self.stock_w_spin.value(), "h": self.stock_h_spin.value(),
                       "x": self.stock_x_spin.value(), "y": self.stock_y_spin.value(),
@@ -2684,6 +2697,7 @@ class MainWindow(QMainWindow):
         _combo(self.fid_place_combo, fd.get("place", 0))
         _spin(self.fid_offset_spin, fd.get("offset", 4.0))
         _chk(self.fid_scale_chk, fd.get("scale", False))
+        _combo(self.fid_flip_combo, fd.get("flip", 0))
         self._fid_points = [list(p) for p in fd.get("points", [])]
         self.fid_offset_spin.setEnabled(self.fid_place_combo.currentIndex() != 2)
         _combo(self.view_combo, d.get("view", 0))

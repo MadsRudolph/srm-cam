@@ -387,6 +387,53 @@ def test_fiducial_manual_empty_points_falls_back_to_corners():
     assert len(lay.align_holes) == 4                 # graceful corner fallback
 
 
+def test_fiducial_horizontal_flip_axis():
+    # flip_axis="horizontal" = the operator flips the board top-bottom. The
+    # whole layout must mirror about Y and the nominal reflection must run
+    # about a horizontal line — the corner-fiducial rectangle is symmetric, so
+    # ONLY the board content distinguishes the two flip directions.
+    spec_v = FiducialSpec(count=4, placement="onboard")
+    spec_h = FiducialSpec(count=4, placement="onboard", flip_axis="horizontal")
+    lay_v = layout_double_sided(FIXT, registration="fiducial", fiducials=spec_v)
+    lay_h = layout_double_sided(FIXT, registration="fiducial", fiducials=spec_h)
+    assert lay_v.axis == "vertical" and lay_h.axis == "horizontal"
+    # the corner-fiducial RECTANGLE is identical for both (the trap: the fit
+    # cannot tell the directions apart)...
+    rect = lambda lay: sorted((round(x - lay.frame0[0], 3),
+                               round(y - lay.frame0[1], 3))
+                              for (x, y, _d) in lay.align_holes)
+    assert rect(lay_v) == rect(lay_h)
+    # ...but the board content mirrors differently: same board width/height,
+    # different hole arrangement (unless the design itself is symmetric)
+    w_v = [round(x - lay_v.frame0[0], 3) for (x, y, d) in lay_v.holes]
+    w_h = [round(x - lay_h.frame0[0], 3) for (x, y, d) in lay_h.holes]
+    assert w_v != w_h
+    # nominal reflection runs about the flip line of the chosen axis
+    nom_h = nominal_top_fiducials(lay_h)
+    for (hx, hy, _d), (nx, ny) in zip(lay_h.align_holes, nom_h):
+        assert abs(nx - hx) < 1e-6                       # x untouched
+        assert abs(ny - (2 * lay_h.flip_pos - hy)) < 1e-6
+
+
+def test_fiducial_manual_points_mirror_along_the_flip_axis():
+    # manual points must mirror across the machine frame along the CHOSEN flip
+    # direction (y for a horizontal flip), keeping the physical holes where the
+    # design-frame preview shows them
+    from gerber2rml.doublesided import preview_layout_double_sided
+    pts = ((5.0, 10.0), (40.0, 90.0))
+    spec = FiducialSpec(count=2, placement="manual", points=pts,
+                        flip_axis="horizontal")
+    prev = preview_layout_double_sided(FIXT, registration="fiducial", fiducials=spec)
+    mach = layout_double_sided(FIXT, registration="fiducial", fiducials=spec)
+    # physical consistency: distance from box bottom in preview + distance from
+    # box bottom in machine frame = box height (a constant), x untouched
+    sums = [(hp[1] - prev.frame0[1]) + (hm[1] - mach.frame0[1])
+            for hp, hm in zip(prev.align_holes, mach.align_holes)]
+    assert abs(sums[0] - sums[1]) < 1e-6
+    for (px, _py), (hx, hy, _d) in zip(pts, mach.align_holes):
+        assert abs(hx - (mach.frame0[0] + px)) < 1e-6    # x passes straight through
+
+
 def test_fiducial_manual_nominal_top_still_reflected():
     spec = FiducialSpec(count=2, placement="manual",
                         points=((-4.0, 5.0), (22.0, 30.0)))
