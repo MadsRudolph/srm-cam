@@ -852,20 +852,30 @@ class MainWindow(QMainWindow):
             f.setLabelAlignment(Qt.AlignRight)
             return g, f
 
-        # ---------- Settings Sidebar & Stacked Widget ----------
+        # ---------- Runplan spine (GUI 2.0) ----------
+        # The sidebar IS the run plan: the steps in machining order, each
+        # routing to the page/op/side it needs. NEVER blocking — every step
+        # is clickable at any time; it's a map, not a gate.
+        # (label, stacked page, op tab index or None, DS view or None)
+        self._SPINE = [
+            ("1 · Setup board",    0, None, None),
+            ("2 · Bed leveling",   2, None, None),
+            ("3 · Registration",   1, None, None),
+            ("4 · Drill",          0, 1,    "Bottom"),
+            ("5 · Bottom traces",  0, 0,    "Bottom"),
+            ("6 · Cutout",         0, 2,    "Bottom"),
+            ("7 · Flip + align",   1, None, None),
+            ("8 · Top traces",     0, 0,    "Top"),
+            ("Rework",             3, None, None),
+            ("3D viewer",          4, None, None),
+        ]
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(180)
-        self.sidebar.addItems([
-            "Project & Tools",
-            "Double-Sided",
-            "Bed Leveling",
-            "Rework",
-            "3D Viewer"
-        ])
-        
+        self.sidebar.addItems([s[0] for s in self._SPINE])
+
         self.stacked_widget = QStackedWidget()
-        self.sidebar.currentRowChanged.connect(self.stacked_widget.setCurrentIndex)
+        self.sidebar.currentRowChanged.connect(self._on_spine_changed)
 
         def _make_page(help_text=""):
             p = QWidget()
@@ -1279,6 +1289,27 @@ class MainWindow(QMainWindow):
         """Set the registration method programmatically ('dowel'|'fiducial')."""
         self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
         self._update_ds_controls()
+
+    def _on_spine_changed(self, row):
+        """A runplan step was clicked: route to its page and pre-select the op
+        tab / double-sided side it works in. Pure navigation — never blocks."""
+        if not (0 <= row < len(self._SPINE)):
+            return
+        _label, page, op_idx, ds_view = self._SPINE[row]
+        self.stacked_widget.setCurrentIndex(page)
+        if op_idx is not None:
+            self.tabs.setCurrentIndex(op_idx)
+        if ds_view is not None and self.double_sided_chk.isChecked():
+            self.view_combo.setCurrentText(ds_view)
+
+    def _goto_page(self, page):
+        """Select the first spine step that lives on stacked ``page`` (tour +
+        programmatic navigation; rows no longer equal page indexes)."""
+        for row, (_l, p, _o, _v) in enumerate(self._SPINE):
+            if p == page:
+                self.sidebar.setCurrentRow(row)
+                return
+        self.stacked_widget.setCurrentIndex(page)
 
     def _travel_check(self, toolpaths):
         """Compare toolpath XY extents against the machine bed. Returns None

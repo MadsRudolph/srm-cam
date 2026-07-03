@@ -807,6 +807,25 @@ def test_top_view_pins_reflect_before_the_fit():
         assert abs(px - ex) < 1e-9 and abs(py - ey) < 1e-9
 
 
+def test_runplan_spine_routes_page_op_and_side():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.sidebar.setCurrentRow(4)                       # 5 · Bottom traces
+    assert w.stacked_widget.currentIndex() == 0
+    assert w.tabs.currentIndex() == 0 and w.view_combo.currentText() == "Bottom"
+    w.sidebar.setCurrentRow(7)                       # 8 · Top traces
+    assert w.tabs.currentIndex() == 0 and w.view_combo.currentText() == "Top"
+    w.sidebar.setCurrentRow(1)                       # 2 · Bed leveling
+    assert w.stacked_widget.currentIndex() == 2
+    # never blocking: any row is selectable regardless of state
+    w.sidebar.setCurrentRow(8)                       # Rework
+    assert w.stacked_widget.currentIndex() == 3
+    # tour navigation by PAGE still lands on a matching step
+    w._goto_page(1)
+    assert w.stacked_widget.currentIndex() == 1
+
+
 def test_travel_check_flags_out_of_reach_and_suggests_slide():
     from gerber2rml.toolpath import Move
     w = MainWindow()
@@ -1180,7 +1199,7 @@ def test_settings_panel_autofits_per_page():
     project_inner = w.stacked_widget.widget(0).widget()
     project_min = w._settings_container.minimumWidth()      # fitted on show (page 0)
     assert project_min >= w.sidebar.minimumWidth() + project_inner.sizeHint().width()
-    w.sidebar.setCurrentRow(2); _app.processEvents()        # Bed Leveling: wider
+    w.sidebar.setCurrentRow(1); _app.processEvents()        # Bed leveling: wider
     assert w._settings_container.minimumWidth() > project_min   # re-fit wider
     w.close()
 
@@ -1286,7 +1305,7 @@ def test_preview_shows_persistent_estimate_per_op():
 def test_3d_viewer_tab_exists_with_launchers():
     w = MainWindow()
     titles = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
-    assert "3D Viewer" in titles                          # 5th sidebar entry
+    assert "3D viewer" in titles                          # spine tool entry
     for b in (w.view3d_sim_btn, w.view3d_file_btn, w.view3d_bed_btn):
         assert b is not None
 
@@ -1309,7 +1328,7 @@ def test_double_sided_enable_refits_panel():
     # must re-fit so they aren't clipped.
     w = MainWindow()
     w.resize(1916, 1000); w.show(); _app.processEvents()
-    w.sidebar.setCurrentRow(1); _app.processEvents()       # Double-Sided page
+    w.sidebar.setCurrentRow(2); _app.processEvents()       # 3 · Registration (DS page)
     before = w._settings_container.minimumWidth()
     w.double_sided_chk.setChecked(True); _app.processEvents()
     assert w._settings_container.minimumWidth() > before   # re-fit wider
