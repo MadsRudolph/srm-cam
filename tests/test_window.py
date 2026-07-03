@@ -1001,6 +1001,48 @@ def test_fid_measured_survives_setup_roundtrip():
     assert w2._fid_measured == [(200.24, 10.11), (5.94, 11.49)]
 
 
+def test_photo_overlay_apply_and_persist():
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((60, 80, 4), np.uint8); img[..., 3] = 255
+    photo_pts = [(5, 55), (75, 55), (75, 5), (5, 5)]
+    machine_pts = [(10.0, 20.0), (90.0, 20.0), (90.0, 80.0), (10.0, 80.0)]
+    worst = w._apply_photo_overlay(img, photo_pts, machine_pts, "C:/nope/board.jpg")
+    assert worst < 1e-6                             # exact correspondences
+    assert w.preview._photo is not None             # underlay is showing
+    d = w._collect_setup()
+    assert d["photo_overlay"]["machine_pts"] == [list(p) for p in machine_pts]
+    # restore with a missing photo file: never blocks the load, overlay off
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2.preview._photo is None
+
+
+def test_photo_anchor_holes_are_four_named_corners():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.preview._full_holes = [(10, 10, 0.8), (90, 12, 0.8), (88, 70, 0.8),
+                             (12, 68, 0.8), (50, 40, 0.8)]
+    w.preview._pins = []
+    anchors = w._photo_anchor_holes()
+    assert [n for n, _p in anchors] == ["bottom-left", "bottom-right",
+                                        "top-right", "top-left"]
+    assert anchors[0][1] == (10, 10) and anchors[2][1] == (88, 70)
+
+
+def test_photo_overlay_cleared_on_new_board():
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)])
+    w.load_folder(str(FIXT))                        # new physical setup
+    assert w._photo_overlay is None
+    assert w.preview._photo is None
+
+
 def test_rework_export_always_enabled_and_explains(monkeypatch):
     # The button used to grey out silently when preconditions were missing (an
     # operator lost time to this). It now stays enabled and clicking explains

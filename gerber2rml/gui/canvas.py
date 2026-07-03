@@ -106,6 +106,12 @@ class PreviewCanvas(QWidget):
         self._stock = None
         self._stock_fits = True
 
+        # Rework photo underlay: (rgba, extent) of a board photo warped into
+        # the machine frame (engine.photofit) so rework boxes are drawn on the
+        # real copper. None = hidden.
+        self._photo = None
+        self._photo_alpha = 0.55
+
         # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
         # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
         # can eyeball the tilt/warp before cutting. None = hidden.
@@ -255,6 +261,22 @@ class PreviewCanvas(QWidget):
         ``None`` to hide it. Redraws so the change is immediate."""
         self._stock = rect if (rect and rect[2] > 0 and rect[3] > 0) else None
         self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_photo(self, rgba=None, extent=None, alpha=0.55):
+        """Show (or clear, with no args) a machine-frame photo underlay:
+        ``rgba`` is an HxWx4 uint8 array with row 0 at the LOWEST y (as
+        produced by engine.photofit.warp_photo), ``extent`` = (x0, x1, y0, y1)
+        mm. Drawn under the copper/toolpaths so rework boxes can be placed on
+        the real board. Redraws immediately."""
+        self._photo = (rgba, extent) if rgba is not None else None
+        self._photo_alpha = alpha
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_photo_alpha(self, alpha):
+        """Adjust the photo underlay opacity (0..1). Redraws."""
+        self._photo_alpha = alpha
+        if self._photo is not None:
+            self._draw_fraction(self.slider.value() / 1000.0)
 
     def set_level_overlay(self, X=None, Y=None, Z=None, points=None):
         """Show (or clear, with no args) the height-map heatmap. ``X``/``Y``/``Z``
@@ -532,6 +554,12 @@ class PreviewCanvas(QWidget):
             self.ax.add_patch(Rectangle((sx, sy), sw, sh, facecolor="#b87333",
                                         alpha=0.16, edgecolor=edge, linewidth=1.6,
                                         zorder=0.5))
+
+        if self._photo is not None:
+            rgba, (px0, px1, py0, py1) = self._photo
+            self.ax.imshow(rgba, extent=(px0, px1, py0, py1), origin="lower",
+                           zorder=0.6, alpha=self._photo_alpha,
+                           interpolation="bilinear")
 
         if self._copper:
             self._add_copper_fills()

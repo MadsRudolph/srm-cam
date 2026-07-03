@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
     QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea,
     QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox
+    QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox, QSlider
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
@@ -818,6 +818,25 @@ class MainWindow(QMainWindow):
             "boxes, the Traces or Cutout preview, and (double-sided) View set "
             "to Bottom or Top — clicking tells you what's missing.")
 
+        # Photo overlay: warp a phone photo of the board on the bed into the
+        # machine frame (homography from clicked hole anchors) and draw it
+        # under the toolpaths — rework boxes land on the REAL copper instead
+        # of on memory of a walk to the machine.
+        self.photo_load_btn = QPushButton("Load photo...")
+        self.photo_load_btn.setToolTip(
+            "Overlay a photo of the board on the bed: pick an image, click the "
+            "4 highlighted anchor holes in it, and the photo is warped to line "
+            "up with the preview exactly.")
+        self.photo_load_btn.clicked.connect(self._on_load_photo)
+        self.photo_clear_btn = QPushButton("Clear")
+        self.photo_clear_btn.clicked.connect(self._on_clear_photo)
+        self.photo_alpha_slider = QSlider(Qt.Horizontal)
+        self.photo_alpha_slider.setRange(0, 100)
+        self.photo_alpha_slider.setValue(55)
+        self.photo_alpha_slider.setToolTip("Photo overlay opacity")
+        self.photo_alpha_slider.valueChanged.connect(self._on_photo_alpha)
+        self._photo_overlay = None      # {path, photo_pts, machine_pts, alpha}
+
         # Live cross-section of the active trace tool (V-bit width/depth math
         # made visible). Created before the forms: _sync_vbit_fields feeds it.
         from gerber2rml.gui.bitviz import BitProfileWidget
@@ -1017,6 +1036,9 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(QLabel("New-box depth"), self.rework_depth_spin,
                            stretch_first=True))
         _rl.addWidget(self.rework_level_chk)
+        _rl.addWidget(_row(QLabel("Photo"), self.photo_load_btn,
+                           self.photo_alpha_slider, self.photo_clear_btn,
+                           stretch_first=True))
         _rl.addWidget(self.rework_table)
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
@@ -1183,6 +1205,8 @@ class MainWindow(QMainWindow):
         self.preview._view_limits = None        # new board -> fit (clear any zoom)
         self._top_fit = None                    # placement is per-physical-board
         # (a setup restore re-applies its saved fit after this call)
+        self._photo_overlay = None              # photo is of one physical setup
+        self.preview.set_photo(None)
         # any successful load clears the DEMO badge — this covers Load setup /
         # session restore too, not just the Load Gerber folder button. The
         # launch-time preload re-sets the badge right after this call.
@@ -2746,6 +2770,7 @@ class MainWindow(QMainWindow):
             # leveling-panel exporter across an app restart
             "fid_measured": [list(p) for p in
                              (getattr(self, "_fid_measured", None) or [])],
+            "photo_overlay": self._photo_overlay,
             "fid": {"count": self.fid_count_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
@@ -2863,6 +2888,18 @@ class MainWindow(QMainWindow):
         self._update_level_overlay()
         if loaded:
             self.generate_preview()
+        # Photo overlay: re-decode + re-fit from the saved anchor pairs (the
+        # photo itself is NOT stored in the setup — only its path and clicks).
+        po = d.get("photo_overlay")
+        if loaded and po and po.get("path") and Path(po["path"]).exists():
+            try:
+                img = self._decode_photo(po["path"])
+                self.photo_alpha_slider.setValue(
+                    int(round(float(po.get("alpha", 0.55)) * 100)))
+                self._apply_photo_overlay(img, po["photo_pts"],
+                                          po["machine_pts"], po["path"])
+            except Exception:
+                pass                  # a stale/moved photo never blocks a load
         self.statusBar().showMessage(
             "Setup loaded" if loaded else
             "Setup loaded (board not found — load the Gerber folder manually)", 10000)
@@ -3224,6 +3261,113 @@ class MainWindow(QMainWindow):
     def _clear_rework(self):
         self._rework_regions = []
         self._refresh_rework()
+
+    # ---- rework photo overlay -------------------------------------------
+    @staticmethod
+    def _decode_photo(path, max_dim=2400):
+        """Image file -> HxWx4 uint8 RGBA. Downscaled so anchor clicks stay
+        snappy; the SAME array is used for clicking and warping, so the
+        homography is consistent whatever the original resolution."""
+        from PySide6.QtGui import QImage
+        import numpy as np
+        img = QImage(str(path))
+        if img.isNull():
+            raise ValueError(f"could not read image: {path}")
+        if max(img.width(), img.height()) > max_dim:
+            img = img.scaled(max_dim, max_dim, Qt.KeepAspectRatio,
+                             Qt.SmoothTransformation)
+        img = img.convertToFormat(QImage.Format_RGBA8888)
+        h, w, bpl = img.height(), img.width(), img.bytesPerLine()
+        buf = np.frombuffer(img.constBits(), np.uint8, count=h * bpl)
+        return buf.reshape(h, bpl)[:, :w * 4].reshape(h, w, 4).copy()
+
+    def _photo_anchor_holes(self):
+        """The 4 corner-most displayed holes as (label, (x, y)) anchors — in
+        the SAME frame the preview draws (AS PLACED on a fitted top side), so
+        the warped photo lines up with what you see."""
+        holes = [(x, y) for (x, y, _d) in (self.preview._full_holes or [])]
+        holes += [(x, y) for (x, y, _d) in (self.preview._pins or [])]
+        if len(holes) < 4:
+            return None
+        corners = [max(holes, key=lambda p: -p[0] - p[1]),   # bottom-left
+                   max(holes, key=lambda p: p[0] - p[1]),    # bottom-right
+                   max(holes, key=lambda p: p[0] + p[1]),    # top-right
+                   max(holes, key=lambda p: -p[0] + p[1])]   # top-left
+        if len(set(corners)) < 4:
+            return None
+        names = ("bottom-left", "bottom-right", "top-right", "top-left")
+        return list(zip(names, corners))
+
+    def _on_load_photo(self):
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        anchors = self._photo_anchor_holes()
+        if not anchors:
+            QMessageBox.warning(
+                self, "No anchors",
+                "Need at least 4 distinct drilled holes in the preview to "
+                "anchor a photo (show the drill or traces preview first).")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Board photo", "", "Images (*.jpg *.jpeg *.png *.bmp)")
+        if not path:
+            return
+        try:
+            img = self._decode_photo(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Photo failed", str(e))
+            return
+        from gerber2rml.gui.photodlg import PhotoAnchorDialog
+        dlg = PhotoAnchorDialog(self, img, anchors)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            worst = self._apply_photo_overlay(
+                img, dlg.photo_points(), [p for _n, p in anchors], path)
+        except Exception as e:
+            QMessageBox.critical(self, "Fit failed", str(e))
+            return
+        msg = f"Photo aligned — worst anchor residual {worst * 1000:.0f} um"
+        if worst > 0.8:
+            QMessageBox.warning(
+                self, "Rough fit",
+                msg + ".\n\nA residual that big usually means one click "
+                "missed its hole. Load the photo again and re-click "
+                "(right-click undoes a click).")
+        self.statusBar().showMessage(msg, 8000)
+
+    def _apply_photo_overlay(self, img, photo_pts, machine_pts, path=""):
+        """Fit photo->machine homography, warp, and show under the preview.
+        Returns the worst anchor residual (mm). Factored out of the dialog
+        flow so a restore (or a test) can re-apply saved anchor pairs."""
+        from gerber2rml.engine.photofit import (fit_homography, residuals,
+                                                warp_photo)
+        H = fit_homography(photo_pts, machine_pts)
+        res = residuals(H, photo_pts, machine_pts)
+        db = self.preview._design_bounds()
+        if db is None:
+            bed = BACKENDS[self.state.machine].bed or (203.2, 152.4)
+            db = (0.0, 0.0, bed[0], bed[1])
+        m = 5.0
+        rgba, extent = warp_photo(img, H, (db[0] - m, db[1] - m,
+                                           db[2] + m, db[3] + m))
+        alpha = self.photo_alpha_slider.value() / 100.0
+        self.preview.set_photo(rgba, extent, alpha)
+        self._photo_overlay = {"path": str(path),
+                               "photo_pts": [list(p) for p in photo_pts],
+                               "machine_pts": [list(p) for p in machine_pts],
+                               "alpha": alpha}
+        return float(res.max())
+
+    def _on_clear_photo(self):
+        self._photo_overlay = None
+        self.preview.set_photo(None)
+
+    def _on_photo_alpha(self, v):
+        if self._photo_overlay:
+            self._photo_overlay["alpha"] = v / 100.0
+        self.preview.set_photo_alpha(v / 100.0)
 
     def _delete_rework_region(self, i):
         if 0 <= i < len(self._rework_regions):
