@@ -775,6 +775,15 @@ def test_top_fit_moves_the_probe_grid_onto_the_placed_board():
     assert abs(b1[1] - (b0[1] + 14.3)) < 1e-9
 
 
+def test_fiducial_dialog_names_rows_by_position():
+    from gerber2rml.gui.app import _FiducialAlignDialog
+    w = MainWindow()
+    dlg = _FiducialAlignDialog(w, [(198.2, 13.4), (4.0, 13.4),
+                                   (4.0, 136.4), (198.2, 136.4)])
+    labels = [dlg.table.verticalHeaderItem(r).text() for r in range(4)]
+    assert labels == ["bottom-right", "bottom-left", "top-left", "top-right"]
+
+
 def test_fiducial_dialog_prefills_previous_measurements():
     from gerber2rml.gui.app import _FiducialAlignDialog
     w = MainWindow()

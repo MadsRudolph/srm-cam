@@ -156,6 +156,13 @@ class _FiducialAlignDialog(QDialog):
             "measured X/Y. Nominal = where a perfect flip would put it."))
         self.table = QTableWidget(len(nominal), 5)
         self.table.setHorizontalHeaderLabels(["nom X", "nom Y", "meas X", "meas Y", ""])
+        # name each fiducial by where it sits (bottom-left, top-right, ...) so
+        # the operator matches physical holes to rows without a decoder ring
+        cx = sum(x for x, _y in nominal) / len(nominal)
+        cy = sum(y for _x, y in nominal) / len(nominal)
+        self.table.setVerticalHeaderLabels([
+            ("top" if y >= cy else "bottom") + ("-right" if x >= cx else "-left")
+            for (x, y) in nominal])
         initial = initial or []
         for r, (nx, ny) in enumerate(nominal):
             for c, val in ((0, nx), (1, ny)):
