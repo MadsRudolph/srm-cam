@@ -914,6 +914,14 @@ class MainWindow(QMainWindow):
             "delete false alarms before exporting. Needs the photo overlay "
             "loaded and the traces preview visible.")
         self.detect_rework_btn.clicked.connect(self._on_detect_rework)
+        self.probe_boxes_btn = QPushButton("Probe boxes")
+        self.probe_boxes_btn.setToolTip(
+            "Probe each rework box center over SPI and compare against the "
+            "leveling mesh: where the real surface sits HIGHER than the mesh "
+            "believed (the reason the spot needs rework), the box is deepened "
+            "by exactly the difference. Jog above the mesh reference point "
+            "(leveling grid point 1) first, spindle OFF.")
+        self.probe_boxes_btn.clicked.connect(self._on_probe_rework_boxes)
         self._photo_overlay = None      # {path, photo_pts, machine_pts, alpha}
 
         # Live cross-section of the active trace tool (V-bit width/depth math
@@ -1122,7 +1130,8 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
                            self.detect_rework_btn, stretch_first=True))
         _rl.addWidget(self.rework_table)
-        _rl.addWidget(self.export_sel_btn)
+        _rl.addWidget(_row(self.export_sel_btn, self.probe_boxes_btn,
+                           stretch_first=True))
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
 
@@ -2793,7 +2802,22 @@ class MainWindow(QMainWindow):
             msg = f"Exported successfully to: {out}"
             if total:
                 msg += f"  ·  est. total run ~{format_duration(total)} (see runplan)"
+            msg += self._note_tool_wear()
             self.statusBar().showMessage(msg, 12000)
+
+    def _note_tool_wear(self, toolpaths=None):
+        """Record this export's cut distance in the per-tool wear ledger and
+        return a status suffix (mileage + a WORN warning past the threshold)."""
+        try:
+            from gerber2rml.engine import toolwear
+            job = self.state.trace
+            key = f"{job.tool_type} {job.effective_diameter():.2f}mm"
+            if toolpaths is None:
+                toolpaths = self.state.toolpaths("traces")
+            toolwear.record(key, toolwear.cut_distance_mm(toolpaths))
+            return toolwear.wear_note(key)
+        except Exception:
+            return ""
 
     def _on_export_align_only(self):
         if self.state.gerber_dir is None:
@@ -3714,6 +3738,98 @@ class MainWindow(QMainWindow):
             self._photo_overlay["trace_alpha"] = v / 100.0
         self.preview.set_trace_alpha(v / 100.0)
 
+    def _on_probe_rework_boxes(self):
+        """Probe each rework box center over SPI and deepen boxes where the
+        real surface sits higher than the mesh believed (the exact failure
+        that caused the rework in the first place)."""
+        if not self._rework_regions:
+            QMessageBox.information(self, "No boxes", "Draw rework boxes first.")
+            return
+        if self._level_heightmap_preview() is None:
+            QMessageBox.information(
+                self, "No mesh",
+                "The comparison needs the bed-leveling mesh loaded (the rework "
+                "export uses it, so probe or load it first).")
+            return
+        it0x = self.level_table.item(0, 0)
+        it0y = self.level_table.item(0, 1)
+        if it0x is None or it0y is None:
+            QMessageBox.information(self, "No reference",
+                                    "Leveling table has no reference point.")
+            return
+        x0, y0 = float(it0x.text()), float(it0y.text())
+        points = [(0, 0, 0)]
+        for i, r in enumerate(self._rework_regions):
+            bx0, by0, bx1, by1 = r["bbox"]
+            cx, cy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
+            points.append((i + 1, round((cx - x0) * 1000),
+                           round((cy - y0) * 1000)))
+        port = self.level_port_combo.currentText().strip() or "COM5"
+        if QMessageBox.question(
+                self, "Probe rework boxes",
+                f"Jog the tool ~2-3 mm above the MESH REFERENCE point "
+                f"(X{x0:.1f} Y{y0:.1f} — leveling grid point 1), spindle OFF, "
+                f"prober running.\n\nProbe the reference + "
+                f"{len(self._rework_regions)} box center(s) on {port}?"
+                ) != QMessageBox.Yes:
+            return
+        self._dro_was_on = self._pause_dro()
+        self._rework_probe_results = []
+        self.statusBar().showMessage("Probing rework box centers…")
+        self._rework_probe_worker = _ProbeWorker(port, points)
+        self._rework_probe_worker.result.connect(
+            lambda d: self._rework_probe_results.append(d))
+        self._rework_probe_worker.done.connect(self._on_rework_probe_done)
+        self._rework_probe_worker.start()
+
+    def _on_rework_probe_done(self, err):
+        if self._dro_was_on:
+            self._dro_was_on = False
+            self._start_dro()
+        if err and not err.startswith("missed:"):
+            QMessageBox.warning(self, "Probe failed", err)
+            return
+        n = self._apply_rework_probe(self._rework_probe_results)
+        if n is None:
+            return
+        adjusted, skipped = n
+        msg = (f"Rework boxes probed: {len(adjusted)} deepened to match the "
+               f"real surface" if adjusted else
+               "Rework boxes probed: mesh already matches the real surface")
+        if skipped:
+            msg += f" ({skipped} box(es) had no contact — unchanged)"
+        QMessageBox.information(self, "Probe rework boxes", msg)
+        self.statusBar().showMessage(msg, 12000)
+
+    def _apply_rework_probe(self, results, min_delta=0.005):
+        """Compare measured box-center dz against the mesh and deepen boxes
+        where the surface is HIGHER than modeled (never shallower — the goal
+        is a guaranteed through-cut). Returns (adjusted list, skipped count)."""
+        by_id = {r["id"]: r["z"] for r in results if r.get("z") is not None}
+        if 0 not in by_id:
+            QMessageBox.warning(self, "No reference",
+                                "The reference point had no contact — nothing "
+                                "was adjusted.")
+            return None
+        hmap = self._level_heightmap_preview()
+        z0 = by_id[0]
+        adjusted, skipped = [], 0
+        for i, r in enumerate(self._rework_regions):
+            zid = i + 1
+            if zid not in by_id:
+                skipped += 1
+                continue
+            bx0, by0, bx1, by1 = r["bbox"]
+            cx, cy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
+            measured = (by_id[zid] - z0) / 1000.0
+            modeled = float(hmap(cx, cy)) if hmap is not None else 0.0
+            delta = measured - modeled
+            if delta > min_delta:
+                r["depth"] = round(r["depth"] + delta, 3)
+                adjusted.append((i, delta))
+        self._refresh_rework()
+        return adjusted, skipped
+
     def _on_detect_rework(self):
         """Propose rework boxes from the aligned photo: channel stretches that
         still look like copper become boxes at the current New-box depth."""
@@ -3864,7 +3980,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Wrote {path.name}: {len(self._rework_regions)} region(s), "
             f"{len(clipped)} path(s)"
-            f"{f', {n_leveled} height-map leveled' if n_leveled else ''}", 10000)
+            f"{f', {n_leveled} height-map leveled' if n_leveled else ''}"
+            f"{self._note_tool_wear(clipped)}", 10000)
 
 _STYLESHEET = """
 QWidget { color: #dde3ea; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }

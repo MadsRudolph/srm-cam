@@ -1712,3 +1712,35 @@ def test_detect_rework_from_photo_adds_boxes(monkeypatch):
     w._on_detect_rework()
     assert len(w._rework_regions) == 1
     assert w._rework_regions[0]["bbox"] == (5.0, 6.0, 9.0, 8.0)
+
+
+def test_apply_rework_probe_deepens_only_high_spots(monkeypatch):
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    # flat mesh at dz=0 (3x3 grid, reference at (0, 0))
+    w.level_table.setRowCount(9)
+    w.level_nx_spin.setValue(3)
+    w.level_ny_spin.setValue(3)
+    r = 0
+    for y in (0.0, 50.0, 100.0):
+        for x in (0.0, 50.0, 100.0):
+            w.level_table.setItem(r, 0, QTableWidgetItem(f"{x:.3f}"))
+            w.level_table.setItem(r, 1, QTableWidgetItem(f"{y:.3f}"))
+            w.level_table.setItem(r, 2, QTableWidgetItem("0.0000"))
+            r += 1
+    w.rework_depth_spin.setValue(0.15)
+    w._on_region_added((10.0, 10.0, 20.0, 20.0))    # box 1
+    w._on_region_added((60.0, 60.0, 80.0, 80.0))    # box 2
+    # measured: reference -56000; box1 center 80 um HIGHER than mesh (0);
+    # box2 spot matches the mesh; box3 id missing (no contact)
+    results = [{"id": 0, "z": -56000},
+               {"id": 1, "z": -55920},
+               {"id": 2, "z": -56002}]
+    out = w._apply_rework_probe(results)
+    assert out is not None
+    adjusted, skipped = out
+    assert [i for i, _d in adjusted] == [0]
+    assert abs(w._rework_regions[0]["depth"] - 0.23) < 1e-9   # 0.15 + 0.080
+    assert w._rework_regions[1]["depth"] == 0.15              # matches mesh
+    assert skipped == 0
