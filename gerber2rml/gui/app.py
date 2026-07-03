@@ -26,11 +26,14 @@ _OPS = ["traces", "drill", "cutout"]
 class _ProbeWorker(QThread):
     """Runs the SPI grid probe off the GUI thread; emits one result per point."""
     result = Signal(dict)
+    corrected = Signal(list)      # final drift-corrected results (re-fills the table)
+    drift = Signal(float)         # reference drift span over the run (um)
     done = Signal(str)            # "" on success, else an error message
 
-    def __init__(self, port, points):
+    def __init__(self, port, points, retouch_every=0):
         super().__init__()
         self._port, self._points = port, points
+        self._retouch_every = retouch_every
         self._abort = False
 
     def abort(self):
@@ -40,12 +43,20 @@ class _ProbeWorker(QThread):
     def run(self):
         from gerber2rml.engine.spi_probe import probe_grid
         try:
+            drift_log = []
             res = probe_grid(self._port, self._points,
                              on_result=lambda d: self.result.emit(d),
-                             should_abort=lambda: self._abort)
+                             should_abort=lambda: self._abort,
+                             retouch_every=self._retouch_every,
+                             drift_log=drift_log)
             if self._abort:
                 self.done.emit("aborted")
                 return
+            if any("z_raw" in r for r in res):
+                # live emits showed raw values; re-publish the drift-corrected set
+                zs = [e["z"] for e in drift_log]
+                self.drift.emit(float(max(zs) - min(zs)))
+                self.corrected.emit(res)
             if len(res) < len(self._points):    # stopped early (deep touch / no datum)
                 last = res[-1] if res else {"id": -1, "error": "stopped"}
                 self.done.emit(
@@ -63,6 +74,7 @@ class _DROPoller(QThread):
     """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
     position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
     touch_done = Signal(bool, float, float, float)  # ok, x, y, z (mm) of surface
+    zero_done = Signal(bool, float)                 # ok, new origin z (mm)
     failed = Signal(str)
 
     def __init__(self, port):
@@ -71,6 +83,7 @@ class _DROPoller(QThread):
         self._lock = QMutex()
         self._pending_move = None       # (x_um, y_um) queued jog target
         self._pending_touch = False     # queued touch-off request
+        self._pending_zero = False      # queued machine-origin Z zero (W)
         self._abort = False             # STOP: lift the tool and stop polling
 
     def request_abort(self):
@@ -79,6 +92,7 @@ class _DROPoller(QThread):
         self._abort = True
         self._pending_move = None
         self._pending_touch = False
+        self._pending_zero = False
         self._lock.unlock()
 
     def request_move(self, x_um, y_um):
@@ -93,6 +107,13 @@ class _DROPoller(QThread):
         self._pending_touch = True
         self._lock.unlock()
 
+    def request_zero(self):
+        """Queue a machine-origin Z zero: verified touch-off, then the firmware
+        writes origin Z = the copper surface (firmware v2 ``W``)."""
+        self._lock.lock()
+        self._pending_zero = True
+        self._lock.unlock()
+
     def run(self):
         from gerber2rml.engine import spi_probe
         try:
@@ -104,9 +125,11 @@ class _DROPoller(QThread):
                 self._lock.lock()
                 mv = self._pending_move
                 to = self._pending_touch
+                zo = self._pending_zero
                 ab = self._abort
                 self._pending_move = None
                 self._pending_touch = False
+                self._pending_zero = False
                 self._lock.unlock()
                 if ab:
                     spi_probe.send_abort(ser)                 # lift the tool, then stop
@@ -114,6 +137,12 @@ class _DROPoller(QThread):
                 try:
                     if mv is not None:
                         spi_probe.jog_to(ser, mv[0], mv[1])   # lifts then travels XY
+                    elif zo:
+                        r = spi_probe.zero_z(ser, should_abort=lambda: self._abort)
+                        if r is not None:
+                            self.zero_done.emit(True, r[2])
+                        else:
+                            self.zero_done.emit(False, 0.0)
                     elif to:
                         r = spi_probe.touch_off(ser, should_abort=lambda: self._abort)
                         if r is not None:
@@ -126,7 +155,8 @@ class _DROPoller(QThread):
                             self.position.emit(*p)
                 except Exception:
                     pass
-                self.msleep(60 if (self._pending_move or self._pending_touch) else 250)
+                self.msleep(60 if (self._pending_move or self._pending_touch
+                                   or self._pending_zero) else 250)
         finally:
             try:
                 ser.close()
@@ -480,6 +510,17 @@ class MainWindow(QMainWindow):
             "Jog the tool ~2-3 mm above the first grid point first, with the prober "
             "sketch running and the Arduino Serial Monitor CLOSED.")
         self.level_probe_btn.clicked.connect(self._on_probe_spi)
+        self.level_retouch_spin = QSpinBox()
+        self.level_retouch_spin.setRange(0, 20)
+        self.level_retouch_spin.setValue(6)
+        self.level_retouch_spin.setPrefix("drift chk ")
+        self.level_retouch_spin.setSpecialValueText("drift chk off")
+        self.level_retouch_spin.setToolTip(
+            "Re-touch the reference point after every N probed points and correct "
+            "the whole grid for Z drift (spindle warm-up, board settling). This is "
+            "what catches a mesh row measured 'low' minutes after the others. "
+            "0 = off. Needs firmware v2 on the Arduino (reflash "
+            "hardware/srm20_spi_probe).")
         self.level_gridshow_chk = QCheckBox("Show grid")
         self.level_gridshow_chk.setToolTip(
             "Overlay the planned probe points (numbered) on the preview, so you "
@@ -535,6 +576,14 @@ class MainWindow(QMainWindow):
             "surface, and set that Z as the work-surface zero. Needs the touch "
             "clips connected; start a few mm above the surface.")
         self.zero_btn.clicked.connect(self._on_probe_z)
+        self.machine_zero_btn = QPushButton("Zero Z on machine")
+        self.machine_zero_btn.setEnabled(False)
+        self.machine_zero_btn.setToolTip(
+            "Verified touch-off, then the FIRMWARE writes origin Z = the copper "
+            "surface (v2 'W' command) and lifts 2 mm - no VPanel round-trip.\n"
+            "NOTE: this sets the origin VPanel displays (User CS). Check "
+            "VPanel's G54 Z once before trusting it for NC jobs.")
+        self.machine_zero_btn.clicked.connect(self._on_machine_zero)
         self.align_btn = QPushButton("Align overlay")
         self.align_btn.setCheckable(True)
         self.align_btn.setEnabled(False)      # only meaningful while connected
@@ -1015,7 +1064,7 @@ class MainWindow(QMainWindow):
                            self.level_clear_btn))
         # the serial port selector lives in the machine dock (shared with the
         # DRO connect); probing reads it from there
-        _ll.addWidget(_row(self.level_probe_btn,
+        _ll.addWidget(_row(self.level_probe_btn, self.level_retouch_spin,
                            self.level_gridshow_chk, self.level_show_chk,
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
@@ -1127,6 +1176,7 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.trail_chk)
         _mb.addWidget(self.trail_clear_btn)
         _mb.addWidget(self.zero_btn)
+        _mb.addWidget(self.machine_zero_btn)
         _mb.addWidget(self.align_btn)
         _mb.addWidget(self.jog_chk)
         _mb.addWidget(QLabel("port"))
@@ -2021,11 +2071,13 @@ class MainWindow(QMainWindow):
         self._dro = _DROPoller(port)
         self._dro.position.connect(self._on_position)
         self._dro.touch_done.connect(self._on_touch_done)
+        self._dro.zero_done.connect(self._on_zero_done)
         self._dro.failed.connect(self._on_dro_failed)
         self._dro.start()
         self.connect_btn.setText("Disconnect")
         self.jog_chk.setEnabled(True)
         self.zero_btn.setEnabled(True)
+        self.machine_zero_btn.setEnabled(True)
         self.align_btn.setEnabled(True)
         if self._sim_window is not None:
             self._sim_window.set_live_enabled(True)
@@ -2048,6 +2100,7 @@ class MainWindow(QMainWindow):
         self.jog_chk.setEnabled(False)
         self.preview.set_jogging(False)
         self.zero_btn.setEnabled(False)
+        self.machine_zero_btn.setEnabled(False)
         self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
         self.align_btn.setEnabled(False)
         self.preview.set_align_pick(False)
@@ -2318,6 +2371,34 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Probing down to the surface…")
         self._dro.request_touchoff()
 
+    def _on_machine_zero(self):
+        """Verified touch-off, then the firmware writes origin Z on the surface."""
+        if self._dro is None:
+            QMessageBox.warning(self, "Not connected", "Connect the machine first.")
+            return
+        if self._touching:
+            QMessageBox.warning(self, "Already touching",
+                                "The bit is already touching — lift it a few mm first.")
+            return
+        self.machine_zero_btn.setEnabled(False)
+        self.statusBar().showMessage("Zeroing origin Z on the copper…")
+        self._dro.request_zero()
+
+    def _on_zero_done(self, ok, oz):
+        self.machine_zero_btn.setEnabled(self._dro is not None)
+        if not ok:
+            QMessageBox.warning(
+                self, "Zero Z failed",
+                "No verified contact (NOTOUCH/UNSTABLE), or the firmware is v1 — "
+                "reflash hardware/srm20_spi_probe (v2) for the W command.")
+            self.statusBar().showMessage("Zero Z: failed", 6000)
+            return
+        self._z_zero = oz
+        self.statusBar().showMessage(
+            f"Origin Z written to the machine at the copper surface "
+            f"(machine Z {oz:.2f} mm). Verify VPanel G54 Z once before an NC job.",
+            12000)
+
     def _on_touch_done(self, ok, x, y, z):
         self.zero_btn.setEnabled(self._dro is not None)
         if not ok:
@@ -2407,8 +2488,12 @@ class MainWindow(QMainWindow):
         self._probe_z0 = None
         self.level_probe_btn.setEnabled(False)
         self.statusBar().showMessage(f"Probing {len(points)} points on {port}...")
-        self._probe_worker = _ProbeWorker(port, points)
+        self._probe_drift_um = None
+        self._probe_worker = _ProbeWorker(
+            port, points, retouch_every=self.level_retouch_spin.value())
         self._probe_worker.result.connect(self._on_probe_result)
+        self._probe_worker.corrected.connect(self._on_probe_corrected)
+        self._probe_worker.drift.connect(self._on_probe_drift)
         self._probe_worker.done.connect(self._on_probe_done)
         self._probe_worker.start()
 
@@ -2423,6 +2508,16 @@ class MainWindow(QMainWindow):
             dz = (d["z"] - self._probe_z0) / 1000.0
             self.level_table.setItem(row, 2, QTableWidgetItem(f"{dz:.4f}"))
         self.statusBar().showMessage(f"Probed point {row + 1}/{self.level_table.rowCount()}")
+
+    def _on_probe_corrected(self, res):
+        """Drift-corrected final results: re-fill the table (reference resets so
+        the deviations are relative to the CORRECTED first point)."""
+        self._probe_z0 = None
+        for d in res:
+            self._on_probe_result(d)
+
+    def _on_probe_drift(self, um):
+        self._probe_drift_um = um
 
     def _on_probe_done(self, err):
         self.level_probe_btn.setEnabled(True)
@@ -2446,7 +2541,11 @@ class MainWindow(QMainWindow):
             self.level_chk.setChecked(True)     # leveling is ready to apply
             self.level_show_chk.setChecked(True)  # reveal the surface heatmap
             self._update_level_overlay()
-            self.statusBar().showMessage("Probe complete — Z column filled", 10000)
+            msg = "Probe complete — Z column filled"
+            if self._probe_drift_um is not None:
+                msg += (f" (reference drifted {self._probe_drift_um:.0f} um over "
+                        f"the run — corrected)")
+            self.statusBar().showMessage(msg, 12000)
         if self._dro_was_on:                    # restore the live link after probing
             self._dro_was_on = False
             self._start_dro()
