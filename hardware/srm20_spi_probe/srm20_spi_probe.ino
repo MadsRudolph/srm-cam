@@ -58,6 +58,12 @@
  *                       and whenever a move fails to complete (e.g. the lid is
  *                       opened, which pauses the machine), so it can never keep
  *                       stepping the bit down into the work.
+ *     C                 begin an EXPERIMENTAL streaming session: caches the
+ *                       work origin and clears any stale abort -> 'C ox oy oz'
+ *     M <x> <y> <z> <s> stream one move to work-frame (x,y,z) um at raw
+ *                       library speed s (-1 = default); waits for the motors,
+ *                       replies 'M x y z'. DRY-RUN (Z held high) first — the
+ *                       speed units are Roland-internal and uncalibrated.
  *     Q                 quick position query -> 'Q x y z touch' (um, single read)
  *     G                 get the work origin -> 'G ox oy oz' (um)
  *     O                 setOrigin TEST: shift origin Z +1 mm, report actual+origin
@@ -115,6 +121,10 @@ long maxSurfaceZ = 0;
 // setOrigin experiment: saved origin so the test can always restore it.
 long savedOX = 0, savedOY = 0, savedOZ = 0;
 bool haveSavedOrigin = false;
+
+// Streaming session ('C'/'M'): the cached work origin all moves are relative to.
+long strOX = 0, strOY = 0, strOZ = 0;
+bool haveStreamOrigin = false;
 
 // ---- robust position read: require two agreeing reads (SPI reads can be garbage)
 bool readPos(long &x, long &y, long &z) {
@@ -416,8 +426,31 @@ void handleLine(char *s) {
       Serial.print("# restored origin "); Serial.print(ox); Serial.print(' ');
       Serial.print(oy); Serial.print(' '); Serial.println(oz);
     }
+  } else if (s[0] == 'C') {        // begin a streaming session: cache the work
+    // origin (all 'M' moves are origin-relative) and clear any stale abort
+    gAbort = false;
+    srm20.getOrigin(strOX, strOY, strOZ);
+    haveStreamOrigin = true;
+    Serial.print("C "); Serial.print(strOX); Serial.print(' ');
+    Serial.print(strOY); Serial.print(' '); Serial.println(strOZ);
+  } else if (s[0] == 'M') {        // EXPERIMENTAL stream move: work-frame um
+    // at a raw library speed value (-1 = default). The host validates with a
+    // DRY RUN (Z held above the surface) before ever cutting with this.
+    if (!haveStreamOrigin) { Serial.println("E M NOSESSION"); return; }
+    if (checkAbort()) { Serial.println("E M ABORT"); return; }
+    char *p = s + 1;
+    long x = strtol(p, &p, 10);
+    long y = strtol(p, &p, 10);
+    long z = strtol(p, &p, 10);
+    long sp = strtol(p, &p, 10);
+    long mz = strOZ + z;
+    if (mz > 0) mz = 0;            // never above machine Z home
+    srm20.jumpTo(strOX + x, strOY + y, mz, (int)sp);
+    if (!waitForMotorStop()) { Serial.println("E M ABORT"); return; }
+    Serial.print("M "); Serial.print(x); Serial.print(' ');
+    Serial.print(y); Serial.print(' '); Serial.println(z);
   } else if (s[0] == 'V') {        // version + feature flags for the host
-    Serial.println("V 2 probe,refine,verify,retouch,zeroz,touchbit");
+    Serial.println("V 2 probe,refine,verify,retouch,zeroz,touchbit,stream");
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);
     Serial.print("# v2 datum="); Serial.print(haveDatum);

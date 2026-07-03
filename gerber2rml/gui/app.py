@@ -70,6 +70,42 @@ class _ProbeWorker(QThread):
             self.done.emit(str(e))
 
 
+class _StreamWorker(QThread):
+    """EXPERIMENTAL: streams toolpaths over SPI off the GUI thread."""
+    progress = Signal(int, int)
+    done = Signal(str)            # "" on success, else an error message
+
+    def __init__(self, port, toolpaths, speed=-1, dry_run=True):
+        super().__init__()
+        self._port, self._tps = port, toolpaths
+        self._speed, self._dry = speed, dry_run
+        self._abort = False
+
+    def abort(self):
+        self._abort = True
+
+    def run(self):
+        from gerber2rml.engine import spi_probe, spi_stream
+        try:
+            ser = spi_probe.open_link(self._port)
+        except Exception as e:
+            self.done.emit(str(e))
+            return
+        try:
+            spi_stream.stream_toolpaths(
+                ser, self._tps, speed=self._speed, dry_run=self._dry,
+                on_progress=lambda i, n: self.progress.emit(i, n),
+                should_abort=lambda: self._abort)
+            self.done.emit("")
+        except Exception as e:
+            self.done.emit(str(e))
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+
 class _DROPoller(QThread):
     """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
     position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
@@ -610,6 +646,15 @@ class MainWindow(QMainWindow):
             "NOTE: this sets the origin VPanel displays (User CS). Check "
             "VPanel's G54 Z once before trusting it for NC jobs.")
         self.machine_zero_btn.clicked.connect(self._on_machine_zero)
+        self.stream_btn = QPushButton("Stream (exp.)")
+        self.stream_btn.setEnabled(False)
+        self.stream_btn.setToolTip(
+            "EXPERIMENTAL: stream the picked op's toolpaths over the SPI link "
+            "move-by-move (no VPanel file player). ALWAYS starts as a DRY RUN "
+            "with Z held 2 mm above the origin — nothing can cut. A wet run "
+            "additionally needs the spindle started in VPanel by hand and the "
+            "raw speed value calibrated on dry runs first.")
+        self.stream_btn.clicked.connect(self._on_stream_job)
         self.align_btn = QPushButton("Align overlay")
         self.align_btn.setCheckable(True)
         self.align_btn.setEnabled(False)      # only meaningful while connected
@@ -1221,6 +1266,7 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.trail_clear_btn)
         _mb.addWidget(self.zero_btn)
         _mb.addWidget(self.machine_zero_btn)
+        _mb.addWidget(self.stream_btn)
         _mb.addWidget(self.align_btn)
         _mb.addWidget(self.jog_chk)
         _mb.addWidget(QLabel("port"))
@@ -2222,6 +2268,7 @@ class MainWindow(QMainWindow):
         self.jog_chk.setEnabled(True)
         self.zero_btn.setEnabled(True)
         self.machine_zero_btn.setEnabled(True)
+        self.stream_btn.setEnabled(True)
         self.align_btn.setEnabled(True)
         if self._sim_window is not None:
             self._sim_window.set_live_enabled(True)
@@ -2245,6 +2292,7 @@ class MainWindow(QMainWindow):
         self.preview.set_jogging(False)
         self.zero_btn.setEnabled(False)
         self.machine_zero_btn.setEnabled(False)
+        self.stream_btn.setEnabled(False)
         self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
         self.align_btn.setEnabled(False)
         self.preview.set_align_pick(False)
@@ -2286,6 +2334,14 @@ class MainWindow(QMainWindow):
         pw = getattr(self, "_probe_worker", None)
         if pw is not None and pw.isRunning():
             pw.abort()                        # ! -> firmware lifts; worker bails
+            stopped = True
+        rw = getattr(self, "_rework_probe_worker", None)
+        if rw is not None and rw.isRunning():
+            rw.abort()
+            stopped = True
+        sw = getattr(self, "_stream_worker", None)
+        if sw is not None and sw.isRunning():
+            sw.abort()                        # stream sends ! and stops
             stopped = True
         if self._dro is not None:
             self._dro.request_abort()         # ! -> firmware lifts; poller bails
@@ -2553,6 +2609,70 @@ class MainWindow(QMainWindow):
         self.zero_btn.setEnabled(False)
         self.statusBar().showMessage("Probing down to the surface…")
         self._dro.request_touchoff()
+
+    def _on_stream_job(self):
+        """EXPERIMENTAL SPI streaming — dry run by default, wet run behind a
+        second explicit confirmation."""
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        self._sync_state()
+        op = self._RUN_OP[self.run_op_combo.currentText()]
+        try:
+            toolpaths = self._toolpaths_for(op)
+            if self.run_rework_chk.isChecked() and self._rework_regions:
+                toolpaths, _lv = self._rework_clip_regions(toolpaths)
+        except Exception as e:
+            QMessageBox.warning(self, "No toolpaths", f"No toolpaths for {op}: {e}")
+            return
+        n_moves = sum(len(tp) for tp in toolpaths)
+        box = QMessageBox(
+            QMessageBox.Warning, "Stream over SPI (EXPERIMENTAL)",
+            f"Stream {n_moves} moves of '{op}' over the SPI link, bypassing "
+            f"VPanel.\n\nDRY RUN traces the whole job with Z held 2 mm above "
+            f"the work origin — nothing can cut; use it to verify motion and "
+            f"calibrate timing.\n\nWET RUN cuts for real: spindle must be "
+            f"started in VPanel BY HAND first, Z zeroed on the copper, and "
+            f"the speed value validated on dry runs. The speed units are "
+            f"Roland-internal and NOT calibrated to mm/s yet.",
+            QMessageBox.Cancel, self)
+        dry = box.addButton("Dry run (safe)", QMessageBox.AcceptRole)
+        wet = box.addButton("Wet run…", QMessageBox.DestructiveRole)
+        box.exec()
+        if box.clickedButton() is dry:
+            dry_run = True
+        elif box.clickedButton() is wet:
+            if QMessageBox.question(
+                    self, "Wet run — really cut?",
+                    "Spindle running (VPanel)? Z zeroed on the copper? Dry run "
+                    "verified on THIS job?\n\nThe bit will plunge to cut depth "
+                    "on the first move.") != QMessageBox.Yes:
+                return
+            dry_run = False
+        else:
+            return
+        port = self.level_port_combo.currentText().strip() or "COM5"
+        self._dro_was_on = self._pause_dro()   # free the port for the stream
+        self.stream_btn.setEnabled(False)
+        self.statusBar().showMessage(
+            f"Streaming {n_moves} moves ({'DRY' if dry_run else 'WET'}) — "
+            f"press STOP or close the lid to abort…")
+        self._stream_worker = _StreamWorker(port, toolpaths, dry_run=dry_run)
+        self._stream_worker.progress.connect(
+            lambda i, n: self.run_bar.setValue(int(round(100 * i / max(n, 1)))))
+        self._stream_worker.done.connect(self._on_stream_done)
+        self._stream_worker.start()
+
+    def _on_stream_done(self, err):
+        self.stream_btn.setEnabled(True)
+        if self._dro_was_on:
+            self._dro_was_on = False
+            self._start_dro()
+        if err:
+            QMessageBox.warning(self, "Stream stopped", err)
+            self.statusBar().showMessage("Stream stopped — tool lifted", 10000)
+        else:
+            self.statusBar().showMessage("Stream complete", 10000)
 
     def _on_machine_zero(self):
         """Verified touch-off, then the firmware writes origin Z on the surface."""
