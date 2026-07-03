@@ -1692,3 +1692,23 @@ def test_insert_probe_rows_keeps_grid_cartesian():
     # resume-probing sees the reference + exactly the 6 new points
     points, _x0, _y0 = w._probe_points(resume=True)
     assert len(points) == 7
+
+
+def test_detect_rework_from_photo_adds_boxes(monkeypatch):
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    assert w.preview._full_cuts                     # channels to walk
+    w.preview.set_photo(np.zeros((10, 10, 4), np.uint8), (0, 10, 0, 10))
+    import gerber2rml.engine.cutcheck as cc
+    monkeypatch.setattr(cc, "detect_uncut", lambda *a, **k: {
+        "boxes": [(5.0, 6.0, 9.0, 8.0)], "coverage": 0.97,
+        "n_samples": 500, "n_suspect": 12,
+        "copper_color": (0, 0, 0), "channel_color": (99, 99, 99)})
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    w._on_detect_rework()
+    assert len(w._rework_regions) == 1
+    assert w._rework_regions[0]["bbox"] == (5.0, 6.0, 9.0, 8.0)

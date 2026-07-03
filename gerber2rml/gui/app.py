@@ -906,6 +906,14 @@ class MainWindow(QMainWindow):
             "Toolpath/copper opacity — slide left to fade the traces so the "
             "photo underneath reads clearly (rework boxes stay full strength)")
         self.trace_dim_slider.valueChanged.connect(self._on_trace_dim)
+        self.detect_rework_btn = QPushButton("Detect from photo")
+        self.detect_rework_btn.setToolTip(
+            "Walk every isolation channel and check the aligned photo for "
+            "stretches that still look like copper — each becomes a proposed "
+            "rework box (at the current New-box depth). Review the boxes and "
+            "delete false alarms before exporting. Needs the photo overlay "
+            "loaded and the traces preview visible.")
+        self.detect_rework_btn.clicked.connect(self._on_detect_rework)
         self._photo_overlay = None      # {path, photo_pts, machine_pts, alpha}
 
         # Live cross-section of the active trace tool (V-bit width/depth math
@@ -1112,7 +1120,7 @@ class MainWindow(QMainWindow):
                            self.photo_alpha_slider, self.photo_clear_btn,
                            stretch_first=True))
         _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
-                           stretch_first=True))
+                           self.detect_rework_btn, stretch_first=True))
         _rl.addWidget(self.rework_table)
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
@@ -3689,6 +3697,56 @@ class MainWindow(QMainWindow):
         if self._photo_overlay:
             self._photo_overlay["trace_alpha"] = v / 100.0
         self.preview.set_trace_alpha(v / 100.0)
+
+    def _on_detect_rework(self):
+        """Propose rework boxes from the aligned photo: channel stretches that
+        still look like copper become boxes at the current New-box depth."""
+        from gerber2rml.engine.cutcheck import CutCheckError, detect_uncut
+        if self.preview._photo is None:
+            QMessageBox.information(
+                self, "No photo",
+                "Load and align a board photo first (Photo row above).")
+            return
+        channels = [list(seg) for seg in (list(self.preview._full_cuts)
+                                          + list(self.preview._full_top_cuts))
+                    if len(seg) >= 2]
+        if not channels:
+            QMessageBox.information(
+                self, "No toolpaths",
+                "Generate the traces preview first — the detector walks its "
+                "isolation channels.")
+            return
+        # copper geometry sharpens the color reference when displayed; without
+        # it the detector samples the channel flanks (copper by construction)
+        geoms = [g for g, _c in self.preview._copper
+                 if g is not None and not getattr(g, "is_empty", True)]
+        copper = None
+        if geoms:
+            from shapely.ops import unary_union
+            copper = unary_union(geoms)
+        rgba, extent = self.preview._photo
+        bit = float(self.forms["traces"].value().bit_diameter)
+        try:
+            r = detect_uncut(rgba, extent, channels, copper, bit_d=max(bit, 0.4))
+        except CutCheckError as e:
+            QMessageBox.warning(self, "Can't judge this photo", str(e))
+            return
+        cov = f"{r['coverage'] * 100:.1f}% of {r['n_samples']} channel samples look cut"
+        if not r["boxes"]:
+            QMessageBox.information(
+                self, "Detect from photo",
+                f"No uncut copper found.\n\n{cov}.")
+            self.statusBar().showMessage(f"Photo check: clean ({cov})", 10000)
+            return
+        for b in r["boxes"]:
+            self._on_region_added(tuple(b))
+        QMessageBox.information(
+            self, "Detect from photo",
+            f"{len(r['boxes'])} suspect area(s) proposed as rework boxes "
+            f"({cov}).\n\nReview them on the preview — delete false alarms "
+            f"(glare, dust) from the table, then export the rework job.")
+        self.statusBar().showMessage(
+            f"Photo check: {len(r['boxes'])} suspect area(s) boxed ({cov})", 12000)
 
     def _delete_rework_region(self, i):
         if 0 <= i < len(self._rework_regions):
