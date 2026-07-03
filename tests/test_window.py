@@ -1031,6 +1031,42 @@ def test_photo_anchor_holes_are_four_named_corners():
     assert anchors[0][1] == (10, 10) and anchors[2][1] == (88, 70)
 
 
+def test_photo_anchor_angle_guide_math():
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("bottom-left", (0.0, 0.0)), ("bottom-right", (100.0, 0.0)),
+               ("top-right", (100.0, 80.0)), ("top-left", (0.0, 80.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    # photo v runs downward: rightward edge is 0 deg, upward edge +90
+    assert abs(dlg._seg_angle((10, 40), (50, 40))) < 1e-9
+    assert abs(dlg._seg_angle((50, 40), (50, 10)) - 90.0) < 1e-9
+    # later edges are squared off the base edge AS CLICKED (tilted photo ok)
+    dlg._points = [(10.0, 40.0), (50.0, 42.0)]
+    base = dlg._seg_angle((10.0, 40.0), (50.0, 42.0))
+    assert abs(dlg._guide_expected(2) - (base + 90.0)) < 1e-9
+    assert abs(dlg._guide_expected(3) - (base + 180.0)) < 1e-9
+
+
+def test_photo_anchor_guide_follows_cursor():
+    import types
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("bottom-left", (0.0, 0.0)), ("bottom-right", (100.0, 0.0)),
+               ("top-right", (100.0, 80.0)), ("top-left", (0.0, 80.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    ev = types.SimpleNamespace(inaxes=dlg._ax, xdata=50.0, ydata=40.0)
+    dlg._on_motion(ev)
+    assert dlg._guide == []                     # no clicks yet: no guide
+    dlg._points = [(10.0, 40.0)]
+    dlg._on_motion(ev)
+    assert len(dlg._guide) == 2                 # dotted line + angle text
+    dlg._points = [(10.0, 40.0), (50.0, 40.0), (50.0, 10.0), (10.0, 10.0)]
+    dlg._on_motion(ev)
+    assert dlg._guide == []                     # all anchors placed: no guide
+
+
 def test_trace_dim_persists_and_resets_with_photo():
     import numpy as np
     w = MainWindow()

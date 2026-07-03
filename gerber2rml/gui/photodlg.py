@@ -5,6 +5,8 @@ The caller supplies the photo (RGBA numpy array) and the ordered anchor list
 hole in the photo (scroll to zoom, right-click to undo). ``photo_points()``
 returns the clicked (u, v) pixel coordinates in the same order.
 """
+import math
+
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QVBoxLayout)
 from PySide6.QtCore import Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -13,6 +15,10 @@ from matplotlib.figure import Figure
 
 class PhotoAnchorDialog(QDialog):
     _MARK = "#4dd0e1"
+    # Expected direction of each clicked edge, relative to the first one
+    # (anchors run bottom-left -> bottom-right -> top-right -> top-left, so
+    # the edges of the square turn 0, +90, +180 degrees).
+    _EXPECT = (0.0, 90.0, 180.0)
 
     def __init__(self, parent, image, anchors):
         super().__init__(parent)
@@ -22,6 +28,7 @@ class PhotoAnchorDialog(QDialog):
         self._anchors = list(anchors)
         self._points = []                       # [(u, v)] clicked, in order
         self._marks = []
+        self._guide = []                        # rubber-band line + angle text
 
         lay = QVBoxLayout(self)
         self._prompt = QLabel()
@@ -43,6 +50,7 @@ class PhotoAnchorDialog(QDialog):
 
         self._canvas.mpl_connect("button_press_event", self._on_click)
         self._canvas.mpl_connect("scroll_event", self._on_scroll)
+        self._canvas.mpl_connect("motion_notify_event", self._on_motion)
         self._update_prompt()
 
     # ---- interaction ----------------------------------------------------
@@ -54,6 +62,7 @@ class PhotoAnchorDialog(QDialog):
                 self._points.pop()
                 for a in self._marks.pop():
                     a.remove()
+                self._clear_guide()             # re-aims from the new last point
                 self._update_prompt()
                 self._canvas.draw_idle()
             return
@@ -61,6 +70,7 @@ class PhotoAnchorDialog(QDialog):
             return
         u, v = float(ev.xdata), float(ev.ydata)
         label = self._anchors[len(self._points)][0]
+        self._clear_guide()                     # next motion re-aims it
         self._points.append((u, v))
         self._marks.append([
             self._ax.scatter([u], [v], s=90, facecolors="none",
@@ -69,6 +79,61 @@ class PhotoAnchorDialog(QDialog):
                               xytext=(6, 6), textcoords="offset points", zorder=5),
         ])
         self._update_prompt()
+        self._canvas.draw_idle()
+
+    # ---- angle guide -----------------------------------------------------
+    # The 4 anchors are the corners of a rectangle on the board, so each edge
+    # the operator "draws" by clicking should turn exactly 90 degrees from the
+    # previous one. A dotted rubber-band from the last click to the cursor
+    # shows the live edge angle; aiming at the wrong hole shows up as a big
+    # deviation before the click happens.
+
+    @staticmethod
+    def _seg_angle(p0, p1):
+        """Direction of p0->p1 in degrees, photo frame: 0 = right, 90 = up
+        (image v runs downward, hence the sign flip)."""
+        return math.degrees(math.atan2(-(p1[1] - p0[1]), p1[0] - p0[0]))
+
+    def _guide_expected(self, n):
+        """Expected direction (deg) of edge ``n`` (points n-1 -> n). The first
+        edge assumes a roughly level photo (~0); later edges are squared off
+        the first edge as it was actually clicked."""
+        if n <= 1 or len(self._points) < 2:
+            return self._EXPECT[0]
+        base = self._seg_angle(self._points[0], self._points[1])
+        return base + self._EXPECT[min(n, len(self._EXPECT)) - 1]
+
+    def _clear_guide(self):
+        removed = bool(self._guide)
+        for a in self._guide:
+            a.remove()
+        self._guide = []
+        return removed
+
+    def _on_motion(self, ev):
+        removed = self._clear_guide()
+        n = len(self._points)
+        if (ev.inaxes != self._ax or ev.xdata is None
+                or n < 1 or n >= len(self._anchors)):
+            if removed:
+                self._canvas.draw_idle()
+            return
+        u0, v0 = self._points[-1]
+        u, v = float(ev.xdata), float(ev.ydata)
+        ang = self._seg_angle((u0, v0), (u, v))
+        dev = (ang - self._guide_expected(n) + 180.0) % 360.0 - 180.0
+        col = ("#7bd88f" if abs(dev) <= 3.0 else
+               "#ffb454" if abs(dev) <= 10.0 else "#ff6666")
+        line, = self._ax.plot([u0, u], [v0, v], linestyle=":", color=col,
+                              linewidth=1.4, zorder=4)
+        note = (f"{ang:+.1f}\N{DEGREE SIGN}" if n == 1 else
+                f"{ang:+.1f}\N{DEGREE SIGN}  "
+                f"(\N{GREEK CAPITAL LETTER DELTA}{dev:+.1f}\N{DEGREE SIGN} "
+                f"from square)")
+        text = self._ax.annotate(note, (u, v), color=col, fontsize=9,
+                                 xytext=(12, -14), textcoords="offset points",
+                                 zorder=4)
+        self._guide = [line, text]
         self._canvas.draw_idle()
 
     def _on_scroll(self, ev):
