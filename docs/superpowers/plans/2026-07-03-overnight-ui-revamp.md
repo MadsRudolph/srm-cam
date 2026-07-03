@@ -65,13 +65,17 @@ morning instruction).
   X-ray action gating, spine step state transitions, travel-check math,
   session migration.
 
-## Morning deliverables checklist
-- [ ] Phase 3 complete (switcher, tint, migration, tests)
-- [ ] Runplan spine replacing sidebar
-- [ ] Progressive disclosure pass
-- [ ] Auto travel check + hints
-- [ ] New theme applied + screenshots rendered
-- [ ] Full suite green, branch pushed
-- [ ] Installer built; installed or ready with instruction
-- [ ] Morning brief message: what changed, how to use it, the physical
-      steps for the top side (installer click, flip check, board slide)
+## Morning deliverables checklist (status at hand-off)
+- [x] Phase 3: resolver seam + all critical branch points migrated
+      (preview, badges, display outline). REMAINING for next session: the
+      visible two-state frame switcher, X-ray canvas tint + action gating,
+      mirror-as-export-property, session key migration.
+- [x] Runplan spine replacing sidebar (navigation, op/side routing, tour
+      compat). REMAINING: per-step state chips fed by run tracking,
+      between-step bit/spindle notes.
+- [ ] Progressive disclosure pass (not started — next session)
+- [x] Auto travel check after fiducial fit (exact slide suggestion)
+- [x] New slate/cyan theme applied + renders verified
+- [x] Full suite green (370), branch pushed (feat/gui2-phase3-frame-unification)
+- [x] Installer built (install needs the user's UAC click in the morning)
+- [x] Morning brief delivered in chat
