@@ -521,6 +521,13 @@ class MainWindow(QMainWindow):
             "what catches a mesh row measured 'low' minutes after the others. "
             "0 = off. Needs firmware v2 on the Arduino (reflash "
             "hardware/srm20_spi_probe).")
+        self.level_check_btn = QPushButton("Mesh check")
+        self.level_check_btn.setToolTip(
+            "Sanity-check the measured mesh: flag points no smooth board surface "
+            "can explain (flaky touches), recommend a cut depth that survives "
+            "this mesh's uncertainty, and suggest where the grid is too coarse "
+            "(with one click to insert the missing probe rows).")
+        self.level_check_btn.clicked.connect(self._on_mesh_check)
         self.level_gridshow_chk = QCheckBox("Show grid")
         self.level_gridshow_chk.setToolTip(
             "Overlay the planned probe points (numbered) on the preview, so you "
@@ -1065,6 +1072,7 @@ class MainWindow(QMainWindow):
         # the serial port selector lives in the machine dock (shared with the
         # DRO connect); probing reads it from there
         _ll.addWidget(_row(self.level_probe_btn, self.level_retouch_spin,
+                           self.level_check_btn,
                            self.level_gridshow_chk, self.level_show_chk,
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
@@ -1970,6 +1978,90 @@ class MainWindow(QMainWindow):
                 pass                              # unmeasured point (interpolated)
         return xy, xyz
 
+    def _on_mesh_check(self):
+        """Sanity-check the measured mesh: outliers, depth advice, refinement."""
+        from gerber2rml.engine.leveling import (flag_outliers, recommend_depth,
+                                                suggest_refinement_rows)
+        _xy, xyz = self._table_points()
+        if len(xyz) < 5:
+            QMessageBox.information(self, "Mesh check",
+                                    "Probe (or enter) at least 5 points first.")
+            return
+        nx, ny = self.level_nx_spin.value(), self.level_ny_spin.value()
+        flags = flag_outliers(xyz)
+        rec = recommend_depth(xyz, nx, ny)
+        sug = suggest_refinement_rows(xyz, nx, ny)
+        lines = []
+        if flags:
+            lines.append("SUSPICIOUS POINTS (no smooth board surface explains them):")
+            for k, r in flags[:5]:
+                x, y, z = xyz[k]
+                lines.append(f"  X{x:.1f} Y{y:.1f}: dz {z:+.3f} sits "
+                             f"{r * 1000:.0f} um off the fit — re-probe it")
+            lines.append("")
+        else:
+            lines.append("No single-point outliers vs a smooth surface.")
+            lines.append("")
+        lines.append("DEPTH: " + rec["detail"])
+        try:
+            cur = float(self.forms["traces"].value().cut_depth)
+            if rec["depth"] > cur + 1e-9:
+                lines.append(f"  Current trace cut_depth is {cur:.2f} mm — "
+                             f"consider raising it to {rec['depth']:.2f} mm.")
+        except Exception:
+            pass
+        if sug["rows"] or sug["cols"]:
+            lines.append("")
+            lines.append("GRID TOO COARSE:")
+            if sug["rows"]:
+                lines.append("  surface jumps >80 um between probe rows — add "
+                             "row(s) at y = "
+                             + ", ".join(f"{y:.1f}" for y in sug["rows"]))
+            if sug["cols"]:
+                lines.append("  ...and between columns — add column(s) at x = "
+                             + ", ".join(f"{x:.1f}" for x in sug["cols"]))
+        msg = "\n".join(lines)
+        if sug["rows"]:
+            box = QMessageBox(QMessageBox.Information, "Mesh check", msg,
+                              QMessageBox.Close, self)
+            ins = box.addButton("Insert suggested row(s)", QMessageBox.AcceptRole)
+            box.exec()
+            if box.clickedButton() is ins:
+                self._insert_probe_rows(sug["rows"])
+        else:
+            QMessageBox.information(self, "Mesh check", msg)
+
+    def _insert_probe_rows(self, new_ys):
+        """Insert full probe rows at the given y values (blank Z), keeping the
+        table row-major and the grid cartesian — bilinear stays available, and
+        'Probe over SPI - Resume' fills exactly the new points."""
+        _xy, _xyz = self._table_points()
+        rows = []
+        for r in range(self.level_table.rowCount()):
+            xi, yi, zi = (self.level_table.item(r, c) for c in range(3))
+            if xi is None or yi is None:
+                continue
+            rows.append((float(xi.text()), float(yi.text()),
+                         zi.text().strip() if zi else ""))
+        xs = sorted({round(x, 3) for x, _y, _z in rows})
+        for y in new_ys:
+            for x in xs:
+                rows.append((x, float(y), ""))
+        rows.sort(key=lambda t: (t[1], t[0]))       # row-major, bottom-up
+        self.level_table.setRowCount(len(rows))
+        for r, (x, y, z) in enumerate(rows):
+            self.level_table.setItem(r, 0, QTableWidgetItem(f"{x:.3f}"))
+            self.level_table.setItem(r, 1, QTableWidgetItem(f"{y:.3f}"))
+            self.level_table.setItem(r, 2, QTableWidgetItem(z))
+        ny = len({round(y, 3) for _x, y, _z in rows})
+        self.level_ny_spin.blockSignals(True)
+        self.level_ny_spin.setValue(ny)
+        self.level_ny_spin.blockSignals(False)
+        self._update_grid_overlay()
+        self.statusBar().showMessage(
+            f"Inserted {len(new_ys)} probe row(s) — run 'Probe over SPI' and "
+            f"choose Resume to measure only the new points", 12000)
+
     def _on_export_probe_files(self):
         if not self.level_table.rowCount():
             self._on_build_level_grid()
@@ -2545,7 +2637,20 @@ class MainWindow(QMainWindow):
             if self._probe_drift_um is not None:
                 msg += (f" (reference drifted {self._probe_drift_um:.0f} um over "
                         f"the run — corrected)")
-            self.statusBar().showMessage(msg, 12000)
+            try:
+                from gerber2rml.engine.leveling import (flag_outliers,
+                                                        suggest_refinement_rows)
+                _xy, xyz = self._table_points()
+                n_flag = len(flag_outliers(xyz))
+                n_rows = len(suggest_refinement_rows(
+                    xyz, self.level_nx_spin.value(),
+                    self.level_ny_spin.value())["rows"])
+                if n_flag or n_rows:
+                    msg += (f" — Mesh check: {n_flag} suspicious point(s), "
+                            f"{n_rows} extra row(s) suggested (click Mesh check)")
+            except Exception:
+                pass
+            self.statusBar().showMessage(msg, 15000)
         if self._dro_was_on:                    # restore the live link after probing
             self._dro_was_on = False
             self._start_dro()

@@ -199,6 +199,131 @@ class HeightMap:
 
 
 # ---------------------------------------------------------------------------
+# Mesh sanity / probing advice
+# ---------------------------------------------------------------------------
+
+def _grid_arrays(points, nx, ny):
+    """(xs, ys, z[j][i]) if *points* form a complete nx*ny grid, else None."""
+    if not (nx and ny and len(points) == nx * ny):
+        return None
+    xs = sorted({round(p[0], 3) for p in points})
+    ys = sorted({round(p[1], 3) for p in points})
+    if len(xs) != nx or len(ys) != ny:
+        return None
+    zmap = {(round(x, 3), round(y, 3)): z for x, y, z in points}
+    z = [[zmap[(xs[i], ys[j])] for i in range(nx)] for j in range(ny)]
+    return xs, ys, z
+
+
+def flag_outliers(points, tol=0.10):
+    """Leave-one-out residuals: for each point, fit a smooth surface to all the
+    OTHER points and flag it if it disagrees by more than ``tol`` mm.
+
+    The reference surface is a quadratic when enough points remain (bow and
+    saddle are legitimate board shapes — a plane would flag genuine warp),
+    else a plane. This catches the classic flaky-touch case: one point that no
+    smooth board surface can explain. A whole mis-measured ROW is fundamentally
+    ambiguous from geometry alone — that's what the drift re-touch is for.
+
+    Returns ``[(index, residual_mm), ...]`` sorted worst-first.
+    """
+    import numpy as np
+    n = len(points)
+    if n < 5:
+        return []
+    flagged = []
+    for k in range(n):
+        rest = [p for i, p in enumerate(points) if i != k]
+        x = np.array([p[0] for p in rest])
+        y = np.array([p[1] for p in rest])
+        z = np.array([p[2] for p in rest])
+        if len(rest) >= 8:
+            A = np.column_stack([np.ones_like(x), x, y, x * x, x * y, y * y])
+        else:
+            A = np.column_stack([np.ones_like(x), x, y])
+        try:
+            coef, *_ = np.linalg.lstsq(A, z, rcond=None)
+        except np.linalg.LinAlgError:
+            continue
+        px, py, pz = points[k]
+        basis = ([1.0, px, py, px * px, px * py, py * py]
+                 if A.shape[1] == 6 else [1.0, px, py])
+        pred = float(np.dot(coef, basis))
+        r = abs(pz - pred)
+        if r > tol:
+            flagged.append((k, r))
+    flagged.sort(key=lambda t: -t[1])
+    return flagged
+
+
+def recommend_depth(points, nx=None, ny=None, copper=0.035, noise=0.03,
+                    min_depth=0.15):
+    """Recommend a trace cut depth that survives this mesh's uncertainty.
+
+    The uncut-copper failure needs (surface-model error) > (depth - copper).
+    Model error is estimated as the worst mid-cell interpolation risk: a smooth
+    bow between two probe lines deviates from the straight (bilinear) chord by
+    roughly a quarter of the corner-to-corner spread, plus a probe-noise floor.
+
+    Returns ``{"depth", "range", "worst_spread", "est_error", "detail"}``.
+    """
+    zs = [p[2] for p in points]
+    rng = (max(zs) - min(zs)) if zs else 0.0
+    worst = 0.0
+    where = ""
+    g = _grid_arrays(points, nx, ny)
+    if g:
+        xs, ys, z = g
+        for j in range(len(ys) - 1):
+            for i in range(len(xs) - 1):
+                corners = [z[j][i], z[j][i + 1], z[j + 1][i], z[j + 1][i + 1]]
+                spread = max(corners) - min(corners)
+                if spread > worst:
+                    worst = spread
+                    where = (f"cell x {xs[i]:.0f}..{xs[i + 1]:.0f}, "
+                             f"y {ys[j]:.0f}..{ys[j + 1]:.0f}")
+    else:
+        worst = rng                      # no grid structure: be conservative
+        where = "whole mesh (no complete grid)"
+    # /3 (not the textbook /4) after the MegaPCB post-mortem: real meshes carry
+    # measurement error on top of pure interpolation error, and under-cutting
+    # costs a whole rework pass while 30 um of extra depth costs nothing with a
+    # flat bit (isolation width doesn't grow with depth).
+    est_error = worst / 3.0 + noise
+    depth = max(min_depth, math.ceil((copper + est_error + 0.02) * 100) / 100)
+    return {"depth": depth, "range": rng, "worst_spread": worst,
+            "est_error": est_error,
+            "detail": (f"mesh range {rng * 1000:.0f} um; worst cell spread "
+                       f"{worst * 1000:.0f} um ({where}); est. mid-cell error "
+                       f"{est_error * 1000:.0f} um -> cut >= {depth:.2f} mm")}
+
+
+def suggest_refinement_rows(points, nx, ny, budget=0.08):
+    """Where is the grid too coarse? For each adjacent pair of probe ROWS
+    (columns), if the surface changes more than ``budget`` mm between them, a
+    new full row (column) at their midpoint is worth probing — full lines keep
+    the grid cartesian, so bilinear interpolation stays available.
+
+    Returns ``{"rows": [y_mid, ...], "cols": [x_mid, ...]}`` (mm, sorted).
+    """
+    g = _grid_arrays(points, nx, ny)
+    if not g:
+        return {"rows": [], "cols": []}
+    xs, ys, z = g
+    rows = []
+    for j in range(len(ys) - 1):
+        jump = max(abs(z[j + 1][i] - z[j][i]) for i in range(len(xs)))
+        if jump > budget:
+            rows.append(round((ys[j] + ys[j + 1]) / 2.0, 3))
+    cols = []
+    for i in range(len(xs) - 1):
+        jump = max(abs(z[j][i + 1] - z[j][i]) for j in range(len(ys)))
+        if jump > budget:
+            cols.append(round((xs[i] + xs[i + 1]) / 2.0, 3))
+    return {"rows": rows, "cols": cols}
+
+
+# ---------------------------------------------------------------------------
 # Toolpath warp
 # ---------------------------------------------------------------------------
 

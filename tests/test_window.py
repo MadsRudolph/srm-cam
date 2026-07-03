@@ -1663,3 +1663,32 @@ def test_demo_badge_cleared_by_load_setup():
     donor.load_folder(str(FIXT))
     w._apply_setup(donor._collect_setup())                  # "Load setup..."
     assert w.preview._demo is False                         # badge cleared
+
+
+def test_insert_probe_rows_keeps_grid_cartesian():
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow()
+    xs = [10.0, 100.0, 190.0]
+    ys = [12.0, 72.0, 131.0]
+    w.level_table.setRowCount(9)
+    w.level_nx_spin.setValue(3)
+    w.level_ny_spin.setValue(3)
+    r = 0
+    for y in ys:
+        for x in xs:
+            w.level_table.setItem(r, 0, QTableWidgetItem(f"{x:.3f}"))
+            w.level_table.setItem(r, 1, QTableWidgetItem(f"{y:.3f}"))
+            w.level_table.setItem(r, 2, QTableWidgetItem("0.0100"))
+            r += 1
+    w._insert_probe_rows([42.0, 101.5])
+    assert w.level_table.rowCount() == 15          # 9 + 2 rows x 3 columns
+    assert w.level_ny_spin.value() == 5
+    _xy, xyz = w._table_points()
+    assert len(xyz) == 9                            # new points blank (unmeasured)
+    # row-major order held: y sequence is sorted, each row ascending in x
+    got = [(float(w.level_table.item(i, 1).text()),
+            float(w.level_table.item(i, 0).text())) for i in range(15)]
+    assert got == sorted(got)
+    # resume-probing sees the reference + exactly the 6 new points
+    points, _x0, _y0 = w._probe_points(resume=True)
+    assert len(points) == 7
