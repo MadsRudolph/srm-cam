@@ -285,6 +285,17 @@ class MainWindow(QMainWindow):
         except Exception:
             pass                        # a read-only home dir never blocks launch
 
+        # Workflow state chips (right side of the status bar): a glance answers
+        # "what's set up and what's missing" — board, mesh, fit, photo, boxes,
+        # machine link. Poll-driven (cheap attribute reads) so no event wiring
+        # can go stale.
+        self._chip_labels = {}
+        from PySide6.QtCore import QTimer
+        self._chip_timer = QTimer(self)
+        self._chip_timer.setInterval(1500)
+        self._chip_timer.timeout.connect(self._update_chips)
+        self._chip_timer.start()
+
         # Toolbar / Top Controls
         self.load_btn = QPushButton("Load Gerber folder...")
         self.load_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
@@ -301,6 +312,14 @@ class MainWindow(QMainWindow):
             "deepest cut fit the SRM-20 Z range (probe Z first), holes vs bit. "
             "Run this before a full-bed job.")
         self.diag_btn.clicked.connect(self._on_diagnostics)
+
+        self.feedcard_btn = QPushButton("Feed card")
+        self.feedcard_btn.setToolTip(
+            "Dial in the XY feed on scrap: export the feed-ladder test card "
+            "(one block per feed, value engraved next to it), cut it, then "
+            "photograph it and let the app score every block and recommend "
+            "the fastest clean feed.")
+        self.feedcard_btn.clicked.connect(self._on_feed_card)
 
         self.guide_btn = QPushButton("Guide")
         self.guide_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
@@ -1037,7 +1056,7 @@ class MainWindow(QMainWindow):
         # ===== BASIC: the things you set every time =====
         board_group, bl = _group("Board")
         bl.addRow(_row(self.load_btn, self.export_btn))
-        bl.addRow(_row(self.diag_btn))
+        bl.addRow(_row(self.diag_btn, self.feedcard_btn))
         bl.addRow(_row(self.save_setup_btn, self.load_setup_btn))
         bl.addRow("Name", self.name_edit)
         bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
@@ -2436,6 +2455,45 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Auto-started run tracking from tool motion", 4000)
 
+    _CHIP_ON = ("background:#1d3a2a; color:#6be49a; border:1px solid #2c5a40; "
+                "border-radius:9px; padding:1px 9px; font-size:11px;")
+    _CHIP_OFF = ("background:#23262c; color:#7c828c; border:1px solid #34383f; "
+                 "border-radius:9px; padding:1px 9px; font-size:11px;")
+
+    def _update_chips(self):
+        """Refresh the workflow chips (status bar, right side)."""
+        if not self._chip_labels:
+            for name in ("board", "mesh", "fit", "photo", "boxes", "link"):
+                lbl = QLabel("")
+                self._chip_labels[name] = lbl
+                self.statusBar().addPermanentWidget(lbl)
+
+        def put(name, text, on):
+            lbl = self._chip_labels[name]
+            if lbl.text() != text:
+                lbl.setText(text)
+            lbl.setStyleSheet(self._CHIP_ON if on else self._CHIP_OFF)
+
+        put("board", self.state.name if self.state.board is not None
+            else "no board", self.state.board is not None)
+        try:
+            n_mesh = len(self._table_points()[1])
+        except Exception:
+            n_mesh = 0
+        put("mesh", f"mesh {n_mesh}" if n_mesh else "mesh —",
+            n_mesh >= 3 and self.level_chk.isChecked())
+        if self._top_fit is not None:
+            import math as _m
+            put("fit", f"fit {_m.degrees(self._top_fit.theta):+.2f}°", True)
+        else:
+            put("fit", "fit —", False)
+        put("photo", "photo ✓" if self._photo_overlay else "photo —",
+            bool(self._photo_overlay))
+        n_boxes = len(self._rework_regions)
+        put("boxes", f"boxes {n_boxes}" if n_boxes else "boxes —", n_boxes > 0)
+        put("link", "link ●" if self._dro is not None else "link ○",
+            self._dro is not None)
+
     def _update_run_progress(self, x, y, z):
         self._maybe_autostart_run(x, y, z)
         if self._run_progress is None:
@@ -3737,6 +3795,87 @@ class MainWindow(QMainWindow):
         if self._photo_overlay:
             self._photo_overlay["trace_alpha"] = v / 100.0
         self.preview.set_trace_alpha(v / 100.0)
+
+    def _on_feed_card(self):
+        """Feed-ladder card: export the NC, or score a photo of the cut card."""
+        box = QMessageBox(QMessageBox.Question, "Feed card",
+                          "The feed-ladder card mills the same isolation "
+                          "pattern at 4/6/8/10/12/15 mm/s on scrap (needs "
+                          "~50 x 40 mm from X18.6 Y18.6). Cut it, photograph "
+                          "it, and Score recommends the fastest clean feed.",
+                          QMessageBox.Cancel, self)
+        exp = box.addButton("Export card NC…", QMessageBox.AcceptRole)
+        sco = box.addButton("Score card photo…", QMessageBox.ActionRole)
+        box.exec()
+        if box.clickedButton() is exp:
+            self._export_feed_card()
+        elif box.clickedButton() is sco:
+            self._score_feed_card()
+
+    def _export_feed_card(self):
+        from gerber2rml.engine.testcard import render_feed_ladder
+        out = self._pick_out_dir("Select output folder for the feed card")
+        if not out:
+            return
+        try:
+            text, bbox = render_feed_ladder(plunge_feed=2.0)
+        except Exception as e:
+            QMessageBox.critical(self, "Feed card failed", str(e))
+            return
+        path = Path(out) / "feed_testcard.nc"
+        path.write_text(text)
+        self.statusBar().showMessage(
+            f"Wrote {path.name} — scrap must cover X {bbox[0]:.1f}..{bbox[2]:.1f} "
+            f"Y {bbox[1]:.1f}..{bbox[3]:.1f}, zero Z on the scrap surface", 15000)
+
+    def _score_feed_card(self):
+        from gerber2rml.engine.cutcheck import CutCheckError
+        from gerber2rml.engine.feedscore import score_feed_card
+        from gerber2rml.engine.photofit import fit_homography, warp_photo
+        from gerber2rml.engine.testcard import feed_ladder_layout
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Photo of the CUT feed card", self._dlg_dir("photo", "photos"),
+            "Images (*.jpg *.jpeg *.png *.bmp)")
+        if not path:
+            return
+        self._dlg_remember("photo", path)
+        try:
+            img = self._decode_photo(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Could not read image", str(e))
+            return
+        blocks, anchors = feed_ladder_layout()
+        from gerber2rml.gui.photodlg import PhotoAnchorDialog
+        dlg = PhotoAnchorDialog(self, img, anchors)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            H = fit_homography(dlg.photo_points(), [p for _n, p in anchors])
+            xs = [p for b in blocks for p in (b["ring"][0],)]
+            x0 = min(min(b["serpentine"][0][0] for b in blocks), min(xs)) - 4
+            x1 = max(max(p[0] for b in blocks for p in b["serpentine"]), max(xs)) + 4
+            y0 = min(b["serpentine"][0][1] for b in blocks) - 4
+            y1 = max(b["ring"][1] for b in blocks) + 8
+            rgba, extent = warp_photo(img, H, (x0, y0, x1, y1))
+            r = score_feed_card(rgba, extent, blocks)
+        except CutCheckError as e:
+            QMessageBox.warning(self, "Can't judge this photo", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Scoring failed", str(e))
+            return
+        lines = [f"{b['feed']:>5.1f} mm/s   channel cut {b['cut'] * 100:5.1f}%   "
+                 f"land intact {b['land'] * 100:5.1f}%"
+                 for b in sorted(r["blocks"], key=lambda b: b["feed"])]
+        rec = (f"\nRecommended XY feed: {r['recommended']:.0f} mm/s"
+               if r["recommended"] is not None else
+               "\nNo block is clearly clean — check the photo/lighting.")
+        QMessageBox.information(self, "Feed card score",
+                                "\n".join(lines) + "\n" + rec)
+        if r["recommended"] is not None:
+            self.statusBar().showMessage(
+                f"Feed card: use {r['recommended']:.0f} mm/s (set it in the "
+                f"traces job form)", 15000)
 
     def _on_probe_rework_boxes(self):
         """Probe each rework box center over SPI and deepen boxes where the

@@ -108,6 +108,52 @@ def feed_ladder_card(feeds=(4.0, 6.0, 8.0, 10.0, 12.0, 15.0), origin=(20.0, 20.0
     return paths, per_path, bbox
 
 
+def feed_ladder_layout(feeds=(4.0, 6.0, 8.0, 10.0, 12.0, 15.0),
+                       origin=(20.0, 20.0), bit_diameter=0.8, cols=3):
+    """Scoring geometry for a cut card (photo evaluation): per block the feed,
+    the serpentine channel centerline, the midline of the thin land between
+    the tight channel pair, and the big pad-ring center (a click anchor).
+
+    Also returns the 4 photo anchors — the big-ring centers of the corner-most
+    blocks, ordered bottom-left, bottom-right, top-right, top-left (the order
+    the anchor dialog asks for). Must be called with the same parameters the
+    card was generated with.
+    """
+    ox0, oy0 = origin
+    cell_w, cell_h = 17.0, 18.5
+    pitch = 2.0 * bit_diameter
+    gap = 1.25 * bit_diameter
+    blocks = []
+    for i, f in enumerate(feeds):
+        cx = ox0 + (i % cols) * cell_w
+        cy = oy0 + (i // cols) * cell_h
+        serp, y = [], 0.0
+        for k in range(4):
+            row = [(cx, cy + y), (cx + 12.0, cy + y)]
+            serp += row if k % 2 == 0 else row[::-1]
+            y += pitch
+        ring_y = cy + 4 * pitch + 2.2
+        ty = ring_y + 2.6
+        blocks.append({
+            "feed": float(f),
+            "serpentine": serp,
+            "land": [(cx + 0.5, ty + gap / 2.0), (cx + 9.5, ty + gap / 2.0)],
+            "ring": (cx + 3.0, ring_y),
+        })
+    xs = sorted({round(b["ring"][0], 3) for b in blocks})
+    ys = sorted({round(b["ring"][1], 3) for b in blocks})
+
+    def _corner(want_x, want_y):
+        return min(blocks, key=lambda b: (abs(b["ring"][0] - want_x)
+                                          + abs(b["ring"][1] - want_y)))["ring"]
+
+    anchors = [("bottom-left big ring", _corner(xs[0], ys[0])),
+               ("bottom-right big ring", _corner(xs[-1], ys[0])),
+               ("top-right big ring", _corner(xs[-1], ys[-1])),
+               ("top-left big ring", _corner(xs[0], ys[-1]))]
+    return blocks, anchors
+
+
 def render_feed_ladder(machine="Roland SRM-20 (G-code)", plunge_feed=1.0,
                        travel_z=1.0, **card_kwargs):
     """Render the card to machine text. G-code only (needs per-path feeds)."""

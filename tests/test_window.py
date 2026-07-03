@@ -1744,3 +1744,16 @@ def test_apply_rework_probe_deepens_only_high_spots(monkeypatch):
     assert abs(w._rework_regions[0]["depth"] - 0.23) < 1e-9   # 0.15 + 0.080
     assert w._rework_regions[1]["depth"] == 0.15              # matches mesh
     assert skipped == 0
+
+
+def test_workflow_chips_reflect_state():
+    w = MainWindow()
+    w._update_chips()
+    assert w._chip_labels["board"].text() == "no board"
+    assert w._chip_labels["boxes"].text() == "boxes —"
+    w.load_folder(str(FIXT))
+    w._on_region_added((1.0, 1.0, 2.0, 2.0))
+    w._update_chips()
+    assert w._chip_labels["board"].text() == w.state.name
+    assert w._chip_labels["boxes"].text() == "boxes 1"
+    assert w._chip_labels["link"].text() == "link ○"
