@@ -35,6 +35,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[Dirs]
+; Per-user workspace. The app also creates these at startup (that path is
+; authoritative, e.g. for portable/dev runs); creating them here just makes
+; the folders visible right after install.
+Name: "{userdocs}\SRM-CAM"
+Name: "{userdocs}\SRM-CAM\sessions"
+Name: "{userdocs}\SRM-CAM\exports"
+Name: "{userdocs}\SRM-CAM\photos"
+
 [Files]
 ; The whole PyInstaller output folder (exe + _internal with Qt, numpy, etc.).
 Source: "..\dist\SRM-CAM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

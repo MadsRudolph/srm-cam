@@ -247,6 +247,14 @@ class MainWindow(QMainWindow):
         self.resize(1100, 750)
         self.state = ProjectState()
 
+        # Ensure the per-user workspace (Documents/SRM-CAM/{sessions,exports,
+        # photos}) exists; every file dialog starts in its matching folder.
+        try:
+            from gerber2rml.gui.workspace import workspace_root
+            workspace_root()
+        except Exception:
+            pass                        # a read-only home dir never blocks launch
+
         # Toolbar / Top Controls
         self.load_btn = QPushButton("Load Gerber folder...")
         self.load_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
@@ -1217,6 +1225,9 @@ class MainWindow(QMainWindow):
         self._photo_overlay = None              # photo is of one physical setup
         self.preview.set_photo(None)
         self.trace_dim_slider.setValue(100)     # un-dim: no photo to see through
+        if self._rework_regions:                # boxes belong to that board too
+            self._rework_regions = []
+            self._refresh_rework()
         # any successful load clears the DEMO badge — this covers Load setup /
         # session restore too, not just the Load Gerber folder button. The
         # launch-time preload re-sets the badge right after this call.
@@ -1915,7 +1926,7 @@ class MainWindow(QMainWindow):
         xy, _xyz = self._table_points()
         if not xy:
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if not out:
             return
         from gerber2rml.engine.leveling import write_probe_files
@@ -1930,10 +1941,13 @@ class MainWindow(QMainWindow):
             return
         from pathlib import Path
         default = f"{self.state.name or 'board'}_heightmap.csv"
-        path, _ = QFileDialog.getSaveFileName(self, "Save height map", default,
-                                              "CSV (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save height map",
+            str(Path(self._dlg_dir("heightmap", "sessions")) / default),
+            "CSV (*.csv)")
         if not path:
             return
+        self._dlg_remember("heightmap", path)
         lines = ["x_mm,y_mm,dz_mm"]
         for r in range(self.level_table.rowCount()):
             vals = []
@@ -1947,10 +1961,12 @@ class MainWindow(QMainWindow):
     def _on_load_level_grid(self):
         """Load a probe grid (x_mm, y_mm, dz_mm) CSV back into the table — e.g. one
         saved with 'Save CSV' before an update. Infers nx/ny from the points."""
-        path, _ = QFileDialog.getOpenFileName(self, "Load height map CSV", "",
-                                              "CSV (*.csv)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load height map CSV",
+            self._dlg_dir("heightmap", "sessions"), "CSV (*.csv)")
         if not path:
             return
+        self._dlg_remember("heightmap", path)
         try:
             text = Path(path).read_text(encoding="utf-8")
         except Exception as e:
@@ -2519,7 +2535,7 @@ class MainWindow(QMainWindow):
         return png
 
     def _on_load_clicked(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Gerber folder")
+        folder = self._pick_dir("gerber", "Select Gerber folder", sub="")
         if folder:
             try:
                 self.load_folder(folder)
@@ -2536,7 +2552,7 @@ class MainWindow(QMainWindow):
                 and self.state.board.copper_top.is_empty:
             QMessageBox.warning(self, "No F.Cu",
                                 "Double-sided needs front copper (F.Cu); none found in this export.")
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if out:
             try:
                 written = self.export_to(out)
@@ -2555,7 +2571,7 @@ class MainWindow(QMainWindow):
         if self.state.gerber_dir is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if not out:
             return
         self._sync_state()
@@ -2632,7 +2648,7 @@ class MainWindow(QMainWindow):
             reg_kwargs = dict(registration="fiducial", fiducials=fid,
                               measured_fiducials=measured,
                               allow_scale=fid.allow_scale)
-        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
+        out = self._pick_out_dir("Select output folder (same as the job)")
         if not out:
             return
         from gerber2rml.doublesided import build_top_traces
@@ -2716,7 +2732,7 @@ class MainWindow(QMainWindow):
                     "Fit stored (AS PLACED) — probe the top, then Fit & export "
                     "again; your fiducial measurements are pre-filled", 12000)
                 return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
+        out = self._pick_out_dir("Select output folder (same as the job)")
         if not out:
             return
         try:
@@ -2781,6 +2797,9 @@ class MainWindow(QMainWindow):
             "fid_measured": [list(p) for p in
                              (getattr(self, "_fid_measured", None) or [])],
             "photo_overlay": self._photo_overlay,
+            "rework": [{"bbox": list(r["bbox"]), "depth": r["depth"],
+                        "follow": r.get("follow", True)}
+                       for r in self._rework_regions],
             "fid": {"count": self.fid_count_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
@@ -2794,9 +2813,11 @@ class MainWindow(QMainWindow):
                       "apply": self.level_chk.isChecked(), "rows": rows},
         }
 
-    def _apply_setup(self, d):
+    def _apply_setup(self, d, session_dir=None):
         """Restore a setup dict from :meth:`_collect_setup`. Tolerant of missing
-        keys and renamed/removed job fields, so a setup survives a code update."""
+        keys and renamed/removed job fields, so a setup survives a code update.
+        ``session_dir`` (where the setup file lives) resolves the session-local
+        photo copy when the original photo path is gone."""
         import dataclasses
         from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
@@ -2898,42 +2919,115 @@ class MainWindow(QMainWindow):
         self._update_level_overlay()
         if loaded:
             self.generate_preview()
-        # Photo overlay: re-decode + re-fit from the saved anchor pairs (the
-        # photo itself is NOT stored in the setup — only its path and clicks).
-        po = d.get("photo_overlay")
-        if loaded and po and po.get("path") and Path(po["path"]).exists():
+        # Rework boxes: restore with their per-box depths (colors reassigned).
+        self._rework_regions = []
+        for r in d.get("rework") or []:
             try:
-                img = self._decode_photo(po["path"])
-                self.photo_alpha_slider.setValue(
-                    int(round(float(po.get("alpha", 0.55)) * 100)))
-                self.trace_dim_slider.setValue(
-                    int(round(float(po.get("trace_alpha", 1.0)) * 100)))
-                self._apply_photo_overlay(img, po["photo_pts"],
-                                          po["machine_pts"], po["path"])
+                color = self._REWORK_COLORS[len(self._rework_regions)
+                                            % len(self._REWORK_COLORS)]
+                self._rework_regions.append({
+                    "bbox": tuple(float(v) for v in r["bbox"]),
+                    "depth": float(r.get("depth", 0.15)),
+                    "follow": bool(r.get("follow", True)),
+                    "color": color})
             except Exception:
-                pass                  # a stale/moved photo never blocks a load
+                pass                  # one bad row never blocks the load
+        self._refresh_rework()
+        # Photo overlay: re-decode + re-fit from the saved anchor pairs. The
+        # original path is tried first, then the session-local copy written
+        # by Save setup (so setups survive the photo moving or being deleted).
+        po = d.get("photo_overlay")
+        if loaded and po:
+            src = po.get("path")
+            if not (src and Path(src).exists()):
+                cp = po.get("photo_copy")
+                src = (str(Path(session_dir) / cp)
+                       if cp and session_dir and (Path(session_dir) / cp).exists()
+                       else None)
+            if src:
+                try:
+                    img = self._decode_photo(src)
+                    self.photo_alpha_slider.setValue(
+                        int(round(float(po.get("alpha", 0.55)) * 100)))
+                    self.trace_dim_slider.setValue(
+                        int(round(float(po.get("trace_alpha", 1.0)) * 100)))
+                    self._apply_photo_overlay(img, po["photo_pts"],
+                                              po["machine_pts"], src)
+                    self._photo_overlay["photo_copy"] = po.get("photo_copy")
+                except Exception:
+                    pass              # a stale/moved photo never blocks a load
         self.statusBar().showMessage(
             "Setup loaded" if loaded else
             "Setup loaded (board not found — load the Gerber folder manually)", 10000)
 
+    # ---- file-dialog helpers: start where the user last was ---------------
+    def _dlg_dir(self, key, sub="exports"):
+        """Start directory for a dialog: last-used for ``key``, else the
+        workspace subfolder ``sub`` (Documents/SRM-CAM/<sub>)."""
+        try:
+            from gerber2rml.gui.workspace import remembered_dir
+            return remembered_dir(key, sub)
+        except Exception:
+            return ""
+
+    def _dlg_remember(self, key, path):
+        try:
+            from gerber2rml.gui.workspace import remember_dir
+            remember_dir(key, path)
+        except Exception:
+            pass
+
+    def _pick_dir(self, key, title, sub="exports"):
+        d = QFileDialog.getExistingDirectory(self, title, self._dlg_dir(key, sub))
+        if d:
+            self._dlg_remember(key, d)
+        return d
+
+    def _pick_out_dir(self, title="Select output folder"):
+        return self._pick_dir("out", title)
+
     def _on_save_setup(self):
-        import json
         default = f"{self.name_edit.text() or 'board'}_setup.json"
-        path, _ = QFileDialog.getSaveFileName(self, "Save setup", default,
-                                              "Setup (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save setup",
+            str(Path(self._dlg_dir("session", "sessions")) / default),
+            "Setup (*.json)")
         if not path:
             return
         try:
-            Path(path).write_text(json.dumps(self._collect_setup(), indent=2),
-                                  encoding="utf-8")
+            self._write_setup(Path(path))
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
             return
+        self._dlg_remember("session", path)
         self.statusBar().showMessage(f"Saved setup to {Path(path).name}", 8000)
+
+    def _write_setup(self, path):
+        """Write the setup JSON to ``path``. If a photo overlay is active and
+        its source file still exists, drop a copy next to the session so the
+        setup remains self-contained even if the original photo moves."""
+        import json
+        import shutil
+        d = self._collect_setup()
+        po = d.get("photo_overlay")
+        if po and po.get("path") and Path(po["path"]).is_file():
+            src = Path(po["path"])
+            copy_name = f"{path.stem}_photo{src.suffix.lower()}"
+            dst = path.parent / copy_name
+            try:
+                if src.resolve() != dst.resolve():
+                    shutil.copy2(src, dst)
+                po["photo_copy"] = copy_name
+                self._photo_overlay["photo_copy"] = copy_name
+            except Exception:
+                pass                    # photo copy is best-effort, never blocks
+        path.write_text(json.dumps(d, indent=2), encoding="utf-8")
 
     def _on_load_setup(self):
         import json
-        path, _ = QFileDialog.getOpenFileName(self, "Load setup", "", "Setup (*.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load setup", self._dlg_dir("session", "sessions"),
+            "Setup (*.json)")
         if not path:
             return
         try:
@@ -2941,7 +3035,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load failed", str(e))
             return
-        self._apply_setup(d)
+        self._dlg_remember("session", path)
+        self._apply_setup(d, session_dir=Path(path).parent)
 
     def _diag_bounds(self):
         """Placed job bounds (board + dowels) in the cut/machine frame, for the
@@ -2998,7 +3093,7 @@ class MainWindow(QMainWindow):
         if self.state.board is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if out:
             try:
                 png = self.export_image_to(out)
@@ -3080,10 +3175,11 @@ class MainWindow(QMainWindow):
         from pathlib import Path
         from gerber2rml.engine.gcode_parse import parse_file
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open toolpath file to simulate", "",
+            self, "Open toolpath file to simulate", self._dlg_dir("out"),
             "Toolpath files (*.nc *.rml *.gcode *.g);;All files (*)")
         if not path:
             return
+        self._dlg_remember("out", path)
         try:
             toolpaths = parse_file(path)
         except Exception as e:
@@ -3322,9 +3418,11 @@ class MainWindow(QMainWindow):
                 "anchor a photo (show the drill or traces preview first).")
             return
         path, _ = QFileDialog.getOpenFileName(
-            self, "Board photo", "", "Images (*.jpg *.jpeg *.png *.bmp)")
+            self, "Board photo", self._dlg_dir("photo", "photos"),
+            "Images (*.jpg *.jpeg *.png *.bmp)")
         if not path:
             return
+        self._dlg_remember("photo", path)
         try:
             img = self._decode_photo(path)
         except Exception as e:
@@ -3471,7 +3569,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Empty selection",
                                     "No toolpaths fall inside the boxes.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if not out:
             return
         backend = BACKENDS[self.state.machine]

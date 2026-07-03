@@ -1031,6 +1031,72 @@ def test_photo_anchor_holes_are_four_named_corners():
     assert anchors[0][1] == (10, 10) and anchors[2][1] == (88, 70)
 
 
+def test_rework_boxes_persist_in_setup():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._on_region_added((10.0, 20.0, 30.0, 40.0))
+    w.rework_depth_spin.setValue(0.20)
+    w._on_region_added((50.0, 60.0, 70.0, 80.0))
+    d = w._collect_setup()
+    assert [r["bbox"] for r in d["rework"]] == [[10.0, 20.0, 30.0, 40.0],
+                                                [50.0, 60.0, 70.0, 80.0]]
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert len(w2._rework_regions) == 2
+    assert w2._rework_regions[0]["bbox"] == (10.0, 20.0, 30.0, 40.0)
+    assert w2._rework_regions[1]["depth"] == 0.20
+    # loading a new board clears the boxes (they belong to that physical board)
+    w2.load_folder(str(FIXT))
+    assert w2._rework_regions == []
+
+
+def test_setup_saves_photo_copy_and_restores_from_it(tmp_path):
+    import json
+    import numpy as np
+    from PySide6.QtGui import QImage
+    photo = tmp_path / "board.png"
+    qi = QImage(8, 8, QImage.Format_RGBA8888)
+    qi.fill(0xFF00FF00)
+    assert qi.save(str(photo))
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)], str(photo))
+    sess = tmp_path / "top_setup.json"
+    w._write_setup(sess)
+    copy = tmp_path / "top_setup_photo.png"
+    assert copy.exists()                    # photo copied next to the session
+    photo.unlink()                          # original photo disappears...
+    d = json.loads(sess.read_text(encoding="utf-8"))
+    assert d["photo_overlay"]["photo_copy"] == "top_setup_photo.png"
+    w2 = MainWindow()
+    w2._apply_setup(d, session_dir=tmp_path)
+    assert w2.preview._photo is not None    # ...restored from the session copy
+
+
+def test_workspace_folders_and_remembered_dirs(tmp_path, monkeypatch):
+    monkeypatch.setenv("SRM_CAM_HOME", str(tmp_path / "ws"))
+    from gerber2rml.gui.workspace import (remember_dir, remembered_dir,
+                                          workspace_root)
+    root = workspace_root()
+    assert (root / "sessions").is_dir()
+    assert (root / "exports").is_dir()
+    assert (root / "photos").is_dir()
+    # unknown key falls back to the workspace subfolder
+    assert remembered_dir("no-such-key-xyz", "sessions") == str(root / "sessions")
+    # remembered file path -> its parent dir comes back
+    f = tmp_path / "somewhere" / "job.nc"
+    f.parent.mkdir()
+    f.write_text("")
+    remember_dir("test-key-xyz", str(f))
+    try:
+        assert remembered_dir("test-key-xyz", "exports") == str(f.parent)
+    finally:
+        from PySide6.QtCore import QSettings
+        QSettings("SRM-CAM", "SRM-CAM").remove("dirs/test-key-xyz")
+
+
 def test_photo_anchor_angle_guide_math():
     import numpy as np
     from gerber2rml.gui.photodlg import PhotoAnchorDialog
