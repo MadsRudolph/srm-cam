@@ -1031,6 +1031,29 @@ def test_photo_anchor_holes_are_four_named_corners():
     assert anchors[0][1] == (10, 10) and anchors[2][1] == (88, 70)
 
 
+def test_trace_dim_persists_and_resets_with_photo():
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)],
+                           "C:/nope/board.jpg")
+    w.trace_dim_slider.setValue(30)                 # dim traces to see the photo
+    assert w.preview._trace_alpha == 0.30
+    assert w._photo_overlay["trace_alpha"] == 0.30
+    d = w._collect_setup()
+    assert d["photo_overlay"]["trace_alpha"] == 0.30
+    # clearing the photo un-dims (nothing left to see through)
+    w._on_clear_photo()
+    assert w.trace_dim_slider.value() == 100
+    assert w.preview._trace_alpha == 1.0
+    # a new board load also un-dims
+    w.trace_dim_slider.setValue(40)
+    w.load_folder(str(FIXT))
+    assert w.trace_dim_slider.value() == 100
+
+
 def test_photo_overlay_cleared_on_new_board():
     import numpy as np
     w = MainWindow()

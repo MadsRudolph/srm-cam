@@ -111,6 +111,9 @@ class PreviewCanvas(QWidget):
         # real copper. None = hidden.
         self._photo = None
         self._photo_alpha = 0.55
+        # Trace dimming (0..1): fades the toolpaths/copper/holes so the photo
+        # underlay reads clearly when hunting for rework spots. 1.0 = normal.
+        self._trace_alpha = 1.0
 
         # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
         # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
@@ -278,6 +281,13 @@ class PreviewCanvas(QWidget):
         if self._photo is not None:
             self._draw_fraction(self.slider.value() / 1000.0)
 
+    def set_trace_alpha(self, alpha):
+        """Dim the toolpaths/copper/holes (0..1, 1 = normal). Lets the photo
+        underlay read clearly; rework boxes and pins stay at full strength.
+        Redraws."""
+        self._trace_alpha = max(0.0, min(1.0, float(alpha)))
+        self._draw_fraction(self.slider.value() / 1000.0)
+
     def set_level_overlay(self, X=None, Y=None, Z=None, points=None):
         """Show (or clear, with no args) the height-map heatmap. ``X``/``Y``/``Z``
         are 2D meshes of surface deviation (mm); ``points`` are the probed
@@ -412,7 +422,9 @@ class PreviewCanvas(QWidget):
                                  + [MplPath.CLOSEPOLY])
             if verts:
                 self.ax.add_patch(PathPatch(MplPath(verts, codes), facecolor=color,
-                                            edgecolor="none", alpha=0.16, zorder=0.8))
+                                            edgecolor="none",
+                                            alpha=0.16 * self._trace_alpha,
+                                            zorder=0.8))
 
     def _design_bounds(self):
         """(minx, miny, maxx, maxy) of all toolpath/hole/pin geometry, or None."""
@@ -594,23 +606,25 @@ class PreviewCanvas(QWidget):
         holes = self._full_holes[:h_end]
         top_cuts = self._full_top_cuts[:t_end]
 
+        ta = self._trace_alpha
         if rapids:
             self.ax.add_collection(
-                LineCollection(rapids, colors="#555555", linewidths=0.6))
+                LineCollection(rapids, colors="#555555", linewidths=0.6, alpha=ta))
         if cuts:
             self.ax.add_collection(
-                LineCollection(cuts, colors="#00ffff", linewidths=1.2))
+                LineCollection(cuts, colors="#00ffff", linewidths=1.2, alpha=ta))
         if top_cuts:
             # reflected front-side isolation, second colour so the two registered
             # sides are visually distinct
             self.ax.add_collection(
-                LineCollection(top_cuts, colors="#ff55ff", linewidths=1.2))
+                LineCollection(top_cuts, colors="#ff55ff", linewidths=1.2, alpha=ta))
         if holes:
             for (x, y, d) in holes:
                 self.ax.add_patch(Circle((x, y), max(d, 0.1) / 2.0, fill=False,
-                                         edgecolor="#ff5555", linewidth=1.2))
+                                         edgecolor="#ff5555", linewidth=1.2,
+                                         alpha=ta))
             self.ax.scatter([h[0] for h in holes], [h[1] for h in holes],
-                            s=15, c="#ff5555", marker="+")
+                            s=15, c="#ff5555", marker="+", alpha=ta)
         # dowel/alignment holes: always drawn in full (registration features,
         # never scrubbed away) and clearly distinct from the board's own holes
         self._pin_artists = []

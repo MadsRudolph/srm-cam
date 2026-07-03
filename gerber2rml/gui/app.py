@@ -835,6 +835,13 @@ class MainWindow(QMainWindow):
         self.photo_alpha_slider.setValue(55)
         self.photo_alpha_slider.setToolTip("Photo overlay opacity")
         self.photo_alpha_slider.valueChanged.connect(self._on_photo_alpha)
+        self.trace_dim_slider = QSlider(Qt.Horizontal)
+        self.trace_dim_slider.setRange(0, 100)
+        self.trace_dim_slider.setValue(100)
+        self.trace_dim_slider.setToolTip(
+            "Toolpath/copper opacity — slide left to fade the traces so the "
+            "photo underneath reads clearly (rework boxes stay full strength)")
+        self.trace_dim_slider.valueChanged.connect(self._on_trace_dim)
         self._photo_overlay = None      # {path, photo_pts, machine_pts, alpha}
 
         # Live cross-section of the active trace tool (V-bit width/depth math
@@ -1039,6 +1046,8 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(QLabel("Photo"), self.photo_load_btn,
                            self.photo_alpha_slider, self.photo_clear_btn,
                            stretch_first=True))
+        _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
+                           stretch_first=True))
         _rl.addWidget(self.rework_table)
         _rl.addWidget(self.export_sel_btn)
         l_rework.addWidget(rework_group)
@@ -1207,6 +1216,7 @@ class MainWindow(QMainWindow):
         # (a setup restore re-applies its saved fit after this call)
         self._photo_overlay = None              # photo is of one physical setup
         self.preview.set_photo(None)
+        self.trace_dim_slider.setValue(100)     # un-dim: no photo to see through
         # any successful load clears the DEMO badge — this covers Load setup /
         # session restore too, not just the Load Gerber folder button. The
         # launch-time preload re-sets the badge right after this call.
@@ -2896,6 +2906,8 @@ class MainWindow(QMainWindow):
                 img = self._decode_photo(po["path"])
                 self.photo_alpha_slider.setValue(
                     int(round(float(po.get("alpha", 0.55)) * 100)))
+                self.trace_dim_slider.setValue(
+                    int(round(float(po.get("trace_alpha", 1.0)) * 100)))
                 self._apply_photo_overlay(img, po["photo_pts"],
                                           po["machine_pts"], po["path"])
             except Exception:
@@ -3357,17 +3369,24 @@ class MainWindow(QMainWindow):
         self._photo_overlay = {"path": str(path),
                                "photo_pts": [list(p) for p in photo_pts],
                                "machine_pts": [list(p) for p in machine_pts],
-                               "alpha": alpha}
+                               "alpha": alpha,
+                               "trace_alpha": self.trace_dim_slider.value() / 100.0}
         return float(res.max())
 
     def _on_clear_photo(self):
         self._photo_overlay = None
         self.preview.set_photo(None)
+        self.trace_dim_slider.setValue(100)   # nothing to see through anymore
 
     def _on_photo_alpha(self, v):
         if self._photo_overlay:
             self._photo_overlay["alpha"] = v / 100.0
         self.preview.set_photo_alpha(v / 100.0)
+
+    def _on_trace_dim(self, v):
+        if self._photo_overlay:
+            self._photo_overlay["trace_alpha"] = v / 100.0
+        self.preview.set_trace_alpha(v / 100.0)
 
     def _delete_rework_region(self, i):
         if 0 <= i < len(self._rework_regions):
