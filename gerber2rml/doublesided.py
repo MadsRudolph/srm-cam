@@ -316,6 +316,10 @@ def _offset_layout(lay, offset):
     kw = dict(bottom_copper=t(lay.bottom_copper), top_copper=t(lay.top_copper),
               outline=t(lay.outline), holes=h(lay.holes),
               align_holes=h(lay.align_holes),
+              # the flip axis is a coordinate too — leaving it behind shifts
+              # every post-offset reflection (nominal fiducials, top-frame
+              # holes) by 2*offset: the 12 mm X bug of 2026-07-03
+              flip_pos=lay.flip_pos + (dy if lay.axis == "horizontal" else dx),
               frame0=(lay.frame0[0] + dx, lay.frame0[1] + dy))
     if hasattr(lay, "top_outline"):
         kw["top_outline"] = t(lay.top_outline)

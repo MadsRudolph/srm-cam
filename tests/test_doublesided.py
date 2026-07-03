@@ -387,6 +387,26 @@ def test_fiducial_manual_empty_points_falls_back_to_corners():
     assert len(lay.align_holes) == 4                 # graceful corner fallback
 
 
+def test_flip_pos_follows_the_placement_offset():
+    # Regression (the 12 mm X bug, 2026-07-03): _offset_layout translated all
+    # geometry but NOT flip_pos, so every post-offset reflection — nominal
+    # fiducials, top-frame holes — was off by 2*offset. Onboard fiducials
+    # rendered OUTSIDE the board and a fiducial-fit export would have miscut
+    # the top by 12 mm at offset=(-6, 3.4).
+    from shapely.geometry import Point
+    spec = FiducialSpec(count=4, placement="onboard", edge_offset=4.0)
+    lay = layout_double_sided(FIXT, offset=(-6.0, 3.4),
+                              registration="fiducial", fiducials=spec)
+    ob = lay.outline.bounds
+    assert abs(lay.flip_pos - (ob[0] + ob[2]) / 2.0) < 1e-6   # axis = board centre
+    for (x, y) in nominal_top_fiducials(lay):                  # onboard stays ON board
+        assert lay.top_outline.buffer(0.1).contains(Point(x, y))
+    # and the same align set reflects onto itself for symmetric corners
+    xs = sorted(round(x, 3) for x, _y, _d in lay.align_holes)
+    nx = sorted(round(x, 3) for x, _y in nominal_top_fiducials(lay))
+    assert xs == nx
+
+
 def test_fiducial_horizontal_flip_axis():
     # flip_axis="horizontal" = the operator flips the board top-bottom. The
     # whole layout must mirror about Y and the nominal reflection must run
