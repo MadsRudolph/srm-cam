@@ -917,6 +917,90 @@ def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
     assert not captured
 
 
+def _leveling_export_window(monkeypatch, tmp_path):
+    """Window primed for the leveling-panel top-traces exporter, with the
+    build call captured instead of writing files."""
+    import gerber2rml.doublesided as ds
+    from PySide6.QtWidgets import QFileDialog
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Top")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    monkeypatch.setattr(w, "_level_heightmap_preview", lambda: object())
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        return tmp_path / "x_top_traces.nc"
+
+    monkeypatch.setattr(ds, "build_top_traces", _fake_build)
+    return w, captured
+
+
+def test_leveling_export_uses_measured_fiducial_frame(monkeypatch, tmp_path):
+    # THE 2026-07-03 near-miss: the leveling-panel exporter rebuilt the layout
+    # with the default dowel registration, silently dropping the fiducial fit —
+    # the exported job sat ~12 mm off the physical board. In fiducial mode it
+    # must export in the measured frame.
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+    w._fid_measured = [(200.2, 10.1), (5.9, 11.5), (6.9, 134.2), (201.2, 133.3)]
+    w._on_export_top_traces()
+    assert captured.get("registration") == "fiducial"
+    assert captured.get("measured_fiducials") == w._fid_measured
+    assert captured.get("fiducials") is not None
+
+
+def test_leveling_export_synthesizes_measured_from_saved_fit(monkeypatch, tmp_path):
+    # After a restart the raw measurements are gone but the fit is restored
+    # from the setup; the exporter reconstructs equivalent measured points.
+    from gerber2rml.engine.fiducial import Transform, fit_transform
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(1)
+    w._top_fit = Transform(-0.0063, 1.0, 1.98, -1.99)
+    w._on_export_top_traces()
+    assert captured.get("registration") == "fiducial"
+    meas = captured.get("measured_fiducials")
+    assert meas and len(meas) >= 2
+    # fitting the synthesized points against nominal returns the stored fit
+    from gerber2rml.doublesided import layout_double_sided, nominal_top_fiducials
+    lay = layout_double_sided(str(FIXT), offset=(w.state.place_x, w.state.place_y),
+                              rotate=w.state.rotate, registration="fiducial",
+                              fiducials=w._fiducial_spec_from_ui())
+    t = fit_transform(nominal_top_fiducials(lay), meas)
+    assert abs(t.theta - -0.0063) < 1e-9 and abs(t.tx - 1.98) < 1e-9
+
+
+def test_leveling_export_refuses_fiducial_mode_without_fit(monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(1)
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warned.append(a)))
+    w._on_export_top_traces()
+    assert warned and not captured                  # refused, nothing exported
+
+
+def test_leveling_export_dowel_mode_unchanged(monkeypatch, tmp_path):
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(0)            # dowel registration
+    w._on_export_top_traces()
+    assert "registration" not in captured           # dowel default preserved
+
+
+def test_fid_measured_survives_setup_roundtrip():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._fid_measured = [(200.24, 10.11), (5.94, 11.49)]
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2._fid_measured == [(200.24, 10.11), (5.94, 11.49)]
+
+
 def test_rework_export_always_enabled_and_explains(monkeypatch):
     # The button used to grey out silently when preconditions were missing (an
     # operator lost time to this). It now stays enabled and clicking explains

@@ -2563,10 +2563,44 @@ class MainWindow(QMainWindow):
                 "Probe at least 3 points on the flipped (top) surface before "
                 "exporting leveled top traces.")
             return
+        self._sync_state()
+        # THE 2026-07-03 TRAP: this exporter used to rebuild the layout with the
+        # default dowel registration no matter what — in fiducial mode that
+        # silently dropped the measured fit AND shifted the whole job into the
+        # dowel frame (~12 mm off on a real board). Export in the frame the
+        # registration actually defines.
+        reg_kwargs = {}
+        if self._registration_mode() == "fiducial":
+            fid = self._fiducial_spec_from_ui()
+            measured = getattr(self, "_fid_measured", None)
+            if not measured and self._top_fit is not None:
+                # Setup reloaded after a restart: the raw measurements are gone
+                # but the fit survives — synthesize equivalent measured points
+                # (fitting t(nominal) against nominal returns exactly t).
+                from gerber2rml.doublesided import (layout_double_sided,
+                                                    nominal_top_fiducials)
+                lay = layout_double_sided(
+                    self.state.gerber_dir,
+                    offset=(self.state.place_x, self.state.place_y),
+                    rotate=self.state.rotate, registration="fiducial",
+                    fiducials=fid)
+                measured = [self._top_fit.apply(x, y)
+                            for (x, y) in nominal_top_fiducials(lay)]
+            if not measured:
+                QMessageBox.warning(
+                    self, "Fiducial fit required",
+                    "Registration is set to fiducial holes but no fit has been "
+                    "measured yet, so there is no frame to export the top "
+                    "traces in.\n\nRun 'Fit & export' (step 7 · Flip + align) "
+                    "first — it measures the flipped board and exports in one "
+                    "go.")
+                return
+            reg_kwargs = dict(registration="fiducial", fiducials=fid,
+                              measured_fiducials=measured,
+                              allow_scale=fid.allow_scale)
         out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
         if not out:
             return
-        self._sync_state()
         from gerber2rml.doublesided import build_top_traces
         try:
             path = build_top_traces(
@@ -2574,12 +2608,14 @@ class MainWindow(QMainWindow):
                 trace=self.state.trace, dowels=self._dowel_spec(),
                 machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
-                rotate=self.state.rotate, level=level)
+                rotate=self.state.rotate, level=level, **reg_kwargs)
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
             return
         self.statusBar().showMessage(
-            f"Wrote leveled {path.name} — run it (then the cut-out)", 10000)
+            f"Wrote leveled {path.name}"
+            + (" (fiducial fit applied)" if reg_kwargs else "")
+            + " — run it (then the cut-out)", 10000)
 
     def _on_fiducial_align(self):
         """Fiducial top-side alignment: measure the flipped board's fiducials,
@@ -2706,6 +2742,10 @@ class MainWindow(QMainWindow):
             "top_fit": ([self._top_fit.theta, self._top_fit.scale,
                          self._top_fit.tx, self._top_fit.ty]
                         if self._top_fit is not None else None),
+            # raw fiducial measurements: prefill the align dialog and feed the
+            # leveling-panel exporter across an app restart
+            "fid_measured": [list(p) for p in
+                             (getattr(self, "_fid_measured", None) or [])],
             "fid": {"count": self.fid_count_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
@@ -2781,6 +2821,9 @@ class MainWindow(QMainWindow):
         if tf:
             from gerber2rml.engine.fiducial import Transform
             self._top_fit = Transform(*[float(v) for v in tf])
+        fm = d.get("fid_measured")
+        if fm:
+            self._fid_measured = [(float(x), float(y)) for x, y in fm]
         fd = d.get("fid", {})
         _spin(self.fid_count_spin, fd.get("count", 4))
         _combo(self.fid_place_combo, fd.get("place", 0))
