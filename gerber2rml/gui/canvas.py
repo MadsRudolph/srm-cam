@@ -1053,3 +1053,15 @@ class PreviewCanvas(QWidget):
                 xs, ys = p.exterior.xy
                 self.ax.fill(list(xs), list(ys), color="#ff0000", alpha=0.5, zorder=5)
         self.canvas.draw_idle()
+
+    def show_shorts(self, hits):
+        """Mark guaranteed milling shorts (separate nets closer than the bit):
+        an X at each pinch with the actual copper-to-copper gap labeled."""
+        for h in hits:
+            self.ax.scatter([h["x"]], [h["y"]], s=110, marker="x",
+                            c="#ff2222", linewidths=2.2, zorder=17)
+            self.ax.annotate(f"{h['gap']:.2f}", (h["x"], h["y"]),
+                             color="#ff2222", fontsize=8, fontweight="bold",
+                             xytext=(6, 6), textcoords="offset points",
+                             zorder=17)
+        self.canvas.draw_idle()

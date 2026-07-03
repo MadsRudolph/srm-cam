@@ -1802,14 +1802,30 @@ class MainWindow(QMainWindow):
         self.preview.set_estimate(self._est_text(tps, job))
         if op == "traces":
             from gerber2rml.analysis import find_narrow_gaps
+            from gerber2rml.engine.drc import isolation_bridges
             gaps = find_narrow_gaps(self.state.board.copper,
                                     self.state.board.outline,
                                     self.state.trace.effective_diameter())
-            if not gaps.is_empty:
+            # narrow slivers won't be cleared; SEPARATE nets closer than the
+            # bit are worse — guaranteed electrical shorts. Mark + count them.
+            shorts = isolation_bridges(self.state.board.copper,
+                                       self.state.trace.effective_diameter())
+            if shorts:
+                self.preview.show_shorts(shorts)
+            if shorts:
+                self.statusBar().showMessage(
+                    f"DRC: {len(shorts)} spot(s) where separate nets sit closer "
+                    f"than the bit (worst {shorts[0]['gap']:.2f} mm, marked X) — "
+                    f"these WILL short; use a smaller bit or edit the layout"
+                    + est, 12000)
+                gap_warning = True
+            elif not gaps.is_empty:
                 self.preview.show_gaps(gaps)
                 self.statusBar().showMessage(
                     "Warning: copper gaps too narrow to isolate (shown red)" + est, 8000)
                 gap_warning = True
+            if shorts and not gaps.is_empty:
+                self.preview.show_gaps(gaps)
         if not gap_warning:
             self.statusBar().showMessage(
                 f"Preview updated in {time.time() - t0:.2f}s{est}", 5000)
