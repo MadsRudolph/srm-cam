@@ -1067,6 +1067,34 @@ def test_photo_anchor_guide_follows_cursor():
     assert dlg._guide == []                     # all anchors placed: no guide
 
 
+def test_photo_anchor_drag_pans_click_places():
+    import types
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("bottom-left", (0.0, 0.0)), ("bottom-right", (100.0, 0.0)),
+               ("top-right", (100.0, 80.0)), ("top-left", (0.0, 80.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    ax = dlg._ax
+    mk = lambda **kw: types.SimpleNamespace(inaxes=ax, **kw)
+    # plain click (press + release in place) places the first anchor
+    dlg._on_press(mk(button=1, x=100, y=100, xdata=20.0, ydata=30.0))
+    dlg._on_release(mk(button=1, x=100, y=100, xdata=20.0, ydata=30.0))
+    assert dlg._points == [(20.0, 30.0)]
+    # press-drag-release pans the view and does NOT place an anchor
+    xlim0 = ax.get_xlim()
+    dlg._on_press(mk(button=1, x=100, y=100, xdata=20.0, ydata=30.0))
+    dlg._on_motion(mk(button=1, x=160, y=100, xdata=25.0, ydata=30.0))
+    dlg._on_release(mk(button=1, x=160, y=100, xdata=25.0, ydata=30.0))
+    assert len(dlg._points) == 1                # no stray anchor from the pan
+    assert ax.get_xlim()[0] < xlim0[0]          # dragged right: view shifted left
+    # a wiggle inside the slop radius still counts as a click
+    dlg._on_press(mk(button=1, x=200, y=200, xdata=40.0, ydata=35.0))
+    dlg._on_motion(mk(button=1, x=202, y=201, xdata=40.2, ydata=35.1))
+    dlg._on_release(mk(button=1, x=202, y=201, xdata=40.2, ydata=35.1))
+    assert len(dlg._points) == 2
+
+
 def test_trace_dim_persists_and_resets_with_photo():
     import numpy as np
     w = MainWindow()

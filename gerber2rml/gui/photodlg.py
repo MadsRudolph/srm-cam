@@ -29,6 +29,7 @@ class PhotoAnchorDialog(QDialog):
         self._points = []                       # [(u, v)] clicked, in order
         self._marks = []
         self._guide = []                        # rubber-band line + angle text
+        self._drag = None                       # left-button pan in progress
 
         lay = QVBoxLayout(self)
         self._prompt = QLabel()
@@ -48,14 +49,20 @@ class PhotoAnchorDialog(QDialog):
         self._buttons.rejected.connect(self.reject)
         lay.addWidget(self._buttons)
 
-        self._canvas.mpl_connect("button_press_event", self._on_click)
+        self._canvas.mpl_connect("button_press_event", self._on_press)
+        self._canvas.mpl_connect("button_release_event", self._on_release)
         self._canvas.mpl_connect("scroll_event", self._on_scroll)
         self._canvas.mpl_connect("motion_notify_event", self._on_motion)
         self._update_prompt()
 
     # ---- interaction ----------------------------------------------------
-    def _on_click(self, ev):
-        if ev.inaxes != self._ax or ev.xdata is None:
+    # Left button does double duty: press-and-drag pans the photo, while a
+    # plain click (release within a few pixels of the press) places the next
+    # anchor. Placement happens on RELEASE so a pan never drops a stray mark.
+    _CLICK_SLOP_PX = 4
+
+    def _on_press(self, ev):
+        if ev.inaxes != self._ax:
             return
         if ev.button == 3:                      # right-click: undo last
             if self._points:
@@ -66,7 +73,17 @@ class PhotoAnchorDialog(QDialog):
                 self._update_prompt()
                 self._canvas.draw_idle()
             return
-        if ev.button != 1 or len(self._points) >= len(self._anchors):
+        if ev.button == 1:
+            self._drag = {"px": (ev.x, ev.y),
+                          "xlim": self._ax.get_xlim(),
+                          "ylim": self._ax.get_ylim(),
+                          "moved": False}
+
+    def _on_release(self, ev):
+        drag, self._drag = self._drag, None
+        if (ev.button != 1 or drag is None or drag["moved"]
+                or ev.inaxes != self._ax or ev.xdata is None
+                or len(self._points) >= len(self._anchors)):
             return
         u, v = float(ev.xdata), float(ev.ydata)
         label = self._anchors[len(self._points)][0]
@@ -111,6 +128,22 @@ class PhotoAnchorDialog(QDialog):
         return removed
 
     def _on_motion(self, ev):
+        if self._drag is not None:              # left-drag: pan the photo
+            dx = ev.x - self._drag["px"][0]
+            dy = ev.y - self._drag["px"][1]
+            if self._drag["moved"] or dx * dx + dy * dy > self._CLICK_SLOP_PX ** 2:
+                self._drag["moved"] = True
+                x0, x1 = self._drag["xlim"]
+                y0, y1 = self._drag["ylim"]
+                bb = self._ax.get_window_extent()
+                # keep the grabbed point under the cursor; the linear map works
+                # unchanged for imshow's inverted y-axis
+                kx = (x1 - x0) / max(bb.width, 1)
+                ky = (y1 - y0) / max(bb.height, 1)
+                self._ax.set_xlim(x0 - dx * kx, x1 - dx * kx)
+                self._ax.set_ylim(y0 - dy * ky, y1 - dy * ky)
+                self._canvas.draw_idle()
+            return
         removed = self._clear_guide()
         n = len(self._points)
         if (ev.inaxes != self._ax or ev.xdata is None
@@ -155,7 +188,7 @@ class PhotoAnchorDialog(QDialog):
             self._prompt.setText(
                 f"Click anchor {n + 1}/{total}: <b>{label}</b> "
                 f"(machine X {mx:.2f}, Y {my:.2f}). "
-                "Scroll to zoom, right-click to undo.")
+                "Scroll to zoom, drag to pan, right-click to undo.")
             ok.setEnabled(False)
         else:
             self._prompt.setText("All anchors clicked — OK to fit the overlay.")
