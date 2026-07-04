@@ -41,3 +41,19 @@ The serial protocol (115200 baud, microns) is documented at the top of
 `docs/2026-06-25-srm20-spi-and-bed-leveling.md` for the full story, including the
 STOP / runaway-guard behaviour — **reflash after pulling** to get those safety
 fixes.
+
+## Firmware v2 (2026-07)
+
+Reflash to get:
+
+- **Debounced contact** — 3 consecutive LOW reads, so stepper EMI can't fake a touch.
+- **Two-stage verified touch** — coarse 25 um contact, lift 150 um, re-descend at
+  10 um (machine native step); the touches must agree within 60 um or the point
+  reports `E ... UNSTABLE` instead of poisoning the height map.
+- **`B`** — re-touch the datum reference mid-grid; the host uses it to measure and
+  correct Z drift (spindle warm-up, board settling) across a long run.
+- **`W`** — zero the work-origin Z on the copper: verified touch-off, then
+  `setOrigin(x, y, touchZ)`, lift 2 mm. NOTE: this writes the origin VPanel
+  displays (User CS). Verify VPanel's **G54** Z once before trusting it for NC
+  jobs — on our machine G54 has not been observed to follow it.
+- **`V`** — `V 2 <features>` so the host can detect firmware capabilities.

@@ -88,3 +88,62 @@ def test_warp_leaves_rapids_unsubdivided_but_clearance_tracks():
     out = apply_leveling(tp, h, max_seg=1.0)
     assert len(out[0]) == 2                  # rapids not subdivided
     assert abs(out[0][1].z - (2.0 + 0.1)) < 1e-9
+
+
+# ---- mesh sanity / probing advice -------------------------------------------
+
+def _mega_mesh():
+    """The real MegaPCB top mesh that produced the uncut middle band."""
+    xs = [9.071, 103.550, 198.529]
+    ys = [11.953, 72.416, 131.378]
+    z = [[0.0, 0.25, 0.25], [0.02, 0.02, -0.03], [0.05, 0.22, 0.17]]
+    return [(x, y, z[j][i]) for j, y in enumerate(ys) for i, x in enumerate(xs)]
+
+
+def test_flag_outliers_finds_single_bad_point_not_smooth_bow():
+    from gerber2rml.engine.leveling import flag_outliers
+    # smooth quadratic bow: legitimate warp, nothing flagged
+    bow = [(x, y, 0.0005 * (x - 50) ** 2 / 50)
+           for y in (0, 50, 100) for x in (0, 50, 100)]
+    assert flag_outliers(bow, tol=0.05) == []
+    # same bow with one flaky touch 0.3 mm off -> exactly that point flagged
+    bad = list(bow)
+    bad[4] = (bad[4][0], bad[4][1], bad[4][2] + 0.30)
+    flags = flag_outliers(bad, tol=0.10)
+    assert flags and flags[0][0] == 4 and flags[0][1] > 0.15
+
+
+def test_recommend_depth_on_the_mega_mesh_says_cut_deeper():
+    from gerber2rml.engine.leveling import recommend_depth
+    r = recommend_depth(_mega_mesh(), nx=3, ny=3)
+    # 0.15 mm was NOT enough on this board; the advisor must say so
+    assert r["depth"] >= 0.16
+    assert abs(r["range"] - 0.28) < 1e-9
+    assert r["worst_spread"] >= 0.2
+    assert "cell" in r["detail"]
+
+
+def test_recommend_depth_flat_mesh_keeps_default():
+    from gerber2rml.engine.leveling import recommend_depth
+    flat = [(x, y, 0.005) for y in (0, 50) for x in (0, 50, 100)]
+    r = recommend_depth(flat, nx=3, ny=2)
+    assert r["depth"] == 0.15
+
+
+def test_suggest_refinement_rows_on_the_mega_mesh():
+    from gerber2rml.engine.leveling import suggest_refinement_rows
+    s = suggest_refinement_rows(_mega_mesh(), nx=3, ny=3, budget=0.08)
+    # the surface jumps ~0.23 mm between BOTH row pairs -> two new rows
+    assert len(s["rows"]) == 2
+    assert abs(s["rows"][0] - (11.953 + 72.416) / 2) < 1e-3
+    assert abs(s["rows"][1] - (72.416 + 131.378) / 2) < 1e-3
+    # columns never jump more than 0.25-0.02 across a row? they do at the front
+    # row (0 -> 0.25): the left column gap is flagged too
+    assert s["cols"]
+
+
+def test_suggest_refinement_quiet_on_gentle_mesh():
+    from gerber2rml.engine.leveling import suggest_refinement_rows
+    gentle = [(x, y, 0.0003 * x) for y in (0, 60, 120) for x in (0, 100, 200)]
+    s = suggest_refinement_rows(gentle, nx=3, ny=3, budget=0.08)
+    assert s == {"rows": [], "cols": []}

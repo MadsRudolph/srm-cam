@@ -48,10 +48,22 @@ def send_abort(ser):
         pass
 
 
+def _interp_drift(retouches, s):
+    """Piecewise-linear reference Z (um) at sequence position ``s`` from
+    ``retouches`` = [(after_n_points, z_um), ...] (in order). Clamped ends."""
+    if s <= retouches[0][0]:
+        return retouches[0][1]
+    for (a0, z0), (a1, z1) in zip(retouches, retouches[1:]):
+        if s <= a1:
+            t = (s - a0) / max(a1 - a0, 1e-9)
+            return z0 + t * (z1 - z0)
+    return retouches[-1][1]
+
+
 def probe_grid(port, points, baud=115200, point_timeout=90.0,
                startup_wait=2.0, ack_timeout=3.0, ack_tries=3,
                serial_factory=None, on_result=None, should_abort=None,
-               outlier_mm=1.5):
+               outlier_mm=1.5, retouch_every=0, drift_log=None):
     """Probe a grid and return per-point results.
 
     ``points``: list of ``(id, x_um, y_um)`` datum-local offsets (ints).
@@ -69,6 +81,15 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
     aborted: the tool is lifted (``!``) and probing stops. The firmware enforces
     the same limit in real time; this is the host-side backstop. Set
     ``outlier_mm=None`` to disable.
+
+    Drift compensation (``retouch_every=N``, firmware v2): the datum reference is
+    re-touched (``B``) before the first point and after every N points. If the
+    reference Z drifts over the run (spindle warm-up, board settling — exactly
+    what poisons a mesh row probed minutes after another), each point's z is
+    corrected by the drift interpolated at the moment it was probed. Raw values
+    are kept in ``z_raw``; ``drift_log`` (a list, if given) receives
+    ``{"after": n, "z": z_um}`` per re-touch. Correction is applied to the
+    RETURNED results — ``on_result`` still sees raw values live.
     """
     factory = serial_factory or _open_serial
     # Short read timeout so reads return often and a STOP stays responsive; the
@@ -93,6 +114,23 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
                 f"running and the Serial Monitor closed?")
         results = []
         ref_z = None                          # first measured Z (runaway reference)
+        retouches = []                        # [(after_n_points, ref_z_um)]
+
+        def do_retouch():
+            ser.write(b"B\n")
+            line = _read_line(ser, time.monotonic() + point_timeout, should_abort)
+            if line and line.startswith("B "):
+                try:
+                    z = int(line.split()[1])
+                except (ValueError, IndexError):
+                    return
+                retouches.append((len(results), z))
+                if drift_log is not None:
+                    drift_log.append({"after": len(results), "z": z})
+            # a failed re-touch (E/timeout) just skips this checkpoint
+
+        if retouch_every:
+            do_retouch()                     # baseline before the first point
         for (pid, x, y) in points:
             if should_abort is not None and should_abort():
                 send_abort(ser)              # lift the tool, then stop the grid
@@ -140,6 +178,30 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
                 break
             # else a miss WITH a known surface: the firmware safely capped that
             # point (no copper there) -> record it as missing and keep probing.
+            if (retouch_every and len(results) % retouch_every == 0
+                    and len(results) < len(points)
+                    and not (should_abort is not None and should_abort())):
+                do_retouch()
+        else:
+            # Grid ran to completion: close the drift record with a final
+            # re-touch, so the last points aren't extrapolated from a stale
+            # checkpoint (they're the ones probed FURTHEST from the baseline).
+            if (retouch_every and results
+                    and (not retouches or retouches[-1][0] != len(results))
+                    and not (should_abort is not None and should_abort())):
+                do_retouch()
+
+        # Apply the drift correction: the reference surface measured at (at
+        # least) two moments defines drift as a function of grid progress; each
+        # point is corrected by the drift at the moment it completed.
+        if len(retouches) >= 2:
+            base = retouches[0][1]
+            for i, d in enumerate(results):
+                if d.get("z") is None:
+                    continue
+                drift = _interp_drift(retouches, i + 0.5) - base
+                d["z_raw"] = d["z"]
+                d["z"] = int(round(d["z"] - drift))
         return results
     finally:
         ser.close()
@@ -204,6 +266,44 @@ def jog_to(ser, x_um, y_um, timeout=20.0):
     ser.write(f"J {int(x_um)} {int(y_um)}\n".encode())
     line = _read_line(ser, time.monotonic() + timeout)
     return bool(line and line.startswith("J"))
+
+
+def firmware_version(ser, timeout=1.5):
+    """Send ``V`` -> ``(version:int, features:set[str])``. Older sketches don't
+    answer ``V`` at all -> ``(1, set())`` after the timeout, so callers can gate
+    v2-only features (``"retouch"``, ``"zeroz"``, ...) cleanly."""
+    ser.write(b"V\n")
+    line = _read_line(ser, time.monotonic() + timeout)
+    if line and line.startswith("V "):
+        parts = line.split()
+        try:
+            ver = int(parts[1])
+        except (ValueError, IndexError):
+            return (1, set())
+        feats = set(parts[2].split(",")) if len(parts) >= 3 else set()
+        return (ver, feats)
+    return (1, set())
+
+
+def zero_z(ser, timeout=60.0, should_abort=None):
+    """Send ``W`` (verified touch-off, then set the work-origin Z to the copper
+    surface). Returns the new origin ``(ox_mm, oy_mm, oz_mm)`` or None on
+    error/abort. NOTE: writes the origin VPanel displays (User CS); verify
+    VPanel's G54 Z once before trusting it for NC jobs."""
+    ser.write(b"W\n")
+    line = _read_line(ser, time.monotonic() + timeout, should_abort)
+    if should_abort is not None and should_abort():
+        send_abort(ser)
+        return None
+    if line and line.startswith("W "):
+        parts = line.split()
+        if len(parts) >= 4:
+            try:
+                return (int(parts[1]) / 1000.0, int(parts[2]) / 1000.0,
+                        int(parts[3]) / 1000.0)
+            except ValueError:
+                return None
+    return None
 
 
 def deviations_mm(results, ref_id=0):

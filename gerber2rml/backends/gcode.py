@@ -48,7 +48,13 @@ def _f(v: float) -> str:
 
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID, rpm: int = DEFAULT_RPM,
-           travel_z: float = 2.0, spinup_s: float = DEFAULT_SPINUP_S) -> str:
+           travel_z: float = 2.0, spinup_s: float = DEFAULT_SPINUP_S,
+           xy_feeds: list[float] | None = None) -> str:
+    """``xy_feeds``, when given, carries one XY feed (mm/s) per toolpath —
+    used by the feed-ladder test card to cut otherwise-identical blocks at
+    stepped speeds. Modal F handling keeps the output minimal either way."""
+    if xy_feeds is not None and len(xy_feeds) != len(toolpaths):
+        raise ValueError("xy_feeds must have one feed per toolpath")
     xy_fpm = xy_feed * 60.0          # mm/s -> mm/min for G94
     plunge_fpm = plunge_feed * 60.0
 
@@ -77,7 +83,9 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
     def changed(a, b):
         return a is None or abs(a - b) > EPS
 
-    for tp in toolpaths:
+    for ti, tp in enumerate(toolpaths):
+        if xy_feeds is not None:
+            xy_fpm = xy_feeds[ti] * 60.0
         for m in tp:
             if m.rapid:
                 # Lift Z first, then traverse XY -- never plunge during a rapid.

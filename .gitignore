@@ -36,3 +36,12 @@ docs/*.pdf
 
 # Throwaway preview renders generated while developing
 examples/*.png
+
+# Machine-local job data and scratch outputs. User data now lives in
+# Documents/SRM-CAM/ (sessions, exports, photos) - these repo-local copies
+# are legacy scratch and never belong in the repo.
+/sessions/
+/Tobias/
+examples/Dobbelt_sided_TEST/ncbitch/
+examples/Dobbelt_sided_TEST_jobs/
+examples/fullboard_probe_test/

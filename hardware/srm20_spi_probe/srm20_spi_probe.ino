@@ -6,6 +6,21 @@
  * flaky — never move on one read), step Z down 25 um at a time until D7 touches,
  * read Z, lift. Repeatable to the step size on this machine.
  *
+ * V2 accuracy upgrades:
+ *   - DEBOUNCED contact: 3 consecutive LOW reads 1 ms apart, so stepper EMI
+ *     flashing the probe line for a moment can't fake a touch.
+ *   - TWO-STAGE TOUCH: after the 25 um coarse contact the tool lifts 150 um and
+ *     re-descends at 10 um (the machine's native step). The two touches must
+ *     agree within TOUCH_AGREE_UM or the point retries once and then reports
+ *     E UNSTABLE — one flaky reading can no longer poison a grid point.
+ *   - 'B' re-touches the datum reference so the host can measure and correct
+ *     Z drift (warm-up, board settling) over a long grid run.
+ *   - 'W' zeroes the work origin Z on the copper: touch, setOrigin(z=touch).
+ *     NOTE: setOrigin writes the origin VPanel shows (User CS). Whether NC/G54
+ *     jobs pick it up is machine-config dependent — verify VPanel's G54 Z once
+ *     before trusting it for NC work.
+ *   - 'V' reports the firmware version + feature list so the host can adapt.
+ *
  * FAST APPROACH: the first point of a run fine-steps the whole way down from the
  * datum lift (slow, but it learns where the copper is). Every point after that
  * rapids straight down to ~1 mm above the highest copper seen (APPROACH_CLEAR_UM)
@@ -26,27 +41,42 @@
  *     D                 set datum = current X,Y and safe Z = current Z
  *     P <id> <x> <y>    probe local (x,y); rapid to datum+(x,y) at safe Z, step
  *                       down to contact, report Z, lift
+ *     B                 re-touch the reference (datum X,Y) and report its Z —
+ *                       the host uses this to track/correct drift mid-grid
  *     Z <z>             set safe Z manually (machine um)
  *     L                 lift to safe Z at current X,Y
  *     J <x> <y>         jog to absolute machine (x,y) um — lifts ~5 mm first so
  *                       XY travel never drags, then moves; replies 'J x y'
- *     T                 touch-off: descend Z from HERE until the probe contacts,
- *                       then STOP at the surface; replies 'T x y z' (um)
+ *     T                 touch-off: descend Z from HERE until the probe contacts
+ *                       (two-stage verified), STOP at the surface; replies
+ *                       'T x y z' (um)
+ *     W                 zero the work origin Z on the copper: touch-off like T,
+ *                       then setOrigin(origin.x, origin.y, touchZ) and lift
+ *                       2 mm; replies 'W ox oy oz' (the new origin read back)
  *     !                 ABORT: stop any descent immediately and lift to safe Z.
  *                       Also honoured MID-probe — checked between every Z step
  *                       and whenever a move fails to complete (e.g. the lid is
  *                       opened, which pauses the machine), so it can never keep
  *                       stepping the bit down into the work.
- *     Q                 quick position query -> 'Q x y z' (um, single read)
+ *     C                 begin an EXPERIMENTAL streaming session: caches the
+ *                       work origin and clears any stale abort -> 'C ox oy oz'
+ *     M <x> <y> <z> <s> stream one move to work-frame (x,y,z) um at raw
+ *                       library speed s (-1 = default); waits for the motors,
+ *                       replies 'M x y z'. DRY-RUN (Z held high) first — the
+ *                       speed units are Roland-internal and uncalibrated.
+ *     Q                 quick position query -> 'Q x y z touch' (um, single read)
  *     G                 get the work origin -> 'G ox oy oz' (um)
  *     O                 setOrigin TEST: shift origin Z +1 mm, report actual+origin
  *                       before/after (no motion). Then check VPanel + run R.
  *     R                 restore the origin saved by O
+ *     V                 firmware version -> 'V 2 <feature,list>'
  *     ?                 print status
  *   board -> host:
  *     D <datX> <datY> <safeZ>          datum acknowledged
  *     R <id> <x> <y> <touchZ>          probe result (touchZ machine um)
- *     E <id> <reason>                  probe error (NOTOUCH / UNSTABLE / LOW / NODATUM)
+ *     B <touchZ>                       reference re-touch result
+ *     E <id|cmd> <reason>              error (NOTOUCH / UNSTABLE / LOW / NODATUM
+ *                                      / ABORT / RUNAWAY)
  *     # ...                            human-readable log (host ignores)
  */
 #include <SPI.h>
@@ -55,7 +85,14 @@
 SRM20SPIRemote srm20;
 
 const int  PROBE_PIN = 7;            // external touch probe; LOW = contact
-const long PROBE_STEP_UM = 25;       // fine descent step (touch accuracy)
+const long PROBE_STEP_UM = 25;       // coarse descent step (finds the surface)
+const long PROBE_FINE_STEP_UM = 10;  // verify descent step (machine native step)
+const long RETOUCH_LIFT_UM = 150;    // lift between the coarse and fine touches
+const long TOUCH_AGREE_UM = 60;      // coarse/fine agreement gate (coarse can
+                                     // overshoot by up to one 25 um step; beyond
+                                     // this the touch was flaky -> retry/UNSTABLE)
+const long FINE_FLOOR_UM = 500;      // fine descent may go at most this far past
+                                     // the coarse touch before we call it broken
 const long PROBE_MAX_DROP_UM = 6000; // absolute floor: never drop > 6 mm from safe Z
 const long OUTLIER_MARGIN_UM = 1200; // runaway guard: once a surface is known, never
                                      // descend more than this past it without contact.
@@ -85,6 +122,10 @@ long maxSurfaceZ = 0;
 long savedOX = 0, savedOY = 0, savedOZ = 0;
 bool haveSavedOrigin = false;
 
+// Streaming session ('C'/'M'): the cached work origin all moves are relative to.
+long strOX = 0, strOY = 0, strOZ = 0;
+bool haveStreamOrigin = false;
+
 // ---- robust position read: require two agreeing reads (SPI reads can be garbage)
 bool readPos(long &x, long &y, long &z) {
   long ax, ay, az, bx, by, bz;
@@ -98,6 +139,16 @@ bool readPos(long &x, long &y, long &z) {
     ax = bx; ay = by; az = bz;
   }
   return false;
+}
+
+// Debounced contact read: stepper EMI can flash the probe line LOW for a
+// moment. Real contact holds — require 3 consecutive LOW reads 1 ms apart.
+bool probeTouched() {
+  for (int i = 0; i < 3; i++) {
+    if (digitalRead(PROBE_PIN) != LOW) return false;
+    delay(1);
+  }
+  return true;
 }
 
 // Scan any pending serial bytes for the '!' abort. Consumes them — during a
@@ -149,21 +200,59 @@ void liftToApproach(long mx, long my) {
   waitForMotorStop();
 }
 
-// Probe at absolute machine (mx,my). Returns 1 + touchZ on contact, 0 on no
-// contact (lifted), -1 if aborted (operator '!' or a move that didn't finish),
-// -2 if it ran away past the known surface (missed copper -> stopped early).
+// Step Z down from *z* (in-out) by *step* until debounced contact or *floorZ*.
+// Returns 1 on touch, 0 if the floor was reached, -1 on abort/paused-machine.
+int descendUntilTouch(long mx, long my, long &z, long step, long floorZ) {
+  while (z > floorZ) {
+    if (checkAbort()) return -1;
+    z -= step;
+    srm20.jumpTo(mx, my, z, MOVE_SPEED);       // X,Y fixed — Z only
+    if (!waitForMotorStop()) return -1;
+    if (probeTouched()) return 1;
+  }
+  return 0;
+}
+
+// Verified touch at the CURRENT contact: the coarse touch at *coarseZ* is
+// checked by lifting RETOUCH_LIFT_UM and re-descending at the fine step. The
+// two touches must agree within TOUCH_AGREE_UM (one retry, where the first
+// fine touch becomes the new reference). On success *fineZ* is the fine touch
+// (machine um) and the tool is LEFT TOUCHING the surface.
+// Returns 1 ok, -1 abort, -3 unstable.
+int verifyTouch(long mx, long my, long coarseZ, long &fineZ) {
+  long ref = coarseZ;
+  for (int attempt = 0; attempt < 2; attempt++) {
+    long z = ref + RETOUCH_LIFT_UM;
+    if (z > safeZ) z = safeZ;
+    srm20.jumpTo(mx, my, z, MOVE_SPEED);
+    if (!waitForMotorStop()) return -1;
+    int r = descendUntilTouch(mx, my, z, PROBE_FINE_STEP_UM, ref - FINE_FLOOR_UM);
+    if (r == -1) return -1;
+    if (r != 1) return -3;                     // lost the surface on re-descend
+    long tx, ty, tz;
+    if (!readPos(tx, ty, tz)) return -3;
+    if (labs(tz - ref) <= TOUCH_AGREE_UM) { fineZ = tz; return 1; }
+    ref = tz;                                  // disagreed: trust the fine touch, retry
+  }
+  return -3;
+}
+
+// Probe at absolute machine (mx,my). Returns 1 + touchZ on verified contact,
+// 0 on no contact (lifted), -1 if aborted (operator '!' or a move that didn't
+// finish), -2 if it ran away past the known surface (missed copper -> stopped
+// early), -3 if the two touches wouldn't agree (flaky contact).
 int probeAt(long mx, long my, long &touchZ) {
   // Rapid to the point at the approach height (≈1 mm above known copper once the
   // first point has found the surface; full safeZ for that first point).
   long startZ = approachZ();
   srm20.jumpTo(mx, my, startZ, MOVE_SPEED);
   if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
-  if (digitalRead(PROBE_PIN) == LOW) {
+  if (probeTouched()) {
     // Copper higher than the approach plane (surface rose > clearance). Back off
     // to full safe Z and fine-step from there — never plunge from a low rapid.
     srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);
     if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
-    if (digitalRead(PROBE_PIN) == LOW) return 0;   // touching even at safe Z: safe Z too low
+    if (probeTouched()) return 0;              // touching even at safe Z: safe Z too low
     startZ = safeZ;
   }
   // Floor = absolute cap, tightened to refSurface - margin once a surface is known.
@@ -174,25 +263,45 @@ int probeAt(long mx, long my, long &touchZ) {
     if (refFloor > floorZ) { floorZ = refFloor; refLimited = true; }
   }
   long z = startZ;
-  while (z > floorZ) {
-    if (checkAbort()) { liftSafe(mx, my); return -1; }
-    z -= PROBE_STEP_UM;
-    srm20.jumpTo(mx, my, z, MOVE_SPEED);     // X,Y fixed — Z only
-    if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }   // paused/aborted -> stop
-    if (digitalRead(PROBE_PIN) == LOW) {
-      long tx, ty, tz;
-      bool ok = readPos(tx, ty, tz);
-      if (ok) {
-        if (!haveRef) { refSurfaceZ = tz; maxSurfaceZ = tz; haveRef = true; }  // surface ref
-        else if (tz > maxSurfaceZ) maxSurfaceZ = tz;          // track highest for approach
-        touchZ = tz;
-      }
-      liftToApproach(mx, my);                 // back up only to the approach plane
-      return ok ? 1 : 0;
-    }
-  }
-  liftSafe(mx, my);                          // hit the floor with no contact
-  return refLimited ? -2 : 0;                // past the known surface -> runaway
+  int r = descendUntilTouch(mx, my, z, PROBE_STEP_UM, floorZ);
+  if (r == -1) { liftSafe(mx, my); return -1; }
+  if (r == 0)  { liftSafe(mx, my); return refLimited ? -2 : 0; }
+  long cx, cy, cz;
+  long coarseZ = z;                            // fall back to the commanded Z...
+  if (readPos(cx, cy, cz)) coarseZ = cz;       // ...but prefer the encoder read
+  long fineZ;
+  r = verifyTouch(mx, my, coarseZ, fineZ);
+  if (r == -1) { liftSafe(mx, my); return -1; }
+  if (r != 1)  { liftSafe(mx, my); return -3; }
+  if (!haveRef) { refSurfaceZ = fineZ; maxSurfaceZ = fineZ; haveRef = true; }
+  else if (fineZ > maxSurfaceZ) maxSurfaceZ = fineZ;
+  touchZ = fineZ;
+  liftToApproach(mx, my);                      // back up only to the approach plane
+  return 1;
+}
+
+// Touch-off from the CURRENT position (no datum needed): coarse descent, then
+// the same two-stage verification, ending ON the surface. Returns 1 + touch
+// position, 0 no contact, -1 abort, -3 unstable. Used by 'T' and 'W'.
+int touchOffHere(long &tx, long &ty, long &tz) {
+  long x, y, z;
+  if (!readPos(x, y, z)) return -3;
+  long topZ = z;                               // where the descent started
+  long floorZ = z - PROBE_MAX_DROP_UM;
+  int r = descendUntilTouch(x, y, z, PROBE_STEP_UM, floorZ);
+  if (r != 1) return r;                        // 0 no-touch / -1 abort
+  long coarseZ = z;
+  { long ax, ay, az; if (readPos(ax, ay, az)) coarseZ = az; }
+  long saveSafe = safeZ;
+  safeZ = topZ;                                // verifyTouch caps its lift at safeZ
+  long fineZ;
+  r = verifyTouch(x, y, coarseZ, fineZ);
+  safeZ = saveSafe;
+  if (r != 1) return r;
+  long ax, ay, az;
+  if (!readPos(ax, ay, az)) return -3;
+  tx = ax; ty = ay; tz = az;
+  return 1;
 }
 
 // ---- tiny line reader -----------------------------------------------------
@@ -226,33 +335,57 @@ void handleLine(char *s) {
       srm20.jumpTo(x, y, jz, MOVE_SPEED); waitForMotorStop();     // travel XY lifted
       Serial.print("J "); Serial.print(x); Serial.print(' '); Serial.println(y);
     }
-  } else if (s[0] == 'T') {        // touch-off: descend from HERE until contact, STOP
-    if (digitalRead(PROBE_PIN) == LOW) { Serial.println("E T LOW"); }
-    else {
-      long x, y, z;
-      if (!readPos(x, y, z)) { Serial.println("E T UNSTABLE"); }
-      else {
-        gAbort = false;                      // fresh touch-off — clear any stale abort
-        long floorZ = z - PROBE_MAX_DROP_UM;
-        bool hit = false, aborted = false;
-        while (z > floorZ) {
-          if (checkAbort()) { aborted = true; break; }
-          z -= PROBE_STEP_UM;
-          srm20.jumpTo(x, y, z, MOVE_SPEED);   // X,Y fixed — Z only
-          if (!waitForMotorStop()) { aborted = true; break; }   // paused/aborted -> stop
-          if (digitalRead(PROBE_PIN) == LOW) {
-            long tx, ty, tz;
-            if (readPos(tx, ty, tz)) {
-              Serial.print("T "); Serial.print(tx); Serial.print(' ');
-              Serial.print(ty); Serial.print(' '); Serial.println(tz);
-            } else { Serial.println("E T UNSTABLE"); }
-            hit = true; break;
-          }
-        }
-        if (aborted) { liftSafe(x, y); Serial.println("E T ABORT"); }
-        else if (!hit) { liftSafe(x, y); Serial.println("E T NOTOUCH"); }
-      }
+  } else if (s[0] == 'T') {        // touch-off: descend from HERE, STOP at surface
+    if (probeTouched()) { Serial.println("E T LOW"); return; }
+    gAbort = false;                          // fresh touch-off — clear any stale abort
+    long tx, ty, tz;
+    int r = touchOffHere(tx, ty, tz);
+    if (r == 1) {
+      Serial.print("T "); Serial.print(tx); Serial.print(' ');
+      Serial.print(ty); Serial.print(' '); Serial.println(tz);
+    } else if (r == -1) {
+      long x, y, z; if (readPos(x, y, z)) liftSafe(x, y);
+      Serial.println("E T ABORT");
+    } else if (r == -3) {
+      Serial.println("E T UNSTABLE");
+    } else {
+      long x, y, z; if (readPos(x, y, z)) liftSafe(x, y);
+      Serial.println("E T NOTOUCH");
     }
+  } else if (s[0] == 'W') {        // zero the work-origin Z on the copper
+    if (probeTouched()) { Serial.println("E W LOW"); return; }
+    gAbort = false;
+    long tx, ty, tz;
+    int r = touchOffHere(tx, ty, tz);
+    if (r != 1) {
+      if (r == -1) { long x, y, z; if (readPos(x, y, z)) liftSafe(x, y); }
+      Serial.println(r == -1 ? "E W ABORT" :
+                     r == -3 ? "E W UNSTABLE" : "E W NOTOUCH");
+      return;
+    }
+    long ox, oy, oz;
+    srm20.getOrigin(ox, oy, oz);
+    srm20.setOrigin(ox, oy, tz);             // origin Z = the copper surface
+    delay(150);
+    long nox, noy, noz;
+    srm20.getOrigin(nox, noy, noz);
+    srm20.jumpTo(tx, ty, tz + 2000, MOVE_SPEED);   // lift 2 mm clear of the surface
+    waitForMotorStop();
+    Serial.print("W "); Serial.print(nox); Serial.print(' ');
+    Serial.print(noy); Serial.print(' '); Serial.println(noz);
+    Serial.println("# origin Z zeroed on the copper. NOTE: this writes the User");
+    Serial.println("# CS origin (what VPanel shows) - verify VPanel's G54 Z once");
+    Serial.println("# before trusting it for NC jobs.");
+  } else if (s[0] == 'B') {        // re-touch the reference (datum XY) for drift
+    if (!haveDatum) { Serial.println("E B NODATUM"); return; }
+    if (probeTouched()) { Serial.println("E B LOW"); return; }
+    gAbort = false;
+    long tz;
+    int r = probeAt(datX, datY, tz);
+    if (r == 1) { Serial.print("B "); Serial.println(tz); }
+    else Serial.println(r == -1 ? "E B ABORT" :
+                        r == -2 ? "E B RUNAWAY" :
+                        r == -3 ? "E B UNSTABLE" : "E B NOTOUCH");
   } else if (s[0] == 'Q') {        // fast live position + touch for the DRO
     long x, y, z;
     srm20.getActualPosition(x, y, z);
@@ -293,9 +426,34 @@ void handleLine(char *s) {
       Serial.print("# restored origin "); Serial.print(ox); Serial.print(' ');
       Serial.print(oy); Serial.print(' '); Serial.println(oz);
     }
+  } else if (s[0] == 'C') {        // begin a streaming session: cache the work
+    // origin (all 'M' moves are origin-relative) and clear any stale abort
+    gAbort = false;
+    srm20.getOrigin(strOX, strOY, strOZ);
+    haveStreamOrigin = true;
+    Serial.print("C "); Serial.print(strOX); Serial.print(' ');
+    Serial.print(strOY); Serial.print(' '); Serial.println(strOZ);
+  } else if (s[0] == 'M') {        // EXPERIMENTAL stream move: work-frame um
+    // at a raw library speed value (-1 = default). The host validates with a
+    // DRY RUN (Z held above the surface) before ever cutting with this.
+    if (!haveStreamOrigin) { Serial.println("E M NOSESSION"); return; }
+    if (checkAbort()) { Serial.println("E M ABORT"); return; }
+    char *p = s + 1;
+    long x = strtol(p, &p, 10);
+    long y = strtol(p, &p, 10);
+    long z = strtol(p, &p, 10);
+    long sp = strtol(p, &p, 10);
+    long mz = strOZ + z;
+    if (mz > 0) mz = 0;            // never above machine Z home
+    srm20.jumpTo(strOX + x, strOY + y, mz, (int)sp);
+    if (!waitForMotorStop()) { Serial.println("E M ABORT"); return; }
+    Serial.print("M "); Serial.print(x); Serial.print(' ');
+    Serial.print(y); Serial.print(' '); Serial.println(z);
+  } else if (s[0] == 'V') {        // version + feature flags for the host
+    Serial.println("V 2 probe,refine,verify,retouch,zeroz,touchbit,stream");
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);
-    Serial.print("# datum="); Serial.print(haveDatum);
+    Serial.print("# v2 datum="); Serial.print(haveDatum);
     Serial.print(" safeZ="); Serial.print(safeZ);
     Serial.print(" pos="); if (ok) { Serial.print(x); Serial.print(','); Serial.print(y); Serial.print(','); Serial.println(z); }
     else Serial.println("UNSTABLE");
@@ -305,7 +463,7 @@ void handleLine(char *s) {
     long x  = strtol(p, &p, 10);
     long y  = strtol(p, &p, 10);
     if (!haveDatum) { Serial.print("E "); Serial.print(id); Serial.println(" NODATUM"); return; }
-    if (digitalRead(PROBE_PIN) == LOW) { Serial.print("E "); Serial.print(id); Serial.println(" LOW"); return; }
+    if (probeTouched()) { Serial.print("E "); Serial.print(id); Serial.println(" LOW"); return; }
     gAbort = false;                          // fresh probe — clear any stale abort
     long tz;
     int r = probeAt(datX + x, datY + y, tz);
@@ -317,6 +475,8 @@ void handleLine(char *s) {
       Serial.print("E "); Serial.print(id); Serial.println(" ABORT");
     } else if (r == -2) {
       Serial.print("E "); Serial.print(id); Serial.println(" RUNAWAY");
+    } else if (r == -3) {
+      Serial.print("E "); Serial.print(id); Serial.println(" UNSTABLE");
     } else {
       Serial.print("E "); Serial.print(id); Serial.println(" NOTOUCH");
     }
@@ -332,7 +492,7 @@ void setup() {
   pinMode(PROBE_PIN, INPUT_PULLUP);
   Serial.begin(115200);
   srm20.begin(9, 6);
-  Serial.println("# SRM-20 grid prober ready. cmds: D | P id x y | Z z | L | ?");
+  Serial.println("# SRM-20 grid prober v2 ready. cmds: D | P id x y | B | T | W | V | ?");
 }
 
 void loop() {

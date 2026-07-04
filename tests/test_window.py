@@ -726,27 +726,513 @@ def test_double_sided_view_toggle_bottom_and_top():
     assert w.preview._full_cuts == [] and len(w.preview._full_top_cuts) > 0
     assert len(w.preview._pins) == 2
 
-def test_double_sided_rework_export_enabled_per_side():
-    from gerber2rml.engine.select import clip_toolpaths_to_bbox
+def test_top_fit_places_the_top_views_on_the_real_board():
+    # After a fiducial fit, the Top views render AS PLACED: holes, pins and
+    # toolpaths warped by the measured transform so jog-to-hole is physical.
+    from gerber2rml.engine.fiducial import Transform
+    from gerber2rml.doublesided import reflect_holes
     w = MainWindow()
     w.load_folder(str(FIXT))
     w.double_sided_chk.setChecked(True)
-    box = (0, 0, 200, 200)                         # covers the whole placed board
-    w._on_region_added(box)                         # one rework region present
-    # Both sides: can't rework two sides at once -> export stays disabled
-    w.view_combo.setCurrentText("Both sides")
+    w.view_combo.setCurrentText("Top")
+    w.tabs.setCurrentIndex(1)                       # drill tab
     w.generate_preview()
-    assert w._ds_side() is None and not w.export_sel_btn.isEnabled()
-    # Bottom: export enabled, and the bottom side's MACHINE-frame paths clip
+    nominal = list(w.preview._full_holes)
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)    # pure shift, like tonight's
+    w.generate_preview()
+    for (nx, ny, _d), (px, py, _d2) in zip(nominal, w.preview._full_holes):
+        assert abs(px - (nx - 8.7)) < 1e-9 and abs(py - (ny + 14.3)) < 1e-9
+    assert "AS PLACED" in w.preview._frame_label
+    # the side toolpaths (rework clipping / run tracking) are warped too
+    ref = w._ds_side_toolpaths("traces", "Top")
+    w._top_fit = None
+    unwarped = w._ds_side_toolpaths("traces", "Top")
+    assert abs(ref[0][0].x - (unwarped[0][0].x - 8.7)) < 1e-9
+    # the Bottom view is untouched by the fit
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)
     w.view_combo.setCurrentText("Bottom")
     w.generate_preview()
-    assert w._ds_side() == "Bottom" and w.export_sel_btn.isEnabled()
-    assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Bottom"), box)
-    # Top: its own side paths (reflected) also clip
+    mlay = w._machine_layout()
+    assert w.preview._full_holes == mlay.holes
+    assert "AS MILLED" in w.preview._frame_label
+
+
+def test_top_fit_moves_the_probe_grid_onto_the_placed_board():
+    # The leveling grid is built over the DISPLAYED outline; with a fiducial
+    # fit stored the Top outline is AS PLACED, so probe points land on the
+    # crooked board instead of the nominal position (off the stock = probing
+    # the bare bed).
+    from gerber2rml.engine.fiducial import Transform
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
     w.view_combo.setCurrentText("Top")
     w.generate_preview()
-    assert w._ds_side() == "Top" and w.export_sel_btn.isEnabled()
+    b0 = w._level_bounds()
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)
+    b1 = w._level_bounds()
+    assert abs(b1[0] - (b0[0] - 8.7)) < 1e-9
+    assert abs(b1[1] - (b0[1] + 14.3)) < 1e-9
+
+
+def test_fiducial_dialog_names_rows_by_position():
+    from gerber2rml.gui.app import _FiducialAlignDialog
+    w = MainWindow()
+    dlg = _FiducialAlignDialog(w, [(198.2, 13.4), (4.0, 13.4),
+                                   (4.0, 136.4), (198.2, 136.4)])
+    labels = [dlg.table.verticalHeaderItem(r).text() for r in range(4)]
+    assert labels == ["bottom-right", "bottom-left", "top-left", "top-right"]
+
+
+def test_fiducial_dialog_prefills_previous_measurements():
+    from gerber2rml.gui.app import _FiducialAlignDialog
+    w = MainWindow()
+    dlg = _FiducialAlignDialog(w, [(10.0, 20.0), (30.0, 40.0)],
+                               initial=[(11.5, 21.5), (31.5, 41.5)])
+    assert dlg.measured() == [(11.5, 21.5), (31.5, 41.5)]
+
+
+def test_top_view_pins_reflect_before_the_fit():
+    # Regression: manual (asymmetric) fiducial pins rendered in the Top view
+    # without the flip reflection, so the AS PLACED fit pushed them mirrored —
+    # off the board and even outside the bed. Pins must be reflected into the
+    # top frame first, exactly like the drill holes.
+    from gerber2rml.engine.fiducial import Transform
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.fid_count_spin.setValue(2)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+    w.fid_place_combo.setCurrentIndex(2)            # manual placement
+    w._fid_points = [[-3.0, 5.0], [20.0, 30.0]]     # asymmetric about the axis
+    w.view_combo.setCurrentText("Top")
+    w.tabs.setCurrentIndex(1)                       # drill tab (draws pins too)
+    w._top_fit = Transform(0.0, 1.0, -8.7, 14.3)
+    w.generate_preview()
+    mlay = w._machine_layout()
+    exp = [(2 * mlay.flip_pos - x - 8.7, y + 14.3) for (x, y, _d) in mlay.align_holes]
+    assert len(w.preview._pins) == 2
+    for (px, py, _pd), (ex, ey) in zip(w.preview._pins, exp):
+        assert abs(px - ex) < 1e-9 and abs(py - ey) < 1e-9
+
+
+def test_runplan_spine_routes_page_op_and_side():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.sidebar.setCurrentRow(4)                       # 5 · Bottom traces
+    assert w.stacked_widget.currentIndex() == 0
+    assert w.tabs.currentIndex() == 0 and w.view_combo.currentText() == "Bottom"
+    w.sidebar.setCurrentRow(7)                       # 8 · Top traces
+    assert w.tabs.currentIndex() == 0 and w.view_combo.currentText() == "Top"
+    w.sidebar.setCurrentRow(1)                       # 2 · Bed leveling
+    assert w.stacked_widget.currentIndex() == 2
+    # never blocking: any row is selectable regardless of state
+    w.sidebar.setCurrentRow(8)                       # Rework
+    assert w.stacked_widget.currentIndex() == 3
+    # tour navigation by PAGE still lands on a matching step
+    w._goto_page(1)
+    assert w.stacked_widget.currentIndex() == 1
+
+
+def test_travel_check_flags_out_of_reach_and_suggests_slide():
+    from gerber2rml.toolpath import Move
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    inside = [[Move(10, 10, -0.1), Move(50, 50, -0.1)]]
+    assert w._travel_check(inside) is None
+    off_left = [[Move(-8.9, 10, -0.1), Move(50, 50, -0.1)]]
+    msg = w._travel_check(off_left)
+    assert msg and "8.9 mm RIGHT" in msg
+    off_back = [[Move(10, 10, -0.1), Move(50, 155.3, -0.1)]]
+    msg = w._travel_check(off_back)
+    assert msg and "FORWARD" in msg
+
+
+def test_frame_resolver_truth_table():
+    # GUI 2.0 phase 3 seam: one function decides the canvas frame. Initially
+    # derived from the legacy controls with identical behaviour.
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    assert w._resolve_frame() == ("bed", None)          # single-sided = as milled
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Both sides")
+    assert w._resolve_frame() == ("xray", None)         # registration inspection
+    w.view_combo.setCurrentText("Bottom")
+    assert w._resolve_frame() == ("bed", "Bottom")
+    w.view_combo.setCurrentText("Top")
+    assert w._resolve_frame() == ("bed", "Top")
+
+
+def test_top_fit_survives_setup_roundtrip():
+    from gerber2rml.engine.fiducial import Transform
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._top_fit = Transform(-0.0063, 1.0, -8.7, 14.3)
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2._top_fit is not None
+    assert abs(w2._top_fit.tx - -8.7) < 1e-9 and abs(w2._top_fit.theta - -0.0063) < 1e-9
+
+
+def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
+    # Regression: the fiducial-align export dropped the probed top-side height
+    # map (engine supports XY-from-fit + Z-from-leveling together). It must
+    # pass the map through, and refuse quietly-unleveled exports.
+    import gerber2rml.gui.app as appmod
+    import gerber2rml.doublesided as ds
+    from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+
+    class _StubDlg:                                  # auto-accept with a small shift
+        def __init__(self, parent, nominal, initial=None): self._n = nominal
+        def exec(self): return QDialog.Accepted
+        def measured(self): return [(x + 0.1, y - 0.05) for (x, y) in self._n]
+
+    monkeypatch.setattr(appmod, "_FiducialAlignDialog", _StubDlg)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        return tmp_path / "x_top_traces.nc"
+
+    monkeypatch.setattr(ds, "build_top_traces", _fake_build)
+    sentinel = object()
+    monkeypatch.setattr(w, "_level_heightmap_preview", lambda: sentinel)
+    w._on_fiducial_align()
+    assert captured.get("level") is sentinel        # map passed to the export
+    assert w._top_fit is not None                   # placement remembered
+    # without a probed map, declining the explicit unleveled prompt aborts
+    captured.clear()
+    monkeypatch.setattr(w, "_level_heightmap_preview", lambda: None)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k: QMessageBox.No))
+    w._on_fiducial_align()
+    assert not captured
+
+
+def _leveling_export_window(monkeypatch, tmp_path):
+    """Window primed for the leveling-panel top-traces exporter, with the
+    build call captured instead of writing files."""
+    import gerber2rml.doublesided as ds
+    from PySide6.QtWidgets import QFileDialog
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w.view_combo.setCurrentText("Top")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    monkeypatch.setattr(w, "_level_heightmap_preview", lambda: object())
+    captured = {}
+
+    def _fake_build(*a, **k):
+        captured.update(k)
+        return tmp_path / "x_top_traces.nc"
+
+    monkeypatch.setattr(ds, "build_top_traces", _fake_build)
+    return w, captured
+
+
+def test_leveling_export_uses_measured_fiducial_frame(monkeypatch, tmp_path):
+    # THE 2026-07-03 near-miss: the leveling-panel exporter rebuilt the layout
+    # with the default dowel registration, silently dropping the fiducial fit —
+    # the exported job sat ~12 mm off the physical board. In fiducial mode it
+    # must export in the measured frame.
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
+    w._fid_measured = [(200.2, 10.1), (5.9, 11.5), (6.9, 134.2), (201.2, 133.3)]
+    w._on_export_top_traces()
+    assert captured.get("registration") == "fiducial"
+    assert captured.get("measured_fiducials") == w._fid_measured
+    assert captured.get("fiducials") is not None
+
+
+def test_leveling_export_synthesizes_measured_from_saved_fit(monkeypatch, tmp_path):
+    # After a restart the raw measurements are gone but the fit is restored
+    # from the setup; the exporter reconstructs equivalent measured points.
+    from gerber2rml.engine.fiducial import Transform, fit_transform
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(1)
+    w._top_fit = Transform(-0.0063, 1.0, 1.98, -1.99)
+    w._on_export_top_traces()
+    assert captured.get("registration") == "fiducial"
+    meas = captured.get("measured_fiducials")
+    assert meas and len(meas) >= 2
+    # fitting the synthesized points against nominal returns the stored fit
+    from gerber2rml.doublesided import layout_double_sided, nominal_top_fiducials
+    lay = layout_double_sided(str(FIXT), offset=(w.state.place_x, w.state.place_y),
+                              rotate=w.state.rotate, registration="fiducial",
+                              fiducials=w._fiducial_spec_from_ui())
+    t = fit_transform(nominal_top_fiducials(lay), meas)
+    assert abs(t.theta - -0.0063) < 1e-9 and abs(t.tx - 1.98) < 1e-9
+
+
+def test_leveling_export_refuses_fiducial_mode_without_fit(monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(1)
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warned.append(a)))
+    w._on_export_top_traces()
+    assert warned and not captured                  # refused, nothing exported
+
+
+def test_leveling_export_dowel_mode_unchanged(monkeypatch, tmp_path):
+    w, captured = _leveling_export_window(monkeypatch, tmp_path)
+    w.regmethod_combo.setCurrentIndex(0)            # dowel registration
+    w._on_export_top_traces()
+    assert "registration" not in captured           # dowel default preserved
+
+
+def test_fid_measured_survives_setup_roundtrip():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._fid_measured = [(200.24, 10.11), (5.94, 11.49)]
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2._fid_measured == [(200.24, 10.11), (5.94, 11.49)]
+
+
+def test_photo_overlay_apply_and_persist():
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((60, 80, 4), np.uint8); img[..., 3] = 255
+    photo_pts = [(5, 55), (75, 55), (75, 5), (5, 5)]
+    machine_pts = [(10.0, 20.0), (90.0, 20.0), (90.0, 80.0), (10.0, 80.0)]
+    worst = w._apply_photo_overlay(img, photo_pts, machine_pts, "C:/nope/board.jpg")
+    assert worst < 1e-6                             # exact correspondences
+    assert w.preview._photo is not None             # underlay is showing
+    d = w._collect_setup()
+    assert d["photo_overlay"]["machine_pts"] == [list(p) for p in machine_pts]
+    # restore with a missing photo file: never blocks the load, overlay off
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2.preview._photo is None
+
+
+def test_photo_anchor_holes_are_four_named_corners():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.preview._full_holes = [(10, 10, 0.8), (90, 12, 0.8), (88, 70, 0.8),
+                             (12, 68, 0.8), (50, 40, 0.8)]
+    w.preview._pins = []
+    anchors = w._photo_anchor_holes()
+    assert [n for n, _p in anchors] == ["bottom-left", "bottom-right",
+                                        "top-right", "top-left"]
+    assert anchors[0][1] == (10, 10) and anchors[2][1] == (88, 70)
+
+
+def test_rework_boxes_persist_in_setup():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._on_region_added((10.0, 20.0, 30.0, 40.0))
+    w.rework_depth_spin.setValue(0.20)
+    w._on_region_added((50.0, 60.0, 70.0, 80.0))
+    d = w._collect_setup()
+    assert [r["bbox"] for r in d["rework"]] == [[10.0, 20.0, 30.0, 40.0],
+                                                [50.0, 60.0, 70.0, 80.0]]
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert len(w2._rework_regions) == 2
+    assert w2._rework_regions[0]["bbox"] == (10.0, 20.0, 30.0, 40.0)
+    assert w2._rework_regions[1]["depth"] == 0.20
+    # loading a new board clears the boxes (they belong to that physical board)
+    w2.load_folder(str(FIXT))
+    assert w2._rework_regions == []
+
+
+def test_setup_saves_photo_copy_and_restores_from_it(tmp_path):
+    import json
+    import numpy as np
+    from PySide6.QtGui import QImage
+    photo = tmp_path / "board.png"
+    qi = QImage(8, 8, QImage.Format_RGBA8888)
+    qi.fill(0xFF00FF00)
+    assert qi.save(str(photo))
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)], str(photo))
+    sess = tmp_path / "top_setup.json"
+    w._write_setup(sess)
+    copy = tmp_path / "top_setup_photo.png"
+    assert copy.exists()                    # photo copied next to the session
+    photo.unlink()                          # original photo disappears...
+    d = json.loads(sess.read_text(encoding="utf-8"))
+    assert d["photo_overlay"]["photo_copy"] == "top_setup_photo.png"
+    w2 = MainWindow()
+    w2._apply_setup(d, session_dir=tmp_path)
+    assert w2.preview._photo is not None    # ...restored from the session copy
+
+
+def test_workspace_folders_and_remembered_dirs(tmp_path, monkeypatch):
+    monkeypatch.setenv("SRM_CAM_HOME", str(tmp_path / "ws"))
+    from gerber2rml.gui.workspace import (remember_dir, remembered_dir,
+                                          workspace_root)
+    root = workspace_root()
+    assert (root / "sessions").is_dir()
+    assert (root / "exports").is_dir()
+    assert (root / "photos").is_dir()
+    # unknown key falls back to the workspace subfolder
+    assert remembered_dir("no-such-key-xyz", "sessions") == str(root / "sessions")
+    # remembered file path -> its parent dir comes back
+    f = tmp_path / "somewhere" / "job.nc"
+    f.parent.mkdir()
+    f.write_text("")
+    remember_dir("test-key-xyz", str(f))
+    try:
+        assert remembered_dir("test-key-xyz", "exports") == str(f.parent)
+    finally:
+        from PySide6.QtCore import QSettings
+        QSettings("SRM-CAM", "SRM-CAM").remove("dirs/test-key-xyz")
+
+
+def test_photo_anchor_angle_guide_math():
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("bottom-left", (0.0, 0.0)), ("bottom-right", (100.0, 0.0)),
+               ("top-right", (100.0, 80.0)), ("top-left", (0.0, 80.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    # photo v runs downward: rightward edge is 0 deg, upward edge +90
+    assert abs(dlg._seg_angle((10, 40), (50, 40))) < 1e-9
+    assert abs(dlg._seg_angle((50, 40), (50, 10)) - 90.0) < 1e-9
+    # later edges are squared off the base edge AS CLICKED (tilted photo ok)
+    dlg._points = [(10.0, 40.0), (50.0, 42.0)]
+    base = dlg._seg_angle((10.0, 40.0), (50.0, 42.0))
+    assert abs(dlg._guide_expected(2) - (base + 90.0)) < 1e-9
+    assert abs(dlg._guide_expected(3) - (base + 180.0)) < 1e-9
+
+
+def test_photo_anchor_guide_follows_cursor():
+    import types
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("bottom-left", (0.0, 0.0)), ("bottom-right", (100.0, 0.0)),
+               ("top-right", (100.0, 80.0)), ("top-left", (0.0, 80.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    ev = types.SimpleNamespace(inaxes=dlg._ax, xdata=50.0, ydata=40.0)
+    dlg._on_motion(ev)
+    assert dlg._guide == []                     # no clicks yet: no guide
+    dlg._points = [(10.0, 40.0)]
+    dlg._on_motion(ev)
+    assert len(dlg._guide) == 2                 # dotted line + angle text
+    dlg._points = [(10.0, 40.0), (50.0, 40.0), (50.0, 10.0), (10.0, 10.0)]
+    dlg._on_motion(ev)
+    assert dlg._guide == []                     # all anchors placed: no guide
+
+
+def test_photo_anchor_drag_pans_click_places():
+    import types
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("bottom-left", (0.0, 0.0)), ("bottom-right", (100.0, 0.0)),
+               ("top-right", (100.0, 80.0)), ("top-left", (0.0, 80.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    ax = dlg._ax
+    mk = lambda **kw: types.SimpleNamespace(inaxes=ax, **kw)
+    # plain click (press + release in place) places the first anchor
+    dlg._on_press(mk(button=1, x=100, y=100, xdata=20.0, ydata=30.0))
+    dlg._on_release(mk(button=1, x=100, y=100, xdata=20.0, ydata=30.0))
+    assert dlg._points == [(20.0, 30.0)]
+    # press-drag-release pans the view and does NOT place an anchor
+    xlim0 = ax.get_xlim()
+    dlg._on_press(mk(button=1, x=100, y=100, xdata=20.0, ydata=30.0))
+    dlg._on_motion(mk(button=1, x=160, y=100, xdata=25.0, ydata=30.0))
+    dlg._on_release(mk(button=1, x=160, y=100, xdata=25.0, ydata=30.0))
+    assert len(dlg._points) == 1                # no stray anchor from the pan
+    assert ax.get_xlim()[0] < xlim0[0]          # dragged right: view shifted left
+    # a wiggle inside the slop radius still counts as a click
+    dlg._on_press(mk(button=1, x=200, y=200, xdata=40.0, ydata=35.0))
+    dlg._on_motion(mk(button=1, x=202, y=201, xdata=40.2, ydata=35.1))
+    dlg._on_release(mk(button=1, x=202, y=201, xdata=40.2, ydata=35.1))
+    assert len(dlg._points) == 2
+
+
+def test_trace_dim_persists_and_resets_with_photo():
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)],
+                           "C:/nope/board.jpg")
+    w.trace_dim_slider.setValue(30)                 # dim traces to see the photo
+    assert w.preview._trace_alpha == 0.30
+    assert w._photo_overlay["trace_alpha"] == 0.30
+    d = w._collect_setup()
+    assert d["photo_overlay"]["trace_alpha"] == 0.30
+    # clearing the photo un-dims (nothing left to see through)
+    w._on_clear_photo()
+    assert w.trace_dim_slider.value() == 100
+    assert w.preview._trace_alpha == 1.0
+    # a new board load also un-dims
+    w.trace_dim_slider.setValue(40)
+    w.load_folder(str(FIXT))
+    assert w.trace_dim_slider.value() == 100
+
+
+def test_photo_overlay_cleared_on_new_board():
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)])
+    w.load_folder(str(FIXT))                        # new physical setup
+    assert w._photo_overlay is None
+    assert w.preview._photo is None
+
+
+def test_rework_export_always_enabled_and_explains(monkeypatch):
+    # The button used to grey out silently when preconditions were missing (an
+    # operator lost time to this). It now stays enabled and clicking explains
+    # exactly what to fix.
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine.select import clip_toolpaths_to_bbox
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: warnings.append(a[2])))
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    assert w.export_sel_btn.isEnabled()             # enabled from the start
+    w._on_export_selected()                         # no regions yet
+    assert "boxes" in warnings[-1]
+    box = (0, 0, 200, 200)                          # covers the whole placed board
+    w._on_region_added(box)
+    w.view_combo.setCurrentText("Both sides")
+    w.generate_preview()
+    assert w.export_sel_btn.isEnabled()             # still enabled...
+    w._on_export_selected()
+    assert "Bottom or Top" in warnings[-1]          # ...and it says what to fix
+    # with a side picked, both sides' MACHINE-frame paths clip as before
+    assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Bottom"), box)
     assert clip_toolpaths_to_bbox(w._ds_side_toolpaths("traces", "Top"), box)
+
+
+def test_machine_dock_at_bottom_with_port():
+    # GUI 2.0 phase 2: the machine strip + run progress live in a bottom dock,
+    # and the serial port selector sits in the dock next to Connect.
+    w = MainWindow()
+    lay = w.centralWidget().layout()
+    names = [lay.itemAt(i).widget().objectName() for i in range(lay.count())]
+    assert names[-2:] == ["machineBar", "progressBar"]   # dock is the bottom rows
+    bar = w.centralWidget().layout().itemAt(lay.count() - 2).widget()
+    assert w.level_port_combo in bar.findChildren(type(w.level_port_combo))
+    assert w.connect_btn in bar.findChildren(type(w.connect_btn))
 
 def test_rework_export_uses_custom_depth(tmp_path, monkeypatch):
     # the rework pass cuts at the spin's depth, not the original job's depth.
@@ -1001,7 +1487,7 @@ def test_settings_panel_autofits_per_page():
     project_inner = w.stacked_widget.widget(0).widget()
     project_min = w._settings_container.minimumWidth()      # fitted on show (page 0)
     assert project_min >= w.sidebar.minimumWidth() + project_inner.sizeHint().width()
-    w.sidebar.setCurrentRow(2); _app.processEvents()        # Bed Leveling: wider
+    w.sidebar.setCurrentRow(1); _app.processEvents()        # Bed leveling: wider
     assert w._settings_container.minimumWidth() > project_min   # re-fit wider
     w.close()
 
@@ -1107,7 +1593,7 @@ def test_preview_shows_persistent_estimate_per_op():
 def test_3d_viewer_tab_exists_with_launchers():
     w = MainWindow()
     titles = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
-    assert "3D Viewer" in titles                          # 5th sidebar entry
+    assert "3D viewer" in titles                          # spine tool entry
     for b in (w.view3d_sim_btn, w.view3d_file_btn, w.view3d_bed_btn):
         assert b is not None
 
@@ -1130,7 +1616,7 @@ def test_double_sided_enable_refits_panel():
     # must re-fit so they aren't clipped.
     w = MainWindow()
     w.resize(1916, 1000); w.show(); _app.processEvents()
-    w.sidebar.setCurrentRow(1); _app.processEvents()       # Double-Sided page
+    w.sidebar.setCurrentRow(2); _app.processEvents()       # 3 · Registration (DS page)
     before = w._settings_container.minimumWidth()
     w.double_sided_chk.setChecked(True); _app.processEvents()
     assert w._settings_container.minimumWidth() > before   # re-fit wider
@@ -1177,3 +1663,97 @@ def test_demo_badge_cleared_by_load_setup():
     donor.load_folder(str(FIXT))
     w._apply_setup(donor._collect_setup())                  # "Load setup..."
     assert w.preview._demo is False                         # badge cleared
+
+
+def test_insert_probe_rows_keeps_grid_cartesian():
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow()
+    xs = [10.0, 100.0, 190.0]
+    ys = [12.0, 72.0, 131.0]
+    w.level_table.setRowCount(9)
+    w.level_nx_spin.setValue(3)
+    w.level_ny_spin.setValue(3)
+    r = 0
+    for y in ys:
+        for x in xs:
+            w.level_table.setItem(r, 0, QTableWidgetItem(f"{x:.3f}"))
+            w.level_table.setItem(r, 1, QTableWidgetItem(f"{y:.3f}"))
+            w.level_table.setItem(r, 2, QTableWidgetItem("0.0100"))
+            r += 1
+    w._insert_probe_rows([42.0, 101.5])
+    assert w.level_table.rowCount() == 15          # 9 + 2 rows x 3 columns
+    assert w.level_ny_spin.value() == 5
+    _xy, xyz = w._table_points()
+    assert len(xyz) == 9                            # new points blank (unmeasured)
+    # row-major order held: y sequence is sorted, each row ascending in x
+    got = [(float(w.level_table.item(i, 1).text()),
+            float(w.level_table.item(i, 0).text())) for i in range(15)]
+    assert got == sorted(got)
+    # resume-probing sees the reference + exactly the 6 new points
+    points, _x0, _y0 = w._probe_points(resume=True)
+    assert len(points) == 7
+
+
+def test_detect_rework_from_photo_adds_boxes(monkeypatch):
+    import numpy as np
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    assert w.preview._full_cuts                     # channels to walk
+    w.preview.set_photo(np.zeros((10, 10, 4), np.uint8), (0, 10, 0, 10))
+    import gerber2rml.engine.cutcheck as cc
+    monkeypatch.setattr(cc, "detect_uncut", lambda *a, **k: {
+        "boxes": [(5.0, 6.0, 9.0, 8.0)], "coverage": 0.97,
+        "n_samples": 500, "n_suspect": 12,
+        "copper_color": (0, 0, 0), "channel_color": (99, 99, 99)})
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    w._on_detect_rework()
+    assert len(w._rework_regions) == 1
+    assert w._rework_regions[0]["bbox"] == (5.0, 6.0, 9.0, 8.0)
+
+
+def test_apply_rework_probe_deepens_only_high_spots(monkeypatch):
+    from PySide6.QtWidgets import QTableWidgetItem
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    # flat mesh at dz=0 (3x3 grid, reference at (0, 0))
+    w.level_table.setRowCount(9)
+    w.level_nx_spin.setValue(3)
+    w.level_ny_spin.setValue(3)
+    r = 0
+    for y in (0.0, 50.0, 100.0):
+        for x in (0.0, 50.0, 100.0):
+            w.level_table.setItem(r, 0, QTableWidgetItem(f"{x:.3f}"))
+            w.level_table.setItem(r, 1, QTableWidgetItem(f"{y:.3f}"))
+            w.level_table.setItem(r, 2, QTableWidgetItem("0.0000"))
+            r += 1
+    w.rework_depth_spin.setValue(0.15)
+    w._on_region_added((10.0, 10.0, 20.0, 20.0))    # box 1
+    w._on_region_added((60.0, 60.0, 80.0, 80.0))    # box 2
+    # measured: reference -56000; box1 center 80 um HIGHER than mesh (0);
+    # box2 spot matches the mesh; box3 id missing (no contact)
+    results = [{"id": 0, "z": -56000},
+               {"id": 1, "z": -55920},
+               {"id": 2, "z": -56002}]
+    out = w._apply_rework_probe(results)
+    assert out is not None
+    adjusted, skipped = out
+    assert [i for i, _d in adjusted] == [0]
+    assert abs(w._rework_regions[0]["depth"] - 0.23) < 1e-9   # 0.15 + 0.080
+    assert w._rework_regions[1]["depth"] == 0.15              # matches mesh
+    assert skipped == 0
+
+
+def test_workflow_chips_reflect_state():
+    w = MainWindow()
+    w._update_chips()
+    assert w._chip_labels["board"].text() == "no board"
+    assert w._chip_labels["boxes"].text() == "boxes —"
+    w.load_folder(str(FIXT))
+    w._on_region_added((1.0, 1.0, 2.0, 2.0))
+    w._update_chips()
+    assert w._chip_labels["board"].text() == w.state.name
+    assert w._chip_labels["boxes"].text() == "boxes 1"
+    assert w._chip_labels["link"].text() == "link ○"

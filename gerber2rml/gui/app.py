@@ -4,11 +4,12 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QTabWidget, QCheckBox, QLabel, QFileDialog, QMessageBox,
     QSplitter, QGroupBox, QStyle, QFormLayout, QDoubleSpinBox, QScrollArea,
     QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox
+    QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox, QSlider
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
 from PySide6.QtGui import QPalette, QColor
 from pathlib import Path
+import math
 import sys
 import time
 
@@ -25,11 +26,14 @@ _OPS = ["traces", "drill", "cutout"]
 class _ProbeWorker(QThread):
     """Runs the SPI grid probe off the GUI thread; emits one result per point."""
     result = Signal(dict)
+    corrected = Signal(list)      # final drift-corrected results (re-fills the table)
+    drift = Signal(float)         # reference drift span over the run (um)
     done = Signal(str)            # "" on success, else an error message
 
-    def __init__(self, port, points):
+    def __init__(self, port, points, retouch_every=0):
         super().__init__()
         self._port, self._points = port, points
+        self._retouch_every = retouch_every
         self._abort = False
 
     def abort(self):
@@ -39,12 +43,20 @@ class _ProbeWorker(QThread):
     def run(self):
         from gerber2rml.engine.spi_probe import probe_grid
         try:
+            drift_log = []
             res = probe_grid(self._port, self._points,
                              on_result=lambda d: self.result.emit(d),
-                             should_abort=lambda: self._abort)
+                             should_abort=lambda: self._abort,
+                             retouch_every=self._retouch_every,
+                             drift_log=drift_log)
             if self._abort:
                 self.done.emit("aborted")
                 return
+            if any("z_raw" in r for r in res):
+                # live emits showed raw values; re-publish the drift-corrected set
+                zs = [e["z"] for e in drift_log]
+                self.drift.emit(float(max(zs) - min(zs)))
+                self.corrected.emit(res)
             if len(res) < len(self._points):    # stopped early (deep touch / no datum)
                 last = res[-1] if res else {"id": -1, "error": "stopped"}
                 self.done.emit(
@@ -58,10 +70,47 @@ class _ProbeWorker(QThread):
             self.done.emit(str(e))
 
 
+class _StreamWorker(QThread):
+    """EXPERIMENTAL: streams toolpaths over SPI off the GUI thread."""
+    progress = Signal(int, int)
+    done = Signal(str)            # "" on success, else an error message
+
+    def __init__(self, port, toolpaths, speed=-1, dry_run=True):
+        super().__init__()
+        self._port, self._tps = port, toolpaths
+        self._speed, self._dry = speed, dry_run
+        self._abort = False
+
+    def abort(self):
+        self._abort = True
+
+    def run(self):
+        from gerber2rml.engine import spi_probe, spi_stream
+        try:
+            ser = spi_probe.open_link(self._port)
+        except Exception as e:
+            self.done.emit(str(e))
+            return
+        try:
+            spi_stream.stream_toolpaths(
+                ser, self._tps, speed=self._speed, dry_run=self._dry,
+                on_progress=lambda i, n: self.progress.emit(i, n),
+                should_abort=lambda: self._abort)
+            self.done.emit("")
+        except Exception as e:
+            self.done.emit(str(e))
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+
 class _DROPoller(QThread):
     """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
     position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
     touch_done = Signal(bool, float, float, float)  # ok, x, y, z (mm) of surface
+    zero_done = Signal(bool, float)                 # ok, new origin z (mm)
     failed = Signal(str)
 
     def __init__(self, port):
@@ -70,6 +119,7 @@ class _DROPoller(QThread):
         self._lock = QMutex()
         self._pending_move = None       # (x_um, y_um) queued jog target
         self._pending_touch = False     # queued touch-off request
+        self._pending_zero = False      # queued machine-origin Z zero (W)
         self._abort = False             # STOP: lift the tool and stop polling
 
     def request_abort(self):
@@ -78,6 +128,7 @@ class _DROPoller(QThread):
         self._abort = True
         self._pending_move = None
         self._pending_touch = False
+        self._pending_zero = False
         self._lock.unlock()
 
     def request_move(self, x_um, y_um):
@@ -92,6 +143,13 @@ class _DROPoller(QThread):
         self._pending_touch = True
         self._lock.unlock()
 
+    def request_zero(self):
+        """Queue a machine-origin Z zero: verified touch-off, then the firmware
+        writes origin Z = the copper surface (firmware v2 ``W``)."""
+        self._lock.lock()
+        self._pending_zero = True
+        self._lock.unlock()
+
     def run(self):
         from gerber2rml.engine import spi_probe
         try:
@@ -103,9 +161,11 @@ class _DROPoller(QThread):
                 self._lock.lock()
                 mv = self._pending_move
                 to = self._pending_touch
+                zo = self._pending_zero
                 ab = self._abort
                 self._pending_move = None
                 self._pending_touch = False
+                self._pending_zero = False
                 self._lock.unlock()
                 if ab:
                     spi_probe.send_abort(ser)                 # lift the tool, then stop
@@ -113,6 +173,12 @@ class _DROPoller(QThread):
                 try:
                     if mv is not None:
                         spi_probe.jog_to(ser, mv[0], mv[1])   # lifts then travels XY
+                    elif zo:
+                        r = spi_probe.zero_z(ser, should_abort=lambda: self._abort)
+                        if r is not None:
+                            self.zero_done.emit(True, r[2])
+                        else:
+                            self.zero_done.emit(False, 0.0)
                     elif to:
                         r = spi_probe.touch_off(ser, should_abort=lambda: self._abort)
                         if r is not None:
@@ -125,7 +191,8 @@ class _DROPoller(QThread):
                             self.position.emit(*p)
                 except Exception:
                     pass
-                self.msleep(60 if (self._pending_move or self._pending_touch) else 250)
+                self.msleep(60 if (self._pending_move or self._pending_touch
+                                   or self._pending_zero) else 250)
         finally:
             try:
                 ser.close()
@@ -144,7 +211,7 @@ class _FiducialAlignDialog(QDialog):
     ``nominal`` is the list of (x, y) top-frame fiducial positions (where a
     perfect flip lands them). Capture pulls the parent's live DRO position."""
 
-    def __init__(self, parent, nominal):
+    def __init__(self, parent, nominal, initial=None):
         super().__init__(parent)
         self.setWindowTitle("Fiducial alignment")
         self._parent = parent
@@ -155,13 +222,25 @@ class _FiducialAlignDialog(QDialog):
             "measured X/Y. Nominal = where a perfect flip would put it."))
         self.table = QTableWidget(len(nominal), 5)
         self.table.setHorizontalHeaderLabels(["nom X", "nom Y", "meas X", "meas Y", ""])
+        # name each fiducial by where it sits (bottom-left, top-right, ...) so
+        # the operator matches physical holes to rows without a decoder ring
+        cx = sum(x for x, _y in nominal) / len(nominal)
+        cy = sum(y for _x, y in nominal) / len(nominal)
+        self.table.setVerticalHeaderLabels([
+            ("top" if y >= cy else "bottom") + ("-right" if x >= cx else "-left")
+            for (x, y) in nominal])
+        initial = initial or []
         for r, (nx, ny) in enumerate(nominal):
             for c, val in ((0, nx), (1, ny)):
                 it = QTableWidgetItem(f"{val:.3f}")
                 it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(r, c, it)
-            self.table.setItem(r, 2, QTableWidgetItem(""))
-            self.table.setItem(r, 3, QTableWidgetItem(""))
+            # pre-fill this run's earlier measurements so probe-then-refit
+            # doesn't mean typing (or re-jogging) everything again
+            mx = f"{initial[r][0]:.3f}" if r < len(initial) else ""
+            my = f"{initial[r][1]:.3f}" if r < len(initial) else ""
+            self.table.setItem(r, 2, QTableWidgetItem(mx))
+            self.table.setItem(r, 3, QTableWidgetItem(my))
             btn = QPushButton("Capture")
             btn.clicked.connect(lambda _=False, row=r: self._capture(row))
             self.table.setCellWidget(r, 4, btn)
@@ -234,6 +313,25 @@ class MainWindow(QMainWindow):
         self.resize(1100, 750)
         self.state = ProjectState()
 
+        # Ensure the per-user workspace (Documents/SRM-CAM/{sessions,exports,
+        # photos}) exists; every file dialog starts in its matching folder.
+        try:
+            from gerber2rml.gui.workspace import workspace_root
+            workspace_root()
+        except Exception:
+            pass                        # a read-only home dir never blocks launch
+
+        # Workflow state chips (right side of the status bar): a glance answers
+        # "what's set up and what's missing" — board, mesh, fit, photo, boxes,
+        # machine link. Poll-driven (cheap attribute reads) so no event wiring
+        # can go stale.
+        self._chip_labels = {}
+        from PySide6.QtCore import QTimer
+        self._chip_timer = QTimer(self)
+        self._chip_timer.setInterval(1500)
+        self._chip_timer.timeout.connect(self._update_chips)
+        self._chip_timer.start()
+
         # Toolbar / Top Controls
         self.load_btn = QPushButton("Load Gerber folder...")
         self.load_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
@@ -250,6 +348,14 @@ class MainWindow(QMainWindow):
             "deepest cut fit the SRM-20 Z range (probe Z first), holes vs bit. "
             "Run this before a full-bed job.")
         self.diag_btn.clicked.connect(self._on_diagnostics)
+
+        self.feedcard_btn = QPushButton("Feed card")
+        self.feedcard_btn.setToolTip(
+            "Dial in the XY feed on scrap: export the feed-ladder test card "
+            "(one block per feed, value engraved next to it), cut it, then "
+            "photograph it and let the app score every block and recommend "
+            "the fastest clean feed.")
+        self.feedcard_btn.clicked.connect(self._on_feed_card)
 
         self.guide_btn = QPushButton("Guide")
         self.guide_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
@@ -294,6 +400,11 @@ class MainWindow(QMainWindow):
         self.double_sided_chk.toggled.connect(self._on_double_sided_toggled)
         self._ds_cache = None   # (gerber_dir, layout) so live edits don't re-read disk
         self._ds_mcache = None  # machine-frame layout cache (single-side rework/preview)
+        # Measured top-side placement (engine.fiducial.Transform) from the last
+        # fiducial fit: where the flipped board REALLY sits. When set, the Top
+        # views render AS PLACED — warped by it — so click-to-jog, snapping,
+        # rework boxes and run tracking land on the physical board.
+        self._top_fit = None
         self._rework_regions = []  # [{bbox, depth, follow, color}] multi-region rework
 
         # single-sided preview orientation: the milled (mirrored) cut, or the
@@ -431,9 +542,13 @@ class MainWindow(QMainWindow):
             "click this to re-write <name>_top_traces warped to that surface.")
         self.level_top_btn.clicked.connect(self._on_export_top_traces)
         # auto-probe over the SRM-20 SPI link (Arduino running srm20_spi_probe.ino)
+        # Serial port for the Arduino link — shared by the DRO connect and the
+        # SPI probe. Shown in the machine dock; keeps its historical name.
         self.level_port_combo = QComboBox()
         self.level_port_combo.setMaximumWidth(90)
-        self.level_port_combo.setToolTip("Serial port of the Arduino prober (Device Manager > Ports).")
+        self.level_port_combo.setToolTip(
+            "Serial port of the Arduino (Device Manager > Ports). Used by both "
+            "Connect (live DRO) and the SPI bed probe.")
         self.level_port_combo.setEditable(True)
         try:
             import serial.tools.list_ports
@@ -450,6 +565,24 @@ class MainWindow(QMainWindow):
             "Jog the tool ~2-3 mm above the first grid point first, with the prober "
             "sketch running and the Arduino Serial Monitor CLOSED.")
         self.level_probe_btn.clicked.connect(self._on_probe_spi)
+        self.level_retouch_spin = QSpinBox()
+        self.level_retouch_spin.setRange(0, 20)
+        self.level_retouch_spin.setValue(6)
+        self.level_retouch_spin.setPrefix("drift chk ")
+        self.level_retouch_spin.setSpecialValueText("drift chk off")
+        self.level_retouch_spin.setToolTip(
+            "Re-touch the reference point after every N probed points and correct "
+            "the whole grid for Z drift (spindle warm-up, board settling). This is "
+            "what catches a mesh row measured 'low' minutes after the others. "
+            "0 = off. Needs firmware v2 on the Arduino (reflash "
+            "hardware/srm20_spi_probe).")
+        self.level_check_btn = QPushButton("Mesh check")
+        self.level_check_btn.setToolTip(
+            "Sanity-check the measured mesh: flag points no smooth board surface "
+            "can explain (flaky touches), recommend a cut depth that survives "
+            "this mesh's uncertainty, and suggest where the grid is too coarse "
+            "(with one click to insert the missing probe rows).")
+        self.level_check_btn.clicked.connect(self._on_mesh_check)
         self.level_gridshow_chk = QCheckBox("Show grid")
         self.level_gridshow_chk.setToolTip(
             "Overlay the planned probe points (numbered) on the preview, so you "
@@ -505,6 +638,23 @@ class MainWindow(QMainWindow):
             "surface, and set that Z as the work-surface zero. Needs the touch "
             "clips connected; start a few mm above the surface.")
         self.zero_btn.clicked.connect(self._on_probe_z)
+        self.machine_zero_btn = QPushButton("Zero Z on machine")
+        self.machine_zero_btn.setEnabled(False)
+        self.machine_zero_btn.setToolTip(
+            "Verified touch-off, then the FIRMWARE writes origin Z = the copper "
+            "surface (v2 'W' command) and lifts 2 mm - no VPanel round-trip.\n"
+            "NOTE: this sets the origin VPanel displays (User CS). Check "
+            "VPanel's G54 Z once before trusting it for NC jobs.")
+        self.machine_zero_btn.clicked.connect(self._on_machine_zero)
+        self.stream_btn = QPushButton("Stream (exp.)")
+        self.stream_btn.setEnabled(False)
+        self.stream_btn.setToolTip(
+            "EXPERIMENTAL: stream the picked op's toolpaths over the SPI link "
+            "move-by-move (no VPanel file player). ALWAYS starts as a DRY RUN "
+            "with Z held 2 mm above the origin — nothing can cut. A wet run "
+            "additionally needs the spindle started in VPanel by hand and the "
+            "raw speed value calibrated on dry runs first.")
+        self.stream_btn.clicked.connect(self._on_stream_job)
         self.align_btn = QPushButton("Align overlay")
         self.align_btn.setCheckable(True)
         self.align_btn.setEnabled(False)      # only meaningful while connected
@@ -722,12 +872,22 @@ class MainWindow(QMainWindow):
             "capture the probed X/Y of each fiducial; the top traces are warped to "
             "the best-fit transform and exported. Shows the RMS fit error.")
         self.fid_align_btn.clicked.connect(self._on_fiducial_align)
+        self.fid_flip_combo = QComboBox()
+        self.fid_flip_combo.addItems(["Flip left-right", "Flip top-bottom"])
+        self.fid_flip_combo.setToolTip(
+            "Which way you physically flip the board. IMPORTANT with corner "
+            "fiducials: the fiducial rectangle is symmetric, so the fit reports "
+            "a tiny RMS for BOTH directions — it cannot detect a wrong choice. "
+            "Pick the one you actually did, then jog-verify a drilled hole in "
+            "the AS PLACED Top view before cutting.")
+        self.fid_flip_combo.currentIndexChanged.connect(self._on_reg_changed)
         self._fid_row = QWidget()
         _fid_row_l = QHBoxLayout(self._fid_row)
         _fid_row_l.setContentsMargins(0, 0, 0, 0)
         _fid_row_l.addWidget(QLabel("n")); _fid_row_l.addWidget(self.fid_count_spin)
         _fid_row_l.addWidget(self.fid_place_combo)
         _fid_row_l.addWidget(self.fid_offset_spin)
+        _fid_row_l.addWidget(self.fid_flip_combo)
         _fid_row_l.addWidget(self.fid_scale_chk)
         _fid_row_l.addWidget(self.fid_align_btn)
         self._fid_row.setEnabled(False)   # enabled only in fiducial mode
@@ -778,7 +938,55 @@ class MainWindow(QMainWindow):
         self.export_sel_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.export_sel_btn.clicked.connect(self._on_export_selected)
-        self.export_sel_btn.setEnabled(False)
+        # Always enabled: a greyed-out button can't explain itself (a real
+        # operator lost time to this). Clicking with a missing precondition
+        # shows exactly what to fix (regions / op tab / side selection).
+        self.export_sel_btn.setToolTip(
+            "Write the rework pass for the drawn boxes. Needs: one or more "
+            "boxes, the Traces or Cutout preview, and (double-sided) View set "
+            "to Bottom or Top — clicking tells you what's missing.")
+
+        # Photo overlay: warp a phone photo of the board on the bed into the
+        # machine frame (homography from clicked hole anchors) and draw it
+        # under the toolpaths — rework boxes land on the REAL copper instead
+        # of on memory of a walk to the machine.
+        self.photo_load_btn = QPushButton("Load photo...")
+        self.photo_load_btn.setToolTip(
+            "Overlay a photo of the board on the bed: pick an image, click the "
+            "4 highlighted anchor holes in it, and the photo is warped to line "
+            "up with the preview exactly.")
+        self.photo_load_btn.clicked.connect(self._on_load_photo)
+        self.photo_clear_btn = QPushButton("Clear")
+        self.photo_clear_btn.clicked.connect(self._on_clear_photo)
+        self.photo_alpha_slider = QSlider(Qt.Horizontal)
+        self.photo_alpha_slider.setRange(0, 100)
+        self.photo_alpha_slider.setValue(55)
+        self.photo_alpha_slider.setToolTip("Photo overlay opacity")
+        self.photo_alpha_slider.valueChanged.connect(self._on_photo_alpha)
+        self.trace_dim_slider = QSlider(Qt.Horizontal)
+        self.trace_dim_slider.setRange(0, 100)
+        self.trace_dim_slider.setValue(100)
+        self.trace_dim_slider.setToolTip(
+            "Toolpath/copper opacity — slide left to fade the traces so the "
+            "photo underneath reads clearly (rework boxes stay full strength)")
+        self.trace_dim_slider.valueChanged.connect(self._on_trace_dim)
+        self.detect_rework_btn = QPushButton("Detect from photo")
+        self.detect_rework_btn.setToolTip(
+            "Walk every isolation channel and check the aligned photo for "
+            "stretches that still look like copper — each becomes a proposed "
+            "rework box (at the current New-box depth). Review the boxes and "
+            "delete false alarms before exporting. Needs the photo overlay "
+            "loaded and the traces preview visible.")
+        self.detect_rework_btn.clicked.connect(self._on_detect_rework)
+        self.probe_boxes_btn = QPushButton("Probe boxes")
+        self.probe_boxes_btn.setToolTip(
+            "Probe each rework box center over SPI and compare against the "
+            "leveling mesh: where the real surface sits HIGHER than the mesh "
+            "believed (the reason the spot needs rework), the box is deepened "
+            "by exactly the difference. Jog above the mesh reference point "
+            "(leveling grid point 1) first, spindle OFF.")
+        self.probe_boxes_btn.clicked.connect(self._on_probe_rework_boxes)
+        self._photo_overlay = None      # {path, photo_pts, machine_pts, alpha}
 
         # Live cross-section of the active trace tool (V-bit width/depth math
         # made visible). Created before the forms: _sync_vbit_fields feeds it.
@@ -821,20 +1029,30 @@ class MainWindow(QMainWindow):
             f.setLabelAlignment(Qt.AlignRight)
             return g, f
 
-        # ---------- Settings Sidebar & Stacked Widget ----------
+        # ---------- Runplan spine (GUI 2.0) ----------
+        # The sidebar IS the run plan: the steps in machining order, each
+        # routing to the page/op/side it needs. NEVER blocking — every step
+        # is clickable at any time; it's a map, not a gate.
+        # (label, stacked page, op tab index or None, DS view or None)
+        self._SPINE = [
+            ("1 · Setup board",    0, None, None),
+            ("2 · Bed leveling",   2, None, None),
+            ("3 · Registration",   1, None, None),
+            ("4 · Drill",          0, 1,    "Bottom"),
+            ("5 · Bottom traces",  0, 0,    "Bottom"),
+            ("6 · Cutout",         0, 2,    "Bottom"),
+            ("7 · Flip + align",   1, None, None),
+            ("8 · Top traces",     0, 0,    "Top"),
+            ("Rework",             3, None, None),
+            ("3D viewer",          4, None, None),
+        ]
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(180)
-        self.sidebar.addItems([
-            "Project & Tools",
-            "Double-Sided",
-            "Bed Leveling",
-            "Rework",
-            "3D Viewer"
-        ])
-        
+        self.sidebar.addItems([s[0] for s in self._SPINE])
+
         self.stacked_widget = QStackedWidget()
-        self.sidebar.currentRowChanged.connect(self.stacked_widget.setCurrentIndex)
+        self.sidebar.currentRowChanged.connect(self._on_spine_changed)
 
         def _make_page(help_text=""):
             p = QWidget()
@@ -883,7 +1101,7 @@ class MainWindow(QMainWindow):
         # ===== BASIC: the things you set every time =====
         board_group, bl = _group("Board")
         bl.addRow(_row(self.load_btn, self.export_btn))
-        bl.addRow(_row(self.diag_btn))
+        bl.addRow(_row(self.diag_btn, self.feedcard_btn))
         bl.addRow(_row(self.save_setup_btn, self.load_setup_btn))
         bl.addRow("Name", self.name_edit)
         bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
@@ -931,7 +1149,10 @@ class MainWindow(QMainWindow):
                            self.level_grid_btn, self.level_export_btn,
                            self.level_save_btn, self.level_load_btn,
                            self.level_clear_btn))
-        _ll.addWidget(_row(QLabel("port"), self.level_port_combo, self.level_probe_btn,
+        # the serial port selector lives in the machine dock (shared with the
+        # DRO connect); probing reads it from there
+        _ll.addWidget(_row(self.level_probe_btn, self.level_retouch_spin,
+                           self.level_check_btn,
                            self.level_gridshow_chk, self.level_show_chk,
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
@@ -967,8 +1188,14 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(QLabel("New-box depth"), self.rework_depth_spin,
                            stretch_first=True))
         _rl.addWidget(self.rework_level_chk)
+        _rl.addWidget(_row(QLabel("Photo"), self.photo_load_btn,
+                           self.photo_alpha_slider, self.photo_clear_btn,
+                           stretch_first=True))
+        _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
+                           self.detect_rework_btn, stretch_first=True))
         _rl.addWidget(self.rework_table)
-        _rl.addWidget(self.export_sel_btn)
+        _rl.addWidget(_row(self.export_sel_btn, self.probe_boxes_btn,
+                           stretch_first=True))
         l_rework.addWidget(rework_group)
         l_rework.addStretch(1)
 
@@ -1023,7 +1250,10 @@ class MainWindow(QMainWindow):
         splitter.setCollapsible(1, False)     # preview can never collapse
         self._splitter = splitter             # _size_settings_panel sets its sizes
 
-        # Machine bar across the top: live DRO readout + connect toggle.
+        # Machine dock (GUI 2.0 phase 2): everything about the physical machine
+        # in one persistent strip at the BOTTOM, visible from every page —
+        # connect + port, live DRO, probe, jog, align overlay, run tracking,
+        # STOP. The machine doesn't stop existing when you switch pages.
         machine_bar = QWidget()
         machine_bar.setObjectName("machineBar")
         _mb = QHBoxLayout(machine_bar)
@@ -1035,12 +1265,16 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.trail_chk)
         _mb.addWidget(self.trail_clear_btn)
         _mb.addWidget(self.zero_btn)
+        _mb.addWidget(self.machine_zero_btn)
+        _mb.addWidget(self.stream_btn)
         _mb.addWidget(self.align_btn)
         _mb.addWidget(self.jog_chk)
+        _mb.addWidget(QLabel("port"))
+        _mb.addWidget(self.level_port_combo)
         _mb.addWidget(self.connect_btn)
         _mb.addWidget(self.stop_btn)
 
-        # Live run-progress bar across the top, under the machine readout.
+        # Run-progress row: the dock's second line.
         progress_bar_row = QWidget()
         progress_bar_row.setObjectName("progressBar")
         _pb = QHBoxLayout(progress_bar_row)
@@ -1057,9 +1291,9 @@ class MainWindow(QMainWindow):
         _cv = QVBoxLayout(central)
         _cv.setContentsMargins(0, 0, 0, 0)
         _cv.setSpacing(0)
+        _cv.addWidget(splitter, 1)
         _cv.addWidget(machine_bar)
         _cv.addWidget(progress_bar_row)
-        _cv.addWidget(splitter, 1)
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready", 5000)
 
@@ -1126,6 +1360,14 @@ class MainWindow(QMainWindow):
         self._sync_state()
         self.state.load(folder)
         self.preview._view_limits = None        # new board -> fit (clear any zoom)
+        self._top_fit = None                    # placement is per-physical-board
+        # (a setup restore re-applies its saved fit after this call)
+        self._photo_overlay = None              # photo is of one physical setup
+        self.preview.set_photo(None)
+        self.trace_dim_slider.setValue(100)     # un-dim: no photo to see through
+        if self._rework_regions:                # boxes belong to that board too
+            self._rework_regions = []
+            self._refresh_rework()
         # any successful load clears the DEMO badge — this covers Load setup /
         # session restore too, not just the Load Gerber folder button. The
         # launch-time preload re-sets the badge right after this call.
@@ -1160,7 +1402,7 @@ class MainWindow(QMainWindow):
         key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
                spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
                fid.count, fid.placement, fid.edge_offset, fid.points,
-               off, self.state.rotate)
+               fid.flip_axis, off, self.state.rotate)
         if self._ds_cache is None or self._ds_cache[0] != key:
             self._ds_cache = (key, preview_layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
@@ -1180,7 +1422,7 @@ class MainWindow(QMainWindow):
         key = (str(self.state.gerber_dir), reg, spec.mode, spec.placement,
                spec.pitch_x, spec.grid_pin, spec.clearance_large, spec.clearance_small,
                fid.count, fid.placement, fid.edge_offset, fid.points,
-               off, self.state.rotate)
+               fid.flip_axis, off, self.state.rotate)
         if self._ds_mcache is None or self._ds_mcache[0] != key:
             self._ds_mcache = (key, layout_double_sided(
                 self.state.gerber_dir, dowels=spec, offset=off,
@@ -1199,14 +1441,18 @@ class MainWindow(QMainWindow):
     def _ds_side_toolpaths(self, op, side):
         """Machine-frame toolpaths for one side of a double-sided board — exactly
         what that side's exported job cuts, so a rework box clips against the real
-        paths and the result runs in the same frame as the full job."""
+        paths and the result runs in the same frame as the full job. The Top side
+        is warped by the measured fiducial fit when one exists, matching the
+        as-placed export — so top-side rework and run tracking follow the board's
+        REAL position, not the nominal flip."""
         from gerber2rml.engine.traces import isolate
         from gerber2rml.engine.cutout import cut_outline
         mlay = self._machine_layout()
         if op == "cutout":
             return cut_outline(mlay.outline, self.state.cutout)
         if side == "Top":
-            return isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline)
+            return self._top_fit_paths(
+                isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline))
         return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
 
     def _on_advanced_toggled(self, on):
@@ -1236,6 +1482,73 @@ class MainWindow(QMainWindow):
         self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
         self._update_ds_controls()
 
+    def _on_spine_changed(self, row):
+        """A runplan step was clicked: route to its page and pre-select the op
+        tab / double-sided side it works in. Pure navigation — never blocks."""
+        if not (0 <= row < len(self._SPINE)):
+            return
+        _label, page, op_idx, ds_view = self._SPINE[row]
+        self.stacked_widget.setCurrentIndex(page)
+        if op_idx is not None:
+            self.tabs.setCurrentIndex(op_idx)
+        if ds_view is not None and self.double_sided_chk.isChecked():
+            self.view_combo.setCurrentText(ds_view)
+
+    def _goto_page(self, page):
+        """Select the first spine step that lives on stacked ``page`` (tour +
+        programmatic navigation; rows no longer equal page indexes)."""
+        for row, (_l, p, _o, _v) in enumerate(self._SPINE):
+            if p == page:
+                self.sidebar.setCurrentRow(row)
+                return
+        self.stacked_widget.setCurrentIndex(page)
+
+    def _travel_check(self, toolpaths):
+        """Compare toolpath XY extents against the machine bed. Returns None
+        when everything is reachable, else a human suggestion of how far to
+        slide the board (the 2026-07-03 lesson: a crooked fiducial flip can
+        push a job partly outside the machine's travel while every fiducial
+        still measures fine)."""
+        bed = BACKENDS[self.state.machine].bed
+        if not bed or not toolpaths:
+            return None
+        xs = [m.x for tp in toolpaths for m in tp]
+        ys = [m.y for tp in toolpaths for m in tp]
+        over = []
+        if min(xs) < 0:
+            over.append(f"slide the board {abs(min(xs)):.1f} mm RIGHT")
+        if max(xs) > bed[0]:
+            over.append(f"slide the board {max(xs) - bed[0]:.1f} mm LEFT")
+        if min(ys) < 0:
+            over.append(f"slide the board {abs(min(ys)):.1f} mm BACK")
+        if max(ys) > bed[1]:
+            over.append(f"slide the board {max(ys) - bed[1]:.1f} mm FORWARD")
+        if not over:
+            return None
+        return (f"Job spans X {min(xs):.1f}..{max(xs):.1f}, "
+                f"Y {min(ys):.1f}..{max(ys):.1f} mm but the bed is "
+                f"{bed[0]:.1f} x {bed[1]:.1f} mm - " + " and ".join(over)
+                + ", then re-capture the fiducials and re-probe.")
+
+    # ---- GUI 2.0 phase 3: single frame resolver ---------------------------
+    def _resolve_frame(self):
+        """The ONE place that decides what frame the canvas shows.
+
+        Returns ``(mode, side)``: mode is ``"bed"`` (machine coordinates, as
+        cut/as placed — where jog, snap, rework and the probe grid are
+        truthful) or ``"xray"`` (un-mirrored design inspection); ``side`` is
+        ``"Bottom"``/``"Top"`` for double-sided bed views, else ``None``.
+
+        Phase-3 seam: initially derived from the legacy controls
+        (double_sided_chk + view_combo), so behaviour is unchanged while the
+        branch points migrate onto this. The frame_switch control replaces
+        the derivation in a later step.
+        """
+        if not self.double_sided_chk.isChecked():
+            return ("bed", None)
+        side = self._ds_side()
+        return ("bed", side) if side is not None else ("xray", None)
+
     _FID_PLACEMENTS = ("onboard", "waste", "manual")
 
     def _fiducial_spec_from_ui(self):
@@ -1246,6 +1559,8 @@ class MainWindow(QMainWindow):
             placement=placement,
             edge_offset=self.fid_offset_spin.value(),
             allow_scale=self.fid_scale_chk.isChecked(),
+            flip_axis=("horizontal" if self.fid_flip_combo.currentIndex() == 1
+                       else "vertical"),
             points=(tuple(tuple(p) for p in self._fid_points)
                     if placement == "manual" else ()))
 
@@ -1341,6 +1656,28 @@ class MainWindow(QMainWindow):
             return None, None
         return self._poly_xy(b.outline), b.holes
 
+    # ---- measured top-side placement (fiducial fit) ------------------------
+    def _top_fit_paths(self, paths):
+        """Warp toolpaths by the measured top placement (identity when unset)."""
+        if self._top_fit is None:
+            return paths
+        from gerber2rml.engine.fiducial import apply_to_toolpaths
+        return apply_to_toolpaths(paths, self._top_fit)
+
+    def _top_fit_holes(self, holes):
+        if self._top_fit is None:
+            return holes
+        return [(*self._top_fit.apply(x, y), d) for (x, y, d) in holes]
+
+    def _top_fit_geom(self, g):
+        if self._top_fit is None or g is None:
+            return g
+        from shapely.affinity import affine_transform
+        t = self._top_fit
+        c, s = math.cos(t.theta), math.sin(t.theta)
+        return affine_transform(g, [t.scale * c, -t.scale * s,
+                                    t.scale * s, t.scale * c, t.tx, t.ty])
+
     def _preview_double_sided(self, op):
         """Show the registered board with the two dowel/alignment holes so the
         operator can check the flip registration and pin placement before
@@ -1348,9 +1685,9 @@ class MainWindow(QMainWindow):
         overlaid; the dowels are always shown. Board holes are shown on the
         drill tab only."""
         from gerber2rml.engine.traces import isolate
-        side = self._ds_side()
+        mode, side = self._resolve_frame()
         self.preview.set_pin_drag(False)   # re-enabled by the X-ray branch below
-        if side is not None and op == "drill":
+        if mode == "bed" and op == "drill":
             # Machine-frame drill view: the holes exactly as they are cut on the
             # bed (bottom-up mirror), so click-to-jog lands ON a physical hole.
             # The X-ray drill view shows the un-mirrored design frame, where the
@@ -1359,29 +1696,46 @@ class MainWindow(QMainWindow):
             from gerber2rml.doublesided import reflect_holes
             mlay = self._machine_layout()
             if side == "Top":
-                # after the flip the holes appear reflected into the top frame
-                holes = reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)
-                outline, copper = mlay.top_outline, (mlay.top_copper, "#ff55ff")
+                # after the flip the holes appear reflected into the top frame;
+                # a measured fiducial fit then places them where the board
+                # REALLY sits (AS PLACED), so jog-to-hole is physically true.
+                # Pins reflect too — dowels sit ON the axis so it never showed,
+                # but manual fiducials are asymmetric and MUST be reflected
+                # before the fit or they render mirrored off the board.
+                holes = self._top_fit_holes(
+                    reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos))
+                outline = self._top_fit_geom(mlay.top_outline)
+                copper = (self._top_fit_geom(mlay.top_copper), "#ff55ff")
+                pins = self._top_fit_holes(
+                    reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos))
             else:
                 holes = mlay.holes
                 outline, copper = mlay.outline, (mlay.bottom_copper, "#00ffff")
+                pins = mlay.align_holes
             cuts, rapids = toolpath_segments(self._drill_toolpaths(holes))
             self.preview.set_board_outline(self._poly_xy(outline))
             self.preview.show_segments(cuts, rapids, holes=holes,
-                                       pins=mlay.align_holes, copper=[copper])
+                                       pins=pins, copper=[copper])
             return
-        if side is not None and op != "drill":
+        if mode == "bed" and op != "drill":
             # Single side: show it in the MACHINE frame (as actually cut) so a
             # rework box maps to real toolpath coordinates. Keep the channel
-            # contract: Bottom -> bottom cuts, Top -> top cuts.
+            # contract: Bottom -> bottom cuts, Top -> top cuts. The Top side is
+            # additionally warped by the measured fiducial fit when one exists
+            # (the toolpaths come pre-warped from _ds_side_toolpaths).
             mlay = self._machine_layout()
             cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
-            outline = mlay.top_outline if side == "Top" else mlay.outline
-            self.preview.set_board_outline(self._poly_xy(outline))
             if side == "Top":
-                self.preview.show_segments([], [], top_cuts=cuts, pins=mlay.align_holes,
-                                           copper=[(mlay.top_copper, "#ff55ff")])
+                from gerber2rml.doublesided import reflect_holes
+                self.preview.set_board_outline(
+                    self._poly_xy(self._top_fit_geom(mlay.top_outline)))
+                self.preview.show_segments(
+                    [], [], top_cuts=cuts,
+                    pins=self._top_fit_holes(
+                        reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos)),
+                    copper=[(self._top_fit_geom(mlay.top_copper), "#ff55ff")])
             else:
+                self.preview.set_board_outline(self._poly_xy(mlay.outline))
                 self.preview.show_segments(cuts, rapids, pins=mlay.align_holes,
                                            copper=[(mlay.bottom_copper, "#00ffff")])
             return
@@ -1444,19 +1798,21 @@ class MainWindow(QMainWindow):
         AMBER, GREEN = "#ffb000", "#33cc88"
         ds = self.double_sided_chk.isChecked()
         # Mirror + preview-frame are single-sided controls; in double-sided mode
-        # the View selector (Both/Bottom/Top) owns the frame, so grey these out
-        # rather than let them look like they do something.
+        # the frame resolver owns the frame, so grey these out rather than let
+        # them look like they do something.
         self.mirror_chk.setEnabled(not ds)
+        mode, side = self._resolve_frame()
         if ds:
             self.frame_combo.setEnabled(False)
-            side = self._ds_side()
-            if side == "Bottom":
-                self.preview.set_frame("AS MILLED  ·  bottom (mirrored)", AMBER)
-            elif side == "Top":
-                self.preview.set_frame("AS MILLED  ·  top (reflected)", AMBER)
-            else:
+            if mode == "xray":
                 self.preview.set_frame(
                     "AS DESIGNED  ·  X-ray, both layers register", GREEN)
+            elif side == "Bottom":
+                self.preview.set_frame("AS MILLED  ·  bottom (mirrored)", AMBER)
+            elif self._top_fit is not None:
+                self.preview.set_frame("AS PLACED  ·  top (fiducial fit)", GREEN)
+            else:
+                self.preview.set_frame("AS MILLED  ·  top (reflected)", AMBER)
             return
         mirror = self.mirror_chk.isChecked()
         self.frame_combo.setEnabled(mirror)   # only meaningful when mirroring
@@ -1469,8 +1825,6 @@ class MainWindow(QMainWindow):
             self.preview.set_frame("AS MILLED  ·  mirrored (bottom-up)", AMBER)
 
     def generate_preview(self):
-        # keep the rework export button in sync with the active tab / mode
-        self.export_sel_btn.setEnabled(self._rework_export_ok())
         if self.state.board is None:
             self.preview.set_estimate("")
             return
@@ -1522,14 +1876,30 @@ class MainWindow(QMainWindow):
         self.preview.set_estimate(self._est_text(tps, job))
         if op == "traces":
             from gerber2rml.analysis import find_narrow_gaps
+            from gerber2rml.engine.drc import isolation_bridges
             gaps = find_narrow_gaps(self.state.board.copper,
                                     self.state.board.outline,
                                     self.state.trace.effective_diameter())
-            if not gaps.is_empty:
+            # narrow slivers won't be cleared; SEPARATE nets closer than the
+            # bit are worse — guaranteed electrical shorts. Mark + count them.
+            shorts = isolation_bridges(self.state.board.copper,
+                                       self.state.trace.effective_diameter())
+            if shorts:
+                self.preview.show_shorts(shorts)
+            if shorts:
+                self.statusBar().showMessage(
+                    f"DRC: {len(shorts)} spot(s) where separate nets sit closer "
+                    f"than the bit (worst {shorts[0]['gap']:.2f} mm, marked X) — "
+                    f"these WILL short; use a smaller bit or edit the layout"
+                    + est, 12000)
+                gap_warning = True
+            elif not gaps.is_empty:
                 self.preview.show_gaps(gaps)
                 self.statusBar().showMessage(
                     "Warning: copper gaps too narrow to isolate (shown red)" + est, 8000)
                 gap_warning = True
+            if shorts and not gaps.is_empty:
+                self.preview.show_gaps(gaps)
         if not gap_warning:
             self.statusBar().showMessage(
                 f"Preview updated in {time.time() - t0:.2f}s{est}", 5000)
@@ -1622,10 +1992,14 @@ class MainWindow(QMainWindow):
         if self.state.board is None:
             return None
         if self.double_sided_chk.isChecked():
-            side = self._ds_side()
-            if side is not None:
+            mode, side = self._resolve_frame()
+            if mode == "bed":
                 mlay = self._machine_layout()
-                return mlay.top_outline if side == "Top" else mlay.outline
+                if side == "Top":
+                    # AS PLACED: the probe grid must land on the board where it
+                    # really sits (a crooked flip can shift it by many mm)
+                    return self._top_fit_geom(mlay.top_outline)
+                return mlay.outline
             return self._double_sided_layout().outline
         return self.state.board.outline
 
@@ -1702,13 +2076,97 @@ class MainWindow(QMainWindow):
                 pass                              # unmeasured point (interpolated)
         return xy, xyz
 
+    def _on_mesh_check(self):
+        """Sanity-check the measured mesh: outliers, depth advice, refinement."""
+        from gerber2rml.engine.leveling import (flag_outliers, recommend_depth,
+                                                suggest_refinement_rows)
+        _xy, xyz = self._table_points()
+        if len(xyz) < 5:
+            QMessageBox.information(self, "Mesh check",
+                                    "Probe (or enter) at least 5 points first.")
+            return
+        nx, ny = self.level_nx_spin.value(), self.level_ny_spin.value()
+        flags = flag_outliers(xyz)
+        rec = recommend_depth(xyz, nx, ny)
+        sug = suggest_refinement_rows(xyz, nx, ny)
+        lines = []
+        if flags:
+            lines.append("SUSPICIOUS POINTS (no smooth board surface explains them):")
+            for k, r in flags[:5]:
+                x, y, z = xyz[k]
+                lines.append(f"  X{x:.1f} Y{y:.1f}: dz {z:+.3f} sits "
+                             f"{r * 1000:.0f} um off the fit — re-probe it")
+            lines.append("")
+        else:
+            lines.append("No single-point outliers vs a smooth surface.")
+            lines.append("")
+        lines.append("DEPTH: " + rec["detail"])
+        try:
+            cur = float(self.forms["traces"].value().cut_depth)
+            if rec["depth"] > cur + 1e-9:
+                lines.append(f"  Current trace cut_depth is {cur:.2f} mm — "
+                             f"consider raising it to {rec['depth']:.2f} mm.")
+        except Exception:
+            pass
+        if sug["rows"] or sug["cols"]:
+            lines.append("")
+            lines.append("GRID TOO COARSE:")
+            if sug["rows"]:
+                lines.append("  surface jumps >80 um between probe rows — add "
+                             "row(s) at y = "
+                             + ", ".join(f"{y:.1f}" for y in sug["rows"]))
+            if sug["cols"]:
+                lines.append("  ...and between columns — add column(s) at x = "
+                             + ", ".join(f"{x:.1f}" for x in sug["cols"]))
+        msg = "\n".join(lines)
+        if sug["rows"]:
+            box = QMessageBox(QMessageBox.Information, "Mesh check", msg,
+                              QMessageBox.Close, self)
+            ins = box.addButton("Insert suggested row(s)", QMessageBox.AcceptRole)
+            box.exec()
+            if box.clickedButton() is ins:
+                self._insert_probe_rows(sug["rows"])
+        else:
+            QMessageBox.information(self, "Mesh check", msg)
+
+    def _insert_probe_rows(self, new_ys):
+        """Insert full probe rows at the given y values (blank Z), keeping the
+        table row-major and the grid cartesian — bilinear stays available, and
+        'Probe over SPI - Resume' fills exactly the new points."""
+        _xy, _xyz = self._table_points()
+        rows = []
+        for r in range(self.level_table.rowCount()):
+            xi, yi, zi = (self.level_table.item(r, c) for c in range(3))
+            if xi is None or yi is None:
+                continue
+            rows.append((float(xi.text()), float(yi.text()),
+                         zi.text().strip() if zi else ""))
+        xs = sorted({round(x, 3) for x, _y, _z in rows})
+        for y in new_ys:
+            for x in xs:
+                rows.append((x, float(y), ""))
+        rows.sort(key=lambda t: (t[1], t[0]))       # row-major, bottom-up
+        self.level_table.setRowCount(len(rows))
+        for r, (x, y, z) in enumerate(rows):
+            self.level_table.setItem(r, 0, QTableWidgetItem(f"{x:.3f}"))
+            self.level_table.setItem(r, 1, QTableWidgetItem(f"{y:.3f}"))
+            self.level_table.setItem(r, 2, QTableWidgetItem(z))
+        ny = len({round(y, 3) for _x, y, _z in rows})
+        self.level_ny_spin.blockSignals(True)
+        self.level_ny_spin.setValue(ny)
+        self.level_ny_spin.blockSignals(False)
+        self._update_grid_overlay()
+        self.statusBar().showMessage(
+            f"Inserted {len(new_ys)} probe row(s) — run 'Probe over SPI' and "
+            f"choose Resume to measure only the new points", 12000)
+
     def _on_export_probe_files(self):
         if not self.level_table.rowCount():
             self._on_build_level_grid()
         xy, _xyz = self._table_points()
         if not xy:
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if not out:
             return
         from gerber2rml.engine.leveling import write_probe_files
@@ -1723,10 +2181,13 @@ class MainWindow(QMainWindow):
             return
         from pathlib import Path
         default = f"{self.state.name or 'board'}_heightmap.csv"
-        path, _ = QFileDialog.getSaveFileName(self, "Save height map", default,
-                                              "CSV (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save height map",
+            str(Path(self._dlg_dir("heightmap", "sessions")) / default),
+            "CSV (*.csv)")
         if not path:
             return
+        self._dlg_remember("heightmap", path)
         lines = ["x_mm,y_mm,dz_mm"]
         for r in range(self.level_table.rowCount()):
             vals = []
@@ -1740,10 +2201,12 @@ class MainWindow(QMainWindow):
     def _on_load_level_grid(self):
         """Load a probe grid (x_mm, y_mm, dz_mm) CSV back into the table — e.g. one
         saved with 'Save CSV' before an update. Infers nx/ny from the points."""
-        path, _ = QFileDialog.getOpenFileName(self, "Load height map CSV", "",
-                                              "CSV (*.csv)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load height map CSV",
+            self._dlg_dir("heightmap", "sessions"), "CSV (*.csv)")
         if not path:
             return
+        self._dlg_remember("heightmap", path)
         try:
             text = Path(path).read_text(encoding="utf-8")
         except Exception as e:
@@ -1798,11 +2261,14 @@ class MainWindow(QMainWindow):
         self._dro = _DROPoller(port)
         self._dro.position.connect(self._on_position)
         self._dro.touch_done.connect(self._on_touch_done)
+        self._dro.zero_done.connect(self._on_zero_done)
         self._dro.failed.connect(self._on_dro_failed)
         self._dro.start()
         self.connect_btn.setText("Disconnect")
         self.jog_chk.setEnabled(True)
         self.zero_btn.setEnabled(True)
+        self.machine_zero_btn.setEnabled(True)
+        self.stream_btn.setEnabled(True)
         self.align_btn.setEnabled(True)
         if self._sim_window is not None:
             self._sim_window.set_live_enabled(True)
@@ -1825,6 +2291,8 @@ class MainWindow(QMainWindow):
         self.jog_chk.setEnabled(False)
         self.preview.set_jogging(False)
         self.zero_btn.setEnabled(False)
+        self.machine_zero_btn.setEnabled(False)
+        self.stream_btn.setEnabled(False)
         self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
         self.align_btn.setEnabled(False)
         self.preview.set_align_pick(False)
@@ -1866,6 +2334,14 @@ class MainWindow(QMainWindow):
         pw = getattr(self, "_probe_worker", None)
         if pw is not None and pw.isRunning():
             pw.abort()                        # ! -> firmware lifts; worker bails
+            stopped = True
+        rw = getattr(self, "_rework_probe_worker", None)
+        if rw is not None and rw.isRunning():
+            rw.abort()
+            stopped = True
+        sw = getattr(self, "_stream_worker", None)
+        if sw is not None and sw.isRunning():
+            sw.abort()                        # stream sends ! and stops
             stopped = True
         if self._dro is not None:
             self._dro.request_abort()         # ! -> firmware lifts; poller bails
@@ -2035,6 +2511,45 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Auto-started run tracking from tool motion", 4000)
 
+    _CHIP_ON = ("background:#1d3a2a; color:#6be49a; border:1px solid #2c5a40; "
+                "border-radius:9px; padding:1px 9px; font-size:11px;")
+    _CHIP_OFF = ("background:#23262c; color:#7c828c; border:1px solid #34383f; "
+                 "border-radius:9px; padding:1px 9px; font-size:11px;")
+
+    def _update_chips(self):
+        """Refresh the workflow chips (status bar, right side)."""
+        if not self._chip_labels:
+            for name in ("board", "mesh", "fit", "photo", "boxes", "link"):
+                lbl = QLabel("")
+                self._chip_labels[name] = lbl
+                self.statusBar().addPermanentWidget(lbl)
+
+        def put(name, text, on):
+            lbl = self._chip_labels[name]
+            if lbl.text() != text:
+                lbl.setText(text)
+            lbl.setStyleSheet(self._CHIP_ON if on else self._CHIP_OFF)
+
+        put("board", self.state.name if self.state.board is not None
+            else "no board", self.state.board is not None)
+        try:
+            n_mesh = len(self._table_points()[1])
+        except Exception:
+            n_mesh = 0
+        put("mesh", f"mesh {n_mesh}" if n_mesh else "mesh —",
+            n_mesh >= 3 and self.level_chk.isChecked())
+        if self._top_fit is not None:
+            import math as _m
+            put("fit", f"fit {_m.degrees(self._top_fit.theta):+.2f}°", True)
+        else:
+            put("fit", "fit —", False)
+        put("photo", "photo ✓" if self._photo_overlay else "photo —",
+            bool(self._photo_overlay))
+        n_boxes = len(self._rework_regions)
+        put("boxes", f"boxes {n_boxes}" if n_boxes else "boxes —", n_boxes > 0)
+        put("link", "link ●" if self._dro is not None else "link ○",
+            self._dro is not None)
+
     def _update_run_progress(self, x, y, z):
         self._maybe_autostart_run(x, y, z)
         if self._run_progress is None:
@@ -2094,6 +2609,98 @@ class MainWindow(QMainWindow):
         self.zero_btn.setEnabled(False)
         self.statusBar().showMessage("Probing down to the surface…")
         self._dro.request_touchoff()
+
+    def _on_stream_job(self):
+        """EXPERIMENTAL SPI streaming — dry run by default, wet run behind a
+        second explicit confirmation."""
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        self._sync_state()
+        op = self._RUN_OP[self.run_op_combo.currentText()]
+        try:
+            toolpaths = self._toolpaths_for(op)
+            if self.run_rework_chk.isChecked() and self._rework_regions:
+                toolpaths, _lv = self._rework_clip_regions(toolpaths)
+        except Exception as e:
+            QMessageBox.warning(self, "No toolpaths", f"No toolpaths for {op}: {e}")
+            return
+        n_moves = sum(len(tp) for tp in toolpaths)
+        box = QMessageBox(
+            QMessageBox.Warning, "Stream over SPI (EXPERIMENTAL)",
+            f"Stream {n_moves} moves of '{op}' over the SPI link, bypassing "
+            f"VPanel.\n\nDRY RUN traces the whole job with Z held 2 mm above "
+            f"the work origin — nothing can cut; use it to verify motion and "
+            f"calibrate timing.\n\nWET RUN cuts for real: spindle must be "
+            f"started in VPanel BY HAND first, Z zeroed on the copper, and "
+            f"the speed value validated on dry runs. The speed units are "
+            f"Roland-internal and NOT calibrated to mm/s yet.",
+            QMessageBox.Cancel, self)
+        dry = box.addButton("Dry run (safe)", QMessageBox.AcceptRole)
+        wet = box.addButton("Wet run…", QMessageBox.DestructiveRole)
+        box.exec()
+        if box.clickedButton() is dry:
+            dry_run = True
+        elif box.clickedButton() is wet:
+            if QMessageBox.question(
+                    self, "Wet run — really cut?",
+                    "Spindle running (VPanel)? Z zeroed on the copper? Dry run "
+                    "verified on THIS job?\n\nThe bit will plunge to cut depth "
+                    "on the first move.") != QMessageBox.Yes:
+                return
+            dry_run = False
+        else:
+            return
+        port = self.level_port_combo.currentText().strip() or "COM5"
+        self._dro_was_on = self._pause_dro()   # free the port for the stream
+        self.stream_btn.setEnabled(False)
+        self.statusBar().showMessage(
+            f"Streaming {n_moves} moves ({'DRY' if dry_run else 'WET'}) — "
+            f"press STOP or close the lid to abort…")
+        self._stream_worker = _StreamWorker(port, toolpaths, dry_run=dry_run)
+        self._stream_worker.progress.connect(
+            lambda i, n: self.run_bar.setValue(int(round(100 * i / max(n, 1)))))
+        self._stream_worker.done.connect(self._on_stream_done)
+        self._stream_worker.start()
+
+    def _on_stream_done(self, err):
+        self.stream_btn.setEnabled(True)
+        if self._dro_was_on:
+            self._dro_was_on = False
+            self._start_dro()
+        if err:
+            QMessageBox.warning(self, "Stream stopped", err)
+            self.statusBar().showMessage("Stream stopped — tool lifted", 10000)
+        else:
+            self.statusBar().showMessage("Stream complete", 10000)
+
+    def _on_machine_zero(self):
+        """Verified touch-off, then the firmware writes origin Z on the surface."""
+        if self._dro is None:
+            QMessageBox.warning(self, "Not connected", "Connect the machine first.")
+            return
+        if self._touching:
+            QMessageBox.warning(self, "Already touching",
+                                "The bit is already touching — lift it a few mm first.")
+            return
+        self.machine_zero_btn.setEnabled(False)
+        self.statusBar().showMessage("Zeroing origin Z on the copper…")
+        self._dro.request_zero()
+
+    def _on_zero_done(self, ok, oz):
+        self.machine_zero_btn.setEnabled(self._dro is not None)
+        if not ok:
+            QMessageBox.warning(
+                self, "Zero Z failed",
+                "No verified contact (NOTOUCH/UNSTABLE), or the firmware is v1 — "
+                "reflash hardware/srm20_spi_probe (v2) for the W command.")
+            self.statusBar().showMessage("Zero Z: failed", 6000)
+            return
+        self._z_zero = oz
+        self.statusBar().showMessage(
+            f"Origin Z written to the machine at the copper surface "
+            f"(machine Z {oz:.2f} mm). Verify VPanel G54 Z once before an NC job.",
+            12000)
 
     def _on_touch_done(self, ok, x, y, z):
         self.zero_btn.setEnabled(self._dro is not None)
@@ -2184,8 +2791,12 @@ class MainWindow(QMainWindow):
         self._probe_z0 = None
         self.level_probe_btn.setEnabled(False)
         self.statusBar().showMessage(f"Probing {len(points)} points on {port}...")
-        self._probe_worker = _ProbeWorker(port, points)
+        self._probe_drift_um = None
+        self._probe_worker = _ProbeWorker(
+            port, points, retouch_every=self.level_retouch_spin.value())
         self._probe_worker.result.connect(self._on_probe_result)
+        self._probe_worker.corrected.connect(self._on_probe_corrected)
+        self._probe_worker.drift.connect(self._on_probe_drift)
         self._probe_worker.done.connect(self._on_probe_done)
         self._probe_worker.start()
 
@@ -2200,6 +2811,16 @@ class MainWindow(QMainWindow):
             dz = (d["z"] - self._probe_z0) / 1000.0
             self.level_table.setItem(row, 2, QTableWidgetItem(f"{dz:.4f}"))
         self.statusBar().showMessage(f"Probed point {row + 1}/{self.level_table.rowCount()}")
+
+    def _on_probe_corrected(self, res):
+        """Drift-corrected final results: re-fill the table (reference resets so
+        the deviations are relative to the CORRECTED first point)."""
+        self._probe_z0 = None
+        for d in res:
+            self._on_probe_result(d)
+
+    def _on_probe_drift(self, um):
+        self._probe_drift_um = um
 
     def _on_probe_done(self, err):
         self.level_probe_btn.setEnabled(True)
@@ -2223,7 +2844,24 @@ class MainWindow(QMainWindow):
             self.level_chk.setChecked(True)     # leveling is ready to apply
             self.level_show_chk.setChecked(True)  # reveal the surface heatmap
             self._update_level_overlay()
-            self.statusBar().showMessage("Probe complete — Z column filled", 10000)
+            msg = "Probe complete — Z column filled"
+            if self._probe_drift_um is not None:
+                msg += (f" (reference drifted {self._probe_drift_um:.0f} um over "
+                        f"the run — corrected)")
+            try:
+                from gerber2rml.engine.leveling import (flag_outliers,
+                                                        suggest_refinement_rows)
+                _xy, xyz = self._table_points()
+                n_flag = len(flag_outliers(xyz))
+                n_rows = len(suggest_refinement_rows(
+                    xyz, self.level_nx_spin.value(),
+                    self.level_ny_spin.value())["rows"])
+                if n_flag or n_rows:
+                    msg += (f" — Mesh check: {n_flag} suspicious point(s), "
+                            f"{n_rows} extra row(s) suggested (click Mesh check)")
+            except Exception:
+                pass
+            self.statusBar().showMessage(msg, 15000)
         if self._dro_was_on:                    # restore the live link after probing
             self._dro_was_on = False
             self._start_dro()
@@ -2312,7 +2950,7 @@ class MainWindow(QMainWindow):
         return png
 
     def _on_load_clicked(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Gerber folder")
+        folder = self._pick_dir("gerber", "Select Gerber folder", sub="")
         if folder:
             try:
                 self.load_folder(folder)
@@ -2329,7 +2967,7 @@ class MainWindow(QMainWindow):
                 and self.state.board.copper_top.is_empty:
             QMessageBox.warning(self, "No F.Cu",
                                 "Double-sided needs front copper (F.Cu); none found in this export.")
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if out:
             try:
                 written = self.export_to(out)
@@ -2342,13 +2980,28 @@ class MainWindow(QMainWindow):
             msg = f"Exported successfully to: {out}"
             if total:
                 msg += f"  ·  est. total run ~{format_duration(total)} (see runplan)"
+            msg += self._note_tool_wear()
             self.statusBar().showMessage(msg, 12000)
+
+    def _note_tool_wear(self, toolpaths=None):
+        """Record this export's cut distance in the per-tool wear ledger and
+        return a status suffix (mileage + a WORN warning past the threshold)."""
+        try:
+            from gerber2rml.engine import toolwear
+            job = self.state.trace
+            key = f"{job.tool_type} {job.effective_diameter():.2f}mm"
+            if toolpaths is None:
+                toolpaths = self.state.toolpaths("traces")
+            toolwear.record(key, toolwear.cut_distance_mm(toolpaths))
+            return toolwear.wear_note(key)
+        except Exception:
+            return ""
 
     def _on_export_align_only(self):
         if self.state.gerber_dir is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if not out:
             return
         self._sync_state()
@@ -2390,10 +3043,44 @@ class MainWindow(QMainWindow):
                 "Probe at least 3 points on the flipped (top) surface before "
                 "exporting leveled top traces.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
+        self._sync_state()
+        # THE 2026-07-03 TRAP: this exporter used to rebuild the layout with the
+        # default dowel registration no matter what — in fiducial mode that
+        # silently dropped the measured fit AND shifted the whole job into the
+        # dowel frame (~12 mm off on a real board). Export in the frame the
+        # registration actually defines.
+        reg_kwargs = {}
+        if self._registration_mode() == "fiducial":
+            fid = self._fiducial_spec_from_ui()
+            measured = getattr(self, "_fid_measured", None)
+            if not measured and self._top_fit is not None:
+                # Setup reloaded after a restart: the raw measurements are gone
+                # but the fit survives — synthesize equivalent measured points
+                # (fitting t(nominal) against nominal returns exactly t).
+                from gerber2rml.doublesided import (layout_double_sided,
+                                                    nominal_top_fiducials)
+                lay = layout_double_sided(
+                    self.state.gerber_dir,
+                    offset=(self.state.place_x, self.state.place_y),
+                    rotate=self.state.rotate, registration="fiducial",
+                    fiducials=fid)
+                measured = [self._top_fit.apply(x, y)
+                            for (x, y) in nominal_top_fiducials(lay)]
+            if not measured:
+                QMessageBox.warning(
+                    self, "Fiducial fit required",
+                    "Registration is set to fiducial holes but no fit has been "
+                    "measured yet, so there is no frame to export the top "
+                    "traces in.\n\nRun 'Fit & export' (step 7 · Flip + align) "
+                    "first — it measures the flipped board and exports in one "
+                    "go.")
+                return
+            reg_kwargs = dict(registration="fiducial", fiducials=fid,
+                              measured_fiducials=measured,
+                              allow_scale=fid.allow_scale)
+        out = self._pick_out_dir("Select output folder (same as the job)")
         if not out:
             return
-        self._sync_state()
         from gerber2rml.doublesided import build_top_traces
         try:
             path = build_top_traces(
@@ -2401,12 +3088,14 @@ class MainWindow(QMainWindow):
                 trace=self.state.trace, dowels=self._dowel_spec(),
                 machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
-                rotate=self.state.rotate, level=level)
+                rotate=self.state.rotate, level=level, **reg_kwargs)
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
             return
         self.statusBar().showMessage(
-            f"Wrote leveled {path.name} — run it (then the cut-out)", 10000)
+            f"Wrote leveled {path.name}"
+            + (" (fiducial fit applied)" if reg_kwargs else "")
+            + " — run it (then the cut-out)", 10000)
 
     def _on_fiducial_align(self):
         """Fiducial top-side alignment: measure the flipped board's fiducials,
@@ -2426,32 +3115,73 @@ class MainWindow(QMainWindow):
             self.state.gerber_dir, offset=(self.state.place_x, self.state.place_y),
             rotate=self.state.rotate, registration="fiducial", fiducials=fid)
         nominal = nominal_top_fiducials(lay)
-        dlg = _FiducialAlignDialog(self, nominal)
+        dlg = _FiducialAlignDialog(self, nominal,
+                                   initial=getattr(self, "_fid_measured", None))
         if dlg.exec() != QDialog.Accepted:
             return
         measured = dlg.measured()
-        out = QFileDialog.getExistingDirectory(self, "Select output folder (same as the job)")
-        if not out:
-            return
-        import math
+        self._fid_measured = measured        # pre-fill the next run of this dialog
         from gerber2rml.doublesided import build_top_traces
         from gerber2rml.engine.fiducial import fit_transform, rms
+        # Fit FIRST and remember it: from here the Top views render AS PLACED
+        # (jog/snap/probe grid/rework/tracking follow the physical board) even
+        # if the export below is postponed.
         try:
             t = fit_transform(nominal[:len(measured)], measured,
                               allow_scale=fid.allow_scale)
             err = rms(t, nominal[:len(measured)], measured)
+        except Exception as e:
+            QMessageBox.critical(self, "Fit failed", str(e))
+            return
+        self._top_fit = t
+        self.generate_preview()
+        # Intelligence: immediately verify the AS PLACED top job still fits the
+        # machine's travel — BEFORE any probing time is invested.
+        warn = self._travel_check(self._ds_side_toolpaths("traces", "Top"))
+        if warn:
+            QMessageBox.warning(self, "Board partly out of reach", warn)
+        # XY comes from the fiducial fit; Z from a top-side height map when one
+        # has been probed. Exporting unleveled on a warped bed can air-cut, so
+        # make skipping it an explicit choice — the recommended path is to stop
+        # here, probe (the grid now follows the placed board), and re-run this
+        # dialog (your measurements are pre-filled).
+        level = self._level_heightmap_preview()
+        if level is None:
+            if QMessageBox.question(
+                    self, "No top-side height map",
+                    "Fit stored — the Top views now show the board AS PLACED "
+                    "and the probe grid will follow it.\n\nNo height map is "
+                    "probed yet, so the top traces would be exported "
+                    "UNLEVELED (air-cut risk on an uneven bed).\n\n"
+                    "Recommended: No — probe the top now (Build grid, Clear Z, "
+                    "Probe over SPI), then run Fit && export again (your "
+                    "measurements are kept). Export unleveled anyway?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    ) != QMessageBox.Yes:
+                self.statusBar().showMessage(
+                    "Fit stored (AS PLACED) — probe the top, then Fit & export "
+                    "again; your fiducial measurements are pre-filled", 12000)
+                return
+        out = self._pick_out_dir("Select output folder (same as the job)")
+        if not out:
+            return
+        try:
             path = build_top_traces(
                 self.state.gerber_dir, out, self.state.name,
                 trace=self.state.trace, machine=self.state.machine,
                 offset=(self.state.place_x, self.state.place_y),
                 rotate=self.state.rotate, registration="fiducial", fiducials=fid,
-                measured_fiducials=measured, allow_scale=fid.allow_scale)
+                measured_fiducials=measured, allow_scale=fid.allow_scale,
+                level=level)
         except Exception as e:
-            QMessageBox.critical(self, "Fit/export failed", str(e))
+            QMessageBox.critical(self, "Export failed", str(e))
             return
         self.statusBar().showMessage(
             f"Wrote {path.name} — fit RMS {err * 1000:.0f} um, "
-            f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}", 12000)
+            f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}"
+            + (", leveled to the top probe" if level is not None
+               else ", UNLEVELED")
+            + " — Top views show the board AS PLACED", 12000)
 
     # ---- save / load the whole setup -----------------------------------
     def _collect_setup(self):
@@ -2489,10 +3219,22 @@ class MainWindow(QMainWindow):
             "bed_bite": self.fresh_bed_spin.value(),
             "reg_method": self.regmethod_combo.currentIndex(),
             "overlay_trim": list(self._overlay_trim),
+            "top_fit": ([self._top_fit.theta, self._top_fit.scale,
+                         self._top_fit.tx, self._top_fit.ty]
+                        if self._top_fit is not None else None),
+            # raw fiducial measurements: prefill the align dialog and feed the
+            # leveling-panel exporter across an app restart
+            "fid_measured": [list(p) for p in
+                             (getattr(self, "_fid_measured", None) or [])],
+            "photo_overlay": self._photo_overlay,
+            "rework": [{"bbox": list(r["bbox"]), "depth": r["depth"],
+                        "follow": r.get("follow", True)}
+                       for r in self._rework_regions],
             "fid": {"count": self.fid_count_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
                     "scale": self.fid_scale_chk.isChecked(),
+                    "flip": self.fid_flip_combo.currentIndex(),
                     "points": [list(p) for p in self._fid_points]},
             "stock": {"w": self.stock_w_spin.value(), "h": self.stock_h_spin.value(),
                       "x": self.stock_x_spin.value(), "y": self.stock_y_spin.value(),
@@ -2501,9 +3243,11 @@ class MainWindow(QMainWindow):
                       "apply": self.level_chk.isChecked(), "rows": rows},
         }
 
-    def _apply_setup(self, d):
+    def _apply_setup(self, d, session_dir=None):
         """Restore a setup dict from :meth:`_collect_setup`. Tolerant of missing
-        keys and renamed/removed job fields, so a setup survives a code update."""
+        keys and renamed/removed job fields, so a setup survives a code update.
+        ``session_dir`` (where the setup file lives) resolves the session-local
+        photo copy when the original photo path is gone."""
         import dataclasses
         from gerber2rml.config import TraceJob, DrillJob, CutoutJob
 
@@ -2559,11 +3303,19 @@ class MainWindow(QMainWindow):
         _combo(self.regmethod_combo, d.get("reg_method", 0))
         trim = d.get("overlay_trim", [0.0, 0.0])
         self._overlay_trim = (float(trim[0]), float(trim[1]))
+        tf = d.get("top_fit")
+        if tf:
+            from gerber2rml.engine.fiducial import Transform
+            self._top_fit = Transform(*[float(v) for v in tf])
+        fm = d.get("fid_measured")
+        if fm:
+            self._fid_measured = [(float(x), float(y)) for x, y in fm]
         fd = d.get("fid", {})
         _spin(self.fid_count_spin, fd.get("count", 4))
         _combo(self.fid_place_combo, fd.get("place", 0))
         _spin(self.fid_offset_spin, fd.get("offset", 4.0))
         _chk(self.fid_scale_chk, fd.get("scale", False))
+        _combo(self.fid_flip_combo, fd.get("flip", 0))
         self._fid_points = [list(p) for p in fd.get("points", [])]
         self.fid_offset_spin.setEnabled(self.fid_place_combo.currentIndex() != 2)
         _combo(self.view_combo, d.get("view", 0))
@@ -2597,28 +3349,115 @@ class MainWindow(QMainWindow):
         self._update_level_overlay()
         if loaded:
             self.generate_preview()
+        # Rework boxes: restore with their per-box depths (colors reassigned).
+        self._rework_regions = []
+        for r in d.get("rework") or []:
+            try:
+                color = self._REWORK_COLORS[len(self._rework_regions)
+                                            % len(self._REWORK_COLORS)]
+                self._rework_regions.append({
+                    "bbox": tuple(float(v) for v in r["bbox"]),
+                    "depth": float(r.get("depth", 0.15)),
+                    "follow": bool(r.get("follow", True)),
+                    "color": color})
+            except Exception:
+                pass                  # one bad row never blocks the load
+        self._refresh_rework()
+        # Photo overlay: re-decode + re-fit from the saved anchor pairs. The
+        # original path is tried first, then the session-local copy written
+        # by Save setup (so setups survive the photo moving or being deleted).
+        po = d.get("photo_overlay")
+        if loaded and po:
+            src = po.get("path")
+            if not (src and Path(src).exists()):
+                cp = po.get("photo_copy")
+                src = (str(Path(session_dir) / cp)
+                       if cp and session_dir and (Path(session_dir) / cp).exists()
+                       else None)
+            if src:
+                try:
+                    img = self._decode_photo(src)
+                    self.photo_alpha_slider.setValue(
+                        int(round(float(po.get("alpha", 0.55)) * 100)))
+                    self.trace_dim_slider.setValue(
+                        int(round(float(po.get("trace_alpha", 1.0)) * 100)))
+                    self._apply_photo_overlay(img, po["photo_pts"],
+                                              po["machine_pts"], src)
+                    self._photo_overlay["photo_copy"] = po.get("photo_copy")
+                except Exception:
+                    pass              # a stale/moved photo never blocks a load
         self.statusBar().showMessage(
             "Setup loaded" if loaded else
             "Setup loaded (board not found — load the Gerber folder manually)", 10000)
 
+    # ---- file-dialog helpers: start where the user last was ---------------
+    def _dlg_dir(self, key, sub="exports"):
+        """Start directory for a dialog: last-used for ``key``, else the
+        workspace subfolder ``sub`` (Documents/SRM-CAM/<sub>)."""
+        try:
+            from gerber2rml.gui.workspace import remembered_dir
+            return remembered_dir(key, sub)
+        except Exception:
+            return ""
+
+    def _dlg_remember(self, key, path):
+        try:
+            from gerber2rml.gui.workspace import remember_dir
+            remember_dir(key, path)
+        except Exception:
+            pass
+
+    def _pick_dir(self, key, title, sub="exports"):
+        d = QFileDialog.getExistingDirectory(self, title, self._dlg_dir(key, sub))
+        if d:
+            self._dlg_remember(key, d)
+        return d
+
+    def _pick_out_dir(self, title="Select output folder"):
+        return self._pick_dir("out", title)
+
     def _on_save_setup(self):
-        import json
         default = f"{self.name_edit.text() or 'board'}_setup.json"
-        path, _ = QFileDialog.getSaveFileName(self, "Save setup", default,
-                                              "Setup (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save setup",
+            str(Path(self._dlg_dir("session", "sessions")) / default),
+            "Setup (*.json)")
         if not path:
             return
         try:
-            Path(path).write_text(json.dumps(self._collect_setup(), indent=2),
-                                  encoding="utf-8")
+            self._write_setup(Path(path))
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
             return
+        self._dlg_remember("session", path)
         self.statusBar().showMessage(f"Saved setup to {Path(path).name}", 8000)
+
+    def _write_setup(self, path):
+        """Write the setup JSON to ``path``. If a photo overlay is active and
+        its source file still exists, drop a copy next to the session so the
+        setup remains self-contained even if the original photo moves."""
+        import json
+        import shutil
+        d = self._collect_setup()
+        po = d.get("photo_overlay")
+        if po and po.get("path") and Path(po["path"]).is_file():
+            src = Path(po["path"])
+            copy_name = f"{path.stem}_photo{src.suffix.lower()}"
+            dst = path.parent / copy_name
+            try:
+                if src.resolve() != dst.resolve():
+                    shutil.copy2(src, dst)
+                po["photo_copy"] = copy_name
+                self._photo_overlay["photo_copy"] = copy_name
+            except Exception:
+                pass                    # photo copy is best-effort, never blocks
+        path.write_text(json.dumps(d, indent=2), encoding="utf-8")
 
     def _on_load_setup(self):
         import json
-        path, _ = QFileDialog.getOpenFileName(self, "Load setup", "", "Setup (*.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load setup", self._dlg_dir("session", "sessions"),
+            "Setup (*.json)")
         if not path:
             return
         try:
@@ -2626,7 +3465,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load failed", str(e))
             return
-        self._apply_setup(d)
+        self._dlg_remember("session", path)
+        self._apply_setup(d, session_dir=Path(path).parent)
 
     def _diag_bounds(self):
         """Placed job bounds (board + dowels) in the cut/machine frame, for the
@@ -2683,7 +3523,7 @@ class MainWindow(QMainWindow):
         if self.state.board is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if out:
             try:
                 png = self.export_image_to(out)
@@ -2765,10 +3605,11 @@ class MainWindow(QMainWindow):
         from pathlib import Path
         from gerber2rml.engine.gcode_parse import parse_file
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open toolpath file to simulate", "",
+            self, "Open toolpath file to simulate", self._dlg_dir("out"),
             "Toolpath files (*.nc *.rml *.gcode *.g);;All files (*)")
         if not path:
             return
+        self._dlg_remember("out", path)
         try:
             toolpaths = parse_file(path)
         except Exception as e:
@@ -2947,18 +3788,6 @@ class MainWindow(QMainWindow):
         self.place_y_spin.setValue(self.place_y_spin.value() + (ty - cy))
         self.statusBar().showMessage("Design centred on the copper stock", 5000)
 
-    def _rework_export_ok(self):
-        """True when there is at least one region and the current op/side is
-        reworkable (traces/cutout, single side for double-sided)."""
-        if not self._rework_regions:
-            return False
-        op = _OPS[self.tabs.currentIndex()]
-        if op == "drill":
-            return False
-        if self.double_sided_chk.isChecked() and self._ds_side() is None:
-            return False
-        return True
-
     def _on_region_added(self, bbox):
         """A drag committed a box -> add a region at the current defaults."""
         color = self._REWORK_COLORS[len(self._rework_regions) % len(self._REWORK_COLORS)]
@@ -2970,6 +3799,345 @@ class MainWindow(QMainWindow):
     def _clear_rework(self):
         self._rework_regions = []
         self._refresh_rework()
+
+    # ---- rework photo overlay -------------------------------------------
+    @staticmethod
+    def _decode_photo(path, max_dim=2400):
+        """Image file -> HxWx4 uint8 RGBA. Downscaled so anchor clicks stay
+        snappy; the SAME array is used for clicking and warping, so the
+        homography is consistent whatever the original resolution."""
+        from PySide6.QtGui import QImage
+        import numpy as np
+        img = QImage(str(path))
+        if img.isNull():
+            raise ValueError(f"could not read image: {path}")
+        if max(img.width(), img.height()) > max_dim:
+            img = img.scaled(max_dim, max_dim, Qt.KeepAspectRatio,
+                             Qt.SmoothTransformation)
+        img = img.convertToFormat(QImage.Format_RGBA8888)
+        h, w, bpl = img.height(), img.width(), img.bytesPerLine()
+        buf = np.frombuffer(img.constBits(), np.uint8, count=h * bpl)
+        return buf.reshape(h, bpl)[:, :w * 4].reshape(h, w, 4).copy()
+
+    def _photo_anchor_holes(self):
+        """The 4 corner-most displayed holes as (label, (x, y)) anchors — in
+        the SAME frame the preview draws (AS PLACED on a fitted top side), so
+        the warped photo lines up with what you see."""
+        holes = [(x, y) for (x, y, _d) in (self.preview._full_holes or [])]
+        holes += [(x, y) for (x, y, _d) in (self.preview._pins or [])]
+        if len(holes) < 4:
+            return None
+        corners = [max(holes, key=lambda p: -p[0] - p[1]),   # bottom-left
+                   max(holes, key=lambda p: p[0] - p[1]),    # bottom-right
+                   max(holes, key=lambda p: p[0] + p[1]),    # top-right
+                   max(holes, key=lambda p: -p[0] + p[1])]   # top-left
+        if len(set(corners)) < 4:
+            return None
+        names = ("bottom-left", "bottom-right", "top-right", "top-left")
+        return list(zip(names, corners))
+
+    def _on_load_photo(self):
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        anchors = self._photo_anchor_holes()
+        if not anchors:
+            QMessageBox.warning(
+                self, "No anchors",
+                "Need at least 4 distinct drilled holes in the preview to "
+                "anchor a photo (show the drill or traces preview first).")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Board photo", self._dlg_dir("photo", "photos"),
+            "Images (*.jpg *.jpeg *.png *.bmp)")
+        if not path:
+            return
+        self._dlg_remember("photo", path)
+        try:
+            img = self._decode_photo(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Photo failed", str(e))
+            return
+        from gerber2rml.gui.photodlg import PhotoAnchorDialog
+        dlg = PhotoAnchorDialog(self, img, anchors)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            worst = self._apply_photo_overlay(
+                img, dlg.photo_points(), [p for _n, p in anchors], path)
+        except Exception as e:
+            QMessageBox.critical(self, "Fit failed", str(e))
+            return
+        msg = f"Photo aligned — worst anchor residual {worst * 1000:.0f} um"
+        if worst > 0.8:
+            QMessageBox.warning(
+                self, "Rough fit",
+                msg + ".\n\nA residual that big usually means one click "
+                "missed its hole. Load the photo again and re-click "
+                "(right-click undoes a click).")
+        self.statusBar().showMessage(msg, 8000)
+
+    def _apply_photo_overlay(self, img, photo_pts, machine_pts, path=""):
+        """Fit photo->machine homography, warp, and show under the preview.
+        Returns the worst anchor residual (mm). Factored out of the dialog
+        flow so a restore (or a test) can re-apply saved anchor pairs."""
+        from gerber2rml.engine.photofit import (fit_homography, residuals,
+                                                warp_photo)
+        H = fit_homography(photo_pts, machine_pts)
+        res = residuals(H, photo_pts, machine_pts)
+        db = self.preview._design_bounds()
+        if db is None:
+            bed = BACKENDS[self.state.machine].bed or (203.2, 152.4)
+            db = (0.0, 0.0, bed[0], bed[1])
+        m = 5.0
+        rgba, extent = warp_photo(img, H, (db[0] - m, db[1] - m,
+                                           db[2] + m, db[3] + m))
+        alpha = self.photo_alpha_slider.value() / 100.0
+        self.preview.set_photo(rgba, extent, alpha)
+        self._photo_overlay = {"path": str(path),
+                               "photo_pts": [list(p) for p in photo_pts],
+                               "machine_pts": [list(p) for p in machine_pts],
+                               "alpha": alpha,
+                               "trace_alpha": self.trace_dim_slider.value() / 100.0}
+        return float(res.max())
+
+    def _on_clear_photo(self):
+        self._photo_overlay = None
+        self.preview.set_photo(None)
+        self.trace_dim_slider.setValue(100)   # nothing to see through anymore
+
+    def _on_photo_alpha(self, v):
+        if self._photo_overlay:
+            self._photo_overlay["alpha"] = v / 100.0
+        self.preview.set_photo_alpha(v / 100.0)
+
+    def _on_trace_dim(self, v):
+        if self._photo_overlay:
+            self._photo_overlay["trace_alpha"] = v / 100.0
+        self.preview.set_trace_alpha(v / 100.0)
+
+    def _on_feed_card(self):
+        """Feed-ladder card: export the NC, or score a photo of the cut card."""
+        box = QMessageBox(QMessageBox.Question, "Feed card",
+                          "The feed-ladder card mills the same isolation "
+                          "pattern at 4/6/8/10/12/15 mm/s on scrap (needs "
+                          "~50 x 40 mm from X18.6 Y18.6). Cut it, photograph "
+                          "it, and Score recommends the fastest clean feed.",
+                          QMessageBox.Cancel, self)
+        exp = box.addButton("Export card NC…", QMessageBox.AcceptRole)
+        sco = box.addButton("Score card photo…", QMessageBox.ActionRole)
+        box.exec()
+        if box.clickedButton() is exp:
+            self._export_feed_card()
+        elif box.clickedButton() is sco:
+            self._score_feed_card()
+
+    def _export_feed_card(self):
+        from gerber2rml.engine.testcard import render_feed_ladder
+        out = self._pick_out_dir("Select output folder for the feed card")
+        if not out:
+            return
+        try:
+            text, bbox = render_feed_ladder(plunge_feed=2.0)
+        except Exception as e:
+            QMessageBox.critical(self, "Feed card failed", str(e))
+            return
+        path = Path(out) / "feed_testcard.nc"
+        path.write_text(text)
+        self.statusBar().showMessage(
+            f"Wrote {path.name} — scrap must cover X {bbox[0]:.1f}..{bbox[2]:.1f} "
+            f"Y {bbox[1]:.1f}..{bbox[3]:.1f}, zero Z on the scrap surface", 15000)
+
+    def _score_feed_card(self):
+        from gerber2rml.engine.cutcheck import CutCheckError
+        from gerber2rml.engine.feedscore import score_feed_card
+        from gerber2rml.engine.photofit import fit_homography, warp_photo
+        from gerber2rml.engine.testcard import feed_ladder_layout
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Photo of the CUT feed card", self._dlg_dir("photo", "photos"),
+            "Images (*.jpg *.jpeg *.png *.bmp)")
+        if not path:
+            return
+        self._dlg_remember("photo", path)
+        try:
+            img = self._decode_photo(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Could not read image", str(e))
+            return
+        blocks, anchors = feed_ladder_layout()
+        from gerber2rml.gui.photodlg import PhotoAnchorDialog
+        dlg = PhotoAnchorDialog(self, img, anchors)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            H = fit_homography(dlg.photo_points(), [p for _n, p in anchors])
+            xs = [p for b in blocks for p in (b["ring"][0],)]
+            x0 = min(min(b["serpentine"][0][0] for b in blocks), min(xs)) - 4
+            x1 = max(max(p[0] for b in blocks for p in b["serpentine"]), max(xs)) + 4
+            y0 = min(b["serpentine"][0][1] for b in blocks) - 4
+            y1 = max(b["ring"][1] for b in blocks) + 8
+            rgba, extent = warp_photo(img, H, (x0, y0, x1, y1))
+            r = score_feed_card(rgba, extent, blocks)
+        except CutCheckError as e:
+            QMessageBox.warning(self, "Can't judge this photo", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Scoring failed", str(e))
+            return
+        lines = [f"{b['feed']:>5.1f} mm/s   channel cut {b['cut'] * 100:5.1f}%   "
+                 f"land intact {b['land'] * 100:5.1f}%"
+                 for b in sorted(r["blocks"], key=lambda b: b["feed"])]
+        rec = (f"\nRecommended XY feed: {r['recommended']:.0f} mm/s"
+               if r["recommended"] is not None else
+               "\nNo block is clearly clean — check the photo/lighting.")
+        QMessageBox.information(self, "Feed card score",
+                                "\n".join(lines) + "\n" + rec)
+        if r["recommended"] is not None:
+            self.statusBar().showMessage(
+                f"Feed card: use {r['recommended']:.0f} mm/s (set it in the "
+                f"traces job form)", 15000)
+
+    def _on_probe_rework_boxes(self):
+        """Probe each rework box center over SPI and deepen boxes where the
+        real surface sits higher than the mesh believed (the exact failure
+        that caused the rework in the first place)."""
+        if not self._rework_regions:
+            QMessageBox.information(self, "No boxes", "Draw rework boxes first.")
+            return
+        if self._level_heightmap_preview() is None:
+            QMessageBox.information(
+                self, "No mesh",
+                "The comparison needs the bed-leveling mesh loaded (the rework "
+                "export uses it, so probe or load it first).")
+            return
+        it0x = self.level_table.item(0, 0)
+        it0y = self.level_table.item(0, 1)
+        if it0x is None or it0y is None:
+            QMessageBox.information(self, "No reference",
+                                    "Leveling table has no reference point.")
+            return
+        x0, y0 = float(it0x.text()), float(it0y.text())
+        points = [(0, 0, 0)]
+        for i, r in enumerate(self._rework_regions):
+            bx0, by0, bx1, by1 = r["bbox"]
+            cx, cy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
+            points.append((i + 1, round((cx - x0) * 1000),
+                           round((cy - y0) * 1000)))
+        port = self.level_port_combo.currentText().strip() or "COM5"
+        if QMessageBox.question(
+                self, "Probe rework boxes",
+                f"Jog the tool ~2-3 mm above the MESH REFERENCE point "
+                f"(X{x0:.1f} Y{y0:.1f} — leveling grid point 1), spindle OFF, "
+                f"prober running.\n\nProbe the reference + "
+                f"{len(self._rework_regions)} box center(s) on {port}?"
+                ) != QMessageBox.Yes:
+            return
+        self._dro_was_on = self._pause_dro()
+        self._rework_probe_results = []
+        self.statusBar().showMessage("Probing rework box centers…")
+        self._rework_probe_worker = _ProbeWorker(port, points)
+        self._rework_probe_worker.result.connect(
+            lambda d: self._rework_probe_results.append(d))
+        self._rework_probe_worker.done.connect(self._on_rework_probe_done)
+        self._rework_probe_worker.start()
+
+    def _on_rework_probe_done(self, err):
+        if self._dro_was_on:
+            self._dro_was_on = False
+            self._start_dro()
+        if err and not err.startswith("missed:"):
+            QMessageBox.warning(self, "Probe failed", err)
+            return
+        n = self._apply_rework_probe(self._rework_probe_results)
+        if n is None:
+            return
+        adjusted, skipped = n
+        msg = (f"Rework boxes probed: {len(adjusted)} deepened to match the "
+               f"real surface" if adjusted else
+               "Rework boxes probed: mesh already matches the real surface")
+        if skipped:
+            msg += f" ({skipped} box(es) had no contact — unchanged)"
+        QMessageBox.information(self, "Probe rework boxes", msg)
+        self.statusBar().showMessage(msg, 12000)
+
+    def _apply_rework_probe(self, results, min_delta=0.005):
+        """Compare measured box-center dz against the mesh and deepen boxes
+        where the surface is HIGHER than modeled (never shallower — the goal
+        is a guaranteed through-cut). Returns (adjusted list, skipped count)."""
+        by_id = {r["id"]: r["z"] for r in results if r.get("z") is not None}
+        if 0 not in by_id:
+            QMessageBox.warning(self, "No reference",
+                                "The reference point had no contact — nothing "
+                                "was adjusted.")
+            return None
+        hmap = self._level_heightmap_preview()
+        z0 = by_id[0]
+        adjusted, skipped = [], 0
+        for i, r in enumerate(self._rework_regions):
+            zid = i + 1
+            if zid not in by_id:
+                skipped += 1
+                continue
+            bx0, by0, bx1, by1 = r["bbox"]
+            cx, cy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
+            measured = (by_id[zid] - z0) / 1000.0
+            modeled = float(hmap(cx, cy)) if hmap is not None else 0.0
+            delta = measured - modeled
+            if delta > min_delta:
+                r["depth"] = round(r["depth"] + delta, 3)
+                adjusted.append((i, delta))
+        self._refresh_rework()
+        return adjusted, skipped
+
+    def _on_detect_rework(self):
+        """Propose rework boxes from the aligned photo: channel stretches that
+        still look like copper become boxes at the current New-box depth."""
+        from gerber2rml.engine.cutcheck import CutCheckError, detect_uncut
+        if self.preview._photo is None:
+            QMessageBox.information(
+                self, "No photo",
+                "Load and align a board photo first (Photo row above).")
+            return
+        channels = [list(seg) for seg in (list(self.preview._full_cuts)
+                                          + list(self.preview._full_top_cuts))
+                    if len(seg) >= 2]
+        if not channels:
+            QMessageBox.information(
+                self, "No toolpaths",
+                "Generate the traces preview first — the detector walks its "
+                "isolation channels.")
+            return
+        # copper geometry sharpens the color reference when displayed; without
+        # it the detector samples the channel flanks (copper by construction)
+        geoms = [g for g, _c in self.preview._copper
+                 if g is not None and not getattr(g, "is_empty", True)]
+        copper = None
+        if geoms:
+            from shapely.ops import unary_union
+            copper = unary_union(geoms)
+        rgba, extent = self.preview._photo
+        bit = float(self.forms["traces"].value().bit_diameter)
+        try:
+            r = detect_uncut(rgba, extent, channels, copper, bit_d=max(bit, 0.4))
+        except CutCheckError as e:
+            QMessageBox.warning(self, "Can't judge this photo", str(e))
+            return
+        cov = f"{r['coverage'] * 100:.1f}% of {r['n_samples']} channel samples look cut"
+        if not r["boxes"]:
+            QMessageBox.information(
+                self, "Detect from photo",
+                f"No uncut copper found.\n\n{cov}.")
+            self.statusBar().showMessage(f"Photo check: clean ({cov})", 10000)
+            return
+        for b in r["boxes"]:
+            self._on_region_added(tuple(b))
+        QMessageBox.information(
+            self, "Detect from photo",
+            f"{len(r['boxes'])} suspect area(s) proposed as rework boxes "
+            f"({cov}).\n\nReview them on the preview — delete false alarms "
+            f"(glare, dust) from the table, then export the rework job.")
+        self.statusBar().showMessage(
+            f"Photo check: {len(r['boxes'])} suspect area(s) boxed ({cov})", 12000)
 
     def _delete_rework_region(self, i):
         if 0 <= i < len(self._rework_regions):
@@ -3001,7 +4169,6 @@ class MainWindow(QMainWindow):
             dl.clicked.connect(lambda _=False, i=i: self._delete_rework_region(i))
             t.setCellWidget(i, 4, dl)
         self.preview.set_rework_regions(self._rework_draw_list())
-        self.export_sel_btn.setEnabled(self._rework_export_ok())
 
     def _set_region_depth(self, i, v):
         if 0 <= i < len(self._rework_regions):
@@ -3055,7 +4222,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Empty selection",
                                     "No toolpaths fall inside the boxes.")
             return
-        out = QFileDialog.getExistingDirectory(self, "Select output folder")
+        out = self._pick_out_dir()
         if not out:
             return
         backend = BACKENDS[self.state.machine]
@@ -3072,124 +4239,126 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Wrote {path.name}: {len(self._rework_regions)} region(s), "
             f"{len(clipped)} path(s)"
-            f"{f', {n_leveled} height-map leveled' if n_leveled else ''}", 10000)
+            f"{f', {n_leveled} height-map leveled' if n_leveled else ''}"
+            f"{self._note_tool_wear(clipped)}", 10000)
 
 _STYLESHEET = """
-QWidget { color: #e4e4e6; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
-QMainWindow, QScrollArea, #settingsPanel { background: #121212; }
+QWidget { color: #dde3ea; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
+QMainWindow, QScrollArea, #settingsPanel { background: #14171c; }
 QScrollArea { border: none; }
 
 #sidebar {
-    background: #181818;
-    border-right: 1px solid #2e2e2e;
+    background: #181c22;
+    border-right: 1px solid #262c35;
     outline: none;
     padding: 10px 0px;
 }
 #sidebar::item {
     padding: 12px 20px;
-    color: #a0a0a5;
+    color: #8b94a1;
     font-size: 14px;
     font-weight: 500;
 }
 #sidebar::item:hover {
-    background: #202020;
-    color: #e4e4e6;
+    background: #1f242c;
+    color: #dde3ea;
 }
 #sidebar::item:selected {
-    background: #261c14;
-    color: #ff9800;
-    border-left: 3px solid #ff9800;
+    background: #12262b;
+    color: #4dd0e1;
+    border-left: 3px solid #4dd0e1;
 }
 
 QGroupBox {
-    background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 12px;
+    background: #1b2027; border: 1px solid #262c35; border-radius: 10px;
     margin-top: 18px; padding-top: 8px;
 }
 QGroupBox::title {
     subcontrol-origin: margin; subcontrol-position: top left;
     left: 14px; top: 4px; padding: 2px 6px;
-    color: #ff9800; font-size: 12px; font-weight: 700; text-transform: uppercase;
+    color: #8fb8c9; font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px;
 }
-QLabel { background: transparent; color: #b0b3b8; font-weight: 500; }
-#helpText { color: #ff9800; font-size: 13px; font-style: italic; margin-bottom: 4px; border: 1px solid #443210; background: #1a1510; border-radius: 6px; padding: 8px; }
+QLabel { background: transparent; color: #a5adb9; font-weight: 500; }
+#helpText { color: #8fb8c9; font-size: 13px; font-style: italic; margin-bottom: 4px; border: 1px solid #1e3a42; background: #14232a; border-radius: 6px; padding: 8px; }
 
 QPushButton {
-    background: #2a2a2a; border: 1px solid #3e3e3e; border-radius: 6px;
+    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
     padding: 8px 14px; font-weight: 500;
 }
-QPushButton:hover { background: #353535; border-color: #ffb74d; }
-QPushButton:pressed { background: #1f1f1f; }
-QPushButton:disabled { color: #555555; background: #1a1a1a; border-color: #2a2a2a; }
-QPushButton#primaryBtn { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffb74d, stop:1 #f57c00); border: none; color: #121212; font-weight: 700; }
-QPushButton#primaryBtn:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffcc80, stop:1 #fb8c00); }
-QPushButton#primaryBtn:pressed { background: #e65100; }
-QPushButton#primaryBtn:disabled { background: #3e2723; color: #8d6e63; }
-QPushButton#stopBtn { background: #c0392b; border: none; color: #ffffff; font-weight: 700; }
-QPushButton#stopBtn:hover { background: #e04434; }
-QPushButton#stopBtn:pressed { background: #962d22; }
+QPushButton:hover { background: #2b3440; border-color: #4dd0e1; }
+QPushButton:pressed { background: #1b2027; }
+QPushButton:disabled { color: #525b66; background: #191d23; border-color: #262c35; }
+QPushButton#primaryBtn { background: #4dd0e1; border: none; color: #0d1418; font-weight: 700; }
+QPushButton#primaryBtn:hover { background: #80e5f2; }
+QPushButton#primaryBtn:pressed { background: #26b8cc; }
+QPushButton#primaryBtn:disabled { background: #1e3a42; color: #52707a; }
+QPushButton#stopBtn { background: #d64541; border: none; color: #ffffff; font-weight: 700; }
+QPushButton#stopBtn:hover { background: #e8615d; }
+QPushButton#stopBtn:pressed { background: #a83531; }
 
-#progressBar { background: #181818; border-bottom: 1px solid #2a2a2a; }
+/* the machine dock keeps AMBER accents: amber = live machine, everywhere */
+#machineBar { background: #181c22; border-top: 1px solid #262c35; }
+#progressBar { background: #181c22; }
 QProgressBar {
-    background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
-    min-height: 18px; text-align: center; color: #e4e4e6;
+    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
+    min-height: 18px; text-align: center; color: #dde3ea;
 }
-QProgressBar::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffb74d, stop:1 #f57c00);
-    border-radius: 5px;
-}
+QProgressBar::chunk { background: #ffb000; border-radius: 5px; }
 
 QComboBox, QLineEdit, QAbstractSpinBox {
-    background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
-    padding: 6px 10px; min-height: 20px; selection-background-color: #ff9800;
+    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
+    padding: 6px 10px; min-height: 20px; selection-background-color: #4dd0e1;
+    selection-color: #0d1418;
 }
-QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #ffb74d; }
-QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #ff9800; }
-QComboBox:disabled, QAbstractSpinBox:disabled { color: #555555; background: #1a1a1a; }
+QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #4dd0e1; }
+QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #4dd0e1; }
+QComboBox:disabled, QAbstractSpinBox:disabled { color: #525b66; background: #191d23; }
 QComboBox::drop-down { border: none; width: 24px; }
 QComboBox QAbstractItemView {
-    background: #242424; border: 1px solid #3a3a3a; border-radius: 6px;
-    selection-background-color: #ff9800; selection-color: #121212; outline: none;
+    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
+    selection-background-color: #4dd0e1; selection-color: #0d1418; outline: none;
 }
 
-QCheckBox { spacing: 10px; background: transparent; color: #e4e4e6; font-weight: 500; }
-QCheckBox:hover { color: #ffb74d; }
-QCheckBox:pressed { color: #ff9800; }
-QCheckBox:checked { color: #ff9800; }
-QCheckBox:checked:hover { color: #ffb74d; }
+QCheckBox { spacing: 10px; background: transparent; color: #dde3ea; font-weight: 500; }
+QCheckBox:hover { color: #80e5f2; }
+QCheckBox:pressed { color: #4dd0e1; }
+QCheckBox:checked { color: #4dd0e1; }
+QCheckBox:checked:hover { color: #80e5f2; }
 QCheckBox::indicator {
     width: 18px; height: 18px; border-radius: 4px;
-    border: 1px solid #4a4a4a; background: #242424;
+    border: 1px solid #3d4754; background: #232a33;
 }
-QCheckBox::indicator:hover { border-color: #ffb74d; }
-QCheckBox::indicator:checked { background: #ff9800; border-color: #ff9800; }
-QCheckBox::indicator:checked:hover { background: #ffb74d; border-color: #ffb74d; }
+QCheckBox::indicator:hover { border-color: #4dd0e1; }
+QCheckBox::indicator:checked { background: #4dd0e1; border-color: #4dd0e1; }
+QCheckBox::indicator:checked:hover { background: #80e5f2; border-color: #80e5f2; }
 
-QTabWidget::pane { border: 1px solid #2e2e2e; border-radius: 8px; top: -1px; background: #1e1e1e; }
+QTabWidget::pane { border: 1px solid #262c35; border-radius: 8px; top: -1px; background: #1b2027; }
 QTabBar::tab {
-    background: transparent; color: #a0a0a5; padding: 8px 18px; margin-right: 2px;
+    background: transparent; color: #8b94a1; padding: 8px 18px; margin-right: 2px;
     border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: 600;
 }
 QTabBar::tab:selected {
-    background: #1e1e1e; color: #ff9800;
-    border: 1px solid #2e2e2e; border-bottom: none;
+    background: #1b2027; color: #4dd0e1;
+    border: 1px solid #262c35; border-bottom: none;
 }
-QTabBar::tab:hover:!selected { color: #e4e4e6; }
+QTabBar::tab:hover:!selected { color: #dde3ea; }
 
 QScrollBar:vertical { background: transparent; width: 12px; margin: 2px; }
-QScrollBar::handle:vertical { background: #3a3a3a; border-radius: 6px; min-height: 30px; }
-QScrollBar::handle:vertical:hover { background: #4a4a4a; }
+QScrollBar::handle:vertical { background: #313a46; border-radius: 6px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: #3d4754; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-QSlider::groove:horizontal { height: 4px; background: #3a3a3a; border-radius: 2px; }
+QSlider::groove:horizontal { height: 4px; background: #313a46; border-radius: 2px; }
 QSlider::handle:horizontal {
-    background: #ff9800; width: 16px; margin: -6px 0; border-radius: 8px;
+    background: #4dd0e1; width: 16px; margin: -6px 0; border-radius: 8px;
 }
-QSlider::handle:horizontal:hover { background: #ffb74d; }
+QSlider::handle:horizontal:hover { background: #80e5f2; }
 
-QStatusBar { background: #121212; color: #a0a0a5; font-weight: 500; }
+QStatusBar { background: #14171c; color: #8b94a1; font-weight: 500; }
 QToolTip {
-    color: #e4e4e6; background-color: #242424; border: 1px solid #3a3a3a;
+    color: #dde3ea; background-color: #232a33; border: 1px solid #313a46;
     border-radius: 6px; padding: 6px 8px; font-size: 12px;
 }
 """
@@ -3197,19 +4366,19 @@ QToolTip {
 def apply_dark_theme(app):
     app.setStyle("Fusion")
     palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(18, 18, 18))
-    palette.setColor(QPalette.WindowText, QColor(228, 228, 230))
-    palette.setColor(QPalette.Base, QColor(36, 36, 36))
-    palette.setColor(QPalette.AlternateBase, QColor(30, 30, 30))
-    palette.setColor(QPalette.ToolTipBase, QColor(36, 36, 36))
-    palette.setColor(QPalette.ToolTipText, QColor(228, 228, 230))
-    palette.setColor(QPalette.Text, QColor(228, 228, 230))
-    palette.setColor(QPalette.Button, QColor(42, 42, 42))
-    palette.setColor(QPalette.ButtonText, QColor(228, 228, 230))
+    palette.setColor(QPalette.Window, QColor(20, 23, 28))
+    palette.setColor(QPalette.WindowText, QColor(221, 227, 234))
+    palette.setColor(QPalette.Base, QColor(35, 42, 51))
+    palette.setColor(QPalette.AlternateBase, QColor(27, 32, 39))
+    palette.setColor(QPalette.ToolTipBase, QColor(35, 42, 51))
+    palette.setColor(QPalette.ToolTipText, QColor(221, 227, 234))
+    palette.setColor(QPalette.Text, QColor(221, 227, 234))
+    palette.setColor(QPalette.Button, QColor(35, 42, 51))
+    palette.setColor(QPalette.ButtonText, QColor(221, 227, 234))
     palette.setColor(QPalette.BrightText, Qt.red)
-    palette.setColor(QPalette.Link, QColor(255, 152, 0))
-    palette.setColor(QPalette.Highlight, QColor(255, 152, 0))
-    palette.setColor(QPalette.HighlightedText, QColor(18, 18, 18))
+    palette.setColor(QPalette.Link, QColor(77, 208, 225))
+    palette.setColor(QPalette.Highlight, QColor(77, 208, 225))
+    palette.setColor(QPalette.HighlightedText, QColor(13, 20, 24))
     palette.setColor(QPalette.Disabled, QPalette.Text, QColor(85, 85, 85))
     palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(85, 85, 85))
     app.setPalette(palette)

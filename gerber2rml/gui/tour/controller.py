@@ -142,7 +142,9 @@ class TourController(QObject):
         if step.target and target is None:
             return self._next()                 # widget gone -> skip gracefully
 
-        if hasattr(self.window, "sidebar"):
+        if hasattr(self.window, "_goto_page"):
+            self.window._goto_page(step.page)     # spine rows != page indexes
+        elif hasattr(self.window, "sidebar"):
             self.window.sidebar.setCurrentRow(step.page)
         if step.reveal:
             chk = getattr(self.window, step.reveal, None)

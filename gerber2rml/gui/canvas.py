@@ -106,6 +106,15 @@ class PreviewCanvas(QWidget):
         self._stock = None
         self._stock_fits = True
 
+        # Rework photo underlay: (rgba, extent) of a board photo warped into
+        # the machine frame (engine.photofit) so rework boxes are drawn on the
+        # real copper. None = hidden.
+        self._photo = None
+        self._photo_alpha = 0.55
+        # Trace dimming (0..1): fades the toolpaths/copper/holes so the photo
+        # underlay reads clearly when hunting for rework spots. 1.0 = normal.
+        self._trace_alpha = 1.0
+
         # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
         # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
         # can eyeball the tilt/warp before cutting. None = hidden.
@@ -256,6 +265,29 @@ class PreviewCanvas(QWidget):
         self._stock = rect if (rect and rect[2] > 0 and rect[3] > 0) else None
         self._draw_fraction(self.slider.value() / 1000.0)
 
+    def set_photo(self, rgba=None, extent=None, alpha=0.55):
+        """Show (or clear, with no args) a machine-frame photo underlay:
+        ``rgba`` is an HxWx4 uint8 array with row 0 at the LOWEST y (as
+        produced by engine.photofit.warp_photo), ``extent`` = (x0, x1, y0, y1)
+        mm. Drawn under the copper/toolpaths so rework boxes can be placed on
+        the real board. Redraws immediately."""
+        self._photo = (rgba, extent) if rgba is not None else None
+        self._photo_alpha = alpha
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_photo_alpha(self, alpha):
+        """Adjust the photo underlay opacity (0..1). Redraws."""
+        self._photo_alpha = alpha
+        if self._photo is not None:
+            self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_trace_alpha(self, alpha):
+        """Dim the toolpaths/copper/holes (0..1, 1 = normal). Lets the photo
+        underlay read clearly; rework boxes and pins stay at full strength.
+        Redraws."""
+        self._trace_alpha = max(0.0, min(1.0, float(alpha)))
+        self._draw_fraction(self.slider.value() / 1000.0)
+
     def set_level_overlay(self, X=None, Y=None, Z=None, points=None):
         """Show (or clear, with no args) the height-map heatmap. ``X``/``Y``/``Z``
         are 2D meshes of surface deviation (mm); ``points`` are the probed
@@ -390,7 +422,9 @@ class PreviewCanvas(QWidget):
                                  + [MplPath.CLOSEPOLY])
             if verts:
                 self.ax.add_patch(PathPatch(MplPath(verts, codes), facecolor=color,
-                                            edgecolor="none", alpha=0.16, zorder=0.8))
+                                            edgecolor="none",
+                                            alpha=0.16 * self._trace_alpha,
+                                            zorder=0.8))
 
     def _design_bounds(self):
         """(minx, miny, maxx, maxy) of all toolpath/hole/pin geometry, or None."""
@@ -533,6 +567,12 @@ class PreviewCanvas(QWidget):
                                         alpha=0.16, edgecolor=edge, linewidth=1.6,
                                         zorder=0.5))
 
+        if self._photo is not None:
+            rgba, (px0, px1, py0, py1) = self._photo
+            self.ax.imshow(rgba, extent=(px0, px1, py0, py1), origin="lower",
+                           zorder=0.6, alpha=self._photo_alpha,
+                           interpolation="bilinear")
+
         if self._copper:
             self._add_copper_fills()
 
@@ -566,23 +606,25 @@ class PreviewCanvas(QWidget):
         holes = self._full_holes[:h_end]
         top_cuts = self._full_top_cuts[:t_end]
 
+        ta = self._trace_alpha
         if rapids:
             self.ax.add_collection(
-                LineCollection(rapids, colors="#555555", linewidths=0.6))
+                LineCollection(rapids, colors="#555555", linewidths=0.6, alpha=ta))
         if cuts:
             self.ax.add_collection(
-                LineCollection(cuts, colors="#00ffff", linewidths=1.2))
+                LineCollection(cuts, colors="#00ffff", linewidths=1.2, alpha=ta))
         if top_cuts:
             # reflected front-side isolation, second colour so the two registered
             # sides are visually distinct
             self.ax.add_collection(
-                LineCollection(top_cuts, colors="#ff55ff", linewidths=1.2))
+                LineCollection(top_cuts, colors="#ff55ff", linewidths=1.2, alpha=ta))
         if holes:
             for (x, y, d) in holes:
                 self.ax.add_patch(Circle((x, y), max(d, 0.1) / 2.0, fill=False,
-                                         edgecolor="#ff5555", linewidth=1.2))
+                                         edgecolor="#ff5555", linewidth=1.2,
+                                         alpha=ta))
             self.ax.scatter([h[0] for h in holes], [h[1] for h in holes],
-                            s=15, c="#ff5555", marker="+")
+                            s=15, c="#ff5555", marker="+", alpha=ta)
         # dowel/alignment holes: always drawn in full (registration features,
         # never scrubbed away) and clearly distinct from the board's own holes
         self._pin_artists = []
@@ -1010,4 +1052,16 @@ class PreviewCanvas(QWidget):
             if not p.is_empty and p.geom_type == "Polygon":
                 xs, ys = p.exterior.xy
                 self.ax.fill(list(xs), list(ys), color="#ff0000", alpha=0.5, zorder=5)
+        self.canvas.draw_idle()
+
+    def show_shorts(self, hits):
+        """Mark guaranteed milling shorts (separate nets closer than the bit):
+        an X at each pinch with the actual copper-to-copper gap labeled."""
+        for h in hits:
+            self.ax.scatter([h["x"]], [h["y"]], s=110, marker="x",
+                            c="#ff2222", linewidths=2.2, zorder=17)
+            self.ax.annotate(f"{h['gap']:.2f}", (h["x"], h["y"]),
+                             color="#ff2222", fontsize=8, fontweight="bold",
+                             xytext=(6, 6), textcoords="offset points",
+                             zorder=17)
         self.canvas.draw_idle()

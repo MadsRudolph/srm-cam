@@ -215,3 +215,86 @@ def test_failed_point_recorded_and_skipped_in_deviations():
     assert res[1]["z"] is None and "error" in res[1]
     dz = deviations_mm(res)
     assert set(dz) == {0}                  # only the contacted point survives
+
+
+# ---- firmware v2: drift compensation, version, zero-Z ----------------------
+
+class DriftSerial(FakeSerial):
+    """v2 board where the whole machine sinks 30 um per completed probe (warm-up
+    drift): both grid touches and the 'B' reference re-touch see it."""
+    REF_TRUE = -56000
+
+    def __init__(self):
+        super().__init__()
+        self.n = 0                    # completed P probes
+
+    def _drift(self, n):
+        return -30 * n
+
+    def write(self, data):
+        s = data.decode().strip()
+        if s == "B":
+            self._out.append(f"B {self.REF_TRUE + self._drift(self.n)}\n".encode())
+        elif s.startswith("P"):
+            _, pid, x, y = s.split()
+            z = -56000 - int(x) // 100 + self._drift(self.n)
+            self._out.append(f"R {pid} {x} {y} {z}\n".encode())
+            self.n += 1
+        else:
+            super().write(data)
+
+
+def test_drift_compensation_recovers_true_surface():
+    pts = [(0, 0, 0), (1, 10000, 0), (2, 20000, 0), (3, 30000, 0)]
+    log = []
+    res = probe_grid("COM5", pts, serial_factory=lambda p, b, t: DriftSerial(),
+                     startup_wait=0, retouch_every=2, drift_log=log)
+    true_z = [-56000, -56100, -56200, -56300]
+    raw = [r["z_raw"] for r in res]
+    corr = [r["z"] for r in res]
+    # raw values are polluted by up to 90 um of drift...
+    assert max(abs(r - t) for r, t in zip(raw, true_z)) >= 60
+    # ...corrected values sit within half a drift step of the true surface
+    assert max(abs(c - t) for c, t in zip(corr, true_z)) <= 20
+    assert len(log) >= 2 and log[0]["after"] == 0
+
+
+def test_no_retouch_means_no_correction():
+    res = probe_grid("COM5", [(0, 0, 0), (1, 10000, 0)],
+                     serial_factory=_factory(), startup_wait=0)
+    assert all("z_raw" not in r for r in res)
+
+
+def test_firmware_version_v2_and_v1_fallback():
+    from gerber2rml.engine.spi_probe import firmware_version
+
+    class V2Serial:
+        def __init__(self): self._out = []
+        def write(self, data):
+            if data.decode().strip() == "V":
+                self._out.append(b"V 2 probe,refine,verify,retouch,zeroz\n")
+        def readline(self): return self._out.pop(0) if self._out else b""
+        def close(self): pass
+
+    ver, feats = firmware_version(V2Serial())
+    assert ver == 2 and "retouch" in feats and "zeroz" in feats
+
+    class V1Serial(V2Serial):                 # old sketch: 'V' is ignored
+        def write(self, data): pass
+
+    assert firmware_version(V1Serial(), timeout=0.05) == (1, set())
+
+
+def test_zero_z_parses_new_origin():
+    from gerber2rml.engine.spi_probe import zero_z
+
+    class WSerial:
+        def __init__(self, reply): self._reply = reply; self._out = []
+        def write(self, data):
+            if data.decode().strip() == "W":
+                self._out.append(self._reply)
+        def readline(self): return self._out.pop(0) if self._out else b""
+        def close(self): pass
+
+    assert zero_z(WSerial(b"W 0 0 -56290\n")) == (0.0, 0.0, -56.29)
+    assert zero_z(WSerial(b"E W NOTOUCH\n"), timeout=0.05) is None
