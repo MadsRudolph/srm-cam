@@ -106,6 +106,63 @@ class _StreamWorker(QThread):
                 pass
 
 
+class _FidFindWorker(QThread):
+    """Auto-probes one fiducial hole center (firmware v2 'H' hole tests)."""
+    found = Signal(int, float, float)
+    failed = Signal(int, str)
+
+    def __init__(self, port, row, x_mm, y_mm):
+        super().__init__()
+        self._port, self._row = port, row
+        self._x, self._y = x_mm, y_mm
+        self._abort = False
+
+    def abort(self):
+        self._abort = True
+
+    def run(self):
+        import time as _t
+        from gerber2rml.engine import fidfind, spi_probe
+        try:
+            ser = spi_probe.open_link(self._port)
+        except Exception as e:
+            self.failed.emit(self._row, str(e))
+            return
+        try:
+            ack = None
+            for _ in range(3):
+                ser.write(b"D\n")
+                ack = spi_probe._read_line(ser, _t.monotonic() + 3.0)
+                if ack and ack.startswith("D"):
+                    break
+            if not (ack and ack.startswith("D")):
+                self.failed.emit(self._row, f"no datum ack (got {ack!r})")
+                return
+            # surface reference: touch the copper 2.5 mm west of the hole so
+            # the firmware knows where the surface is (H descends 0.2 mm past
+            # it at most)
+            ser.write(b"P 999 -2500 0\n")
+            line = spi_probe._read_line(ser, _t.monotonic() + 90.0,
+                                        lambda: self._abort)
+            if not (line and line.startswith("R")):
+                self.failed.emit(
+                    self._row,
+                    f"no surface contact 2.5 mm west of the start point "
+                    f"(got {line!r}) — that spot must be copper")
+                return
+            cx, cy = fidfind.find_hole_center(
+                ser, self._x, self._y, should_abort=lambda: self._abort)
+            self.found.emit(self._row, cx, cy)
+        except Exception as e:
+            spi_probe.send_abort(ser)
+            self.failed.emit(self._row, str(e))
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
+
+
 class _DROPoller(QThread):
     """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
     position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
@@ -220,8 +277,9 @@ class _FiducialAlignDialog(QDialog):
         v.addWidget(QLabel(
             "Probe each fiducial on the flipped board and enter (or Capture) its\n"
             "measured X/Y. Nominal = where a perfect flip would put it."))
-        self.table = QTableWidget(len(nominal), 5)
-        self.table.setHorizontalHeaderLabels(["nom X", "nom Y", "meas X", "meas Y", ""])
+        self.table = QTableWidget(len(nominal), 6)
+        self.table.setHorizontalHeaderLabels(["nom X", "nom Y", "meas X",
+                                              "meas Y", "", ""])
         # name each fiducial by where it sits (bottom-left, top-right, ...) so
         # the operator matches physical holes to rows without a decoder ring
         cx = sum(x for x, _y in nominal) / len(nominal)
@@ -244,6 +302,18 @@ class _FiducialAlignDialog(QDialog):
             btn = QPushButton("Capture")
             btn.clicked.connect(lambda _=False, row=r: self._capture(row))
             self.table.setCellWidget(r, 4, btn)
+            ab = QPushButton("Auto")
+            ab.setToolTip(
+                "Find this fiducial's center electrically: jog the tool "
+                "roughly over the HOLE first (2-3 mm up, spindle OFF, touch "
+                "clips on), then Auto walks the hole edges with shallow touch "
+                "tests and bisects the true center to ~0.05 mm. Needs "
+                "firmware v2 and copper 2.5 mm west of the hole.")
+            ab.clicked.connect(lambda _=False, row=r: self._auto_probe(row))
+            self.table.setCellWidget(r, 5, ab)
+        self._auto_busy = False
+        self._fid_worker = None
+        self._dro_was_on = False
         v.addWidget(self.table)
         self.fit_lbl = QLabel("Fit: —")
         v.addWidget(self.fit_lbl)
@@ -264,6 +334,47 @@ class _FiducialAlignDialog(QDialog):
         x, y, _z = xyz
         self.table.setItem(row, 2, QTableWidgetItem(f"{x:.3f}"))
         self.table.setItem(row, 3, QTableWidgetItem(f"{y:.3f}"))
+
+    def _auto_probe(self, row):
+        p = self._parent
+        xyz = getattr(p, "_tool_xyz", None)
+        if p._dro is None or xyz is None:
+            QMessageBox.warning(self, "Not connected",
+                                "Connect the machine and click-jog the tool "
+                                "over the fiducial hole first.")
+            return
+        if self._auto_busy:
+            return
+        if QMessageBox.question(
+                self, "Auto-probe fiducial",
+                f"Tool ~2-3 mm ABOVE the '{self.table.verticalHeaderItem(row).text()}' "
+                f"fiducial HOLE, spindle OFF, touch clips on?\n\nIt will touch "
+                f"the copper 2.5 mm west of here for a surface reference, then "
+                f"walk the hole edges (~1 min).") != QMessageBox.Yes:
+            return
+        self._auto_busy = True
+        self._dro_was_on = p._pause_dro()
+        port = p.level_port_combo.currentText().strip() or "COM5"
+        self._fid_worker = _FidFindWorker(port, row, xyz[0], xyz[1])
+        self._fid_worker.found.connect(self._on_auto_found)
+        self._fid_worker.failed.connect(self._on_auto_failed)
+        self._fid_worker.start()
+
+    def _on_auto_found(self, row, x, y):
+        self.table.setItem(row, 2, QTableWidgetItem(f"{x:.3f}"))
+        self.table.setItem(row, 3, QTableWidgetItem(f"{y:.3f}"))
+        self._finish_auto()
+        self._show_fit()                       # live feedback as rows fill in
+
+    def _on_auto_failed(self, row, msg):
+        QMessageBox.warning(self, "Auto-probe failed", msg)
+        self._finish_auto()
+
+    def _finish_auto(self):
+        self._auto_busy = False
+        if self._dro_was_on:
+            self._dro_was_on = False
+            self._parent._start_dro()
 
     def measured(self):
         """The filled-in (x, y) measured rows, in order; rows left blank are skipped."""

@@ -449,8 +449,27 @@ void handleLine(char *s) {
     if (!waitForMotorStop()) { Serial.println("E M ABORT"); return; }
     Serial.print("M "); Serial.print(x); Serial.print(' ');
     Serial.print(y); Serial.print(' '); Serial.println(z);
+  } else if (s[0] == 'H') {        // hole test at absolute (x,y) um: descend at
+    // most HOLE_DROP_UM past the known copper surface. Contact -> copper
+    // ('H 1'), no contact -> the tool is over the hole ('H 0'). Used by the
+    // host's automatic fiducial-center finder (edge bisection).
+    if (!haveRef) { Serial.println("E H NOREF"); return; }
+    if (probeTouched()) { Serial.println("E H LOW"); return; }
+    gAbort = false;
+    char *p = s + 1;
+    long x = strtol(p, &p, 10);
+    long y = strtol(p, &p, 10);
+    long startZ = approachZ();
+    srm20.jumpTo(x, y, startZ, MOVE_SPEED);
+    if (!waitForMotorStop()) { liftSafe(x, y); Serial.println("E H ABORT"); return; }
+    long z = startZ;
+    int r = descendUntilTouch(x, y, z, PROBE_STEP_UM,
+                              refSurfaceZ - 200);   // 0.2 mm past the surface
+    if (r == -1) { liftSafe(x, y); Serial.println("E H ABORT"); return; }
+    liftToApproach(x, y);
+    Serial.println(r == 1 ? "H 1" : "H 0");
   } else if (s[0] == 'V') {        // version + feature flags for the host
-    Serial.println("V 2 probe,refine,verify,retouch,zeroz,touchbit,stream");
+    Serial.println("V 2 probe,refine,verify,retouch,zeroz,touchbit,stream,holetest");
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);
     Serial.print("# v2 datum="); Serial.print(haveDatum);
