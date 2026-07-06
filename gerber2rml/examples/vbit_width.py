@@ -40,9 +40,9 @@ PAD_LX, PAD_RX = 1.5, BOARD_W - 1.5 - PAD_W
 HOLES = [(8.0, 1.2, 0.8), (18.0, 1.2, 0.8)]   # photo/registration anchors
 
 
-def _build_bcu() -> str:
+def _build_bcu(widths=WIDTHS) -> str:
     regions = []
-    for i, w in enumerate(WIDTHS):
+    for i, w in enumerate(widths):
         c = ROW_Y0 - i * ROW_PITCH
         regions.append(_rect_region(PAD_LX, c - PAD_H / 2,
                                     PAD_LX + PAD_W, c + PAD_H / 2))
@@ -68,11 +68,16 @@ def _build_edge() -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_coupon(out_dir) -> Path:
-    """Write the V-bit width card Gerbers into ``out_dir``/vbit_width."""
-    folder = Path(out_dir) / "vbit_width"
+def write_coupon(out_dir, widths=WIDTHS, name="vbit_width") -> Path:
+    """Write the V-bit width card Gerbers into ``out_dir``/``name``.
+
+    ``widths`` sets the 8 track design widths (top row first) — use a wider
+    ladder when the first card wipes out completely (severe runout)."""
+    if len(widths) != len(WIDTHS):
+        raise ValueError(f"need exactly {len(WIDTHS)} widths")
+    folder = Path(out_dir) / name
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "vbit-B_Cu.gbr").write_text(_build_bcu())
+    (folder / "vbit-B_Cu.gbr").write_text(_build_bcu(widths))
     (folder / "vbit-Edge_Cuts.gbr").write_text(_build_edge())
     (folder / "vbit-F_Cu.gbr").write_text(_empty_gbr("Copper,L1,Top"))
     (folder / "vbit-F_Mask.gbr").write_text(_empty_gbr("Soldermask,Top"))
@@ -81,9 +86,13 @@ def write_coupon(out_dir) -> Path:
     (folder / "vbit.drl").write_text(_build_drill(HOLES))
     (folder / "README.txt").write_text(
         "V-bit width card - read with a multimeter (see vbit_width.py).\n"
-        "Rows top->bottom: 0.40 0.35 0.30 0.25 0.20 0.15 0.10 0.05 mm.\n"
-        "Narrowest row that still beeps = upper bound on the overcut:\n"
-        "0.05 beeps -> cut < 0.25 mm; 0.10 is the narrowest beeping ->\n"
-        "0.25-0.30 mm; and so on. Everything beeps and 0.05 looks fat ->\n"
-        "cut is undersized.\n")
+        f"Rows top->bottom (mm): {' '.join(f'{w:.2f}' for w in widths)}\n"
+        "Narrowest row that still beeps = upper bound on the overcut past\n"
+        "the configured bit width. Actual cut width = bit_diameter + the\n"
+        "bracket between the widest dead row and the narrowest live row.\n"
+        "Everything beeps and the thinnest looks fat -> cut is undersized.\n")
     return folder
+
+
+# Wide ladder for badly-behaved setups (broken tips, runout): 0.20-1.50 mm.
+WIDE_WIDTHS = (1.50, 1.25, 1.00, 0.80, 0.60, 0.45, 0.30, 0.20)
