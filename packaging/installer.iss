@@ -1,4 +1,4 @@
-﻿; Inno Setup script for SRM-CAM.
+; Inno Setup script for SRM-CAM.
 ; Wraps the PyInstaller one-folder build (dist/SRM-CAM/) into a single
 ; Setup.exe with Start-menu + optional desktop shortcut and an uninstaller.
 ;
@@ -7,7 +7,7 @@
 ; or just run packaging\build.ps1 which does PyInstaller + this in one go.
 
 #define MyAppName "SRM-CAM"
-#define MyAppVersion "0.2.5"
+#define MyAppVersion "0.2.6"
 #define MyAppPublisher "DTU 62768 team"
 #define MyAppExeName "SRM-CAM.exe"
 
