@@ -4110,28 +4110,53 @@ class MainWindow(QMainWindow):
                 "Generate the traces preview first — the detector walks its "
                 "isolation channels.")
             return
-        # copper geometry sharpens the color reference when displayed; without
-        # it the detector samples the channel flanks (copper by construction)
-        geoms = [g for g, _c in self.preview._copper
-                 if g is not None and not getattr(g, "is_empty", True)]
-        copper = None
-        if geoms:
-            from shapely.ops import unary_union
-            copper = unary_union(geoms)
-        rgba, extent = self.preview._photo
+        # The profile classifier needs the FULL-RESOLUTION photo: re-warp from
+        # the original file at 16 px/mm (the preview overlay is downscaled and
+        # the cross-profile signature dies with it).
+        po = self._photo_overlay
+        src = po.get("path") if po else None
+        if not (src and Path(src).exists()):
+            QMessageBox.information(
+                self, "Original photo needed",
+                "The detector reads the photo at full resolution, but the "
+                "original file isn't reachable. Load the photo again "
+                "(Load photo…) and retry.")
+            return
+        from gerber2rml.engine.photofit import fit_homography, warp_photo
+        try:
+            img_small = self._decode_photo(src)
+            img_full = self._decode_photo(src, max_dim=100000)
+            scale = img_full.shape[1] / img_small.shape[1]
+            H = fit_homography([(u * scale, v * scale)
+                                for (u, v) in po["photo_pts"]],
+                               po["machine_pts"])
+            db = self.preview._design_bounds()
+            if db is None:
+                bed = BACKENDS[self.state.machine].bed or (203.2, 152.4)
+                db = (0.0, 0.0, bed[0], bed[1])
+            rgba, extent = warp_photo(img_full, H,
+                                      (db[0] - 2, db[1] - 2,
+                                       db[2] + 2, db[3] + 2), px_per_mm=16)
+        except Exception as e:
+            QMessageBox.critical(self, "Photo processing failed", str(e))
+            return
         bit = float(self.forms["traces"].value().bit_diameter)
         try:
-            r = detect_uncut(rgba, extent, channels, copper,
-                             bit_d=max(bit, 0.4),
+            r = detect_uncut(rgba, extent, channels, bit_d=max(bit, 0.4),
                              exclude_outline=self.preview._outline_xy)
         except CutCheckError as e:
             QMessageBox.warning(self, "Can't judge this photo", str(e))
             return
-        cov = f"{r['coverage'] * 100:.1f}% of {r['n_samples']} channel samples look cut"
+        cov = (f"{r['n_suspect_tiles']} of {r['n_tiles']} readable 8 mm tiles "
+               f"look failed; {r['decided_frac'] * 100:.0f}% of samples read "
+               f"clearly")
         if not r["boxes"]:
             QMessageBox.information(
                 self, "Detect from photo",
-                f"No uncut copper found.\n\n{cov}.")
+                f"No failed channels found.\n\n{cov}.\n\nNote: this sees "
+                f"channels with no bright cut signature (never-cut or clearly "
+                f"shallow). Marginal depth is better judged with Probe boxes "
+                f"/ Mesh check.")
             self.statusBar().showMessage(f"Photo check: clean ({cov})", 10000)
             return
         for b in r["boxes"]:
@@ -4140,7 +4165,7 @@ class MainWindow(QMainWindow):
             self, "Detect from photo",
             f"{len(r['boxes'])} suspect area(s) proposed as rework boxes "
             f"({cov}).\n\nReview them on the preview — delete false alarms "
-            f"(glare, dust) from the table, then export the rework job.")
+            f"(glare, shadow) from the table, then export the rework job.")
         self.statusBar().showMessage(
             f"Photo check: {len(r['boxes'])} suspect area(s) boxed ({cov})", 12000)
 

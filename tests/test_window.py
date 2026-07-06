@@ -1694,18 +1694,25 @@ def test_insert_probe_rows_keeps_grid_cartesian():
     assert len(points) == 7
 
 
-def test_detect_rework_from_photo_adds_boxes(monkeypatch):
+def test_detect_rework_from_photo_adds_boxes(monkeypatch, tmp_path):
     import numpy as np
+    from PySide6.QtGui import QImage
+    photo = tmp_path / "board.png"
+    qi = QImage(64, 48, QImage.Format_RGBA8888)
+    qi.fill(0xFFB07333)
+    assert qi.save(str(photo))
     w = MainWindow()
     w.load_folder(str(FIXT))
     w.generate_preview()
     assert w.preview._full_cuts                     # channels to walk
-    w.preview.set_photo(np.zeros((10, 10, 4), np.uint8), (0, 10, 0, 10))
+    img = np.zeros((20, 20, 4), np.uint8)
+    w._apply_photo_overlay(img, [(0, 19), (19, 19), (19, 0), (0, 0)],
+                           [(0, 0), (10, 0), (10, 10), (0, 10)], str(photo))
     import gerber2rml.engine.cutcheck as cc
     monkeypatch.setattr(cc, "detect_uncut", lambda *a, **k: {
         "boxes": [(5.0, 6.0, 9.0, 8.0)], "coverage": 0.97,
-        "n_samples": 500, "n_suspect": 12,
-        "copper_color": (0, 0, 0), "channel_color": (99, 99, 99)})
+        "n_samples": 500, "n_suspect": 12, "n_tiles": 100,
+        "n_suspect_tiles": 1, "decided_frac": 0.8})
     from PySide6.QtWidgets import QMessageBox
     monkeypatch.setattr(QMessageBox, "information",
                         staticmethod(lambda *a, **k: None))
