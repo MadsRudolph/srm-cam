@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started — SRM-CAM guide</title>
+<meta name="description" content="Install SRM-CAM, take the guided tour, and learn the layout of the main window.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link active" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Getting started</h1>
+<p class="lead">Install the app, take the guided tour, and learn your way around the main window before touching real stock.</p>
+
+<h2>Install</h2>
+
+<h3>Windows installer (recommended)</h3>
+<ol class="steps">
+  <li><span class="st">Download the installer</span>
+    Grab the latest <code>SRM-CAM-Setup-*.exe</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases page</a>, or use the direct <a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">latest-installer link</a>. No Python needed.</li>
+  <li><span class="st">Run it</span>
+    The installer creates a Start-menu entry (and optionally a desktop icon), plus your workspace folders under <code>Documents\SRM-CAM\</code>.</li>
+  <li><span class="st">Launch SRM-CAM</span>
+    A demo board loads on first run and the guided tour starts automatically.</li>
+</ol>
+
+<h3>From source</h3>
+<pre><code>pip install -e ".[gui]"
+python -m gerber2rml            # GUI
+python -m gerber2rml.cli &lt;gerber-folder&gt; -o out -n &lt;board&gt;   # headless CLI</code></pre>
+<p>After a <code>git pull</code>, run <code>python -m gerber2rml.doctor</code> to install any new dependencies.</p>
+
+<div class="note"><span class="t">Upgrading</span>
+<p>Installing a newer <code>SRM-CAM-Setup</code> over an existing install upgrades in place. Your sessions, presets, and probe CSVs live in your Documents and user folders, so nothing is lost. If you saved a setup mid-job, <span class="ui">Load setup...</span> restores it exactly after the update.</p></div>
+
+<h2>Your workspace folders</h2>
+<p>SRM-CAM keeps its working files in <code>Documents\SRM-CAM\</code> — the file dialogs open there by default:</p>
+<div class="tbl-wrap"><table>
+<tr><th>Folder</th><th>What lives there</th></tr>
+<tr><td><code>Documents\SRM-CAM\sessions</code></td><td>Saved setups (<span class="ui">Save setup...</span> / <span class="ui">Load setup...</span>) — the whole app state as a <code>.json</code> file, including the board, placement, all job settings, the probed height map, rework boxes, and the aligned photo.</td></tr>
+<tr><td><code>Documents\SRM-CAM\exports</code></td><td>Exported <code>.nc</code> / <code>.rml</code> job files and the run plan.</td></tr>
+<tr><td><code>Documents\SRM-CAM\photos</code></td><td>Board photos for the photo overlay / rework detection.</td></tr>
+</table></div>
+
+<h2>The guided tour</h2>
+<p>On first launch the interactive tour walks you through the core workflow using the bundled demo board. You can replay it any time with the <span class="ui">Guide</span> button in the machine dock at the bottom of the window. Individual sections also have their own guide buttons (for example <span class="ui">Guide: Bed leveling</span> and <span class="ui">Guide: Rework</span>) that jump straight into that topic's mini-tour.</p>
+
+<h2>The main window</h2>
+
+<figure class="fig">
+  <img src="img/srmcam_GUI_MainPage.png" alt="SRM-CAM main window">
+  <figcaption>Left: the run-plan sidebar. Center: the settings panel for the selected step. Right: the preview canvas. Bottom: the machine dock.</figcaption>
+</figure>
+
+<h3>Left — the run-plan sidebar</h3>
+<p>The sidebar is the order of operations for a full job. Click any step to open its settings — nothing is locked; you can jump around freely:</p>
+<ol>
+  <li><span class="ui">1 · Setup board</span> — load Gerbers, place on the bed, set stock, pick a preset, export.</li>
+  <li><span class="ui">2 · Bed leveling</span> — probe a height map so cut depth follows the real surface.</li>
+  <li><span class="ui">3 · Registration</span> — double-sided settings: dowels or fiducials.</li>
+  <li><span class="ui">4 · Drill</span> through <span class="ui">8 · Top traces</span> — the per-operation steps of the run plan.</li>
+  <li><span class="ui">Rework</span> — mark and re-cut spots that didn't cut through, with photo assistance.</li>
+  <li><span class="ui">3D viewer</span> — toolpath simulation and the 3D bed height-map.</li>
+</ol>
+<p>For a simple single-sided board you'll mostly live in <span class="ui">1 · Setup board</span>, with optional visits to <span class="ui">2 · Bed leveling</span> and <span class="ui">Rework</span>.</p>
+
+<h3>Right — the preview canvas</h3>
+<p>The 2D preview shows the bed, your placed board, and the toolpaths of the selected operation. Below it:</p>
+<ul>
+  <li><span class="ui">◀ Hide panel</span> — collapse the settings panel for a bigger preview.</li>
+  <li><span class="ui">Fit</span> — zoom to fit everything.</li>
+  <li>The scrub slider plays the toolpath from 0–100% so you can see cut order.</li>
+  <li>A time estimate for the current operation.</li>
+</ul>
+<p>The canvas is also interactive: drag the design to move it on the bed, use the ruler to measure, and — with the machine connected — click to jog the tool (more on that in <a href="hardware.html">Hardware &amp; firmware</a>).</p>
+
+<h3>Bottom — the machine dock</h3>
+<p>Always visible, in every step:</p>
+<ul>
+  <li><span class="ui">Connect</span> + port picker — the serial link to the Arduino probe board. The label next to it is the live DRO: <span class="led off"></span><code>machine offline</code> when disconnected, <span class="led on"></span><code>x=… y=… z=…</code> when live.</li>
+  <li><span class="ui">bit ○</span> — the touch indicator: the circle fills when the bit is electrically touching the copper.</li>
+  <li><span class="ui">Probe Z</span>, <span class="ui">Zero Z on machine</span>, <span class="ui">Click to jog</span>, <span class="ui">Align overlay</span>, <span class="ui">Trail</span> — machine tools covered in the relevant chapters.</li>
+  <li><span class="ui">STOP</span> — the red abort button. Always enabled: it halts probing/jogging, lifts the bit to safe height, and disconnects. When in doubt, hit it.</li>
+  <li>The <span class="ui">Run:</span> row — live progress tracking with an ETA while VPanel plays a job (see <a href="milling-a-board.html#tracking">Milling a board</a>).</li>
+</ul>
+
+<h3>Status chips</h3>
+<p>The status bar shows small chips summarizing where your setup stands at a glance — <em>board</em>, <em>placed</em>, <em>mesh</em>, <em>photo</em>, <em>boxes</em>, <em>machine</em>, <em>touch</em>, <em>fit</em> and so on. They light up as each piece falls into place, so you can tell in one look whether the height map is loaded or the touch probe is wired before you commit to a cut.</p>
+
+<h2>Exporting files from KiCad</h2>
+<p>SRM-CAM reads a folder of standard KiCad plot output:</p>
+<ol class="steps">
+  <li><span class="st">Plot the Gerbers</span>
+    In KiCad: <span class="ui">File → Fabrication Outputs → Gerbers</span>. Include at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (plus <strong>F.Cu</strong> for double-sided boards).</li>
+  <li><span class="st">Generate the drill file</span>
+    In the same dialog, <span class="ui">Generate Drill Files</span> → Excellon format.</li>
+  <li><span class="st">Point SRM-CAM at the folder</span>
+    Everything goes in one folder; <span class="ui">Load Gerber folder...</span> picks up all layers and the drills automatically.</li>
+</ol>
+
+<div class="tip"><span class="t">Try it without KiCad</span>
+<p>A calibration coupon ships with the app — a 40×30&nbsp;mm board that exercises every operation (isolation pairs, drill sizes, a registration grid, a roundness ring, a tabbed cut-out). Load <code>examples/calibration</code> as the Gerber folder and follow the tour with it.</p></div>
+
+<h2>Sessions: save your whole setup</h2>
+<p>Anything beyond a five-minute job is worth saving. <span class="ui">Save setup...</span> (in <span class="ui">1 · Setup board</span>) writes the <strong>entire</strong> state to a session file: the loaded board, placement and rotation, all trace/drill/cutout parameters, double-sided configuration, the probed height map, rework boxes, and the aligned photo. <span class="ui">Load setup...</span> restores it exactly — including after an app update or a PC restart mid-job.</p>
+
+<div class="warn"><span class="t">Save before you probe, save after you probe</span>
+<p>A probed height map represents real machine time. Save the session right after probing so a crash or restart never costs you the mesh.</p></div>
+
+<div class="page-nav">
+  <a href="index.html"><span class="lbl">Previous</span><span class="ttl">← Overview</span></a>
+  <a class="next" href="milling-a-board.html"><span class="lbl">Next</span><span class="ttl">Milling a board →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>

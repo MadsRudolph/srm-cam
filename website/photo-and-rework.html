@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo check &amp; rework — SRM-CAM guide</title>
+<meta name="description" content="Overlay a board photo on the design, detect uncut channels automatically, and re-cut them in one pass with SRM-CAM's rework tools.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link active" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Photo check &amp; rework</h1>
+<p class="lead">The traces pass finished — did every channel actually cut through? Overlay a photo of the board on the design to check, mark every failed spot with a box, and re-cut them all in one pass.</p>
+
+<figure class="fig">
+  <img src="img/rework_example.png" alt="Multi-region rework with per-box depths">
+  <figcaption>Rework: each box is a region to re-cut, with its own depth and height-map follow toggle.</figcaption>
+</figure>
+
+<h2>Rework basics</h2>
+<p>Everything lives on the <span class="ui">Rework</span> page. The board stays on the machine, same origin — never re-zero XY.</p>
+<ol class="steps">
+  <li><span class="st">Mark the spots</span>
+    Tick <span class="ui">Add areas</span> and drag a box over each spot that didn't cut. Every box gets its own color and a row in the table.</li>
+  <li><span class="st">Set depths</span>
+    <span class="ui">New-box depth</span> sets the default for the <em>next</em> box you draw; edit any box's depth individually in the table. Go slightly deeper than the original trace depth — the spot failed because the surface sat higher than the mesh believed.</li>
+  <li><span class="st">Keep boxes on the surface</span>
+    Each box's <span class="ui">lvl</span> toggle (default from <span class="ui">Follow height map</span>) warps that box to the probed surface so its depth stays uniform. Needs a probed or loaded height map.</li>
+  <li><span class="st">Export one file</span>
+    <span class="ui">Export rework NC...</span> writes a single <code>&lt;name&gt;_&lt;side&gt;_&lt;op&gt;_rework.nc</code> containing only the toolpaths clipped to your boxes, each at its own depth. Run it like any other job.</li>
+</ol>
+
+<h2>The photo overlay</h2>
+<p>Judging "did it cut?" by peering at the board in the machine is miserable. Instead, photograph the board and align the photo onto the design:</p>
+<ol class="steps">
+  <li><span class="st">Shoot the photo</span>
+    As straight-down and evenly lit as you can manage. Higher resolution is better — the detector needs it (see below). Avoid glare hot-spots on the copper.</li>
+  <li><span class="st">Load it</span>
+    <span class="ui">Load photo...</span> on the Rework page, then the anchor dialog opens: <em>"Click the anchor holes in the photo."</em></li>
+  <li><span class="st">Click the four anchors</span>
+    The prompt names each anchor in order (e.g. <em>bottom-left</em>) with its machine coordinates. Click that hole in the photo. Navigation: <strong>scroll</strong> to zoom, <strong>drag</strong> to pan, <strong>right-click</strong> to undo the last anchor.</li>
+  <li><span class="st">Use the angle guide</span>
+    After the first click, a live rubber-band line follows your cursor showing the angle to the next anchor and its deviation from a perfect rectangle — green when square, orange when off, red when badly wrong. If the guide is red on a corner you're sure of, you're probably clicking the wrong hole.</li>
+  <li><span class="st">Blend photo and design</span>
+    Two sliders control the view: the photo <strong>opacity</strong> slider, and the <strong>Traces</strong> dim slider that fades the toolpaths so the photo underneath reads clearly at full opacity. Rework boxes stay full-strength regardless.</li>
+</ol>
+<p>The photo is warped into machine coordinates, so a spot on the photo <em>is</em> that spot on the machine — boxes you draw over photo defects land exactly where the tool needs to go. The aligned photo is saved with the session.</p>
+
+<h2>Detect from photo</h2>
+<p>The <span class="ui">Detect from photo</span> button walks every isolation channel and inspects the aligned photo for stretches with no visible cut. Each suspicious region becomes a proposed rework box at the current <span class="ui">New-box depth</span>.</p>
+<p>How it decides: a properly cut channel reads <em>bright</em> in a photo (exposed substrate floor and burred edges catch the light); a failed one reads flat and dark like the surrounding copper. The detector scores this cross-profile at full photo resolution, tile by tile. It was trained and validated against ground truth from a real production board — it found 20 of 21 operator-confirmed rework regions.</p>
+
+<div class="warn"><span class="t">Know its limits</span>
+<ul>
+  <li><strong>Too-shallow cuts are invisible.</strong> A channel cut at half depth still <em>looks</em> like a channel in any photo. The detector finds <em>never-cut</em> and badly failed stretches; judge depth failures with <span class="ui">Probe boxes</span> and <span class="ui">Mesh check</span> instead.</li>
+  <li><strong>It refuses when it can't answer.</strong> Soft focus, glare, low resolution, or misaligned anchors make it decline rather than propose garbage. If it refuses, reshoot: closer, sharper, straighter.</li>
+  <li><strong>Always review the boxes.</strong> Delete false alarms before exporting — you know the board.</li>
+</ul></div>
+
+<h2>Probe boxes: fix the depth, not just the spot</h2>
+<p>A rework spot exists because the real surface sat <em>higher</em> there than the height map believed. <span class="ui">Probe boxes</span> re-measures each box's center over SPI and compares against the leveling mesh: wherever the surface is higher than the mesh said, that box is automatically deepened by exactly the difference. Jog above the mesh reference point (leveling grid point 1) first, spindle OFF, clips on.</p>
+
+<div class="tip"><span class="t">The complete rework loop</span>
+<p>Photo → <span class="ui">Detect from photo</span> → review boxes → <span class="ui">Probe boxes</span> → <span class="ui">Export rework NC...</span> → run → re-photograph to confirm. Two or three minutes of checking instead of discovering a short after soldering.</p></div>
+
+<div class="page-nav">
+  <a href="bed-leveling.html"><span class="lbl">Previous</span><span class="ttl">← Bed leveling &amp; probing</span></a>
+  <a class="next" href="hardware.html"><span class="lbl">Next</span><span class="ttl">Hardware &amp; firmware →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>

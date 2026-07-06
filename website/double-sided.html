@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Double-sided boards — SRM-CAM guide</title>
+<meta name="description" content="Dowel-pin and fiducial registration in SRM-CAM: the flip, the run plan, and the automatic fiducial finder.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link active" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Double-sided boards</h1>
+<p class="lead">Top and bottom passes align off machine-located holes — never off the board edge. Two proven methods: dowel pins (zero measurement) and fiducial holes (free placement, probed after the flip).</p>
+
+<figure class="fig">
+  <img src="img/srmcam_doublesided.png" alt="Double-sided registration preview">
+  <figcaption>Both layers previewed in register. The preview shows the design frame; exports carry the real machine geometry.</figcaption>
+</figure>
+
+<h2>Enable it</h2>
+<p>In <span class="ui">3 · Registration</span>, tick <span class="ui">Double-sided</span>. This needs an <strong>F.Cu</strong> layer in the loaded Gerbers. The <span class="ui">View</span> selector (<span class="ui">Both sides</span> / <span class="ui">Bottom</span> / <span class="ui">Top</span>) picks which side the preview and exports show — in double-sided mode the per-side mirroring is applied automatically, so the single-sided <span class="ui">Mirror</span> checkbox is greyed out.</p>
+
+<h2>How the flip works</h2>
+<p>The board flips <strong>left-to-right about a vertical axis</strong> (or top-to-bottom if you configure it that way). The bottom is milled mirrored; reflecting the front copper about the same axis cancels the mirror, so the top is cut as plain F.Cu and still registers. The registration holes sit <strong>on the flip axis</strong>, which makes them invariant under the flip.</p>
+
+<div class="note"><span class="t">Preview vs. export</span>
+<p>The preview shows both layers in the <em>design</em> frame so they register on screen. The exported job carries the real machine geometry (mirrored bottom, reflected-to-plain top). Both are correct — don't panic when a raw exported file looks flipped in a text viewer.</p></div>
+
+<h2>Method 1: Dowel pins (default, proven)</h2>
+<p>The machine drills dowel holes through the stock <em>into the sacrificial bed</em>. You seat pins in those holes and flip the board onto them. Nothing is measured — the bed itself holds the registration. Repeatably sub-0.1&nbsp;mm.</p>
+
+<h3>Two registration variants</h3>
+<div class="tbl-wrap"><table>
+<tr><th></th><th>Fresh-milled dowels (default)</th><th>Grid-seated pins</th></tr>
+<tr><td>Pins live in</td><td>fresh holes drilled through stock <strong>into the bed</strong></td><td>the bed's <strong>threaded grid</strong></td></tr>
+<tr><td>Pins</td><td>Ø2 + Ø3 mm dowels</td><td>Ø4 mm grid pins</td></tr>
+<tr><td>Flip keyed by</td><td>different diameters</td><td>asymmetric spacing (mark the bottom edge)</td></tr>
+<tr><td>Depends on grid accuracy</td><td>no</td><td>yes (pitch + datum ~±0.2 mm)</td></tr>
+</table></div>
+<p>The dowels sit just outside the Edge.Cuts rectangle, in stock the cut-out discards — they cost zero design area.</p>
+
+<h3>Fresh-dowel settings</h3>
+<ul>
+  <li><strong>Hole clearances</strong> (<span class="ui">clr L</span> / <span class="ui">S</span>): millimetres added to the big (3.1&nbsp;mm) and small (1.9&nbsp;mm) holes so the pins seat snugly. The defaults were dialed in on a fit-test coupon for this machine — only bump them if a pin binds during a test fit.</li>
+  <li><span class="ui">bed</span>: how far the dowel holes bite into the spoilboard under the stock.</li>
+  <li><span class="ui">Dowels</span>: <span class="ui">Top &amp; bottom (flip left-right)</span> or <span class="ui">Left &amp; right (flip top-bottom)</span> — pick whichever flip direction suits your clamping.</li>
+  <li><span class="ui">Cut dowels only...</span> exports <em>just</em> the dowel-hole G-code, no traces/drills/cutout — perfect for test-fitting the rods or deepening the bed bite. Keep the same XY origin so a re-cut lands on the existing holes.</li>
+</ul>
+
+<h3>Dowel operator sequence</h3>
+<ol class="steps">
+  <li><span class="st">Read the run plan</span>
+    Export writes <code>&lt;name&gt;_runplan.txt</code> with the exact order, bits, and pin sizes. Read it first — the steps below are the essentials.</li>
+  <li><span class="st">Zero once</span>
+    Set XY zero once (fresh dowels: the stock corner; grid: the datum hole). <strong>Never re-zero XY between jobs.</strong> Re-zero Z after every bit change <em>and</em> after the flip.</li>
+  <li><span class="st">Run <code>_align</code></span>
+    Drills the dowel holes through the stock into the bed. Seat the pins.</li>
+  <li><span class="st">Bottom side</span>
+    Run the bottom drill file(s), then <code>_bottom_traces</code>.</li>
+  <li><span class="st">Flip onto the pins</span>
+    Flip in the configured direction. The different pin diameters (or asymmetric spacing) make a wrong flip physically impossible to seat.</li>
+  <li><span class="st">Top side, then cut out</span>
+    Re-zero Z on the new surface, run <code>_top_traces</code>, and finish with <code>_cutout</code> <strong>last</strong>.</li>
+</ol>
+
+<h2>Method 2: Fiducial holes</h2>
+<p>The mill drills 2–4 <em>stock-only</em> corner holes. After milling the bottom you flip and re-place the board <strong>anywhere reasonable</strong> — no pins. You then measure where the fiducials actually landed, and the top traces are warped to the best-fit transform before export.</p>
+
+<h3>Settings</h3>
+<ul>
+  <li><span class="ui">n</span>: number of fiducials (2–4 — use 4 when you can; more spread = better fit).</li>
+  <li>Placement: <span class="ui">On board</span> (inset from the corners), <span class="ui">In waste</span> (outside the outline), or <span class="ui">Manual (drag pins)</span> to position them yourself on the preview.</li>
+  <li><span class="ui">Flip left-right</span> / <span class="ui">Flip top-bottom</span>: the flip direction you will physically perform.</li>
+  <li><span class="ui">scale</span>: also fit a uniform scale factor (absorbs thermal/measurement scale). Off = rigid rotation + translation only, like the dowel constraint.</li>
+</ul>
+
+<h3>After the flip: Fit &amp; export top</h3>
+<p>Click <span class="ui">Fit &amp; export top...</span> to open the <strong>Fiducial alignment</strong> dialog. Each row is one fiducial with its <em>nominal</em> position (where a perfect flip would put it) and a <em>measured</em> position you fill in. Three ways to fill a row:</p>
+<div class="tbl-wrap"><table>
+<tr><th>Way</th><th>How</th><th>Effort</th></tr>
+<tr><td>Type it</td><td>Probe/jog by hand, read VPanel, type X/Y</td><td>Slowest, always works</td></tr>
+<tr><td><span class="ui">Capture</span></td><td>Jog the bit into the hole (machine connected), press Capture — the live DRO position fills the row</td><td>Fast, needs careful jogging by eye</td></tr>
+<tr><td><span class="ui">Auto</span></td><td>Jog <em>roughly</em> over the hole, press Auto — the machine finds the center electrically</td><td>~1 minute per hole, no eyeballing</td></tr>
+</table></div>
+<p>Then press <span class="ui">Compute fit</span>: the dialog shows the RMS fit error, rotation, and scale. A good fit is well under 0.1&nbsp;mm RMS. Press <span class="ui">OK</span> and the warped <code>_top_traces</code> file is exported.</p>
+
+<h3>The Auto fiducial finder</h3>
+<p>The <span class="ui">Auto</span> button locates a hole center to about 0.05&nbsp;mm without any precision jogging:</p>
+<ol class="steps">
+  <li><span class="st">Prerequisites</span>
+    Firmware v2 on the Arduino (see <a href="hardware.html">Hardware &amp; firmware</a>), touch clips connected, spindle <strong>OFF</strong>, and copper present ~2.5&nbsp;mm west of the hole (the finder touches there first to learn the surface height).</li>
+  <li><span class="st">Rough position</span>
+    Jog the tool roughly over the hole, 2–3&nbsp;mm up. "Roughly" means within about a millimetre — click-to-jog on the preview is plenty accurate.</li>
+  <li><span class="st">Press Auto</span>
+    The machine performs shallow touch tests marching outward: contact = copper, no contact = hole. It bisects each hole edge and crosses X→Y→X to kill chord error, then fills the measured X/Y into the row (~25–35 touches).</li>
+</ol>
+
+<div class="danger"><span class="t">Verify the flip direction before cutting</span>
+<p>A corner-fiducial fit <strong>cannot detect a wrong flip direction</strong> — corner patterns are symmetric enough that the math fits beautifully either way. Before running the top traces: with the board AS PLACED, click-to-jog to a distinctive <em>board hole</em> (not a fiducial) in the Top view and check the bit actually hovers over that hole. If it doesn't, the flip direction setting doesn't match what you physically did.</p></div>
+
+<h2>Output files (double-sided)</h2>
+<pre><code>&lt;name&gt;_runplan.txt              read first — order, bits, pin sizes, zeroing
+&lt;name&gt;_align.nc                 dowel/fiducial holes
+&lt;name&gt;_bottom_drill_&lt;dia&gt;mm.nc  through-holes
+&lt;name&gt;_bottom_traces.nc         bottom isolation (mirrored)
+&lt;name&gt;_top_traces.nc            top isolation (plain F.Cu, reflected; fiducial mode: warped to fit)
+&lt;name&gt;_cutout.nc                run LAST</code></pre>
+
+<div class="tip"><span class="t">Level the top side too</span>
+<p>After the flip, the board sits differently. On <span class="ui">2 · Bed leveling</span>, set View to Top, rebuild the grid, <span class="ui">Clear Z</span>, re-probe, then <span class="ui">Export top traces (leveled)</span> re-writes the top file warped to the new surface <em>and</em> the fiducial fit. See <a href="bed-leveling.html">Bed leveling &amp; probing</a>.</p></div>
+
+<div class="page-nav">
+  <a href="milling-a-board.html"><span class="lbl">Previous</span><span class="ttl">← Milling a board</span></a>
+  <a class="next" href="bed-leveling.html"><span class="lbl">Next</span><span class="ttl">Bed leveling &amp; probing →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>

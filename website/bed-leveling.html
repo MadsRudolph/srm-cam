@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bed leveling &amp; probing — SRM-CAM guide</title>
+<meta name="description" content="Probe a height map over SPI so cut depth follows the real surface. Grid building, drift correction, mesh checks, and depth advice.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link active" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Bed leveling &amp; probing</h1>
+<p class="lead">Isolation cuts are ~0.15&nbsp;mm deep; FR-4 stock bows more than that. Probe the copper surface electrically, build a height map, and every cutting move follows the real surface.</p>
+
+<div class="note"><span class="t">One-time hardware setup required</span>
+<p>Auto-probing drives the machine through an Arduino on the SRM-20's internal SPI bus and senses contact electrically. If you haven't fitted and flashed the board yet, do <a href="hardware.html">Hardware &amp; firmware</a> first. No probe hardware? You can still level: <span class="ui">Export probe files...</span> writes one tiny G-code program per point to queue in VPanel, and you type the measured Z values into the table by hand.</p></div>
+
+<h2>Before probing</h2>
+<ol class="steps">
+  <li><span class="st">Wire the touch probe</span>
+    Clip <strong>D7 (red) → the copper board</strong> and <strong>GND (black) → the tool/collet</strong>. The board must be electrically isolated from the bed — paper or tape underneath — so the only path to ground is the bit touching copper. Spindle <strong>OFF</strong> for all probing.</li>
+  <li><span class="st">Set the work origin in VPanel</span>
+    Keep the G54 XY at the machine origin and zero <strong>only Z</strong> there. NC jobs obey G54 only.</li>
+  <li><span class="st">Connect</span>
+    Pick the Arduino's COM port in the machine dock and press <span class="ui">Connect</span>. The DRO goes live and the <span class="ui">bit ○</span> indicator fills when you short the clips together — do that once as a wiring test.</li>
+</ol>
+
+<h2>Probe the grid</h2>
+<ol class="steps">
+  <li><span class="st">Build the grid</span>
+    On <span class="ui">2 · Bed leveling</span>, set <span class="ui">nx</span> × <span class="ui">ny</span> (3×3 is a fine start; go denser for large or wavy boards) and press <span class="ui">Build grid</span>. Turn on <span class="ui">Show grid</span> to see the numbered points on the preview before committing.</li>
+  <li><span class="st">Park the tool over point 1</span>
+    Jog the tool 2–3&nbsp;mm <em>above</em> the first grid point — click-to-jog on the preview makes this easy. This position becomes the probing datum and reference for drift correction.</li>
+  <li><span class="st">Probe over SPI</span>
+    Press <span class="ui">Probe over SPI</span>. The bit taps each point with a two-stage verified touch (coarse find, lift, fine re-touch — the two must agree or the point retries) and the Z column fills in live. The <span class="ui">STOP</span> button aborts instantly at any moment, including mid-descent.</li>
+  <li><span class="st">Let drift correction work</span>
+    The <span class="ui">drift chk</span> spinbox (default: every 6 points) re-touches the reference point periodically and corrects the whole grid for thermal drift and board settling. Leave it on for anything bigger than a quick 3×3.</li>
+</ol>
+
+<h2>Check the mesh before trusting it</h2>
+<p>A single flaky touch can poison a height map — and a poisoned height map cuts air in one place and through the board in another. Press <span class="ui">Mesh check</span> after probing. It reports three things:</p>
+<ul>
+  <li><strong>Flaky points</strong> — measurements no smooth board surface can explain. Re-probe those before cutting.</li>
+  <li><strong>Recommended minimum cut depth</strong> — a depth that survives this mesh's measured uncertainty, so thin spots still cut through.</li>
+  <li><strong>Coarse regions</strong> — where the grid spacing is too wide for how fast the surface changes, with a one-click <span class="ui">Insert suggested row(s)</span> to add the missing probe rows (then re-probe just those).</li>
+</ul>
+
+<figure class="fig">
+  <img src="img/srmcam_BedLeveling_3DView.png" alt="3D bed height-map view">
+  <figcaption>The 3D height-map view: the probed surface with adjustable Z exaggeration. Eyeball it — a single spike is a flaky touch, a smooth bow is real.</figcaption>
+</figure>
+
+<p>Also look at the surface yourself: <span class="ui">Show height map</span> overlays a warp heatmap on the preview, and <span class="ui">3D view</span> opens the rotatable mesh. A real board is smooth; isolated spikes are measurement errors.</p>
+
+<h2>Apply it</h2>
+<p>Tick <span class="ui">Apply bed leveling on export</span> and export as usual — every cutting move's Z is warped to the probed surface, so the engrave depth stays constant across the board's bow.</p>
+
+<div class="tip"><span class="t">Save the mesh</span>
+<p><span class="ui">Save CSV</span> writes the grid (X, Y, dz) to a file; <span class="ui">Load CSV</span> restores it after a restart. Saving the whole session (<span class="ui">Save setup...</span>) includes the mesh too. <span class="ui">Clear Z</span> wipes the measurements but keeps the grid layout for a clean re-probe.</p></div>
+
+<h2>Leveling the top side (double-sided)</h2>
+<p>After the flip the board sits on new terrain, so the bottom-side mesh is invalid for the top. The flow, in order: set <span class="ui">View</span> to <span class="ui">Top</span>, <span class="ui">Build grid</span>, <span class="ui">Clear Z</span>, probe the flipped board, then press <span class="ui">Export top traces (leveled)</span> — it re-writes <code>&lt;name&gt;_top_traces</code> warped to the new surface (and to the fiducial fit, if you used one).</p>
+
+<h2>Probing without the Arduino</h2>
+<p><span class="ui">Export probe files...</span> writes one G-code program per probe point plus a checklist. Queue them in VPanel, step point-to-point with Continue, read each touch Z off VPanel, and type the values into the table's Z column. Slower, but it produces exactly the same height map.</p>
+
+<h2>How accurate is it?</h2>
+<p>The mapping itself is faithful: exported files reproduce the mesh to well under a micron of the model. The quality of your result is decided by the <em>measurement</em> — which is why the verified two-stage touch, drift correction, and the mesh check exist. Trust the pipeline, verify the mesh.</p>
+
+<div class="page-nav">
+  <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>
+  <a class="next" href="photo-and-rework.html"><span class="lbl">Next</span><span class="ttl">Photo check &amp; rework →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>

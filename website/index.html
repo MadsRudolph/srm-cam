@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SRM-CAM — PCB milling on the Roland SRM-20</title>
+<meta name="description" content="User guide for SRM-CAM: desktop CAM for milling PCBs on the Roland SRM-20. Gerber to G-code, bed leveling, double-sided registration, photo-based rework.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link active" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<div class="hero">
+  <h1>SRM-CAM</h1>
+  <p class="lead">Desktop CAM for the <strong>Roland SRM-20</strong>: load KiCad Gerber&nbsp;+&nbsp;Excellon files, preview every toolpath, and export ready-to-run G-code — with bed leveling, double-sided registration, and photo-verified rework built in.</p>
+
+  <div class="badge-row">
+    <span class="badge copper">Windows installer — no Python needed</span>
+    <span class="badge">G-code (.nc) &amp; RML output</span>
+    <span class="badge">Open source</span>
+  </div>
+
+  <div class="btn-row">
+    <a class="btn primary" href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">Download for Windows</a>
+    <a class="btn" href="getting-started.html">Get started →</a>
+    <a class="btn" href="https://github.com/MadsRudolph/srm-cam">GitHub</a>
+  </div>
+</div>
+
+<figure class="fig">
+  <img src="img/srmcam_GUI_MainPage.png" alt="SRM-CAM main window with toolpath preview">
+  <figcaption>The main window: toolpath preview, per-operation settings, and machine controls in one place.</figcaption>
+</figure>
+
+<h2>What it replaces</h2>
+<p>One tool for the whole SRM-20 PCB flow, replacing the mods website and FlatCAM. You bring KiCad plot output; SRM-CAM produces one job file per operation — <strong>trace isolation</strong>, <strong>drilling</strong>, and <strong>board cut-out</strong> — that you stream from Roland VPanel in NC-code mode.</p>
+
+<div class="pill-flow">
+  <span class="pf">KiCad Gerbers</span><span class="arr">→</span>
+  <span class="pf">SRM-CAM</span><span class="arr">→</span>
+  <span class="pf">.nc files</span><span class="arr">→</span>
+  <span class="pf">VPanel</span><span class="arr">→</span>
+  <span class="pf">Milled board</span>
+</div>
+
+<h2>Guide contents</h2>
+<div class="cards">
+  <a class="card" href="getting-started.html">
+    <span class="ct"><span class="ico">🚀</span>Getting started</span>
+    <span class="cd">Install, first launch, the guided tour, workspace folders, and exporting KiCad files the right way.</span>
+  </a>
+  <a class="card" href="milling-a-board.html">
+    <span class="ct"><span class="ico">🛠️</span>Milling a board</span>
+    <span class="cd">The full single-sided workflow: import, traces, drilling, cut-out, presets, export, and running jobs in VPanel.</span>
+  </a>
+  <a class="card" href="double-sided.html">
+    <span class="ct"><span class="ico">🔁</span>Double-sided boards</span>
+    <span class="cd">Dowel-pin and fiducial registration, the flip, the run plan, and the automatic fiducial finder.</span>
+  </a>
+  <a class="card" href="bed-leveling.html">
+    <span class="ct"><span class="ico">📐</span>Bed leveling &amp; probing</span>
+    <span class="cd">Probe a height map over SPI so cut depth follows the real surface. Mesh checks and depth advice.</span>
+  </a>
+  <a class="card" href="photo-and-rework.html">
+    <span class="ct"><span class="ico">📷</span>Photo check &amp; rework</span>
+    <span class="cd">Overlay a board photo on the design, detect uncut channels automatically, and re-cut them in one pass.</span>
+  </a>
+  <a class="card" href="hardware.html">
+    <span class="ct"><span class="ico">🔌</span>Hardware &amp; firmware</span>
+    <span class="cd">The Arduino SPI probe board: wiring, flashing, what each firmware feature does, and safety limits.</span>
+  </a>
+  <a class="card" href="reference.html">
+    <span class="ct"><span class="ico">📄</span>Files &amp; reference</span>
+    <span class="cd">Output files, sessions, presets, the calibration coupon, CLI usage, and keyboard shortcuts.</span>
+  </a>
+  <a class="card" href="troubleshooting.html">
+    <span class="ct"><span class="ico">🩹</span>Troubleshooting</span>
+    <span class="cd">Symptoms and fixes: depth problems, registration scares, probing errors, photo detection refusals.</span>
+  </a>
+</div>
+
+<h2>Highlights</h2>
+
+<h3>Trustworthy depth</h3>
+<p>FR-4 stock is never flat. SRM-CAM probes the copper surface electrically through a small Arduino fitted in the SRM-20, builds a height map, and warps every cutting move so the engrave depth follows the real surface — with drift-corrected, double-verified touches and a sanity check that flags suspicious mesh points before you cut.</p>
+
+<h3>Double-sided that registers</h3>
+<p>Two proven flip methods: dowel pins seated in fresh-drilled holes (sub-0.1&nbsp;mm, zero measurement) or fiducial holes probed after the flip — including an <span class="ui">Auto</span> button that finds each hole center electrically to ~50&nbsp;µm without any jogging by eye.</p>
+
+<figure class="fig">
+  <img src="img/srmcam_doublesided.png" alt="Double-sided registration preview">
+  <figcaption>Double-sided registration: both layers previewed in register before anything is cut.</figcaption>
+</figure>
+
+<h3>See problems before they're problems</h3>
+<p>Isolation preflight marks channels the bit physically cannot cut. The 3D simulator plays back the whole job. And after cutting, a photo of the board can be warped onto the design to detect under-cut channels automatically — trained on real production ground truth.</p>
+
+<figure class="fig">
+  <img src="img/srmcam_3dview_traces.png" alt="3D toolpath simulation">
+  <figcaption>3D toolpath simulation — orbit and play back the whole job before committing stock.</figcaption>
+</figure>
+
+<h2>A finished board</h2>
+<p>Both sides of a double-sided board milled with SRM-CAM, registered off dowel pins, held to the light:</p>
+<div class="cards" style="grid-template-columns: 1fr 1fr">
+  <figure class="fig" style="margin:0">
+    <img src="img/doublesided_bcu.jpg" alt="Bottom copper of a finished board">
+    <figcaption>Bottom — B.Cu</figcaption>
+  </figure>
+  <figure class="fig" style="margin:0">
+    <img src="img/doublesided_fcu.jpg" alt="Top copper of a finished board">
+    <figcaption>Top — F.Cu</figcaption>
+  </figure>
+</div>
+
+<div class="page-nav">
+  <a class="next" href="getting-started.html"><span class="lbl">Next</span><span class="ttl">Getting started →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>

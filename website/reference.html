@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files &amp; reference — SRM-CAM guide</title>
+<meta name="description" content="SRM-CAM reference: output files, sessions, presets, the calibration coupon, CLI usage, and mouse interactions.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link active" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Files &amp; reference</h1>
+<p class="lead">Every file SRM-CAM reads and writes, the preset system, the calibration coupon, CLI usage, and the mouse interactions worth memorizing.</p>
+
+<h2>Input files</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Type</th><th>Files</th><th>Notes</th></tr>
+<tr><td>Gerber</td><td><code>.gbr</code> (+ <code>.gbrjob</code>)</td><td>Standard KiCad plot output. B.Cu + Edge.Cuts minimum; F.Cu for double-sided.</td></tr>
+<tr><td>Excellon drill</td><td><code>.drl</code> / <code>.txt</code></td><td>From KiCad's Generate Drill Files.</td></tr>
+<tr><td>Session</td><td><code>.json</code></td><td>Whole app state, written by <span class="ui">Save setup...</span></td></tr>
+<tr><td>Height map</td><td><code>.csv</code></td><td>X, Y, dz — written by <span class="ui">Save CSV</span> on the leveling page.</td></tr>
+<tr><td>Photo</td><td><code>.png</code> / <code>.jpg</code></td><td>Board photo for the overlay and rework detection.</td></tr>
+</table></div>
+
+<h2>Output files</h2>
+<div class="tbl-wrap"><table>
+<tr><th>File</th><th>Contents</th></tr>
+<tr><td><code>&lt;name&gt;_runplan.txt</code></td><td><strong>Read this first.</strong> Run order, bit per step, spindle notes, zeroing instructions, pin sizes.</td></tr>
+<tr><td><code>&lt;name&gt;_bottom_traces.nc</code></td><td>Isolation milling (mirrored). Leveled if <span class="ui">Apply bed leveling on export</span> is on.</td></tr>
+<tr><td><code>&lt;name&gt;_drill_&lt;dia&gt;mm.nc</code></td><td>One per hole diameter (smallest first), or one single-bit file with interpolated large holes.</td></tr>
+<tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>Board outline with holding tabs. Run last.</td></tr>
+<tr><td><code>&lt;name&gt;_align.nc</code></td><td>Double-sided only: dowel/fiducial holes.</td></tr>
+<tr><td><code>&lt;name&gt;_top_traces.nc</code></td><td>Double-sided only: top isolation (fiducial mode: warped to the measured fit; optionally leveled).</td></tr>
+<tr><td><code>&lt;name&gt;_&lt;side&gt;_&lt;op&gt;_rework.nc</code></td><td>Rework pass: toolpaths clipped to your boxes, each at its own depth.</td></tr>
+</table></div>
+<p>All exports default to G-code (<code>.nc</code>, real millimetres, G54 origin, pre-linearised G0/G1 — no arcs or canned cycles). Choosing the <strong>Roland SRM-20</strong> machine instead writes RML (<code>.rml</code>).</p>
+
+<h2>Workspace layout</h2>
+<pre><code>Documents\SRM-CAM\
+├── sessions\    saved setups (.json) — Save/Load setup
+├── exports\     exported .nc / .rml jobs + runplan
+└── photos\      board photos for the overlay</code></pre>
+<p>File dialogs remember the last folder you used per category. Power users can relocate the whole workspace with the <code>SRM_CAM_HOME</code> environment variable.</p>
+
+<h2>What a session contains</h2>
+<p>One <code>.json</code> from <span class="ui">Save setup...</span> restores everything:</p>
+<ul>
+  <li>the loaded board (Gerber folder path) and job name,</li>
+  <li>placement, rotation, machine choice, stock dimensions,</li>
+  <li>all traces / drill / cutout parameters,</li>
+  <li>double-sided configuration (method, pins, fiducials, flip direction),</li>
+  <li>the bed-leveling grid and probed Z values,</li>
+  <li>rework boxes with per-box depths and lvl flags,</li>
+  <li>the aligned photo (copied next to the session, with its anchors).</li>
+</ul>
+<div class="note"><span class="t">Sessions reference the Gerber folder by path</span>
+<p>If you move a session to another PC, bring the Gerber folder too (or fix the path when loading). Everything else — mesh, boxes, photo — travels inside the session.</p></div>
+
+<h2>Presets</h2>
+<p>A preset is a complete bit + feeds/speeds set covering all three operations. Merge order, later overrides earlier by name:</p>
+<ol>
+  <li><strong>Built-in</strong> — ships with the app (<em>SRM-20 0.8 mm flat</em> opens applied).</li>
+  <li><strong>Team-shared</strong> — <code>examples/presets.json</code> in the install/repo.</li>
+  <li><strong>Personal</strong> — <code>~/.gerber2rml/presets.json</code>, written by <span class="ui">Save...</span></li>
+</ol>
+
+<h2>Job parameters</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Parameter</th><th>Applies to</th><th>Meaning</th></tr>
+<tr><td><code>bit_diameter</code></td><td>all</td><td>Diameter of the endmill or drill bit.</td></tr>
+<tr><td><code>tool_type</code></td><td>traces</td><td><code>flat</code> endmill or <code>vbit</code> engraver.</td></tr>
+<tr><td><code>tip_diameter</code>, <code>included_angle</code>, <code>target_width</code></td><td>traces (V-bit)</td><td>V geometry; depth is back-solved from the target cut width.</td></tr>
+<tr><td><code>cut_depth</code></td><td>all</td><td>Depth per pass (peck depth for drills).</td></tr>
+<tr><td><code>total_depth</code></td><td>all</td><td>Total depth (auto = stock + breakthrough when Auto depth is on).</td></tr>
+<tr><td><code>offsets</code></td><td>traces</td><td>Number of isolation passes; <strong>-1</strong> = clear all copper (rubout).</td></tr>
+<tr><td><code>stepover</code></td><td>traces</td><td>Spacing between passes, as a fraction of bit diameter.</td></tr>
+<tr><td><code>single_bit</code></td><td>drill</td><td>One bit for all holes: plunge matching, interpolate larger.</td></tr>
+<tr><td><code>tabs</code>, <code>tab_width</code></td><td>cutout</td><td>Holding tabs count and width.</td></tr>
+<tr><td><code>xy_feed</code>, <code>plunge_feed</code></td><td>all</td><td>Horizontal / vertical cutting speed (mm/s).</td></tr>
+<tr><td><code>travel_z</code></td><td>all</td><td>Safe rapid height above the material.</td></tr>
+</table></div>
+
+<h2>The calibration coupon</h2>
+<p>A bundled 40×30&nbsp;mm test board that exercises every operation — load <code>examples/calibration</code> as the Gerber folder, no KiCad needed. It contains isolation pairs at 0.8&nbsp;mm clearance, a drill-size row, a 10&nbsp;mm registration grid (measure with calipers), a 6&nbsp;mm roundness ring, and a tabbed cut-out. Cut one whenever you change bits, stock, or machine — it tells you in one small board whether your setup is dialed.</p>
+
+<h2>Command line</h2>
+<pre><code>python -m gerber2rml                                          # GUI
+python -m gerber2rml.cli &lt;gerber-folder&gt; -o &lt;out&gt; -n &lt;name&gt;   # headless export
+python -m gerber2rml.doctor                                   # fix deps after git pull</code></pre>
+<p>The CLI exports the same traces/drill/cutout files as the GUI with default settings — handy for batch work. <code>--gcode</code> / RML selection matches the GUI's Machine dropdown.</p>
+
+<h2>Mouse &amp; keys worth memorizing</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Where</th><th>Action</th><th>Effect</th></tr>
+<tr><td>Preview canvas</td><td>drag</td><td>Move the design on the bed (when <span class="ui">Move on bed (drag)</span> is on)</td></tr>
+<tr><td>Preview canvas</td><td>click</td><td>Jog the tool there (when connected + <span class="ui">Click to jog</span>); snaps to nearby holes/pins</td></tr>
+<tr><td>Preview canvas</td><td><kbd>Ctrl</kbd>+click</td><td>Jog to the exact clicked point (no snapping); in align mode: clear the overlay trim</td></tr>
+<tr><td>Photo anchor dialog</td><td>scroll / drag</td><td>Zoom / pan the photo</td></tr>
+<tr><td>Photo anchor dialog</td><td>right-click</td><td>Undo the last anchor</td></tr>
+<tr><td>3D views</td><td>left-drag / scroll / right-drag</td><td>Orbit / zoom / pan</td></tr>
+</table></div>
+
+<h2>Status chips</h2>
+<p>The status-bar chips light as your setup completes. Green means in place:</p>
+<div class="tbl-wrap"><table>
+<tr><th>Chip</th><th>Lit when</th></tr>
+<tr><td><em>board</em></td><td>a Gerber folder is loaded</td></tr>
+<tr><td><em>placed</em></td><td>the board has been positioned on the bed</td></tr>
+<tr><td><em>grid</em> / <em>mesh</em></td><td>a probe grid is built / the height map is probed or loaded (with point count)</td></tr>
+<tr><td><em>photo</em> / <em>boxes</em></td><td>a photo overlay is aligned / rework boxes are marked</td></tr>
+<tr><td><em>machine</em> / <em>touch</em></td><td>the serial link is connected (shows the port) / the touch probe reads</td></tr>
+<tr><td><em>fit</em></td><td>a fiducial fit has been computed (shows the RMS)</td></tr>
+</table></div>
+
+<div class="page-nav">
+  <a href="hardware.html"><span class="lbl">Previous</span><span class="ttl">← Hardware &amp; firmware</span></a>
+  <a class="next" href="troubleshooting.html"><span class="lbl">Next</span><span class="ttl">Troubleshooting →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>
