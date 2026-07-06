@@ -24,6 +24,7 @@ gui = [
     "pyqtgraph>=0.13",
     "PyOpenGL>=3.1",
     "pyserial>=3.5",   # SPI bed-probing over the Arduino serial link
+    "qrcode>=7.0",     # phone photo hand-off QR (matrix only, no PIL)
 ]
 
 [project.scripts]

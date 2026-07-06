@@ -1074,6 +1074,13 @@ class MainWindow(QMainWindow):
             "4 highlighted anchor holes in it, and the photo is warped to line "
             "up with the preview exactly.")
         self.photo_load_btn.clicked.connect(self._on_load_photo)
+        self.photo_phone_btn = QPushButton("Phone...")
+        self.photo_phone_btn.setToolTip(
+            "Take the board photo with your phone and beam it straight in: "
+            "shows a QR code, the phone opens a take-photo page, and the "
+            "shot lands here — no cables, no cloud. Phone and PC must be on "
+            "the same network (on eduroam: use the phone's hotspot).")
+        self.photo_phone_btn.clicked.connect(self._on_phone_photo)
         self.photo_clear_btn = QPushButton("Clear")
         self.photo_clear_btn.clicked.connect(self._on_clear_photo)
         self.photo_alpha_slider = QSlider(Qt.Horizontal)
@@ -1310,6 +1317,7 @@ class MainWindow(QMainWindow):
                            stretch_first=True))
         _rl.addWidget(self.rework_level_chk)
         _rl.addWidget(_row(QLabel("Photo"), self.photo_load_btn,
+                           self.photo_phone_btn,
                            self.photo_alpha_slider, self.photo_clear_btn,
                            stretch_first=True))
         _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
@@ -3973,16 +3981,23 @@ class MainWindow(QMainWindow):
         names = ("bottom-left", "bottom-right", "top-right", "top-left")
         return list(zip(names, corners))
 
-    def _on_load_photo(self):
+    def _photo_flow_anchors(self):
+        """Shared preconditions for every photo source; None = not ready."""
         if self.state.board is None:
             QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
-            return
+            return None
         anchors = self._photo_anchor_holes()
         if not anchors:
             QMessageBox.warning(
                 self, "No anchors",
                 "Need at least 4 distinct drilled holes in the preview to "
                 "anchor a photo (show the drill or traces preview first).")
+            return None
+        return anchors
+
+    def _on_load_photo(self):
+        anchors = self._photo_flow_anchors()
+        if anchors is None:
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Board photo", self._dlg_dir("photo", "photos"),
@@ -3990,6 +4005,20 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self._dlg_remember("photo", path)
+        self._run_photo_anchor_flow(path, anchors)
+
+    def _on_phone_photo(self):
+        anchors = self._photo_flow_anchors()
+        if anchors is None:
+            return
+        from gerber2rml.gui.phonephoto import PhonePhotoDialog
+        from gerber2rml.gui.workspace import workspace_root
+        dlg = PhonePhotoDialog(self, workspace_root() / "photos")
+        if dlg.exec() != QDialog.Accepted or not dlg.photo_path:
+            return
+        self._run_photo_anchor_flow(dlg.photo_path, anchors)
+
+    def _run_photo_anchor_flow(self, path, anchors):
         try:
             img = self._decode_photo(path)
         except Exception as e:
