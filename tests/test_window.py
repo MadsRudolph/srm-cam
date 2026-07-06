@@ -1778,3 +1778,28 @@ def test_fiducial_dialog_has_visible_auto_column():
     # the dialog is wide enough that the Auto column fits inside the table
     total = sum(dlg.table.columnWidth(c) for c in range(6))
     assert dlg.width() >= total
+
+
+def test_phone_photo_autocrop_writes_cropped_file(tmp_path):
+    """A raw machine-frame photo gets cropped to the copper; an already
+    tight photo is passed through untouched."""
+    import numpy as np
+    from PySide6.QtGui import QImage
+    from tests.test_autocrop import scene
+
+    def save(img, path):
+        a = np.ascontiguousarray(img)
+        QImage(a.data, a.shape[1], a.shape[0], 3 * a.shape[1],
+               QImage.Format_RGB888).save(str(path), "JPG", 95)
+
+    w = MainWindow()
+    raw = tmp_path / "raw.jpg"
+    save(scene(board=(160, 120, 680, 500)), raw)
+    out = w._autocrop_photo_file(str(raw))
+    assert out != str(raw) and out.endswith("_crop.jpg")
+    cropped = QImage(out)
+    assert cropped.width() < 800 * 0.8 and cropped.height() < 600 * 0.8
+
+    tight = tmp_path / "tight.jpg"
+    save(scene(board=(0, 0, 800, 600)), tight)
+    assert w._autocrop_photo_file(str(tight)) == str(tight)

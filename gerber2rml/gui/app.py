@@ -4016,7 +4016,41 @@ class MainWindow(QMainWindow):
         dlg = PhonePhotoDialog(self, workspace_root() / "photos")
         if dlg.exec() != QDialog.Accepted or not dlg.photo_path:
             return
-        self._run_photo_anchor_flow(dlg.photo_path, anchors)
+        path = self._autocrop_photo_file(dlg.photo_path)
+        if path != dlg.photo_path:
+            self.statusBar().showMessage(
+                "Auto-cropped the photo to the copper board", 5000)
+        self._run_photo_anchor_flow(path, anchors)
+
+    def _autocrop_photo_file(self, path):
+        """Crop a raw phone photo to the copper stock (the phone shot has the
+        whole machine in frame). Writes <name>_crop.jpg at FULL resolution
+        next to the original — full res matters: Detect-from-photo re-reads
+        the file at native resolution. Falls back to the original path when
+        no convincing board is found (odd lighting, already cropped)."""
+        try:
+            from gerber2rml.engine.autocrop import copper_bbox
+            box = copper_bbox(self._decode_photo(path, max_dim=1000))
+            if box is None:
+                return path
+            x0, y0, x1, y1 = box
+            if (x1 - x0) * (y1 - y0) > 0.90:     # already basically the board
+                return path
+            from PySide6.QtCore import QRect
+            from PySide6.QtGui import QImage
+            img = QImage(str(path))
+            if img.isNull():
+                return path
+            w, h = img.width(), img.height()
+            rect = QRect(int(x0 * w), int(y0 * h),
+                         max(1, round((x1 - x0) * w)),
+                         max(1, round((y1 - y0) * h)))
+            out = Path(path).with_name(Path(path).stem + "_crop.jpg")
+            if img.copy(rect).save(str(out), "JPG", 92):
+                return str(out)
+        except Exception:
+            pass                                  # any hiccup -> use the raw
+        return path
 
     def _run_photo_anchor_flow(self, path, anchors):
         try:
