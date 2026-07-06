@@ -1,15 +1,24 @@
 """Phone hand-off dialog: QR code -> phone camera page -> photo lands here.
 
-Wraps engine.photoshare.PhotoShareServer in a modal dialog: shows the QR
-(and the URL as text fallback), waits, and accepts as soon as one photo has
-been uploaded. ``photo_path`` then holds the saved file.
+Two transports, picked by the Relay field (remembered across sessions):
+
+- Relay URL set  -> phone and app both talk to the self-hosted Cloudflare
+  relay (relay/worker.js). Works on ANY network — eduroam, mobile data —
+  because the PC accepts no inbound traffic at all.
+- Relay empty    -> direct LAN mode: a one-shot local server + a QR with
+  this PC's address. Zero infrastructure, but phone and PC must be able
+  to reach each other (client-isolating wifi blocks this).
+
+Either way, ``photo_path`` holds the saved file after accept().
 """
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QLineEdit,
-                               QVBoxLayout)
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
+                               QLabel, QLineEdit, QVBoxLayout)
 
+from gerber2rml.engine import photorelay
 from gerber2rml.engine.photoshare import PhotoShareServer
+from gerber2rml.gui.workspace import _settings
 
 
 def qr_pixmap(text, module_px=7):
@@ -35,7 +44,7 @@ def qr_pixmap(text, module_px=7):
 
 
 class _Bridge(QObject):
-    # emitted from the HTTP server thread; auto-queued to the GUI thread
+    # emitted from a worker thread; auto-queued to the GUI thread
     received = Signal(str)
 
 
@@ -44,42 +53,92 @@ class PhonePhotoDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Photo from phone")
         self.photo_path = None
+        self.save_dir = save_dir
         self._bridge = _Bridge()
         self._bridge.received.connect(self._on_received)
-        self._server = PhotoShareServer(
-            save_dir, on_photo=self._bridge.received.emit)
-        url = self._server.start()
+        self._server = None
+        self._poller = None
 
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
         head = QLabel("Scan with the phone camera, then take the photo:")
         head.setWordWrap(True)
         lay.addWidget(head)
-        qr = QLabel()
-        qr.setPixmap(qr_pixmap(url))
-        qr.setAlignment(Qt.AlignCenter)
-        lay.addWidget(qr)
-        self.url_edit = QLineEdit(url)
+        self.qr_label = QLabel()
+        self.qr_label.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.qr_label)
+        self.url_edit = QLineEdit()
         self.url_edit.setReadOnly(True)
         self.url_edit.setToolTip("Or type this address in the phone browser.")
         lay.addWidget(self.url_edit)
-        hint = QLabel(
-            "Phone and PC must be on the same network. On eduroam (client "
-            "isolation) connect the PC to the phone's hotspot instead.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #98a2b3;")
-        lay.addWidget(hint)
+
+        relay_row = QHBoxLayout()
+        relay_row.addWidget(QLabel("Relay"))
+        self.relay_edit = QLineEdit(
+            str(_settings().value("phone/relay_url", "")))
+        self.relay_edit.setPlaceholderText(
+            "https://srm-cam-relay.<you>.workers.dev  (empty = direct LAN)")
+        self.relay_edit.setToolTip(
+            "Your self-hosted photo relay (see relay/README.md in the "
+            "repo). With a relay the phone works on ANY network — eduroam, "
+            "mobile data. Leave empty for direct LAN mode (phone and PC "
+            "must reach each other; on eduroam use the phone's hotspot).")
+        self.relay_edit.editingFinished.connect(self._restart_transport)
+        relay_row.addWidget(self.relay_edit, 1)
+        lay.addLayout(relay_row)
+
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: #98a2b3;")
+        lay.addWidget(self.hint)
         self.status = QLabel("Waiting for a photo…")
         lay.addWidget(self.status)
         btns = QDialogButtonBox(QDialogButtonBox.Cancel)
         btns.rejected.connect(self.reject)
         lay.addWidget(btns)
 
+        self._restart_transport()
+
+    # -- transport lifecycle -------------------------------------------
+    def _stop_transport(self):
+        if self._server:
+            self._server.stop()
+            self._server = None
+        if self._poller:
+            self._poller.stop()
+            self._poller = None
+
+    def _restart_transport(self):
+        relay = self.relay_edit.text().strip()
+        _settings().setValue("phone/relay_url", relay)
+        self._stop_transport()
+        if relay:
+            token = photorelay.new_token()
+            url = photorelay.page_url(relay, token)
+            self._poller = photorelay.RelayPoller(
+                relay, token, self.save_dir,
+                on_photo=self._bridge.received.emit)
+            self._poller.start()
+            self.hint.setText(
+                "Via your relay — works on any network, even mobile data.")
+        else:
+            self._server = PhotoShareServer(
+                self.save_dir, on_photo=self._bridge.received.emit)
+            url = self._server.start()
+            self.hint.setText(
+                "Direct LAN mode: phone and PC must be on the same network. "
+                "On eduroam (client isolation) use the phone's hotspot — or "
+                "set up the relay (relay/README.md) to work from anywhere.")
+        self.qr_label.setPixmap(qr_pixmap(url))
+        self.url_edit.setText(url)
+        self.status.setText("Waiting for a photo…")
+
+    # -- events --------------------------------------------------------
     def _on_received(self, path):
         self.photo_path = path
         self.status.setText("Photo received.")
         self.accept()
 
-    def done(self, r):                      # any close path stops the server
-        self._server.stop()
+    def done(self, r):                      # any close path stops everything
+        self._stop_transport()
         super().done(r)

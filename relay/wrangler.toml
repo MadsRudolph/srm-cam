@@ -1,0 +1,10 @@
+# Cloudflare Worker config for the SRM-CAM photo relay.
+# One-time setup: see relay/README.md.
+name = "srm-cam-relay"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+
+[[kv_namespaces]]
+binding = "PHOTOS"
+# Replace with the id printed by:  npx wrangler kv namespace create PHOTOS
+id = "PASTE_KV_NAMESPACE_ID_HERE"

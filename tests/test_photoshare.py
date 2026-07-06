@@ -115,4 +115,4 @@ def test_dialog_accepts_on_photo(tmp_path):
         assert dlg.photo_path and dlg.photo_path.endswith(".jpg")
         assert dlg.result() == QDialog.Accepted or dlg.photo_path
     finally:
-        dlg._server.stop()
+        dlg._stop_transport()
