@@ -59,11 +59,11 @@
 <h2>Before probing</h2>
 <ol class="steps">
   <li><span class="st">Wire the touch probe</span>
-    Clip <strong>D7 (red) → the copper board</strong> and <strong>GND (black) → the tool/collet</strong>. The board must be electrically isolated from the bed — paper or tape underneath — so the only path to ground is the bit touching copper. Spindle <strong>OFF</strong> for all probing.</li>
+    Clip <strong>D7 (red) → the copper board</strong> — that's the only clip; the tool is already grounded through the collet and machine frame. The board must be electrically isolated from the bed — paper or tape underneath — so the only path to ground is the bit touching copper. Spindle <strong>OFF</strong> for all probing.</li>
   <li><span class="st">Set the work origin in VPanel</span>
     Keep the G54 XY at the machine origin and zero <strong>only Z</strong> there. NC jobs obey G54 only.</li>
   <li><span class="st">Connect</span>
-    Pick the Arduino's COM port in the machine dock and press <span class="ui">Connect</span>. The DRO goes live and the <span class="ui">bit ○</span> indicator fills when you short the clips together — do that once as a wiring test.</li>
+    Pick the Arduino's COM port in the machine dock and press <span class="ui">Connect</span>. The DRO goes live and the <span class="ui">bit ○</span> indicator fills when you touch the red clip against the bit — do that once as a wiring test.</li>
 </ol>
 
 <h2>Probe the grid</h2>

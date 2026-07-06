@@ -82,12 +82,13 @@ with a touch probe, so it needs a small board fitted inside the SRM-20:
 2. **Flash the provided firmware:** `hardware/srm20_spi_probe/srm20_spi_probe.ino`
    (needs the bundled `hardware/SRM20SPIRemote` library).
 3. **Probe wiring:** connect **D7 → the copper board** (the workpiece — it floats
-   HIGH on the Nano's internal pull-up) and **GND → the tool / collet**. Put paper
-   or tape under the board so it's **electrically isolated from the bed**: the only
-   path to ground is the bit touching copper, which pulls D7 LOW = contact.
+   HIGH on the Nano's internal pull-up). That is the only clip: the tool is already
+   grounded through the collet/spindle to the machine frame, which the Nano shares.
+   Put paper or tape under the board so it's **electrically isolated from the bed**:
+   the only path to ground is the bit touching copper, which pulls D7 LOW = contact.
 
-> Equivalently, with alligator clips during probing: **red → copper board, black →
-> drill bit** (D7 is the red/signal side, GND the black side).
+> With an alligator clip during probing: **red → copper board** (D7, the signal
+> side). No clip on the tool — the ground path is the machine itself.
 
 ### Probing
 

@@ -78,16 +78,16 @@
 <p>If probing works but <span class="ui">Auto</span> fiducial finding or drift correction doesn't, you're on firmware v1. One reflash of the current <code>srm20_spi_probe.ino</code> upgrades everything at once — verified touches, drift correction, Z zeroing, hole testing, and streaming.</p></div>
 
 <h2>Probe wiring (every session)</h2>
-<p>Touch sensing is a simple circuit: the copper board floats HIGH through the Arduino's pull-up; the grounded tool touching it pulls the line LOW.</p>
+<p>Touch sensing is a simple circuit: the copper board floats HIGH through the Arduino's pull-up, and the tool is already at ground — it grounds through the collet and spindle to the machine frame, which the Arduino shares. So there is exactly <strong>one clip</strong> to attach:</p>
 <div class="tbl-wrap"><table>
 <tr><th>Clip</th><th>Goes to</th></tr>
 <tr><td><strong>D7</strong> (red / signal)</td><td>the copper board (the workpiece)</td></tr>
-<tr><td><strong>GND</strong> (black)</td><td>the tool / collet</td></tr>
 </table></div>
+<p>The bit touching the copper pulls D7 LOW = contact. No clip on the tool — the ground path is the machine itself.</p>
 <ul>
   <li>The board must be <strong>electrically isolated from the bed</strong> — put paper or tape underneath. The only path to ground must be the bit touching copper.</li>
   <li>Spindle stays <strong>OFF</strong> for all probing.</li>
-  <li>Quick test: connect in the app, then short the clips together — the <span class="ui">bit ○</span> indicator in the machine dock should fill.</li>
+  <li>Quick test: connect in the app, then touch the red clip against the bit or collet — the <span class="ui">bit ○</span> indicator in the machine dock should fill.</li>
 </ul>
 
 <h2>Connecting from the app</h2>

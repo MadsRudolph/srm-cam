@@ -83,15 +83,15 @@
 <h3>Probe error meanings</h3>
 <div class="tbl-wrap"><table>
 <tr><th>Error</th><th>Meaning</th><th>What to do</th></tr>
-<tr><td><code>NOTOUCH</code></td><td>Descended the full allowed range without contact</td><td>Check the clips (D7 → copper, GND → collet), check the board is isolated from the bed, check the datum was set close enough above the surface.</td></tr>
-<tr><td><code>UNSTABLE</code></td><td>Coarse and fine touches disagreed twice</td><td>Flaky contact: clean the copper (oxide/dust), reseat the clips, check nothing is vibrating the machine.</td></tr>
-<tr><td><code>RUNAWAY</code></td><td>Descended far past known copper without contact</td><td>The point is over a hole, off the board, or a clip fell off. Fix and re-probe — this guard is what kept the bit out of your bed.</td></tr>
+<tr><td><code>NOTOUCH</code></td><td>Descended the full allowed range without contact</td><td>Check the red clip (D7 → copper) is seated on clean copper, check the board is isolated from the bed, check the datum was set close enough above the surface.</td></tr>
+<tr><td><code>UNSTABLE</code></td><td>Coarse and fine touches disagreed twice</td><td>Flaky contact: clean the copper (oxide/dust), reseat the red clip, check nothing is vibrating the machine.</td></tr>
+<tr><td><code>RUNAWAY</code></td><td>Descended far past known copper without contact</td><td>The point is over a hole, off the board, or the clip fell off. Fix and re-probe — this guard is what kept the bit out of your bed.</td></tr>
 <tr><td><code>NODATUM</code></td><td>Probe command before a datum was set</td><td>Jog above grid point 1 and start the probe run from the app (it sends the datum for you).</td></tr>
 <tr><td><code>ABORT</code></td><td>You pressed STOP (or the lid opened mid-move)</td><td>Nothing broken — resolve the reason and re-run.</td></tr>
 </table></div>
 
 <h3>The touch indicator never fills</h3>
-<p>Short the two clips together with the app connected. If <span class="ui">bit ○</span> still doesn't fill, the problem is wiring/firmware, not the board contact: check D7 and GND at the Arduino, and confirm the firmware banner in a serial terminal.</p>
+<p>Touch the red clip against the bit or collet with the app connected. If <span class="ui">bit ○</span> still doesn't fill, the problem is wiring/firmware, not the board contact: check the D7 line at the Arduino and that the Arduino shares the machine's ground, and confirm the firmware banner in a serial terminal.</p>
 
 <h3>The mesh looks spiky in the 3D view</h3>
 <p>Real boards are smooth. Isolated spikes are flaky touches — run <span class="ui">Mesh check</span> to have them flagged, re-probe those points, and only then trust the map.</p>
