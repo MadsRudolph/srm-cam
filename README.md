@@ -6,6 +6,8 @@ replacing the mods site and FlatCAM.
 
 > Python package name: `gerber2rml`.
 
+**📖 User guide: [madsrudolph.github.io/srm-cam](https://madsrudolph.github.io/srm-cam/)**
+
 ![SRM-CAM main window](docs/Readme_photos/srmcam_GUI_MainPage.png)
 
 ## Install
