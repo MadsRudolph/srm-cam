@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "gerber2rml"
-version = "0.2.4"
+version = "0.2.5"
 description = "Gerber/Excellon to RML CAM tool for the Roland SRM-20"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,3 +36,4 @@ gerber2rml = "gerber2rml.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["gerber2rml*"]
+
