@@ -428,6 +428,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("gerber2rml - Premium CAM")
         self.resize(1100, 750)
+        self._set_app_icon()
         self.state = ProjectState()
 
         # Ensure the per-user workspace (Documents/SRM-CAM/{sessions,exports,
@@ -3509,6 +3510,22 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Setup loaded" if loaded else
             "Setup loaded (board not found — load the Gerber folder manually)", 10000)
+
+    def _set_app_icon(self):
+        """Window/taskbar icon: bundled asset in the installed app, the
+        packaging copy in a dev checkout. The exe/desktop icon comes from the
+        PyInstaller icon= (same artwork, packaging/gen_icon.py)."""
+        import sys
+        from PySide6.QtGui import QIcon
+        candidates = []
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(Path(sys._MEIPASS) / "assets" / "srm-cam-256.png")
+        candidates.append(Path(__file__).resolve().parents[2]
+                          / "packaging" / "srm-cam-256.png")
+        for p in candidates:
+            if p.exists():
+                self.setWindowIcon(QIcon(str(p)))
+                return
 
     # ---- file-dialog helpers: start where the user last was ---------------
     def _dlg_dir(self, key, sub="exports"):

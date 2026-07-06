@@ -21,6 +21,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=srm-cam.ico
 OutputDir=..\dist_installer
 OutputBaseFilename=SRM-CAM-Setup-{#MyAppVersion}
 Compression=lzma2

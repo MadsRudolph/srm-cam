@@ -25,6 +25,8 @@ if DEMO.is_dir():
     for f in DEMO.iterdir():
         if f.is_file():
             datas.append((str(f), "examples/preload_example"))
+# window/taskbar icon (the exe icon below covers the desktop shortcut)
+datas.append((str(ROOT / "packaging" / "srm-cam-256.png"), "assets"))
 
 # ---- modules imported dynamically (not seen by static analysis) ----------
 hiddenimports = []
@@ -67,7 +69,7 @@ exe = EXE(
     upx=False,
     console=False,                 # windowed GUI; flip to True to see tracebacks
     disable_windowed_traceback=False,
-    icon=None,                     # TODO: add packaging/srm-cam.ico when we have one
+    icon=str(ROOT / "packaging" / "srm-cam.ico"),   # regen: packaging/gen_icon.py
 )
 
 coll = COLLECT(
