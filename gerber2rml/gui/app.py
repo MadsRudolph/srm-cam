@@ -973,10 +973,13 @@ class MainWindow(QMainWindow):
         self.detect_rework_btn = QPushButton("Detect from photo")
         self.detect_rework_btn.setToolTip(
             "Walk every isolation channel and check the aligned photo for "
-            "stretches that still look like copper — each becomes a proposed "
+            "stretches with NO visible cut at all — each becomes a proposed "
             "rework box (at the current New-box depth). Review the boxes and "
-            "delete false alarms before exporting. Needs the photo overlay "
-            "loaded and the traces preview visible.")
+            "delete false alarms before exporting.\n\nLIMITS: a too-SHALLOW "
+            "cut still looks like a channel in any photo — judge depth "
+            "failures with Probe boxes / Mesh check instead. Needs the photo "
+            "overlay loaded and the traces preview visible; shoot as straight-"
+            "down and evenly lit as possible.")
         self.detect_rework_btn.clicked.connect(self._on_detect_rework)
         self.probe_boxes_btn = QPushButton("Probe boxes")
         self.probe_boxes_btn.setToolTip(
@@ -4118,7 +4121,9 @@ class MainWindow(QMainWindow):
         rgba, extent = self.preview._photo
         bit = float(self.forms["traces"].value().bit_diameter)
         try:
-            r = detect_uncut(rgba, extent, channels, copper, bit_d=max(bit, 0.4))
+            r = detect_uncut(rgba, extent, channels, copper,
+                             bit_d=max(bit, 0.4),
+                             exclude_outline=self.preview._outline_xy)
         except CutCheckError as e:
             QMessageBox.warning(self, "Can't judge this photo", str(e))
             return
