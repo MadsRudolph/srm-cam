@@ -1,27 +1,35 @@
 """Detect failed isolation channels from a registered board photo.
 
-Trained against ground truth (the MegaPCB top side: the operator's actual
-rework boxes vs the channels that cut clean, evaluated on the real photo):
-the discriminating signature is the channel CROSS-PROFILE, not its color.
+Trained against ground truth twice (the MegaPCB top side: the operator's
+actual rework boxes vs the channels that cut clean, on two real photos —
+one clean and even, one dusty and washed out straight off the machine).
+The discriminating signature is the channel CROSS-PROFILE, not its color:
 
 - A properly cut channel reads BRIGHT across its profile: exposed substrate
   floor plus burred edges catching the light.
 - A failed channel (cut too shallow, or never cut) reads FLAT or as a dark
   smooth groove — no bright floor, no edge highlights.
 
-Per channel sample a 13-tap brightness profile is taken across the channel
-(+-1.2 mm); ``bright`` = how much the inner profile rises above the copper
-flanks. Samples are classified cut / suspect / undecided, and 8 mm tiles are
-scored by their suspect fraction among DECIDED samples — that aggregation is
-what turns a noisy per-sample signal (photos of shiny boards are noisy) into
-a usable region detector (tile-level AUC 0.78 on the MegaPCB ground truth).
+v4 classification (retrained on the dusty-photo ground truth, where absolute
+thresholds flooded 40% of the board):
+
+1. Per sample, ``bright`` = inner profile max minus copper flanks (13 taps,
+   +-1.2 mm).
+2. A sample is SUSPECT only when it is part of a *contiguous run* of
+   near-zero samples along its channel (real uncut stretches are dead for
+   millimetres; photo noise flickers), AND it is dark *relative to its
+   neighbourhood* (a 15 mm local reference absorbs lighting/dust gradients;
+   floored so a fully dead zone cannot absolve itself).
+3. 8 mm tiles score suspect/(decided); suspect tiles are CLUSTERED
+   (8-neighbour) and clusters are ranked by total evidence — defects
+   cluster, photo noise scatters. The top clusters become the proposed
+   boxes (tight around the suspect samples), most-evidence first.
 
 Needs the FULL-RESOLUTION photo warped at >= 12 px/mm: the profile signature
 does not survive heavy downscaling (found the hard way).
 
-Honest limits, enforced with refusals rather than guesses: soft-focus or
-glare regions where nothing reads clearly are excluded; if too little of the
-board is decidable, or suspects smear over most of it (misalignment), a
+Honest limits, enforced with refusals rather than guesses: if too little of
+the board is decidable, or suspects smear over most of it (misalignment), a
 :class:`CutCheckError` explains instead of proposing garbage boxes.
 """
 import math
@@ -127,13 +135,15 @@ def _merge_boxes(boxes, gap):
 
 
 def channel_profiles(photo_rgba, extent, channels, step=0.3, half_width=1.2,
-                     taps=13):
+                     taps=13, return_cid=False):
     """Cross-profile brightness stats per channel sample (vectorized).
 
     Returns ``(xy, bright)``: sample positions (N, 2) and how much the inner
     profile rises above the copper flanks (N,). ``bright`` is the feature the
     classifier thresholds: big = bright cut floor/edges, ~0 = flat copper or
-    a dark smooth groove.
+    a dark smooth groove. With ``return_cid`` also returns the channel index
+    per sample (samples stay in walk order within a channel — the run
+    detector depends on that).
     """
     img = np.asarray(photo_rgba)
     L = img[..., :3].astype(np.float32).mean(axis=-1)
@@ -141,8 +151,8 @@ def channel_profiles(photo_rgba, extent, channels, step=0.3, half_width=1.2,
     h, w = L.shape
     x0, x1, y0, y1 = extent
     offs = np.linspace(-half_width, half_width, taps)
-    all_xy, all_bright = [], []
-    for poly in channels:
+    all_xy, all_bright, all_cid = [], [], []
+    for ci, poly in enumerate(channels):
         if len(poly) < 2:
             continue
         walked = _walk_with_normal(list(poly), step)
@@ -168,16 +178,56 @@ def channel_profiles(photo_rgba, extent, channels, step=0.3, half_width=1.2,
         inner_max = prof[:, 2:taps - 2].max(axis=1)
         all_xy.append(P[:, :2])
         all_bright.append(inner_max - outer)
+        all_cid.append(np.full(len(P), ci, np.int32))
     if not all_xy:
-        return np.empty((0, 2)), np.empty(0)
-    return np.vstack(all_xy), np.concatenate(all_bright)
+        empty = (np.empty((0, 2)), np.empty(0))
+        return empty + (np.empty(0, np.int32),) if return_cid else empty
+    xy = np.vstack(all_xy)
+    bright = np.concatenate(all_bright)
+    if return_cid:
+        return xy, bright, np.concatenate(all_cid)
+    return xy, bright
+
+
+def _run_suspects(bright, cid, low, min_run):
+    """True where a sample sits in a contiguous run (same channel) of at
+    least ``min_run`` samples all below ``low`` — dead-for-millimetres, the
+    signature of a real uncut stretch. Isolated dim samples stay False."""
+    lowm = bright < low
+    sus = np.zeros(len(bright), bool)
+    i, n = 0, len(bright)
+    while i < n:
+        if lowm[i]:
+            j = i
+            while j < n and lowm[j] and cid[j] == cid[i]:
+                j += 1
+            if j - i >= min_run:
+                sus[i:j] = True
+            i = j
+        else:
+            i += 1
+    return sus
+
+
+def _local_reference(xy, bright, grid_mm, floor):
+    """Per-sample local brightness reference: the 75th percentile of samples
+    in the same ``grid_mm`` cell, floored at ``floor`` so a fully dead zone
+    cannot declare itself normal. Absorbs lighting/dust gradients."""
+    keys = (np.floor(xy[:, 0] / grid_mm).astype(np.int64) * 100000
+            + np.floor(xy[:, 1] / grid_mm).astype(np.int64))
+    ref = np.empty(len(bright))
+    for k in np.unique(keys):
+        m = keys == k
+        ref[m] = np.percentile(bright[m], 75)
+    return np.maximum(ref, floor)
 
 
 def detect_uncut(photo_rgba, extent, channels, copper_geom=None, bit_d=0.8,
                  step=0.3, exclude_outline=None, outline_margin=2.0,
-                 tile_mm=8.0, cut_bright=30.0, suspect_bright=15.0,
-                 tile_thresh=0.5, min_decided=10):
-    """Find channel regions that did not cut properly.
+                 tile_mm=8.0, low_bright=10.0, run_mm=1.5, local_frac=0.2,
+                 local_grid_mm=15.0, ref_floor=25.0, cut_ref_frac=0.5,
+                 tile_thresh=0.25, min_decided=10, max_boxes=12):
+    """Find channel regions that did not cut properly (v4).
 
     ``photo_rgba``: machine-frame warped RGBA at >= 12 px/mm — use the FULL
     resolution photo, the profile signature dies in downscaled warps. Row 0
@@ -185,16 +235,22 @@ def detect_uncut(photo_rgba, extent, channels, copper_geom=None, bit_d=0.8,
     ``channels``: iterable of centerline polylines. ``copper_geom`` accepted
     for API compatibility (unused).
 
-    Per sample: ``bright`` > ``cut_bright`` -> cut; < ``suspect_bright`` ->
-    suspect (flat copper or dark groove); between -> undecided (soft focus /
-    glare abstains). Tiles of ``tile_mm`` with at least ``min_decided``
-    decided samples score suspect/(suspect+cut); tiles above ``tile_thresh``
-    merge into proposed boxes.
+    A sample is SUSPECT when (a) it belongs to a contiguous run of at least
+    ``run_mm`` of samples below ``low_bright`` along its channel, and (b) it
+    reads below ``local_frac`` of the local brightness reference (p75 in a
+    ``local_grid_mm`` cell, floored at ``ref_floor``). CUT when above
+    ``cut_ref_frac`` of the local reference. Tiles of ``tile_mm`` with >=
+    ``min_decided`` decided samples score suspect/decided; tiles above
+    ``tile_thresh`` are clustered (8-neighbour) and ranked by total evidence
+    — real defects cluster, photo noise scatters. The top ``max_boxes``
+    clusters become boxes (tight around their suspect samples, padded by the
+    bit), MOST evidence first.
 
     Returns ``{"boxes", "coverage", "n_samples", "n_suspect", "n_tiles",
-    "n_suspect_tiles", "decided_frac"}``. Raises :class:`CutCheckError` when
-    the photo can't answer (little overlap, nothing decidable, or suspect
-    tiles covering most of the board = misalignment).
+    "n_suspect_tiles", "n_clusters", "decided_frac"}``. Raises
+    :class:`CutCheckError` when the photo can't answer (little overlap,
+    nothing decidable, or suspects covering most of the board =
+    misalignment).
     """
     img = np.asarray(photo_rgba)
     if img.ndim != 3 or img.shape[2] != 4:
@@ -203,22 +259,27 @@ def detect_uncut(photo_rgba, extent, channels, copper_geom=None, bit_d=0.8,
     if exclude_outline is not None:
         channels = _drop_outline_channels(channels, exclude_outline,
                                           outline_margin)
-    xy, bright = channel_profiles(img, extent, channels, step=step)
+    xy, bright, cid = channel_profiles(img, extent, channels, step=step,
+                                       return_cid=True)
     if len(xy) < 50:
         raise CutCheckError("photo covers too little of the toolpaths — check "
                             "the overlay alignment")
-    suspect = bright < suspect_bright
-    cut = bright > cut_bright
+    min_run = max(2, int(math.ceil(run_mm / step)))
+    suspect = _run_suspects(bright, cid, low_bright, min_run)
+    ref = _local_reference(xy, bright, local_grid_mm, ref_floor)
+    suspect &= bright < local_frac * ref
+    cut = bright > cut_ref_frac * ref
     decided = suspect | cut
     decided_frac = float(decided.mean())
     if decided_frac < 0.2:
         raise CutCheckError(
             f"only {decided_frac * 100:.0f}% of the channels read clearly — "
-            f"soft focus or glare; reshoot straighter-on with even light")
+            f"soft focus or glare; clean the dust off the board and reshoot "
+            f"straighter-on with even light")
 
     keys = (np.floor(xy[:, 0] / tile_mm).astype(np.int64) * 100000
             + np.floor(xy[:, 1] / tile_mm).astype(np.int64))
-    sus_tiles, n_tiles = [], 0
+    tile_w, n_tiles = {}, 0
     for k in np.unique(keys):
         m = keys == k
         n_dec = int(decided[m].sum())
@@ -227,29 +288,55 @@ def detect_uncut(photo_rgba, extent, channels, copper_geom=None, bit_d=0.8,
         n_tiles += 1
         frac = suspect[m].sum() / n_dec
         if frac > tile_thresh:
-            tx = xy[m][:, 0]; ty = xy[m][:, 1]
-            s = suspect[m]
-            sus_tiles.append((float(tx[s].min()), float(ty[s].min()),
-                              float(tx[s].max()), float(ty[s].max())))
+            tile_w[(int(k // 100000), int(k % 100000))] = frac * n_dec
     if n_tiles < 4:
         raise CutCheckError("too few readable regions to judge — check the "
                             "photo/overlay")
-    if len(sus_tiles) > 0.6 * n_tiles:
+    if len(tile_w) > 0.6 * n_tiles:
         raise CutCheckError(
-            f"{len(sus_tiles)} of {n_tiles} tiles read as failed — that's a "
+            f"{len(tile_w)} of {n_tiles} tiles read as failed — that's a "
             f"misaligned overlay or unusable photo, not a board this bad. "
             f"Re-check the anchor clicks.")
+
+    # cluster suspect tiles (8-neighbour), rank by summed evidence
+    seen, clusters = set(), []
+    for start in tile_w:
+        if start in seen:
+            continue
+        stack, comp = [start], []
+        seen.add(start)
+        while stack:
+            c = stack.pop()
+            comp.append(c)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    nb = (c[0] + dx, c[1] + dy)
+                    if nb in tile_w and nb not in seen:
+                        seen.add(nb)
+                        stack.append(nb)
+        clusters.append((sum(tile_w[c] for c in comp), comp))
+    clusters.sort(key=lambda c: -c[0])
+
     pad = bit_d
-    boxes = [(round(b[0] - pad, 2), round(b[1] - pad, 2),
-              round(b[2] + pad, 2), round(b[3] + pad, 2))
-             for b in _merge_boxes(sus_tiles, gap=1.0)]
-    n_sus = int(suspect.sum())
+    boxes = []
+    for _wsum, comp in clusters[:max_boxes]:
+        in_cluster = np.zeros(len(xy), bool)
+        for (tx, ty) in comp:
+            in_cluster |= ((keys == tx * 100000 + ty) & suspect)
+        if not in_cluster.any():
+            continue
+        px = xy[in_cluster][:, 0]; py = xy[in_cluster][:, 1]
+        boxes.append((round(float(px.min()) - pad, 2),
+                      round(float(py.min()) - pad, 2),
+                      round(float(px.max()) + pad, 2),
+                      round(float(py.max()) + pad, 2)))
     return {
         "boxes": boxes,
-        "coverage": 1.0 - len(sus_tiles) / n_tiles,
+        "coverage": 1.0 - len(tile_w) / n_tiles,
         "n_samples": int(len(xy)),
-        "n_suspect": n_sus,
+        "n_suspect": int(suspect.sum()),
         "n_tiles": n_tiles,
-        "n_suspect_tiles": len(sus_tiles),
+        "n_suspect_tiles": len(tile_w),
+        "n_clusters": len(clusters),
         "decided_frac": decided_frac,
     }

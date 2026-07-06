@@ -4360,9 +4360,11 @@ class MainWindow(QMainWindow):
             self._on_region_added(tuple(b))
         QMessageBox.information(
             self, "Detect from photo",
-            f"{len(r['boxes'])} suspect area(s) proposed as rework boxes "
-            f"({cov}).\n\nReview them on the preview — delete false alarms "
-            f"(glare, shadow) from the table, then export the rework job.")
+            f"{len(r['boxes'])} suspect area(s) proposed as rework boxes, "
+            f"MOST evidence first — table order = confidence ({cov}).\n\n"
+            f"Review them on the preview — the last few are usually the "
+            f"doubtful ones (dust, glare); delete those, then export the "
+            f"rework job.")
         self.statusBar().showMessage(
             f"Photo check: {len(r['boxes'])} suspect area(s) boxed ({cov})", 12000)
 
