@@ -101,6 +101,8 @@ def test_qr_pixmap_renders():
 def test_dialog_accepts_on_photo(tmp_path):
     from PySide6.QtWidgets import QDialog
     from gerber2rml.gui.phonephoto import PhonePhotoDialog
+    from gerber2rml.gui.workspace import _settings
+    _settings().setValue("phone/relay_url", "lan")   # force local-server mode
     dlg = PhonePhotoDialog(None, tmp_path / "photos")
     try:
         assert dlg.photo_path is None
@@ -116,3 +118,4 @@ def test_dialog_accepts_on_photo(tmp_path):
         assert dlg.result() == QDialog.Accepted or dlg.photo_path
     finally:
         dlg._stop_transport()
+        _settings().setValue("phone/relay_url", "")

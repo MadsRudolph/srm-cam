@@ -4,7 +4,13 @@ name = "srm-cam-relay"
 main = "worker.js"
 compatibility_date = "2026-07-01"
 
+# Served at the custom domain (zone must be on the same Cloudflare
+# account — DNS record + certificate are created automatically on
+# deploy). The *.workers.dev URL keeps working as well.
+routes = [
+  { pattern = "srm-cam-relay.madsrudolph.dev", custom_domain = true }
+]
+
 [[kv_namespaces]]
 binding = "PHOTOS"
-# Replace with the id printed by:  npx wrangler kv namespace create PHOTOS
-id = "PASTE_KV_NAMESPACE_ID_HERE"
+id = "b86f128a1c404ad3bcc2c12c9849feee"

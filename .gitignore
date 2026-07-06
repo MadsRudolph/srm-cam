@@ -45,3 +45,6 @@ examples/*.png
 examples/Dobbelt_sided_TEST/ncbitch/
 examples/Dobbelt_sided_TEST_jobs/
 examples/fullboard_probe_test/
+
+# wrangler CLI cache (contains the CF account id/email)
+relay/.wrangler/

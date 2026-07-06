@@ -20,6 +20,12 @@ from gerber2rml.engine import photorelay
 from gerber2rml.engine.photoshare import PhotoShareServer
 from gerber2rml.gui.workspace import _settings
 
+# The team relay (relay/worker.js on Cloudflare). Used when the Relay
+# field is empty, so the dialog works on any network with zero setup;
+# type "lan" in the field for the direct local-server mode instead.
+DEFAULT_RELAY = "https://srm-cam-relay.madsrudolph.dev"
+_LAN_WORDS = ("lan", "local", "direct")
+
 
 def qr_pixmap(text, module_px=7):
     """Render ``text`` as a QR code QPixmap (no PIL — painted from the
@@ -77,12 +83,13 @@ class PhonePhotoDialog(QDialog):
         self.relay_edit = QLineEdit(
             str(_settings().value("phone/relay_url", "")))
         self.relay_edit.setPlaceholderText(
-            "https://srm-cam-relay.<you>.workers.dev  (empty = direct LAN)")
+            f"empty = {DEFAULT_RELAY} · 'lan' = direct")
         self.relay_edit.setToolTip(
-            "Your self-hosted photo relay (see relay/README.md in the "
-            "repo). With a relay the phone works on ANY network — eduroam, "
-            "mobile data. Leave empty for direct LAN mode (phone and PC "
-            "must reach each other; on eduroam use the phone's hotspot).")
+            "Photo relay (relay/README.md). Empty uses the team relay — "
+            "the phone then works on ANY network, eduroam and mobile data "
+            "included. Enter another relay URL to use your own, or type "
+            "'lan' for direct LAN mode (no internet needed, but phone and "
+            "PC must reach each other — client-isolating wifi blocks it).")
         self.relay_edit.editingFinished.connect(self._restart_transport)
         relay_row.addWidget(self.relay_edit, 1)
         lay.addLayout(relay_row)
@@ -109,9 +116,10 @@ class PhonePhotoDialog(QDialog):
             self._poller = None
 
     def _restart_transport(self):
-        relay = self.relay_edit.text().strip()
-        _settings().setValue("phone/relay_url", relay)
+        text = self.relay_edit.text().strip()
+        _settings().setValue("phone/relay_url", text)
         self._stop_transport()
+        relay = "" if text.lower() in _LAN_WORDS else (text or DEFAULT_RELAY)
         if relay:
             token = photorelay.new_token()
             url = photorelay.page_url(relay, token)

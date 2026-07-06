@@ -123,13 +123,28 @@ def test_dialog_relay_mode(tmp_path):
         relay.stop()
 
 
-def test_dialog_local_mode_when_no_relay(tmp_path):
-    from gerber2rml.gui.phonephoto import PhonePhotoDialog
+def test_dialog_empty_field_uses_default_relay(tmp_path):
+    from gerber2rml.gui.phonephoto import DEFAULT_RELAY, PhonePhotoDialog
     from gerber2rml.gui.workspace import _settings
     _settings().setValue("phone/relay_url", "")
     dlg = PhonePhotoDialog(None, tmp_path / "photos")
     try:
-        assert dlg._server is not None and dlg._poller is None
-        assert "/u/" in dlg.url_edit.text()
+        assert dlg._poller is not None and dlg._server is None
+        assert dlg.url_edit.text().startswith(DEFAULT_RELAY + "/u/")
     finally:
         dlg._stop_transport()
+
+
+def test_dialog_lan_keyword_gives_local_mode(tmp_path):
+    from gerber2rml.gui.phonephoto import PhonePhotoDialog
+    from gerber2rml.gui.workspace import _settings
+    _settings().setValue("phone/relay_url", "lan")
+    try:
+        dlg = PhonePhotoDialog(None, tmp_path / "photos")
+        try:
+            assert dlg._server is not None and dlg._poller is None
+            assert "/u/" in dlg.url_edit.text()
+        finally:
+            dlg._stop_transport()
+    finally:
+        _settings().setValue("phone/relay_url", "")

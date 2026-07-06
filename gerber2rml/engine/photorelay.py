@@ -47,9 +47,12 @@ class RelayPoller(threading.Thread):
 
     def run(self):
         self.save_dir.mkdir(parents=True, exist_ok=True)
+        # custom UA: Cloudflare bot protection 403s the default python UA
+        req = urllib.request.Request(
+            self.fetch_url, headers={"User-Agent": "SRM-CAM"})
         while not self._halt.is_set():
             try:
-                with urllib.request.urlopen(self.fetch_url, timeout=10) as r:
+                with urllib.request.urlopen(req, timeout=10) as r:
                     data = r.read()
                     ctype = (r.headers.get("Content-Type") or "").split(";")[0]
             except urllib.error.HTTPError as e:

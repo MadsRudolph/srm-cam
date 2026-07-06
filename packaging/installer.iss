@@ -12,7 +12,7 @@
 #define MyAppExeName "SRM-CAM.exe"
 
 [Setup]
-; AppId uniquely identifies this app for upgrades/uninstall â€” never change it.
+; AppId uniquely identifies this app for upgrades/uninstall - never change it.
 AppId={{1DC2AE10-B36F-47A4-BB7A-9F1C756D1BD7}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
