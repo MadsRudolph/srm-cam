@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hardware &amp; firmware — SRM-CAM guide</title>
-<meta name="description" content="The Arduino SPI probe board for the SRM-20: wiring, flashing, firmware features, safety limits, and the live machine link.">
+<meta name="description" content="The Arduino SPI probe board: wiring, flashing, safety limits, and the live machine link.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -51,99 +51,73 @@
 <div class="content">
 
 <h1>Hardware &amp; firmware</h1>
-<p class="lead">A small Arduino wired to the SRM-20's internal SPI bus gives SRM-CAM a live machine link: a real DRO, electrical touch sensing, auto bed probing, click-to-jog, and the automatic fiducial finder.</p>
+<p class="lead">An Arduino on the SRM-20's internal SPI bus = live DRO, electrical touch sensing, auto probing, click-to-jog, auto fiducial finding.</p>
 
-<h2>What it unlocks</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Feature</th><th>Where it's used</th></tr>
-<tr><td>Live DRO (true position readout)</td><td>Machine dock — position, touch state, run tracking with ETA</td></tr>
-<tr><td>Click-to-jog</td><td>The preview canvas becomes a remote control for the bed</td></tr>
-<tr><td>Auto bed probing</td><td><a href="bed-leveling.html">Bed leveling</a>: probe the whole grid unattended</td></tr>
-<tr><td>Auto fiducial finding</td><td><a href="double-sided.html">Double-sided</a>: the <span class="ui">Auto</span> button locates hole centers electrically</td></tr>
-<tr><td>Rework depth probing</td><td><a href="photo-and-rework.html">Rework</a>: <span class="ui">Probe boxes</span> corrects each box's depth</td></tr>
-<tr><td>Touch-off / Zero Z</td><td><span class="ui">Probe Z</span> and <span class="ui">Zero Z on machine</span> buttons</td></tr>
-</table></div>
-
-<h2>Installing the board (one-time)</h2>
+<h2>Install (one-time)</h2>
 <ol class="steps">
   <li><span class="st">Fit the Arduino</span>
-    Open the SRM-20's back panel and install the Arduino, wired to the controller's internal <strong>SPI header</strong>. The full wiring walkthrough is in the repo: <code>docs/2026-06-25-srm20-spi-and-bed-leveling.md</code>.</li>
-  <li><span class="st">Flash the firmware</span>
-    Open <code>hardware/srm20_spi_probe/srm20_spi_probe.ino</code> in the Arduino IDE. It needs the bundled <code>hardware/SRM20SPIRemote</code> library (copy it into your Arduino libraries folder). Upload.</li>
-  <li><span class="st">Verify</span>
-    Open the Serial Monitor at <strong>115200</strong> baud — you should see <code># SRM-20 grid prober v2 ready</code>. Then <strong>close the Serial Monitor</strong>: the app can't open the port while it's open.</li>
+    Behind the SRM-20's back panel, wired to the controller's SPI header. Full wiring: <code>docs/2026-06-25-srm20-spi-and-bed-leveling.md</code> in the repo.</li>
+  <li><span class="st">Flash</span>
+    <code>hardware/srm20_spi_probe/srm20_spi_probe.ino</code> (needs the bundled <code>SRM20SPIRemote</code> library). 115200 baud.</li>
+  <li><span class="st">Verify, then close the Serial Monitor</span>
+    You should see <code># SRM-20 grid prober v2 ready</code>. The app can't open the port while the Serial Monitor holds it.</li>
 </ol>
 
-<div class="note"><span class="t">Already installed, older firmware?</span>
-<p>If probing works but <span class="ui">Auto</span> fiducial finding or drift correction doesn't, you're on firmware v1. One reflash of the current <code>srm20_spi_probe.ino</code> upgrades everything at once — verified touches, drift correction, Z zeroing, hole testing, and streaming.</p></div>
+<div class="note"><span class="t">Old firmware?</span>
+<p>If probing works but <span class="ui">Auto</span> fiducials or drift correction don't, reflash — one flash gets everything (v2).</p></div>
 
 <h2>Probe wiring (every session)</h2>
-<p>Touch sensing is a simple circuit: the copper board floats HIGH through the Arduino's pull-up, and the tool is already at ground — it grounds through the collet and spindle to the machine frame, which the Arduino shares. So there is exactly <strong>one clip</strong> to attach:</p>
+<p><strong>One clip: red (D7) → the copper board.</strong> The tool is already grounded through the collet/spindle to the machine frame. Bit touches copper → D7 pulled LOW = contact.</p>
+<ul>
+  <li>Isolate the board from the bed (paper/tape under it) — the only ground path must be the bit on copper.</li>
+  <li>Spindle <strong>OFF</strong> for all probing.</li>
+  <li>Test: touch the red clip to the bit — <span class="ui">bit ○</span> fills.</li>
+</ul>
+
+<h2>Machine dock tools</h2>
 <div class="tbl-wrap"><table>
-<tr><th>Clip</th><th>Goes to</th></tr>
-<tr><td><strong>D7</strong> (red / signal)</td><td>the copper board (the workpiece)</td></tr>
+<tr><th>Control</th><th>Does</th></tr>
+<tr><td><span class="ui">Connect</span> + port</td><td>Open/close the serial link; DRO goes live</td></tr>
+<tr><td><span class="ui">Probe Z</span></td><td>Touch-off: descend until contact, stop at the surface</td></tr>
+<tr><td><span class="ui">Zero Z on machine</span></td><td>Touch-off + write origin Z. Writes the User CS origin — verify VPanel's G54 Z once before trusting for NC</td></tr>
+<tr><td><span class="ui">Click to jog</span></td><td>Click the preview → tool lifts ~5 mm, travels there. Snaps to holes/pins; <kbd>Ctrl</kbd>+click = exact point</td></tr>
+<tr><td><span class="ui">Align overlay</span></td><td>Sync the preview to reality (display only; exports untouched)</td></tr>
+<tr><td><span class="ui">Trail</span></td><td>Draw the tool's path during a run</td></tr>
+<tr><td><span class="ui">STOP</span></td><td>Abort now: halt, lift, disconnect. Checked between every probe step</td></tr>
 </table></div>
-<p>The bit touching the copper pulls D7 LOW = contact. No clip on the tool — the ground path is the machine itself.</p>
-<ul>
-  <li>The board must be <strong>electrically isolated from the bed</strong> — put paper or tape underneath. The only path to ground must be the bit touching copper.</li>
-  <li>Spindle stays <strong>OFF</strong> for all probing.</li>
-  <li>Quick test: connect in the app, then touch the red clip against the bit or collet — the <span class="ui">bit ○</span> indicator in the machine dock should fill.</li>
-</ul>
-
-<h2>Connecting from the app</h2>
-<p>In the machine dock: pick the Arduino's COM port, press <span class="ui">Connect</span>. The DRO label goes live and updates continuously. <span class="ui">Connect</span> again disconnects.</p>
-
-<h3>Machine dock tools</h3>
-<ul>
-  <li><span class="ui">Probe Z</span> — touch-off: descend from here until contact, stop at the surface.</li>
-  <li><span class="ui">Zero Z on machine</span> — touch-off and write the origin Z at the copper surface. <strong>Caveat:</strong> this writes the origin VPanel displays (the User coordinate system). NC jobs obey <strong>G54</strong>, and whether G54 picks this up is machine-config dependent — verify VPanel's G54 Z once before trusting it for NC work.</li>
-  <li><span class="ui">Click to jog</span> — click anywhere on the preview and the tool lifts ~5&nbsp;mm, then travels there. Clicks <strong>snap</strong> to the nearest drill hole or dowel/fiducial pin when one is close; <kbd>Ctrl</kbd>+click jogs to the exact clicked point instead.</li>
-  <li><span class="ui">Align overlay</span> — nudge the on-screen overlay to match reality: click the design point the bit is physically at, and the preview shifts to agree. Display-only; exports and job coordinates are untouched. <kbd>Ctrl</kbd>+click clears the trim.</li>
-  <li><span class="ui">Trail</span> / <span class="ui">Clear trail</span> — draw the tool's path on the preview while a job runs.</li>
-  <li><span class="ui">STOP</span> — the red button. Aborts any descent immediately, lifts to safe Z, halts. It is honoured <em>between every probing step</em>, so it can never keep stepping the bit into the work.</li>
-</ul>
 
 <h2>How a touch is measured</h2>
-<p>Firmware v2 treats every touch with suspicion, which is why the height maps are trustworthy:</p>
 <ul>
-  <li><strong>Debounced contact</strong> — three consecutive LOW reads, 1&nbsp;ms apart, so stepper EMI flashing the probe line can't fake a touch.</li>
-  <li><strong>Two-stage verified touch</strong> — coarse contact at 25&nbsp;µm steps, lift 150&nbsp;µm, re-descend at 10&nbsp;µm (the machine's native step). The two touches must agree within 60&nbsp;µm or the point retries and then reports <code>UNSTABLE</code> rather than poisoning the grid.</li>
-  <li><strong>Drift correction</strong> — the host periodically re-touches the reference point (the <span class="ui">drift chk</span> setting) and corrects the whole grid for warm-up drift and board settling.</li>
+  <li><strong>Debounced</strong> — 3 consecutive LOW reads; stepper EMI can't fake a touch.</li>
+  <li><strong>Two-stage verified</strong> — coarse 25&nbsp;µm find, lift, fine 10&nbsp;µm re-touch; must agree within 60&nbsp;µm or the point retries → <code>UNSTABLE</code>.</li>
+  <li><strong>Drift-corrected</strong> — periodic reference re-touch (<span class="ui">drift chk</span>) corrects warm-up drift.</li>
 </ul>
 
-<h3>Built-in safety limits</h3>
+<h3>Safety limits (in firmware)</h3>
 <div class="tbl-wrap"><table>
-<tr><th>Guard</th><th>Value</th><th>What it prevents</th></tr>
-<tr><td>Absolute drop floor</td><td>6 mm below safe Z</td><td>Descending forever if the wiring is dead — the bit can never hunt more than 6&nbsp;mm down.</td></tr>
-<tr><td>Runaway guard</td><td>1.2 mm past known copper</td><td>Once a surface height is known, a point that descends much deeper without contact aborts as <code>RUNAWAY</code> (missed copper — a hole or a bad clip) instead of drilling into the bed.</td></tr>
-<tr><td>Abort everywhere</td><td>—</td><td><code>!</code> (the STOP button) is checked between every Z step and whenever a move stalls — including when opening the lid pauses the machine.</td></tr>
-<tr><td>Hole test depth cap</td><td>0.2 mm past the surface</td><td>The fiducial finder's touch tests can never plunge meaningfully into a hole.</td></tr>
+<tr><th>Guard</th><th>Value</th><th>Prevents</th></tr>
+<tr><td>Drop floor</td><td>6 mm below safe Z</td><td>Endless descent on dead wiring</td></tr>
+<tr><td>Runaway guard</td><td>1.2 mm past known copper</td><td>Drilling into the bed when a point misses copper → <code>RUNAWAY</code></td></tr>
+<tr><td>Abort everywhere</td><td>—</td><td>STOP is honoured between every Z step, and when the lid pauses the machine</td></tr>
+<tr><td>Hole-test cap</td><td>0.2 mm past surface</td><td>Fiducial-finder touches plunging into a hole</td></tr>
 </table></div>
 
-<h2>Serial protocol (reference)</h2>
-<p>115200 baud, newline-terminated, all distances in <strong>microns</strong>. You rarely need this — the app speaks it for you — but it's handy for bench-testing with a serial terminal:</p>
+<h2>Serial protocol (bench reference)</h2>
+<p>115200 baud, newline-terminated, microns. The app speaks it for you.</p>
 <div class="tbl-wrap"><table>
-<tr><th>Command</th><th>Meaning</th></tr>
-<tr><td><code>D</code></td><td>Set datum: current X,Y and safe Z</td></tr>
-<tr><td><code>P id x y</code></td><td>Probe grid point at datum+(x,y); replies <code>R id x y touchZ</code></td></tr>
-<tr><td><code>B</code></td><td>Re-touch the reference point (drift correction)</td></tr>
-<tr><td><code>T</code> / <code>W</code></td><td>Touch-off here / touch-off and zero the work-origin Z</td></tr>
-<tr><td><code>H x y</code></td><td>Hole test: shallow touch at (x,y) — <code>H 1</code> copper, <code>H 0</code> hole (fiducial finder)</td></tr>
-<tr><td><code>J x y</code> / <code>L</code></td><td>Jog to absolute XY (lifts first) / lift to safe Z</td></tr>
-<tr><td><code>Q</code> / <code>G</code> / <code>V</code></td><td>Query position+touch / work origin / firmware version &amp; features</td></tr>
-<tr><td><code>C</code> / <code>M x y z s</code></td><td>Begin an experimental streaming session / stream one move</td></tr>
-<tr><td><code>!</code></td><td>ABORT: stop, lift, halt — always honoured</td></tr>
+<tr><th>Cmd</th><th>Meaning</th></tr>
+<tr><td><code>D</code> / <code>P id x y</code> / <code>B</code></td><td>Set datum / probe point / re-touch reference (drift)</td></tr>
+<tr><td><code>T</code> / <code>W</code></td><td>Touch-off / touch-off + zero work-origin Z</td></tr>
+<tr><td><code>H x y</code></td><td>Hole test: <code>H 1</code> copper, <code>H 0</code> hole</td></tr>
+<tr><td><code>J x y</code> / <code>L</code></td><td>Jog (lifts first) / lift to safe Z</td></tr>
+<tr><td><code>Q</code> / <code>G</code> / <code>V</code></td><td>Position+touch / work origin / version+features</td></tr>
+<tr><td><code>C</code> / <code>M x y z s</code></td><td>Experimental streaming: begin session / one move</td></tr>
+<tr><td><code>!</code></td><td>ABORT — always honoured</td></tr>
 </table></div>
-<p>Errors come back as <code>E &lt;id&gt; &lt;reason&gt;</code> — <code>NOTOUCH</code>, <code>UNSTABLE</code>, <code>NODATUM</code>, <code>ABORT</code>, <code>RUNAWAY</code>. See <a href="troubleshooting.html">Troubleshooting</a> for what each one means at the machine.</p>
+<p>Errors: <code>E &lt;id&gt; NOTOUCH | UNSTABLE | NODATUM | ABORT | RUNAWAY</code> — meanings in <a href="troubleshooting.html">Troubleshooting</a>.</p>
 
-<h2>Experimental: streaming toolpaths over SPI</h2>
-<p>The <span class="ui">Stream (exp.)</span> button streams an operation's toolpaths move-by-move over the SPI link — no VPanel file player at all. It is deliberately hard to hurt yourself with:</p>
-<ul>
-  <li>Every session <strong>starts as a dry run</strong>: Z is held 2&nbsp;mm above the origin, so nothing can cut.</li>
-  <li>A wet run additionally requires the spindle started by hand in VPanel and a confirmation prompt, and the raw speed value calibrated on dry runs first (the speed units are Roland-internal).</li>
-</ul>
-<div class="warn"><span class="t">Experimental means experimental</span>
-<p>For real jobs, export <code>.nc</code> and run it through VPanel. Streaming exists for research and for workflows VPanel can't do — treat it accordingly.</p></div>
+<h2>Streaming (experimental)</h2>
+<p><span class="ui">Stream (exp.)</span> sends toolpaths move-by-move over SPI — no VPanel. Every session <strong>starts as a dry run</strong> (Z held 2&nbsp;mm up, can't cut); a wet run needs the spindle started by hand + confirmation + speed calibrated on dry runs. For real jobs, use exported <code>.nc</code> through VPanel.</p>
 
 <div class="page-nav">
   <a href="photo-and-rework.html"><span class="lbl">Previous</span><span class="ttl">← Photo check &amp; rework</span></a>
@@ -151,7 +125,7 @@
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
 </footer>
 
 </div>

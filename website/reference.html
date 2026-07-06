@@ -51,7 +51,7 @@
 <div class="content">
 
 <h1>Files &amp; reference</h1>
-<p class="lead">Every file SRM-CAM reads and writes, the preset system, the calibration coupon, CLI usage, and the mouse interactions worth memorizing.</p>
+<p class="lead">Everything SRM-CAM reads and writes, plus presets, CLI, and mouse shortcuts.</p>
 
 <h2>Input files</h2>
 <div class="tbl-wrap"><table>
@@ -74,7 +74,7 @@
 <tr><td><code>&lt;name&gt;_top_traces.nc</code></td><td>Double-sided only: top isolation (fiducial mode: warped to the measured fit; optionally leveled).</td></tr>
 <tr><td><code>&lt;name&gt;_&lt;side&gt;_&lt;op&gt;_rework.nc</code></td><td>Rework pass: toolpaths clipped to your boxes, each at its own depth.</td></tr>
 </table></div>
-<p>All exports default to G-code (<code>.nc</code>, real millimetres, G54 origin, pre-linearised G0/G1 — no arcs or canned cycles). Choosing the <strong>Roland SRM-20</strong> machine instead writes RML (<code>.rml</code>).</p>
+<p>Default output: G-code (<code>.nc</code>, mm, G54 origin, plain G0/G1). The <strong>Roland SRM-20</strong> machine choice writes RML instead.</p>
 
 <h2>Workspace layout</h2>
 <pre><code>Documents\SRM-CAM\
@@ -84,18 +84,9 @@
 <p>File dialogs remember the last folder you used per category. Power users can relocate the whole workspace with the <code>SRM_CAM_HOME</code> environment variable.</p>
 
 <h2>What a session contains</h2>
-<p>One <code>.json</code> from <span class="ui">Save setup...</span> restores everything:</p>
-<ul>
-  <li>the loaded board (Gerber folder path) and job name,</li>
-  <li>placement, rotation, machine choice, stock dimensions,</li>
-  <li>all traces / drill / cutout parameters,</li>
-  <li>double-sided configuration (method, pins, fiducials, flip direction),</li>
-  <li>the bed-leveling grid and probed Z values,</li>
-  <li>rework boxes with per-box depths and lvl flags,</li>
-  <li>the aligned photo (copied next to the session, with its anchors).</li>
-</ul>
-<div class="note"><span class="t">Sessions reference the Gerber folder by path</span>
-<p>If you move a session to another PC, bring the Gerber folder too (or fix the path when loading). Everything else — mesh, boxes, photo — travels inside the session.</p></div>
+<p>One <code>.json</code> from <span class="ui">Save setup...</span>: board (Gerber folder path), name, placement/rotation, machine, stock, all job parameters, double-sided config, leveling grid + probed Z, rework boxes, and the aligned photo (copied next to the session).</p>
+<div class="note"><span class="t">Moving a session to another PC?</span>
+<p>Bring the Gerber folder too — the session references it by path. Everything else travels inside the file.</p></div>
 
 <h2>Presets</h2>
 <p>A preset is a complete bit + feeds/speeds set covering all three operations. Merge order, later overrides earlier by name:</p>
@@ -122,13 +113,12 @@
 </table></div>
 
 <h2>The calibration coupon</h2>
-<p>A bundled 40×30&nbsp;mm test board that exercises every operation — load <code>examples/calibration</code> as the Gerber folder, no KiCad needed. It contains isolation pairs at 0.8&nbsp;mm clearance, a drill-size row, a 10&nbsp;mm registration grid (measure with calipers), a 6&nbsp;mm roundness ring, and a tabbed cut-out. Cut one whenever you change bits, stock, or machine — it tells you in one small board whether your setup is dialed.</p>
+<p>Load <code>examples/calibration</code> — a bundled 40×30&nbsp;mm board with isolation pairs, drill sizes, a 10&nbsp;mm registration grid, a roundness ring, and a tabbed cut-out. Cut one after changing bits, stock, or machine.</p>
 
 <h2>Command line</h2>
 <pre><code>python -m gerber2rml                                          # GUI
 python -m gerber2rml.cli &lt;gerber-folder&gt; -o &lt;out&gt; -n &lt;name&gt;   # headless export
 python -m gerber2rml.doctor                                   # fix deps after git pull</code></pre>
-<p>The CLI exports the same traces/drill/cutout files as the GUI with default settings — handy for batch work. <code>--gcode</code> / RML selection matches the GUI's Machine dropdown.</p>
 
 <h2>Mouse &amp; keys worth memorizing</h2>
 <div class="tbl-wrap"><table>

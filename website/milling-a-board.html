@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Milling a board — SRM-CAM guide</title>
-<meta name="description" content="The full single-sided workflow in SRM-CAM: import, traces, drilling, cut-out, presets, export, and running jobs in VPanel.">
+<meta name="description" content="The single-sided workflow: load, place, check, export, run in VPanel.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -51,7 +51,7 @@
 <div class="content">
 
 <h1>Milling a board</h1>
-<p class="lead">The complete single-sided workflow: load the design, place it on the bed, check it, export one file per operation, and run them in VPanel.</p>
+<p class="lead">The single-sided workflow, start to finish.</p>
 
 <div class="pill-flow">
   <span class="pf">Load</span><span class="arr">→</span>
@@ -61,102 +61,63 @@
   <span class="pf">Run in VPanel</span>
 </div>
 
-<h2>1. Load the design</h2>
-<p>In <span class="ui">1 · Setup board</span>, click <span class="ui">Load Gerber folder...</span> and pick the folder with your KiCad plot output. SRM-CAM finds the copper layers, the Edge.Cuts outline, and the Excellon drill files automatically. Give the job a <span class="ui">Name</span> — it becomes the prefix of every exported file.</p>
+<h2>1. Load &amp; configure</h2>
+<p>In <span class="ui">1 · Setup board</span>: <span class="ui">Load Gerber folder...</span>, set a <span class="ui">Name</span> (= export file prefix).</p>
+<ul>
+  <li><span class="ui">Preset</span> → <span class="ui">Apply</span> — a complete bit + feeds set for all three operations. Built-in: <strong>SRM-20 0.8 mm flat</strong>. Tweak, then <span class="ui">Save...</span> your own.</li>
+  <li><span class="ui">Stock</span> — measure your board with calipers; nominal 1.6&nbsp;mm varies.</li>
+  <li><span class="ui">Auto depth = stock +</span> — drill/cutout depth = stock + breakthrough (default 0.1&nbsp;mm). Leave on.</li>
+</ul>
 
-<h3>The three operations</h3>
-<p>Every board becomes three separate jobs, each exported as its own file and run with the right bit:</p>
 <div class="tbl-wrap"><table>
-<tr><th>Operation</th><th>Source layer</th><th>What it does</th></tr>
-<tr><td><strong>Traces</strong></td><td>B.Cu (mirrored for bottom-up milling)</td><td>Isolation milling: cuts channels around every copper feature. Multi-pass via <code>offsets</code>, or full copper clearing with <code>offsets = -1</code>.</td></tr>
-<tr><td><strong>Drill</strong></td><td>Excellon</td><td>Plunge-drills every hole — one file per diameter, or a single-bit file (see below).</td></tr>
-<tr><td><strong>Cutout</strong></td><td>Edge.Cuts</td><td>Cuts the board free, leaving holding tabs so it can't fly off at the end.</td></tr>
+<tr><th>Operation</th><th>Layer</th><th>Does</th></tr>
+<tr><td><strong>Traces</strong></td><td>B.Cu (mirrored)</td><td>Isolation channels; <code>offsets=-1</code> = full copper clear (rubout)</td></tr>
+<tr><td><strong>Drill</strong></td><td>Excellon</td><td>One file per diameter, or single-bit (larger holes interpolated)</td></tr>
+<tr><td><strong>Cutout</strong></td><td>Edge.Cuts</td><td>Outline with holding tabs — run last</td></tr>
 </table></div>
-<p>Switch the preview between them with the <span class="ui">Traces</span> / <span class="ui">Drill</span> / <span class="ui">Cutout</span> tabs. What you see in the preview is what exports.</p>
 
-<h2>2. Pick a preset and set the stock</h2>
-<p>The <span class="ui">Preset</span> dropdown applies a complete bit + feeds/speeds set across all three operations in one click. The built-in <strong>SRM-20 0.8 mm flat</strong> preset (applied on startup) runs everything with a single 0.8&nbsp;mm flat endmill on ~1.6&nbsp;mm stock. Apply a preset, tweak what you need, and <span class="ui">Save...</span> your own under a new name.</p>
-<p>Then tell the app about your material:</p>
+<h2>2. Place on the bed</h2>
 <ul>
-  <li><span class="ui">Stock</span> thickness — measure your actual copper-clad with calipers; nominal 1.6&nbsp;mm boards vary.</li>
-  <li><span class="ui">Auto depth = stock +</span> — with this checked (default), drill and cut-out depth is automatically stock thickness plus a small breakthrough (default 0.1&nbsp;mm into the spoilboard). Uncheck to set depths manually in the job parameters.</li>
+  <li>Drag the design on the preview, or type <span class="ui">Place</span> X/Y. <span class="ui">Rotate 90°</span> as needed.</li>
+  <li><span class="ui">Show bed (fit check)</span> confirms it fits.</li>
+  <li>Enter your copper piece under <span class="ui">Copper stock</span> — jog to its corner and hit <span class="ui">Corner = tool</span>, then <span class="ui">Center design</span>.</li>
 </ul>
 
-<div class="note"><span class="t">V-bit engraving</span>
-<p>The trace tool can be a <strong>flat</strong> endmill or a <strong>vbit</strong> engraver. For a V-bit you enter the tip diameter, included angle, and a <em>target width</em>; the plunge depth is back-solved so the cut is exactly that wide. The tool cross-section graphic in the panel shows what you've configured.</p></div>
-
-<h2>3. Place it on the bed</h2>
+<h2>3. Check before cutting</h2>
 <ul>
-  <li>Drag the design directly on the preview (<span class="ui">Move on bed (drag)</span> is on by default), or type exact coordinates in the <span class="ui">Place</span> X/Y spinboxes.</li>
-  <li><span class="ui">Rotate 90°</span> turns the board in quarter steps.</li>
-  <li><span class="ui">Show bed (fit check)</span> draws the SRM-20 bed outline so you can see the board actually fits.</li>
-  <li><span class="ui">Measure (ruler)</span> gives you an on-canvas ruler for checking distances.</li>
+  <li><strong>Red channels</strong> on the Traces preview = gaps the bit can't isolate → will short. Fix in KiCad or use a smaller bit / V-bit.</li>
+  <li><span class="ui">Diagnostics</span> — fits the bed? deepest cut inside the Z range? holes vs bit? Run it before full-bed jobs.</li>
+  <li><span class="ui">Simulate 3D</span> — play back the whole cut.</li>
+  <li><span class="ui">Feed card</span> (optional) — cut a feed ladder on scrap, photograph it, and the app recommends the fastest clean feed.</li>
 </ul>
-
-<h3>Tell it where your copper is</h3>
-<p>The <span class="ui">Copper stock</span> group lets you enter the real piece of copper-clad on the bed — its <span class="ui">Size</span> (W×H) and <span class="ui">Corner</span> position. With the machine connected, jog the tool to the stock's corner and click <span class="ui">Corner = tool</span> to capture it exactly, then <span class="ui">Center design</span> to put the board in the middle of the material. <span class="ui">Show copper stock</span> draws the piece on the preview so you can see the margins.</p>
-
-<h2>4. Check before you cut</h2>
-
-<h3>Isolation preflight</h3>
-<p>On the <span class="ui">Traces</span> preview, any copper gap narrower than the bit shows in <strong>red</strong> with a status-bar warning. These are channels the bit physically cannot isolate — potential shorts. Fix them in KiCad (widen clearance), use a smaller bit or a V-bit, or accept them knowingly.</p>
-
-<h3>Diagnostics</h3>
-<p>The <span class="ui">Diagnostics</span> button runs the pre-flight checks in one go: does the job fit the bed, does the deepest cut fit the SRM-20's Z travel (probe Z first so it knows where the surface is), and hole sizes versus the drill bit. Run it before any full-bed job.</p>
-
-<h3>3D simulation</h3>
-<p><span class="ui">Simulate 3D</span> opens the toolpath simulator: orbit with the mouse, scrub or play back the whole cut, and watch the stock being removed. You can also simulate any exported file with <span class="ui">Open &amp; simulate file...</span> — useful for double-checking a file you're about to hand to VPanel.</p>
 
 <figure class="fig">
   <img src="img/srmcam_3dview_traces.png" alt="3D toolpath simulation">
-  <figcaption>The 3D simulator: scrub the slider to watch the cut order, orbit to inspect from any angle.</figcaption>
+  <figcaption>Simulate 3D: scrub to check cut order before committing stock.</figcaption>
 </figure>
 
-<h3>Dial in the feed on scrap (optional)</h3>
-<p>The <span class="ui">Feed card</span> button exports a feed-ladder test card — one engraved block per feed rate, with the value engraved next to it. Cut it on scrap, photograph it, and feed the photo back in (<span class="ui">Score card photo…</span>): the app scores every block and recommends the fastest feed that still cuts clean.</p>
+<h2>4. Export</h2>
+<pre><code>&lt;name&gt;_bottom_traces.nc     isolation (mirrored)
+&lt;name&gt;_drill_0.8mm.nc       per diameter (or one single-bit file)
+&lt;name&gt;_cutout.nc            outline + tabs — run LAST
+&lt;name&gt;_runplan.txt          READ FIRST: order, bits, zeroing</code></pre>
+<p><span class="ui">Machine</span> = <strong>Roland SRM-20 (G-code)</strong> (default, recommended). RML available as fallback.</p>
 
-<h2>5. Export</h2>
-<p><span class="ui">Export toolpaths...</span> writes one file per operation into your chosen folder (defaults to <code>Documents\SRM-CAM\exports</code>):</p>
-<pre><code>&lt;name&gt;_bottom_traces.nc     isolation (mirrored for single-sided)
-&lt;name&gt;_drill_0.8mm.nc       one per hole diameter (or one single-bit file)
-&lt;name&gt;_cutout.nc            outline with holding tabs
-&lt;name&gt;_runplan.txt          read this first — the run order, bits, and zeroing steps</code></pre>
-
-<h3>G-code or RML?</h3>
-<p>The <span class="ui">Machine</span> dropdown defaults to <strong>Roland SRM-20 (G-code)</strong>, which writes <code>.nc</code> files with real-mm coordinates against the standard <strong>G54</strong> work origin — this is the recommended path. Pick <strong>Roland SRM-20</strong> for legacy RML output instead.</p>
-
-<h3>Drilling modes</h3>
-<ul>
-  <li><strong>Per-diameter (default):</strong> one file per hole size, smallest first, each plunge-drilled with a matching bit.</li>
-  <li><strong>Single bit</strong> (checkbox in the drill parameters): one file, one small end mill. Matching holes are plunged; larger holes are <em>interpolated</em> — the tool circles out to size. Holes smaller than the bit are plunged at bit size and flagged in the status bar.</li>
-</ul>
-
-<h3>Full copper clearing (rubout)</h3>
-<p>Set the traces <code>offsets</code> parameter to <strong>-1</strong> to clear all background copper — concentric pocketing clipped to the outline, the equivalent of a laser rubout. Much slower (many passes), but leaves no stray copper.</p>
-
-<h2>6. Run it in VPanel</h2>
+<h2>5. Run in VPanel</h2>
 <ol class="steps">
-  <li><span class="st">Set the work origin</span>
-    In VPanel, jog to your origin and set the <strong>G54</strong> user origin. Follow the run plan: set XY zero <strong>once</strong> for the whole board, and re-zero <strong>Z only</strong> after every bit change.</li>
-  <li><span class="st">Switch VPanel to NC-code mode</span>
-    The <code>.nc</code> files stream exactly like RML: <span class="ui">Cut → Add → Output</span>. Coordinates reference the G54 origin; the file header clears any stale tool-length offset automatically.</li>
-  <li><span class="st">Run in run-plan order</span>
-    Traces → drill (smallest bit first) → cut-out <strong>last</strong> (the board is only held by tabs after it).</li>
-  <li><span class="st">Change bits carefully</span>
-    After each bit change: re-zero Z on the copper surface (never XY). The <span class="ui">Zero Z on machine</span> button can do the touch electrically if the red probe clip is on the copper — see <a href="hardware.html">Hardware &amp; firmware</a>.</li>
+  <li><span class="st">Set the G54 origin</span>
+    XY zero <strong>once</strong> for the whole board. Re-zero <strong>Z only</strong> after every bit change.</li>
+  <li><span class="st">NC-code mode</span>
+    <span class="ui">Cut → Add → Output</span> — the <code>.nc</code> streams like RML.</li>
+  <li><span class="st">Run-plan order</span>
+    Traces → drill → cutout last. Re-zero Z at each bit change (<span class="ui">Zero Z on machine</span> does it electrically — <a href="hardware.html">hardware</a>).</li>
 </ol>
 
-<div class="danger"><span class="t">Watch the Z travel</span>
-<p>The SRM-20 has roughly 60&nbsp;mm of usable Z range. If the work surface sits too low, the tool can't reach cutting depth — the symptom is the head lifting to the top and cutting air or cutting shallow. If Diagnostics warns about Z range, raise the work surface (add spoilboard) rather than lowering the origin. See <a href="troubleshooting.html">Troubleshooting</a>.</p></div>
+<div class="danger"><span class="t">Z travel</span>
+<p>~60&nbsp;mm usable Z. If the surface sits too low the head tops out and cuts air/shallow. Fix: <strong>raise the work surface</strong> (add spoilboard). <span class="ui">Diagnostics</span> checks this.</p></div>
 
-<h2 id="tracking">7. Track the run live</h2>
-<p>With the machine link connected (see <a href="hardware.html">Hardware &amp; firmware</a>), the <span class="ui">Run:</span> row at the bottom follows the job as VPanel plays it:</p>
-<ul>
-  <li>Pick the operation being run (<span class="ui">Traces</span> / <span class="ui">Drill</span> / <span class="ui">Cut-out</span>).</li>
-  <li>With <span class="ui">Auto</span> checked (default), tracking starts by itself when the tool starts moving; otherwise press <span class="ui">Track run</span>.</li>
-  <li>The progress bar follows the tool through the toolpath and the ETA counts down the remaining cut time.</li>
-  <li>The live crosshair on the preview shows exactly where the bit is; enable <span class="ui">Trail</span> to draw where it has been.</li>
-</ul>
+<h2 id="tracking">Track the run</h2>
+<p>Machine connected → the <span class="ui">Run:</span> row follows the job: pick the operation, <span class="ui">Auto</span> starts tracking when the tool moves, progress bar + ETA count down, live crosshair on the preview (<span class="ui">Trail</span> draws the path).</p>
 
 <div class="page-nav">
   <a href="getting-started.html"><span class="lbl">Previous</span><span class="ttl">← Getting started</span></a>
@@ -164,7 +125,7 @@
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
 </footer>
 
 </div>

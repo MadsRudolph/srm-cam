@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Troubleshooting — SRM-CAM guide</title>
-<meta name="description" content="Symptoms and fixes for SRM-CAM: depth problems, probing errors, registration scares, connection issues, and photo detection refusals.">
+<meta name="description" content="Symptoms and fixes: depth problems, probing errors, registration scares, photo detection refusals.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -51,98 +51,57 @@
 <div class="content">
 
 <h1>Troubleshooting</h1>
-<p class="lead">Symptoms first, causes second. Most of these were learned the hard way on real boards — the fix listed is the one that actually worked.</p>
+<p class="lead">Symptom → fix. Learned on real boards.</p>
 
-<h2>Cutting problems</h2>
-
-<h3>The head lifts to the top and cuts air (or cuts far too shallow)</h3>
-<p><strong>Cause:</strong> the requested depth is outside the SRM-20's usable Z travel (~60&nbsp;mm). When the work surface sits too low, the machine clamps at the top of its range and the "cut" happens above the board.</p>
-<p><strong>Fix:</strong> raise the work surface — add spoilboard under the stock — rather than fighting the origin. Run <span class="ui">Diagnostics</span> (with Z probed) before full-bed jobs; it checks exactly this.</p>
-
-<h3>Traces cut through in some areas but not others</h3>
-<p><strong>Cause:</strong> the surface isn't flat relative to a ~0.15&nbsp;mm cut — bowed stock, uneven bed, or a height map with a bad measurement in it.</p>
-<p><strong>Fix:</strong> probe a height map and export with leveling (<a href="bed-leveling.html">Bed leveling</a>). If you already leveled and still see failures, run <span class="ui">Mesh check</span> — a flaky probe point reads the surface lower than it is, and everything near it cuts shallow. For spots already missed: the <a href="photo-and-rework.html">rework flow</a>, with <span class="ui">Probe boxes</span> to measure the true surface at each failed spot.</p>
-
-<h3>Red channels in the traces preview</h3>
-<p><strong>Cause:</strong> copper gaps narrower than the bit — physically impossible to isolate; they will short.</p>
-<p><strong>Fix:</strong> widen the clearance in KiCad, use a smaller bit, or switch the trace tool to a V-bit with a smaller target width.</p>
-
-<h3>Depth is wrong after a bit change</h3>
-<p><strong>Cause:</strong> forgot to re-zero Z. Every bit sits at a different stick-out.</p>
-<p><strong>Fix:</strong> re-zero Z after <em>every</em> bit change and after the flip. XY is never re-zeroed mid-board.</p>
-
-<h2>Probing &amp; machine link</h2>
-
-<h3>Connect fails / no response from the Arduino</h3>
-<ul>
-  <li>The Arduino IDE's <strong>Serial Monitor must be closed</strong> — it holds the port exclusively.</li>
-  <li>Check you picked the Arduino's COM port, not another device.</li>
-  <li>Power-cycle the Arduino (replug USB) and reconnect.</li>
-</ul>
-
-<h3>Probe error meanings</h3>
+<h2>Cutting</h2>
 <div class="tbl-wrap"><table>
-<tr><th>Error</th><th>Meaning</th><th>What to do</th></tr>
-<tr><td><code>NOTOUCH</code></td><td>Descended the full allowed range without contact</td><td>Check the red clip (D7 → copper) is seated on clean copper, check the board is isolated from the bed, check the datum was set close enough above the surface.</td></tr>
-<tr><td><code>UNSTABLE</code></td><td>Coarse and fine touches disagreed twice</td><td>Flaky contact: clean the copper (oxide/dust), reseat the red clip, check nothing is vibrating the machine.</td></tr>
-<tr><td><code>RUNAWAY</code></td><td>Descended far past known copper without contact</td><td>The point is over a hole, off the board, or the clip fell off. Fix and re-probe — this guard is what kept the bit out of your bed.</td></tr>
-<tr><td><code>NODATUM</code></td><td>Probe command before a datum was set</td><td>Jog above grid point 1 and start the probe run from the app (it sends the datum for you).</td></tr>
-<tr><td><code>ABORT</code></td><td>You pressed STOP (or the lid opened mid-move)</td><td>Nothing broken — resolve the reason and re-run.</td></tr>
+<tr><th>Symptom</th><th>Cause → fix</th></tr>
+<tr><td>Head lifts to the top, cuts air or shallow</td><td>Depth outside the ~60 mm Z travel → <strong>raise the work surface</strong> (add spoilboard). <span class="ui">Diagnostics</span> checks this.</td></tr>
+<tr><td>Cuts through in some areas, not others</td><td>Surface not flat vs a 0.15 mm cut → <a href="bed-leveling.html">level the bed</a>. Already leveled? Run <span class="ui">Mesh check</span> — a flaky point poisons its neighborhood. Missed spots → <a href="photo-and-rework.html">rework</a> + <span class="ui">Probe boxes</span>.</td></tr>
+<tr><td>Red channels in the Traces preview</td><td>Gaps narrower than the bit → will short. Widen clearance in KiCad, smaller bit, or V-bit.</td></tr>
+<tr><td>Wrong depth after a bit change</td><td>Re-zero <strong>Z</strong> after every bit change and after the flip. Never XY.</td></tr>
 </table></div>
 
-<h3>The touch indicator never fills</h3>
-<p>Touch the red clip against the bit or collet with the app connected. If <span class="ui">bit ○</span> still doesn't fill, the problem is wiring/firmware, not the board contact: check the D7 line at the Arduino and that the Arduino shares the machine's ground, and confirm the firmware banner in a serial terminal.</p>
+<h2>Probing &amp; machine link</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Symptom</th><th>Cause → fix</th></tr>
+<tr><td>Connect fails</td><td>Arduino Serial Monitor open (close it), wrong COM port, or replug the Arduino.</td></tr>
+<tr><td><code>NOTOUCH</code></td><td>Red clip off / dirty copper / board not isolated from the bed / datum too high.</td></tr>
+<tr><td><code>UNSTABLE</code></td><td>Flaky contact: clean the copper, reseat the red clip.</td></tr>
+<tr><td><code>RUNAWAY</code></td><td>Point over a hole / off the board / clip fell off. This guard saved your bed — fix and re-probe.</td></tr>
+<tr><td><code>NODATUM</code></td><td>Start probing from the app (it sets the datum for you).</td></tr>
+<tr><td><code>ABORT</code></td><td>You pressed STOP or the lid opened. Nothing broken.</td></tr>
+<tr><td><span class="ui">bit ○</span> never fills</td><td>Touch the red clip to the bit. Still nothing → check D7 at the Arduino + firmware banner in a serial terminal.</td></tr>
+<tr><td>Spiky mesh in 3D view</td><td>Flaky touches. <span class="ui">Mesh check</span> flags them; re-probe those points.</td></tr>
+</table></div>
 
-<h3>The mesh looks spiky in the 3D view</h3>
-<p>Real boards are smooth. Isolated spikes are flaky touches — run <span class="ui">Mesh check</span> to have them flagged, re-probe those points, and only then trust the map.</p>
-
-<h2>Double-sided registration</h2>
-
-<h3>The top traces landed mirrored / offset after the flip</h3>
-<p><strong>Cause (most likely):</strong> the physical flip direction didn't match the configured one. With corner fiducials the fit math <em>cannot catch this</em> — corner patterns fit well under both hypotheses.</p>
-<p><strong>Fix / prevention:</strong> before cutting the top, click-to-jog to a distinctive <em>board hole</em> in the Top view and confirm the bit hovers over that hole in reality. Ten seconds, saves a board.</p>
-
-<h3>Fiducial fit RMS is large</h3>
-<ul>
-  <li>One measurement is bad — re-capture the fiducial whose residual is largest (use <span class="ui">Auto</span> for a repeatable measurement).</li>
-  <li>The board moved between measurements — clamp first, then measure.</li>
-  <li>Fiducials too close together — spread drives fit accuracy; use all four corners.</li>
-</ul>
-
-<h3>The Auto fiducial finder fails or reports copper where the hole is</h3>
-<ul>
-  <li>Start position too far off — jog within ~1&nbsp;mm of the hole center first.</li>
-  <li>It probes copper ~2.5&nbsp;mm west of the hole to learn the surface; make sure there's copper there (not another hole or the board edge).</li>
-  <li>Needs firmware v2 — reflash <code>srm20_spi_probe.ino</code> if <span class="ui">Auto</span> reports a firmware error. See <a href="hardware.html">Hardware &amp; firmware</a>.</li>
-</ul>
-
-<h3>NC job ignores the origin I set on the machine</h3>
-<p>NC (G-code) jobs obey <strong>G54</strong> only. The origin shown in VPanel's user coordinate system is not automatically G54 on every machine config. Set the G54 origin in VPanel explicitly: keep XY at the machine origin and zero only Z. After using <span class="ui">Zero Z on machine</span>, verify VPanel's G54 Z once before trusting it for NC work.</p>
+<h2>Double-sided</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Symptom</th><th>Cause → fix</th></tr>
+<tr><td>Top mirrored/offset after the flip</td><td>Physical flip ≠ configured direction. Fiducial fits <strong>can't catch this</strong>. Prevention: jog to a distinctive board hole in Top view before cutting — bit must hover over it.</td></tr>
+<tr><td>Large fiducial fit RMS</td><td>Re-capture the worst fiducial (<span class="ui">Auto</span> is repeatable), clamp before measuring, use all 4 corners.</td></tr>
+<tr><td><span class="ui">Auto</span> finder fails</td><td>Start within ~1 mm of the hole; needs copper 2.5 mm west of it; needs firmware v2 (<a href="hardware.html">reflash</a>).</td></tr>
+<tr><td>NC job ignores my origin</td><td>NC obeys <strong>G54</strong> only, not the User CS. Set G54 in VPanel: XY at machine origin, zero only Z. Verify G54 Z once after <span class="ui">Zero Z on machine</span>.</td></tr>
+</table></div>
 
 <h2>Photo &amp; rework</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Symptom</th><th>Cause → fix</th></tr>
+<tr><td><span class="ui">Detect from photo</span> refuses</td><td>Photo can't answer: too low-res, soft focus, glare, or bad anchors. Reshoot closer/sharper/straighter, re-click anchors with the guide green.</td></tr>
+<tr><td>Boxes over areas that look fine</td><td>Delete false alarms — but look twice: extras cluster where the mesh under-measured.</td></tr>
+<tr><td>Missed a spot you know is bad</td><td>Shallow cuts look cut in any photo. Use <span class="ui">Probe boxes</span> + <span class="ui">Mesh check</span> for depth failures.</td></tr>
+<tr><td>Overlay doesn't line up</td><td>Re-do anchors (zoom in, watch the angle guide); shoot straighter down.</td></tr>
+</table></div>
 
-<h3>Detect from photo refuses to answer</h3>
-<p>That's it protecting you from garbage boxes. Causes, in order of likelihood: photo resolution too low for the channel width (get closer — the detector needs the channels well-resolved), soft focus over part of the board, glare washing out the copper, or misclicked anchors. Reshoot straight-down, sharp, evenly lit; re-click the anchors carefully with the angle guide green.</p>
-
-<h3>Detect from photo proposes boxes over areas that look fine</h3>
-<p>Review and delete — false alarms happen, especially in areas where the photo is blurry or glare-y. But before deleting, look twice: extras sometimes cluster in zones the height map under-measured, where cuts are genuinely marginal.</p>
-
-<h3>It didn't flag a spot I know is bad</h3>
-<p>If the channel was cut but too shallow, it <em>looks</em> cut in any photo — that failure class is invisible optically. Use <span class="ui">Probe boxes</span> to measure the real surface at suspect spots, and <span class="ui">Mesh check</span> to find where the map was wrong.</p>
-
-<h3>The photo overlay doesn't line up with the design</h3>
-<p>Re-do the anchors (<span class="ui">Load photo...</span> again): zoom right in on each hole before clicking, and watch the angle guide — it turns red when a click can't belong to the rectangle you're building. A photo shot at an angle also stretches the fit; shoot as straight-down as possible.</p>
-
-<h2>Sessions &amp; app</h2>
-
-<h3>Session loads but the board is missing</h3>
-<p>Sessions store the Gerber folder <em>path</em>. If the folder moved (or the session came from another PC), restore the folder or reload it manually — the rest of the session (mesh, boxes, photo) is intact inside the file.</p>
-
-<h3>Where did my exports/sessions go?</h3>
-<p><code>Documents\SRM-CAM\exports</code> and <code>Documents\SRM-CAM\sessions</code>. Dialogs remember the last-used folder, so if you saved elsewhere once, the dialog will reopen there.</p>
+<h2>Sessions</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Symptom</th><th>Cause → fix</th></tr>
+<tr><td>Session loads, board missing</td><td>Sessions store the Gerber folder <em>path</em> — restore the folder or reload it; mesh/boxes/photo are intact in the file.</td></tr>
+<tr><td>Can't find exports/sessions</td><td><code>Documents\SRM-CAM\exports</code> / <code>...\sessions</code>. Dialogs reopen the last-used folder.</td></tr>
+</table></div>
 
 <div class="tip"><span class="t">Still stuck?</span>
-<p>Open an issue on <a href="https://github.com/MadsRudolph/srm-cam/issues">GitHub</a> with the symptom, the runplan step you were on, and (for probing issues) the exact error line from the status bar.</p></div>
+<p><a href="https://github.com/MadsRudolph/srm-cam/issues">Open an issue</a> with the symptom, the step you were on, and the exact status-bar error.</p></div>
 
 <div class="page-nav">
   <a href="reference.html"><span class="lbl">Previous</span><span class="ttl">← Files &amp; reference</span></a>
@@ -150,7 +109,7 @@
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
 </footer>
 
 </div>

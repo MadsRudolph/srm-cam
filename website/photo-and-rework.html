@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Photo check &amp; rework — SRM-CAM guide</title>
-<meta name="description" content="Overlay a board photo on the design, detect uncut channels automatically, and re-cut them in one pass with SRM-CAM's rework tools.">
+<meta name="description" content="Overlay a board photo, detect uncut channels, re-cut them in one pass.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -51,58 +51,58 @@
 <div class="content">
 
 <h1>Photo check &amp; rework</h1>
-<p class="lead">The traces pass finished — did every channel actually cut through? Overlay a photo of the board on the design to check, mark every failed spot with a box, and re-cut them all in one pass.</p>
+<p class="lead">Did every channel cut through? Photograph the board, overlay it on the design, box the failures, re-cut them in one pass. Board stays on the machine — never re-zero XY.</p>
+
+<div class="pill-flow">
+  <span class="pf">Photo</span><span class="arr">→</span>
+  <span class="pf">Detect</span><span class="arr">→</span>
+  <span class="pf">Review boxes</span><span class="arr">→</span>
+  <span class="pf">Probe boxes</span><span class="arr">→</span>
+  <span class="pf">Export rework NC</span>
+</div>
 
 <figure class="fig">
-  <img src="img/rework_example.png" alt="Multi-region rework with per-box depths">
-  <figcaption>Rework: each box is a region to re-cut, with its own depth and height-map follow toggle.</figcaption>
+  <img src="img/rework_example.png" alt="Multi-region rework">
+  <figcaption>Each box = one region to re-cut, with its own depth and height-map toggle.</figcaption>
 </figure>
 
-<h2>Rework basics</h2>
-<p>Everything lives on the <span class="ui">Rework</span> page. The board stays on the machine, same origin — never re-zero XY.</p>
+<h2>Rework boxes</h2>
 <ol class="steps">
-  <li><span class="st">Mark the spots</span>
-    Tick <span class="ui">Add areas</span> and drag a box over each spot that didn't cut. Every box gets its own color and a row in the table.</li>
-  <li><span class="st">Set depths</span>
-    <span class="ui">New-box depth</span> sets the default for the <em>next</em> box you draw; edit any box's depth individually in the table. Go slightly deeper than the original trace depth — the spot failed because the surface sat higher than the mesh believed.</li>
-  <li><span class="st">Keep boxes on the surface</span>
-    Each box's <span class="ui">lvl</span> toggle (default from <span class="ui">Follow height map</span>) warps that box to the probed surface so its depth stays uniform. Needs a probed or loaded height map.</li>
-  <li><span class="st">Export one file</span>
-    <span class="ui">Export rework NC...</span> writes a single <code>&lt;name&gt;_&lt;side&gt;_&lt;op&gt;_rework.nc</code> containing only the toolpaths clipped to your boxes, each at its own depth. Run it like any other job.</li>
+  <li><span class="st">Mark</span>
+    <span class="ui">Add areas</span> → drag a box over each failed spot. Each gets a table row.</li>
+  <li><span class="st">Depth</span>
+    <span class="ui">New-box depth</span> = default for the next box; edit per box in the table. Go slightly deeper than the trace depth.</li>
+  <li><span class="st">lvl toggle</span>
+    Warps the box to the probed surface (needs a height map). On by default.</li>
+  <li><span class="st">Export</span>
+    <span class="ui">Export rework NC...</span> → one <code>&lt;name&gt;_&lt;side&gt;_&lt;op&gt;_rework.nc</code>, only the boxed toolpaths, each at its own depth.</li>
 </ol>
 
-<h2>The photo overlay</h2>
-<p>Judging "did it cut?" by peering at the board in the machine is miserable. Instead, photograph the board and align the photo onto the design:</p>
+<h2>Photo overlay</h2>
 <ol class="steps">
-  <li><span class="st">Shoot the photo</span>
-    As straight-down and evenly lit as you can manage. Higher resolution is better — the detector needs it (see below). Avoid glare hot-spots on the copper.</li>
-  <li><span class="st">Load it</span>
-    <span class="ui">Load photo...</span> on the Rework page, then the anchor dialog opens: <em>"Click the anchor holes in the photo."</em></li>
-  <li><span class="st">Click the four anchors</span>
-    The prompt names each anchor in order (e.g. <em>bottom-left</em>) with its machine coordinates. Click that hole in the photo. Navigation: <strong>scroll</strong> to zoom, <strong>drag</strong> to pan, <strong>right-click</strong> to undo the last anchor.</li>
-  <li><span class="st">Use the angle guide</span>
-    After the first click, a live rubber-band line follows your cursor showing the angle to the next anchor and its deviation from a perfect rectangle — green when square, orange when off, red when badly wrong. If the guide is red on a corner you're sure of, you're probably clicking the wrong hole.</li>
-  <li><span class="st">Blend photo and design</span>
-    Two sliders control the view: the photo <strong>opacity</strong> slider, and the <strong>Traces</strong> dim slider that fades the toolpaths so the photo underneath reads clearly at full opacity. Rework boxes stay full-strength regardless.</li>
+  <li><span class="st">Shoot</span>
+    Straight-down, evenly lit, sharp, high-res. No glare.</li>
+  <li><span class="st">Load</span>
+    <span class="ui">Load photo...</span> → the anchor dialog opens.</li>
+  <li><span class="st">Click the 4 anchors</span>
+    The prompt names each hole. <strong>Scroll</strong> = zoom, <strong>drag</strong> = pan, <strong>right-click</strong> = undo. The live angle guide turns <span style="color:var(--good)">green</span> when your clicks form a proper rectangle, <span style="color:var(--bad)">red</span> when you clicked the wrong hole.</li>
+  <li><span class="st">Blend</span>
+    Photo opacity slider + <span class="ui">Traces</span> dim slider (fade the toolpaths so the photo reads; boxes stay full-strength).</li>
 </ol>
-<p>The photo is warped into machine coordinates, so a spot on the photo <em>is</em> that spot on the machine — boxes you draw over photo defects land exactly where the tool needs to go. The aligned photo is saved with the session.</p>
+<p>The photo is warped into machine coordinates — a defect on the photo <em>is</em> that spot on the machine. Saved with the session.</p>
 
 <h2>Detect from photo</h2>
-<p>The <span class="ui">Detect from photo</span> button walks every isolation channel and inspects the aligned photo for stretches with no visible cut. Each suspicious region becomes a proposed rework box at the current <span class="ui">New-box depth</span>.</p>
-<p>How it decides: a properly cut channel reads <em>bright</em> in a photo (exposed substrate floor and burred edges catch the light); a failed one reads flat and dark like the surrounding copper. The detector scores this cross-profile at full photo resolution, tile by tile. It was trained and validated against ground truth from a real production board — it found 20 of 21 operator-confirmed rework regions.</p>
+<p><span class="ui">Detect from photo</span> walks every isolation channel and proposes a box wherever the photo shows no cut. A cut channel reads <em>bright</em> (exposed substrate + burrs); a failed one reads flat/dark like copper. Trained on real production ground truth (20/21 regions found).</p>
 
-<div class="warn"><span class="t">Know its limits</span>
+<div class="warn"><span class="t">Limits</span>
 <ul>
-  <li><strong>Too-shallow cuts are invisible.</strong> A channel cut at half depth still <em>looks</em> like a channel in any photo. The detector finds <em>never-cut</em> and badly failed stretches; judge depth failures with <span class="ui">Probe boxes</span> and <span class="ui">Mesh check</span> instead.</li>
-  <li><strong>It refuses when it can't answer.</strong> Soft focus, glare, low resolution, or misaligned anchors make it decline rather than propose garbage. If it refuses, reshoot: closer, sharper, straighter.</li>
-  <li><strong>Always review the boxes.</strong> Delete false alarms before exporting — you know the board.</li>
+  <li><strong>Shallow cuts look cut</strong> in any photo — depth failures need <span class="ui">Probe boxes</span> / <span class="ui">Mesh check</span>, not the camera.</li>
+  <li><strong>It refuses</strong> on blur, glare, low res, or bad anchors — reshoot rather than trust garbage.</li>
+  <li><strong>Review before export</strong> — delete false alarms.</li>
 </ul></div>
 
-<h2>Probe boxes: fix the depth, not just the spot</h2>
-<p>A rework spot exists because the real surface sat <em>higher</em> there than the height map believed. <span class="ui">Probe boxes</span> re-measures each box's center over SPI and compares against the leveling mesh: wherever the surface is higher than the mesh said, that box is automatically deepened by exactly the difference. Jog above the mesh reference point (leveling grid point 1) first, spindle OFF, red clip on the copper.</p>
-
-<div class="tip"><span class="t">The complete rework loop</span>
-<p>Photo → <span class="ui">Detect from photo</span> → review boxes → <span class="ui">Probe boxes</span> → <span class="ui">Export rework NC...</span> → run → re-photograph to confirm. Two or three minutes of checking instead of discovering a short after soldering.</p></div>
+<h2>Probe boxes</h2>
+<p>A spot failed because the surface sat <em>higher</em> than the mesh believed. <span class="ui">Probe boxes</span> re-measures each box center and deepens it by exactly the measured difference. Jog above leveling grid point 1 first, spindle OFF, red clip on the copper.</p>
 
 <div class="page-nav">
   <a href="bed-leveling.html"><span class="lbl">Previous</span><span class="ttl">← Bed leveling &amp; probing</span></a>
@@ -110,7 +110,7 @@
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
 </footer>
 
 </div>

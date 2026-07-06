@@ -72,8 +72,8 @@
   <figcaption>The main window: toolpath preview, per-operation settings, and machine controls in one place.</figcaption>
 </figure>
 
-<h2>What it replaces</h2>
-<p>One tool for the whole SRM-20 PCB flow, replacing the mods website and FlatCAM. You bring KiCad plot output; SRM-CAM produces one job file per operation — <strong>trace isolation</strong>, <strong>drilling</strong>, and <strong>board cut-out</strong> — that you stream from Roland VPanel in NC-code mode.</p>
+<h2>How it works</h2>
+<p>One tool for the whole SRM-20 flow — replaces the mods site and FlatCAM. One job file per operation: traces, drill, cut-out.</p>
 
 <div class="pill-flow">
   <span class="pf">KiCad Gerbers</span><span class="arr">→</span>
@@ -120,24 +120,15 @@
 </div>
 
 <h2>Highlights</h2>
-
-<h3>Trustworthy depth</h3>
-<p>FR-4 stock is never flat. SRM-CAM probes the copper surface electrically through a small Arduino fitted in the SRM-20, builds a height map, and warps every cutting move so the engrave depth follows the real surface — with drift-corrected, double-verified touches and a sanity check that flags suspicious mesh points before you cut.</p>
-
-<h3>Double-sided that registers</h3>
-<p>Two proven flip methods: dowel pins seated in fresh-drilled holes (sub-0.1&nbsp;mm, zero measurement) or fiducial holes probed after the flip — including an <span class="ui">Auto</span> button that finds each hole center electrically to ~50&nbsp;µm without any jogging by eye.</p>
+<ul>
+  <li><strong>Trustworthy depth</strong> — probe the surface electrically, cut depth follows the real board. Drift-corrected, double-verified touches; mesh sanity check before you cut.</li>
+  <li><strong>Double-sided that registers</strong> — dowel pins (sub-0.1&nbsp;mm, zero measurement) or probed fiducials with an <span class="ui">Auto</span> hole finder (~50&nbsp;µm, no jogging by eye).</li>
+  <li><strong>Problems caught early</strong> — preflight flags channels the bit can't cut; 3D simulation plays the whole job; after cutting, a board photo detects missed channels automatically.</li>
+</ul>
 
 <figure class="fig">
   <img src="img/srmcam_doublesided.png" alt="Double-sided registration preview">
   <figcaption>Double-sided registration: both layers previewed in register before anything is cut.</figcaption>
-</figure>
-
-<h3>See problems before they're problems</h3>
-<p>Isolation preflight marks channels the bit physically cannot cut. The 3D simulator plays back the whole job. And after cutting, a photo of the board can be warped onto the design to detect under-cut channels automatically — trained on real production ground truth.</p>
-
-<figure class="fig">
-  <img src="img/srmcam_3dview_traces.png" alt="3D toolpath simulation">
-  <figcaption>3D toolpath simulation — orbit and play back the whole job before committing stock.</figcaption>
 </figure>
 
 <h2>A finished board</h2>
