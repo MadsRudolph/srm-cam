@@ -1,5 +1,0 @@
-# Netlify config: the docs site is pure static HTML/CSS in website/ — no build step.
-# Connect this repo in Netlify and it publishes website/ as-is; drag-and-drop of
-# the website/ folder alone works too (this file is then simply unused).
-[build]
-  publish = "website"
