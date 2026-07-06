@@ -23,6 +23,11 @@ from gerber2rml.toolpath import Move
 
 DEFAULT_RAMP_LEN = 1.0   # mm of lateral travel to spread the plunge over
 RAMP_CLEARANCE = 0.2     # mm above the surface (Z0) where the ramp begins
+APPROACH_SAFE = 0.8      # rapids stop THIS far above the believed surface; the
+                         # last stretch down to RAMP_CLEARANCE is a FEED move.
+                         # A Z-zero error (classic after a bit change) then meets
+                         # copper at plunge feed - a scrapped line, not a snapped
+                         # V-tip. Cost: a fraction of a second per path.
 RAMP_STEP = 0.25         # mm: resample the ramp this finely so Z descends smoothly
 EPS = 1e-9
 
@@ -82,7 +87,9 @@ def _ramp_one(tp, ramp_len, clearance):
     n = max(1, math.ceil(ramp_d / RAMP_STEP))
 
     out = list(tp[:i])                             # keep approach up to (not incl.) plunge
-    out.append(Move(x0, y0, clearance, rapid=True))  # rapid down to just above surface
+    out.append(Move(x0, y0, max(APPROACH_SAFE, clearance), rapid=True))
+    if APPROACH_SAFE > clearance + EPS:
+        out.append(Move(x0, y0, clearance))        # feed down (plunge feed)
 
     # 1) ramp: descend clearance -> cut_z over the first ramp_d of travel
     for s_i in range(1, n + 1):

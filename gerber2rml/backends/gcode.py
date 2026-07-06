@@ -23,6 +23,8 @@ only feed unit the SRM-20 accepts).
 Every word this backend emits is on the SRM-20 NC word list (manual R4 p.115):
 ``% O ( ) G0 G1 G17 G21 G28 G54 G90 G91 M3 M5 M30 F X Y Z``.
 """
+import math
+
 from gerber2rml.toolpath import Move
 
 DEFAULT_RAPID = 15.0   # mm/s (informational; G0 uses the machine rapid rate)
@@ -104,7 +106,14 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
                     # otherwise the whole descent from travel height is at plunge feed
                     out.append(f"G0 Z{_f(PLUNGE_CLEARANCE)}")
                     cz = PLUNGE_CLEARANCE
-                want = plunge_fpm if is_plunge else xy_fpm
+                # A steeply DESCENDING lateral move is a ramp lead-in: cut it at
+                # plunge feed, not XY feed (the tip is entering material). The
+                # slope gate keeps leveling's gentle warp (<2%) at XY feed.
+                dxy = math.hypot(m.x - (cx if cx is not None else m.x),
+                                 m.y - (cy if cy is not None else m.y))
+                is_ramp = (not is_plunge and cz is not None and m.z < cz - EPS
+                           and (cz - m.z) > 0.05 * max(dxy, EPS))
+                want = plunge_fpm if (is_plunge or is_ramp) else xy_fpm
                 line = f"G1 X{_f(m.x)} Y{_f(m.y)} Z{_f(m.z)}"
                 if changed(feed, want):
                     line += f" F{_f(want)}"
