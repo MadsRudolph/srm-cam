@@ -314,6 +314,12 @@ class _FiducialAlignDialog(QDialog):
         self._auto_busy = False
         self._fid_worker = None
         self._dro_was_on = False
+        # 6 columns now (Capture + Auto) — size the table and the dialog so
+        # the Auto column is actually visible instead of clipped off-screen
+        self.table.resizeColumnsToContents()
+        width = sum(self.table.columnWidth(c) for c in range(6))
+        width += self.table.verticalHeader().width() + 60
+        self.resize(max(width, 560), 380)
         v.addWidget(self.table)
         self.fit_lbl = QLabel("Fit: —")
         v.addWidget(self.fit_lbl)

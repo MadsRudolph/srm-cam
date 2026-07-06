@@ -1764,3 +1764,17 @@ def test_workflow_chips_reflect_state():
     assert w._chip_labels["board"].text() == w.state.name
     assert w._chip_labels["boxes"].text() == "boxes 1"
     assert w._chip_labels["link"].text() == "link ○"
+
+
+def test_fiducial_dialog_has_visible_auto_column():
+    from gerber2rml.gui.app import _FiducialAlignDialog
+    w = MainWindow()
+    dlg = _FiducialAlignDialog(w, [(4.0, 13.4), (198.2, 13.4),
+                                   (198.2, 136.4), (4.0, 136.4)])
+    assert dlg.table.columnCount() == 6
+    for r in range(4):
+        btn = dlg.table.cellWidget(r, 5)
+        assert btn is not None and btn.text() == "Auto"
+    # the dialog is wide enough that the Auto column fits inside the table
+    total = sum(dlg.table.columnWidth(c) for c in range(6))
+    assert dlg.width() >= total
