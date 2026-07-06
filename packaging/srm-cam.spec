@@ -34,6 +34,7 @@ hiddenimports += collect_submodules("gerber2rml")  # backends/engine registries
 hiddenimports += collect_submodules("pyqtgraph")
 hiddenimports += collect_submodules("OpenGL")      # PyOpenGL platform/back ends
 hiddenimports += collect_submodules("gerbonara")
+hiddenimports += ["qrcode"]                        # phone photo QR (function-level import)
 
 a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
