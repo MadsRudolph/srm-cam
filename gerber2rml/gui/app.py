@@ -1244,6 +1244,38 @@ class MainWindow(QMainWindow):
         _ol.addWidget(self.tabs)
         l_proj.addWidget(ops_group)
 
+        # ===== JOB PARAMETERS (the forms presets fill — now editable) =====
+        # NOTE: not a checkable QGroupBox — unchecking one DISABLES all
+        # children (Qt built-in), which would stomp the forms' own per-field
+        # enable logic (auto-depth, V-bit greying). A toolbutton toggles
+        # visibility instead.
+        from PySide6.QtWidgets import QToolButton
+        self.params_group = QGroupBox("Job parameters")
+        self.params_group.setToolTip(
+            "Edit the active cut parameters directly — bit, depths, feeds, "
+            "V-bit geometry. Presets fill these fields; tweak here and "
+            "Save... to keep your own preset. Changes update the preview "
+            "immediately.")
+        self.params_toggle = QToolButton()
+        self.params_toggle.setText("Edit values")
+        self.params_toggle.setCheckable(True)
+        self.params_toggle.setArrowType(Qt.RightArrow)
+        self.params_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.params_tabs = QTabWidget()
+        for op in _OPS:
+            self.params_tabs.addTab(self.forms[op], op.capitalize())
+        _jl = QVBoxLayout(self.params_group)
+        _jl.setContentsMargins(10, 14, 10, 10)
+        _jl.addWidget(self.params_toggle)
+        _jl.addWidget(self.params_tabs)
+        self.params_tabs.setVisible(False)
+
+        def _params_toggled(on):
+            self.params_tabs.setVisible(on)
+            self.params_toggle.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        self.params_toggle.toggled.connect(_params_toggled)
+        l_proj.addWidget(self.params_group)
+
         # ===== VIEW / PLACEMENT =====
         view_group, vl = _group("View / machine")
         vl.addRow("Machine", self.machine_combo)

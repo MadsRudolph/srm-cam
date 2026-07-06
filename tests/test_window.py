@@ -1803,3 +1803,18 @@ def test_phone_photo_autocrop_writes_cropped_file(tmp_path):
     tight = tmp_path / "tight.jpg"
     save(scene(board=(0, 0, 800, 600)), tight)
     assert w._autocrop_photo_file(str(tight)) == str(tight)
+
+
+def test_job_parameter_forms_are_on_screen():
+    """The cut-parameter forms must be reachable in the UI (collapsible
+    group on the Setup page), not preset-only."""
+    w = MainWindow()
+    w.show()
+    _app.processEvents()
+    assert not w.params_tabs.isVisible()
+    w.params_toggle.setChecked(True)
+    _app.processEvents()
+    assert w.params_tabs.isVisible()
+    # the traces form is the first tab and really is the live form object
+    assert w.params_tabs.widget(0) is w.forms["traces"]
+    w.close()
