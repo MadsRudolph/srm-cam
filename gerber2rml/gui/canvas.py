@@ -74,6 +74,7 @@ class PreviewCanvas(QWidget):
         self._full_cuts = []
         self._full_rapids = []
         self._full_holes = []
+        self._ref_holes = []              # drill holes as data (photo anchors)
         self._full_top_cuts = []
         self._pins = []
         self._copper = []
@@ -114,6 +115,11 @@ class PreviewCanvas(QWidget):
         # Trace dimming (0..1): fades the toolpaths/copper/holes so the photo
         # underlay reads clearly when hunting for rework spots. 1.0 = normal.
         self._trace_alpha = 1.0
+
+        # Photo-anchor holes: the [(x, y)] the operator picked to register a
+        # rework photo, drawn as numbered cyan rings so the SAME hole can be
+        # found again in the photo. None = hidden (auto corner anchors).
+        self._photo_anchors = None
 
         # Bed-leveling height map overlay: (X, Y, Z) meshes of surface deviation
         # (mm) + the probe points [(x, y, dz)], drawn under the toolpaths so you
@@ -213,7 +219,7 @@ class PreviewCanvas(QWidget):
         self.est_lbl.setText(text or "")
 
     def show_segments(self, cuts, rapids, holes=None, top_cuts=None, pins=None,
-                      copper=None):
+                      copper=None, ref_holes=None):
         """Store the toolpaths and update the display based on the slider.
 
         ``top_cuts`` are the reflected front-side isolation polylines (drawn in a
@@ -225,10 +231,17 @@ class PreviewCanvas(QWidget):
         faint fill UNDER the toolpaths. Without it, pads and vias connected to a
         copper pour have no isolation ring of their own, so their drill markers
         look like stray holes in empty space — the fill shows the copper they
-        actually sit on."""
+        actually sit on.
+
+        ``ref_holes`` are the board's drill holes in THIS view's frame, carried
+        as data only (never drawn, never snapped to). They are what the photo
+        overlay can anchor on when the view itself shows no holes — a rework
+        photo is registered from the traces view, and a single-sided board has
+        no dowels or fiducials to click."""
         self._full_cuts = cuts or []
         self._full_rapids = rapids or []
         self._full_holes = holes or []
+        self._ref_holes = ref_holes or []
         self._full_top_cuts = top_cuts or []
         self._pins = pins or []
         self._copper = copper or []
@@ -293,6 +306,14 @@ class PreviewCanvas(QWidget):
         are 2D meshes of surface deviation (mm); ``points`` are the probed
         ``(x, y, dz)`` in mm. Redraws immediately."""
         self._level_overlay = (X, Y, Z, points) if X is not None else None
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_photo_anchors(self, points):
+        """Show (or clear, with ``None``) the operator's chosen photo-anchor
+        holes as numbered cyan rings. ``points`` is a list of (x, y) in the
+        preview frame; the numbers are the order the photo dialog asks for
+        them, so the same hole is unambiguous in both views. Redraws."""
+        self._photo_anchors = list(points) if points else None
         self._draw_fraction(self.slider.value() / 1000.0)
 
     def set_probe_grid(self, points):
@@ -629,6 +650,17 @@ class PreviewCanvas(QWidget):
         # never scrubbed away) and clearly distinct from the board's own holes
         self._pin_artists = []
         self._add_pins()
+        # chosen photo-anchor holes: numbered so the operator can match them
+        # one-for-one with the prompts in the photo dialog
+        if self._photo_anchors:
+            self.ax.scatter([p[0] for p in self._photo_anchors],
+                            [p[1] for p in self._photo_anchors], s=150,
+                            facecolors="none", edgecolors="#4dd0e1",
+                            linewidths=1.8, zorder=12)
+            for i, (px, py) in enumerate(self._photo_anchors, 1):
+                self.ax.annotate(str(i), (px, py), color="#4dd0e1", fontsize=10,
+                                 fontweight="bold", xytext=(6, 4),
+                                 textcoords="offset points", zorder=12)
         if self._view_limits is not None:    # user zoom/pan overrides the auto-fit
             x0, x1, y0, y1 = self._view_limits
             self.ax.set_xlim(x0, x1)

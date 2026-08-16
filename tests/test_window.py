@@ -1031,6 +1031,86 @@ def test_photo_anchor_holes_are_four_named_corners():
     assert anchors[0][1] == (10, 10) and anchors[2][1] == (88, 70)
 
 
+def test_single_sided_traces_preview_offers_photo_anchors():
+    # a single-sided board has no dowels/fiducials: the photo overlay has to
+    # anchor on the board's OWN drill holes, on the rework (traces) preview
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()                            # traces tab
+    assert w.preview._pins == []                    # nothing registration-ish
+    assert w.preview._full_holes == []              # traces view draws no holes
+    assert w.preview._ref_holes                     # ...but carries them as anchors
+    assert len(w._photo_anchor_holes()) == 4
+
+
+def test_picked_anchor_holes_override_the_corner_pick():
+    from PySide6.QtWidgets import QDialogButtonBox
+    from gerber2rml.gui.photodlg import HolePickDialog
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.preview._full_holes = [(10, 10, 0.8), (90, 12, 0.8), (88, 70, 0.8),
+                             (12, 68, 0.8), (50, 40, 1.2), (30, 60, 1.0)]
+    w.preview._pins = []
+    dlg = HolePickDialog(None, w.preview._full_holes)
+    for (x, y, _d) in [(10, 10, 0), (90, 12, 0), (50, 40, 0), (30, 60, 0)]:
+        dlg._place(x, y)
+    dlg._update_prompt()
+    assert dlg._buttons.button(QDialogButtonBox.Ok).isEnabled()
+    w._photo_anchor_pts = [p for _n, p in dlg.anchors()]
+    anchors = w._photo_anchor_holes()
+    assert [p for _n, p in anchors] == [(10, 10), (90, 12), (50, 40), (30, 60)]
+    assert "1.20 mm" in anchors[2][0]               # label names the hole size
+    # picks that don't match the displayed holes fall back to the corner pick
+    w._photo_anchor_pts = [(500.0, 500.0)] * 4
+    assert [n for n, _p in w._photo_anchor_holes()][0] == "bottom-left"
+
+
+def test_hole_pick_rejects_collinear_and_snaps_to_holes():
+    from PySide6.QtWidgets import QDialogButtonBox
+    from gerber2rml.gui.photodlg import HolePickDialog
+    holes = [(x, 10.0, 0.8) for x in (10, 20, 30, 40)] + [(25.0, 40.0, 0.8)]
+    dlg = HolePickDialog(None, holes)
+    for (x, y, _d) in holes[:4]:
+        dlg._place(x + 0.05, y - 0.05)              # near-misses snap to centers
+    dlg._update_prompt()
+    assert dlg._points == [(10.0, 10.0), (20.0, 10.0), (30.0, 10.0), (40.0, 10.0)]
+    assert not dlg._buttons.button(QDialogButtonBox.Ok).isEnabled()   # all in a line
+    dlg._place(25.0, 40.0)
+    dlg._update_prompt()
+    assert dlg._buttons.button(QDialogButtonBox.Ok).isEnabled()
+    assert dlg._place(25.0, 40.0) is False          # no picking one hole twice
+    assert dlg._place(200.0, 200.0) is False        # empty space places nothing
+
+
+def test_photo_anchor_guide_uses_the_picked_hole_geometry():
+    # anchors that are NOT rectangle corners: the expected turn comes from the
+    # design's own machine coordinates, not from a hardcoded 90 degrees
+    import numpy as np
+    from gerber2rml.gui.photodlg import PhotoAnchorDialog
+    img = np.zeros((50, 60, 4), np.uint8)
+    anchors = [("hole 1", (0.0, 0.0)), ("hole 2", (100.0, 0.0)),
+               ("hole 3", (100.0, 100.0)), ("hole 4", (0.0, 50.0))]
+    dlg = PhotoAnchorDialog(None, img, anchors)
+    dlg._points = [(10.0, 40.0), (50.0, 40.0)]      # base edge clicked level
+    assert abs(dlg._guide_expected(2) - 90.0) < 1e-9        # hole2 -> hole3: +90
+    # hole3 -> hole4 runs left and down: atan2(-50, -100) = 206.57 deg of turn
+    assert abs(dlg._guide_expected(3) - 206.565051177) < 1e-6
+
+
+def test_picked_anchors_persist_in_setup():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    holes = w.preview._full_holes or [(10, 10, 0.8)] * 4
+    w._photo_anchor_pts = [(h[0], h[1]) for h in holes[:4]]
+    d = w._collect_setup()
+    w2 = MainWindow()
+    w2._apply_setup(d)
+    assert w2._photo_anchor_pts == w._photo_anchor_pts
+    assert w2.preview._photo_anchors == w._photo_anchor_pts
+    w2.load_folder(str(FIXT))                       # new board -> picks cleared
+    assert w2._photo_anchor_pts is None
+
+
 def test_rework_boxes_persist_in_setup():
     w = MainWindow()
     w.load_folder(str(FIXT))

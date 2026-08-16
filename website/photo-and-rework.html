@@ -85,11 +85,22 @@
   <li><span class="st">Load</span>
     <span class="ui">Load photo...</span> → the anchor dialog opens.</li>
   <li><span class="st">Click the 4 anchors</span>
-    The prompt names each hole. <strong>Scroll</strong> = zoom, <strong>drag</strong> = pan, <strong>right-click</strong> = undo. The live angle guide turns <span style="color:var(--good)">green</span> when your clicks form a proper rectangle, <span style="color:var(--bad)">red</span> when you clicked the wrong hole.</li>
+    The prompt names each hole and a <strong>design map</strong> beside the photo rings the one being asked for. <strong>Scroll</strong> = zoom, <strong>drag</strong> = pan, <strong>right-click</strong> = undo. The live angle guide turns <span style="color:var(--good)">green</span> when the clicked edge matches the design, <span style="color:var(--bad)">red</span> when you clicked the wrong hole.</li>
   <li><span class="st">Blend</span>
     Photo opacity slider + <span class="ui">Traces</span> dim slider (fade the toolpaths so the photo reads; boxes stay full-strength).</li>
 </ol>
 <p>The photo is warped into machine coordinates — a defect on the photo <em>is</em> that spot on the machine. Saved with the session.</p>
+
+<h3>Which holes are the anchors</h3>
+<p>By default: the 4 corner-most drilled features. On a double-sided job those are the dowel or fiducial holes — big, obvious, unmistakable in a photo. <strong>A single-sided board has none</strong>, so the corners are ordinary vias that may be tiny or impossible to tell apart.</p>
+<p><span class="ui">Anchors...</span> lets you pick your own instead: click any <strong>4 or more</strong> drill holes on the design.</p>
+<ul>
+  <li>Pick holes you can <strong>recognise again</strong> in the photo — largest diameters, board corners, ones standing alone.</li>
+  <li><strong>Spread them out.</strong> Holes in a line are rejected; bunched holes make the fit extrapolate badly.</li>
+  <li>Picks are <strong>numbered on the preview</strong>, and the photo dialog asks for them in that order.</li>
+  <li>More than 4 is fine — the fit is least-squares, so extra anchors reduce the error.</li>
+  <li>Stored in the session; a new board clears them.</li>
+</ul>
 
 <h2>Detect from photo</h2>
 <p><span class="ui">Detect from photo</span> walks every isolation channel and proposes a box wherever the photo shows no cut. A cut channel reads <em>bright</em> (exposed substrate + burrs); a failed one reads flat/dark like copper. Trained on real production ground truth (20/21 regions found).</p>

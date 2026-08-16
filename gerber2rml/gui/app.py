@@ -1074,6 +1074,16 @@ class MainWindow(QMainWindow):
             "4 highlighted anchor holes in it, and the photo is warped to line "
             "up with the preview exactly.")
         self.photo_load_btn.clicked.connect(self._on_load_photo)
+        self.photo_anchor_btn = QPushButton("Anchors...")
+        self.photo_anchor_btn.setToolTip(
+            "Choose WHICH drilled holes anchor the photo. By default the 4 "
+            "corner-most holes are used, which is right when the board has "
+            "dowel/fiducial holes — a single-sided board has none, and its "
+            "corner holes may be tiny or impossible to tell apart in a photo. "
+            "Here you click any 4+ ordinary drill holes you can recognise "
+            "again; they're numbered on the preview and the photo dialog asks "
+            "for them in that order.")
+        self.photo_anchor_btn.clicked.connect(self._on_pick_photo_anchors)
         self.photo_phone_btn = QPushButton("Phone...")
         self.photo_phone_btn.setToolTip(
             "Take the board photo with your phone and beam it straight in: "
@@ -1115,6 +1125,7 @@ class MainWindow(QMainWindow):
             "(leveling grid point 1) first, spindle OFF.")
         self.probe_boxes_btn.clicked.connect(self._on_probe_rework_boxes)
         self._photo_overlay = None      # {path, photo_pts, machine_pts, alpha}
+        self._photo_anchor_pts = None   # operator-chosen anchor holes [(x, y)]
 
         # Live cross-section of the active trace tool (V-bit width/depth math
         # made visible). Created before the forms: _sync_vbit_fields feeds it.
@@ -1348,8 +1359,8 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(QLabel("New-box depth"), self.rework_depth_spin,
                            stretch_first=True))
         _rl.addWidget(self.rework_level_chk)
-        _rl.addWidget(_row(QLabel("Photo"), self.photo_load_btn,
-                           self.photo_phone_btn,
+        _rl.addWidget(_row(QLabel("Photo"), self.photo_anchor_btn,
+                           self.photo_load_btn, self.photo_phone_btn,
                            self.photo_alpha_slider, self.photo_clear_btn,
                            stretch_first=True))
         _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
@@ -1524,6 +1535,7 @@ class MainWindow(QMainWindow):
         self._top_fit = None                    # placement is per-physical-board
         # (a setup restore re-applies its saved fit after this call)
         self._photo_overlay = None              # photo is of one physical setup
+        self._on_clear_photo_anchors()          # anchors are that board's holes
         self.preview.set_photo(None)
         self.trace_dim_slider.setValue(100)     # un-dim: no photo to see through
         if self._rework_regions:                # boxes belong to that board too
@@ -1886,18 +1898,24 @@ class MainWindow(QMainWindow):
             # (the toolpaths come pre-warped from _ds_side_toolpaths).
             mlay = self._machine_layout()
             cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
+            # The board's own drill holes ride along as reference data (not
+            # drawn): 2 dowels are too few features to anchor a rework photo,
+            # and this is the view rework is drawn on.
             if side == "Top":
                 from gerber2rml.doublesided import reflect_holes
                 self.preview.set_board_outline(
                     self._poly_xy(self._top_fit_geom(mlay.top_outline)))
                 self.preview.show_segments(
                     [], [], top_cuts=cuts,
+                    ref_holes=self._top_fit_holes(
+                        reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)),
                     pins=self._top_fit_holes(
                         reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos)),
                     copper=[(self._top_fit_geom(mlay.top_copper), "#ff55ff")])
             else:
                 self.preview.set_board_outline(self._poly_xy(mlay.outline))
-                self.preview.show_segments(cuts, rapids, pins=mlay.align_holes,
+                self.preview.show_segments(cuts, rapids, ref_holes=mlay.holes,
+                                           pins=mlay.align_holes,
                                            copper=[(mlay.bottom_copper, "#00ffff")])
             return
         # Both sides (or the drill tab): design-frame X-ray for registration.
@@ -2031,7 +2049,11 @@ class MainWindow(QMainWindow):
             return
         tps = self.state.toolpaths(op)
         cuts, rapids = toolpath_segments(tps)
-        self.preview.show_segments(cuts, rapids)
+        # The drill holes ride along as reference data (not drawn): they are
+        # the only photo-overlay anchors a single-sided board has, and rework
+        # is registered from this view, not the drill one.
+        self.preview.show_segments(cuts, rapids,
+                                   ref_holes=self.state.board.holes)
         job = self.state.trace if op == "traces" else self.state.cutout
         est = self._estimate_str(tps, job)
         self.preview.set_estimate(self._est_text(tps, job))
@@ -3388,6 +3410,7 @@ class MainWindow(QMainWindow):
             "fid_measured": [list(p) for p in
                              (getattr(self, "_fid_measured", None) or [])],
             "photo_overlay": self._photo_overlay,
+            "photo_anchors": [list(p) for p in (self._photo_anchor_pts or [])],
             "rework": [{"bbox": list(r["bbox"]), "depth": r["depth"],
                         "follow": r.get("follow", True)}
                        for r in self._rework_regions],
@@ -3524,6 +3547,11 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass                  # one bad row never blocks the load
         self._refresh_rework()
+        # Chosen photo-anchor holes: restored before the overlay so a re-shot
+        # photo can be clicked against the same holes as the saved one.
+        pa = [tuple(float(v) for v in p) for p in (d.get("photo_anchors") or [])]
+        self._photo_anchor_pts = pa or None
+        self.preview.set_photo_anchors(self._photo_anchor_pts)
         # Photo overlay: re-decode + re-fit from the saved anchor pairs. The
         # original path is tried first, then the session-local copy written
         # by Save setup (so setups survive the photo moving or being deleted).
@@ -3996,12 +4024,30 @@ class MainWindow(QMainWindow):
         buf = np.frombuffer(img.constBits(), np.uint8, count=h * bpl)
         return buf.reshape(h, bpl)[:, :w * 4].reshape(h, w, 4).copy()
 
+    def _displayed_holes(self):
+        """Every drilled feature available in the current view as (x, y, d) —
+        the board's own holes (drawn or carried as reference data) AND any
+        dowel/fiducial pins, in the SAME frame the preview draws (AS PLACED on
+        a fitted top side), so a photo anchored on them lines up with what you
+        see."""
+        out, seen = [], set()
+        for h in (list(self.preview._full_holes or [])
+                  + list(getattr(self.preview, "_ref_holes", None) or [])
+                  + list(self.preview._pins or [])):
+            key = (round(h[0], 4), round(h[1], 4))
+            if key not in seen:
+                seen.add(key)
+                out.append(h)
+        return out
+
     def _photo_anchor_holes(self):
-        """The 4 corner-most displayed holes as (label, (x, y)) anchors — in
-        the SAME frame the preview draws (AS PLACED on a fitted top side), so
-        the warped photo lines up with what you see."""
-        holes = [(x, y) for (x, y, _d) in (self.preview._full_holes or [])]
-        holes += [(x, y) for (x, y, _d) in (self.preview._pins or [])]
+        """The photo anchors as [(label, (x, y)), ...]: the operator's own
+        picks when they chose some (Anchors...), else the 4 corner-most
+        displayed holes."""
+        chosen = self._photo_anchors_from_picks()
+        if chosen:
+            return chosen
+        holes = [(x, y) for (x, y, _d) in self._displayed_holes()]
         if len(holes) < 4:
             return None
         corners = [max(holes, key=lambda p: -p[0] - p[1]),   # bottom-left
@@ -4013,6 +4059,58 @@ class MainWindow(QMainWindow):
         names = ("bottom-left", "bottom-right", "top-right", "top-left")
         return list(zip(names, corners))
 
+    def _photo_anchors_from_picks(self):
+        """The operator-picked anchors, re-snapped to the holes the preview is
+        showing right now (the frame changes with the view/side, so the stored
+        points are re-matched rather than trusted). None when nothing was
+        picked or the picks no longer match this view."""
+        picks = getattr(self, "_photo_anchor_pts", None)
+        if not picks:
+            return None
+        holes = self._displayed_holes()
+        if not holes:
+            return None
+        out = []
+        for (px, py) in picks:
+            hx, hy, d = min(holes, key=lambda h: math.hypot(h[0] - px, h[1] - py))
+            if math.hypot(hx - px, hy - py) > 0.25:     # different frame/board
+                return None
+            out.append((f"hole {len(out) + 1} (\N{LATIN CAPITAL LETTER O WITH STROKE}"
+                        f"{d:.2f} mm)", (hx, hy)))
+        return out if len(out) >= 4 else None
+
+    def _on_pick_photo_anchors(self):
+        """Choose which drilled holes anchor the photo. Fiducial/dowel holes
+        only exist on double-sided jobs — for single-sided rework any 4+
+        ordinary drill holes work, as long as they're ones you can find again
+        in the photo."""
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        holes = self._displayed_holes()
+        if len(holes) < 4:
+            QMessageBox.warning(
+                self, "No holes",
+                "This board has fewer than 4 drilled holes in the preview, so "
+                "there is nothing to anchor a photo on. Drill a few registration "
+                "holes in the waste, or use double-sided fiducials.")
+            return
+        from gerber2rml.gui.photodlg import HolePickDialog
+        dlg = HolePickDialog(self, holes, self.preview._outline_xy,
+                             preset=getattr(self, "_photo_anchor_pts", None))
+        if dlg.exec() != QDialog.Accepted:
+            return
+        anchors = dlg.anchors()
+        self._photo_anchor_pts = [p for _n, p in anchors]
+        self.preview.set_photo_anchors(self._photo_anchor_pts)
+        self.statusBar().showMessage(
+            f"{len(anchors)} anchor holes chosen (numbered on the preview) — "
+            "load the photo and click them in that order", 10000)
+
+    def _on_clear_photo_anchors(self):
+        self._photo_anchor_pts = None
+        self.preview.set_photo_anchors(None)
+
     def _photo_flow_anchors(self):
         """Shared preconditions for every photo source; None = not ready."""
         if self.state.board is None:
@@ -4023,7 +4121,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "No anchors",
                 "Need at least 4 distinct drilled holes in the preview to "
-                "anchor a photo (show the drill or traces preview first).")
+                "anchor a photo. Show the Traces, Drill or Cutout preview — "
+                "and if the auto-picked corner holes are hard to spot in the "
+                "photo, use <b>Anchors...</b> to choose your own.")
             return None
         return anchors
 
@@ -4091,7 +4191,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Photo failed", str(e))
             return
         from gerber2rml.gui.photodlg import PhotoAnchorDialog
-        dlg = PhotoAnchorDialog(self, img, anchors)
+        # the design map beside the photo: with ordinary drill holes as
+        # anchors, "machine X 43.2 Y 18.7" is not something you can find on a
+        # board by eye — the map shows exactly which hole is being asked for
+        dlg = PhotoAnchorDialog(self, img, anchors,
+                                board={"holes": self._displayed_holes(),
+                                       "outline": self.preview._outline_xy})
         if dlg.exec() != QDialog.Accepted:
             return
         try:
