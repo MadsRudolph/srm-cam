@@ -50,8 +50,46 @@ traces, drilling and cut-out on a ~1.6 mm board; drill/cut-out depth 1.7 mm
 (0.1 mm into the spoilboard). Solid carbide, VPanel spindle ~7000 RPM, dust
 extraction + mask for FR-4.
 
-Sources, merged by name (later overrides earlier): built-in → `examples/presets.json`
-(team-shared) → `~/.gerber2rml/presets.json` (personal, written by Save).
+Sources, merged by name (later overrides earlier):
+
+| Layer | Where | Who owns it |
+|---|---|---|
+| Built-in | in the code | us |
+| **Site** | next to `SRM-CAM.exe` (installed) or `examples/presets.json` (source) | the lab owner — needs admin to change |
+| Personal | `~/.gerber2rml/presets.json` | whoever clicked **Save** |
+
+**Site presets** are how a course hands the same approved numbers to every
+seat instead of talking thirty people through them. Copy
+`presets.example.json` to `presets.json` in the install folder and edit it.
+Keys starting with `_` are settings, not profiles:
+
+- `"_hide_builtins": true` — show **only** the site profiles.
+- `"_comment": "..."` — JSON has no comments; this is the stand-in.
+
+Point `SRM_CAM_PRESETS` at another path to read the site layer from a shared
+network folder instead.
+
+## Novice and Professional modes
+
+**Mode** menu. Novice is the default on a fresh install.
+
+**Novice** is the shortest path from Gerbers to three files you can send from
+VPanel: load → drill → traces → cut out → export. It puts away job parameters,
+double-sided, bed leveling, rework, machine control, and the output-format and
+mirroring options. Diagnostics and the Guide stay — a beginner needs the
+pre-flight check and the walkthrough more than anyone.
+
+**Professional** is every control, i.e. the UI as it has always been.
+
+Novice is a strict subset, not a second program: same widgets, same handlers,
+same exports. The same settings produce byte-identical files in either mode
+(`tests/test_mode.py`), so a student's board and a teacher's board come out the
+same.
+
+Switching is a menu item, not a password — this manages complexity, it is not
+a security boundary. To pin a machine to one mode, set the `SRM_CAM_MODE`
+environment variable to `novice` or `pro` (system-wide, or in the shortcut that
+launches the app); the menu then shows the active mode greyed out.
 
 ## Calibration coupon
 

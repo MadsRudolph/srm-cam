@@ -1,5 +1,8 @@
 # SRM-CAM
 
+[![tests](https://github.com/MadsRudolph/srm-cam/actions/workflows/tests.yml/badge.svg)](https://github.com/MadsRudolph/srm-cam/actions/workflows/tests.yml)
+[![build installer](https://github.com/MadsRudolph/srm-cam/actions/workflows/build.yml/badge.svg)](https://github.com/MadsRudolph/srm-cam/actions/workflows/build.yml)
+
 Desktop CAM for the **Roland SRM-20** mill: load KiCad **Gerber + Excellon**,
 preview the toolpaths, and export **G-code** (`.nc`) or RML. One tool we own,
 replacing the mods site and FlatCAM.
@@ -37,6 +40,24 @@ After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 - **Guided tour** — launches on first run; replay via the **Guide** button (and
   per-section buttons). A demo board loads so new users can follow along.
 
+## Two modes
+
+**Novice** (the default on a fresh install) is the shortest path from Gerbers to
+three files you can send from VPanel — load, drill, traces, cut out, export. Job
+parameters, double-sided, bed leveling, rework and the machine link are put
+away; Diagnostics and the Guide stay, because a beginner needs those most.
+
+**Professional** is every control.
+
+Novice is a strict subset, not a second program — the same settings export
+byte-identical files in either mode. Switch from the **Mode** menu; set
+`SRM_CAM_MODE=novice|pro` to pin a machine to one.
+
+A course hands the same approved feeds and depths to every seat with a **site
+preset**: `presets.json` next to the installed `SRM-CAM.exe`, which lives in
+Program Files so only an admin can change it. See
+[`docs/usage.md`](docs/usage.md#presets).
+
 ## Showcase
 
 <table>
@@ -63,6 +84,23 @@ You can also do **perfect double-sided PCBs** with srm-cam — both layers regis
 
 - **Step-by-step guide (KiCad → milled board), with photos:** [DTU Ballerup PCB prototyping — Roland CNC router](https://github.com/DTU-EKB/DTU-PCB-prototyping#making-pcbs-with-the-roland-cnc-router)
 - Full usage & feature reference: [`docs/usage.md`](docs/usage.md)
-- Build the installer: [`packaging/README.md`](packaging/README.md)
+- Build the installer / cut a release: [`packaging/README.md`](packaging/README.md)
 - Bed-leveling probe firmware (Arduino UNO): [`hardware/srm20_spi_probe/`](hardware/srm20_spi_probe) — flash it before using auto bed leveling (wiring in [`docs/usage.md`](docs/usage.md#bed-leveling)).
 - Run the tests: `pytest`
+
+## Keeping it running
+
+The installed app does **not** use the machine's Python — PyInstaller freezes
+its own interpreter, Qt and every dependency into `_internal\`. Installing,
+upgrading or removing Python on the PC cannot affect it.
+
+What is maintained deliberately:
+
+| | |
+|---|---|
+| **Reproducible builds** | `packaging/requirements-lock.txt` pins every version, including transitives, to the set the shipped installer was built from. |
+| **Builds on any machine** | Pushing a `v*` tag builds the installer from scratch on a clean GitHub Windows runner and drafts a release. No one person's laptop is in the loop. |
+| **Nothing silently changes** | `tests/test_golden.py` asserts a fixed board still produces byte-identical `.nc` output, so a dependency upgrade cannot quietly alter what gets cut. |
+| **Early warning** | A monthly `canary` CI job runs the suite against the newest Python and newest dependencies. When the world moves, it goes red before anyone is mid-course. |
+
+Handover notes: [`HANDOFF.md`](HANDOFF.md).
