@@ -109,19 +109,26 @@ Probe the copper surface to build a height map so engrave depth follows an uneve
 bed or bowed board. Set the **G54 Z** origin in VPanel (only Z — X/Y stay at the
 machine origin; keep machine Z above −50 mm), then build a grid and probe.
 
+> **This is the one feature that needs the Arduino.** Traces, drilling, cut-out,
+> double-sided registration, rework and every export work on a bare SRM-20 with
+> nothing fitted to it — see [Milling without the Arduino](#milling-without-the-arduino).
+
 ### Hardware setup (one-time)
 
 Auto bed leveling drives the machine over its internal SPI bus and senses contact
 with a touch probe, so it needs a small board fitted inside the SRM-20:
 
-1. **Open the SRM-20's back panel** and install an **Arduino Nano**, wired to the
-   controller's SPI bus (full wiring in
+1. **Open the SRM-20's back panel** and seat an **Arduino Uno**, on its SPI
+   shield, on the controller's **SPI remote header** — the connector Roland put
+   there for exactly this (full wiring in
    [2026-06-25-srm20-spi-and-bed-leveling.md](2026-06-25-srm20-spi-and-bed-leveling.md)).
+   Nothing is drilled, cut or soldered: the shield plugs in, and unplugging it
+   returns the machine to stock.
 2. **Flash the provided firmware:** `hardware/srm20_spi_probe/srm20_spi_probe.ino`
    (needs the bundled `hardware/SRM20SPIRemote` library).
 3. **Probe wiring:** connect **D7 → the copper board** (the workpiece — it floats
-   HIGH on the Nano's internal pull-up). That is the only clip: the tool is already
-   grounded through the collet/spindle to the machine frame, which the Nano shares.
+   HIGH on the Uno's internal pull-up). That is the only clip: the tool is already
+   grounded through the collet/spindle to the machine frame, which the Uno shares.
    Put paper or tape under the board so it's **electrically isolated from the bed**:
    the only path to ground is the bit touching copper, which pulls D7 LOW = contact.
 
@@ -130,9 +137,32 @@ with a touch probe, so it needs a small board fitted inside the SRM-20:
 
 ### Probing
 
-In the GUI, connect to the Nano, build a grid, and **Probe over SPI** — the bit
+In the GUI, connect to the Uno, build a grid, and **Probe over SPI** — the bit
 taps each point and records its true height into the table; the engrave depth then
 follows the surface. You can also save/load the height map as CSV.
+
+## Milling without the Arduino
+
+A bare, unmodified SRM-20 with nothing but VPanel is a fully supported setup, and
+it is what **Novice mode assumes** — the machine link is hidden there entirely.
+Everything below works with no board fitted to the machine:
+
+| Works unchanged | Needs the Arduino |
+|---|---|
+| Trace isolation, drilling, cut-out | Automatic probing over SPI |
+| Double-sided registration — dowel pins *and* fiducials | Live DRO / click-to-jog |
+| Rework, photo check, 3D simulation, diagnostics | Electrical touch-off (`Probe Z`) |
+| Presets, calibration coupon, every export | |
+
+**Bed leveling still works without it** — manually. Build the grid, click
+**Export probe files...**, and the app writes one tiny G-code program per point
+plus a checklist. Run each in VPanel, read the Z off the display at contact, and
+type it into the **Z** column of the leveling table (X/Y are read-only; Z is
+yours to fill). From there the height map, the depth advice and the warped export
+behave exactly as they do after an automatic probe.
+
+It is slower — that clunkiness is precisely what motivated the SPI work — but no
+capability is lost, and nothing in the exported toolpaths differs.
 
 ## Rework (multi-region 2nd pass)
 

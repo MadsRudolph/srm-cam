@@ -40,6 +40,12 @@ After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 - **Guided tour** — launches on first run; replay via the **Guide** button (and
   per-section buttons). A demo board loads so new users can follow along.
 
+> **No hardware required.** SRM-CAM talks to a stock SRM-20 through VPanel like
+> any other CAM tool. *Automatic* probing needs an Arduino on the machine's
+> SPI remote header — that is the only thing that does, and bed leveling still
+> works manually without it. See
+> [Milling without the Arduino](docs/usage.md#milling-without-the-arduino).
+
 ## Two modes
 
 **Novice** (the default on a fresh install) is the shortest path from Gerbers to
@@ -103,4 +109,11 @@ What is maintained deliberately:
 | **Nothing silently changes** | `tests/test_golden.py` asserts a fixed board still produces byte-identical `.nc` output, so a dependency upgrade cannot quietly alter what gets cut. |
 | **Early warning** | A monthly `canary` CI job runs the suite against the newest Python and newest dependencies. When the world moves, it goes red before anyone is mid-course. |
 
-Handover notes: [`HANDOFF.md`](HANDOFF.md).
+What is *not* solved by code is ownership: today the repo, the releases, the
+guide site and the CI alerts all hang off one personal GitHub account, and
+students graduate. The plan for that — transfer to the `DTU-EKB` org, a second
+maintainer, a cold copy on lab storage — is in
+**[`MAINTAINING.md`](MAINTAINING.md)**, along with the runbook for when CI goes
+red and how to rebuild the installer with no GitHub at all.
+
+Older per-branch handover notes: [`HANDOFF.md`](HANDOFF.md).
