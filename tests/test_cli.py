@@ -13,10 +13,15 @@ def test_build_jobs_writes_rml(tmp_path):
     # default is single-bit: one combined drill file (not split per diameter)
     assert "mosfet_test_drill.rml" in names
     for p in written:
-        if p.suffix == ".rml":
-            text = p.read_text()
+        if p.suffix != ".rml":
+            continue
+        text = p.read_text()
+        if p.name.endswith("_airpass.rml"):
+            # the dry run traces the outline in the air and must NOT spin up
+            assert text.startswith("^IN;!MC0;")
+        else:
             assert text.startswith("^IN;!MC1;")   # spindle on
-            assert text.rstrip().endswith("!MC0;^IN;")
+        assert text.rstrip().endswith("!MC0;^IN;")
 
 
 def test_build_jobs_writes_runplan(tmp_path):

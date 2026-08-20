@@ -51,8 +51,12 @@ def _f(v: float) -> str:
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID, rpm: int = DEFAULT_RPM,
            travel_z: float = 2.0, spinup_s: float = DEFAULT_SPINUP_S,
-           xy_feeds: list[float] | None = None) -> str:
-    """``xy_feeds``, when given, carries one XY feed (mm/s) per toolpath —
+           xy_feeds: list[float] | None = None, spindle: bool = True) -> str:
+    """``spindle=False`` emits the program with the spindle left OFF (no ``M3``,
+    no spin-up dwell) — for the dry-run outline, which is watched from close
+    up and must never have a turning bit in it.
+
+    ``xy_feeds``, when given, carries one XY feed (mm/s) per toolpath —
     used by the feed-ladder test card to cut otherwise-identical blocks at
     stepped speeds. Modal F handling keeps the output minimal either way."""
     if xy_feeds is not None and len(xy_feeds) != len(toolpaths):
@@ -64,16 +68,22 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
         "%",
         "O0001",
         "( gerber2rml - SRM-20 NC )",
+    ] + ([
         f"( spindle {int(round(rpm))} rpm - set this in VPanel cut settings )",
+    ] if spindle else []) + [
         "G90 G17",                   # absolute, XY plane
         "G21",                       # millimetres
         "G91",                       # incremental for the homing line...
         "G28 Z0.",                   # ...retract Z to machine home (safe)
         "G90",                       # back to absolute
         "G54",                       # work coordinate origin (set in VPanel)
-        "M3",                        # spindle on, clockwise (RPM from VPanel)
     ]
-    if spinup_s > 0:
+    if spindle:
+        out.append("M3")             # spindle on, clockwise (RPM from VPanel)
+    else:
+        # Dry run: nothing is cut, and someone is leaning in to watch the bit.
+        out.append("( DRY RUN - spindle stays OFF, nothing is cut )")
+    if spindle and spinup_s > 0:
         # Let the spindle reach full RPM before any motion. Dwell time is X<sec>:
         # the SRM-20 has no P word (manual R4 word list), so X carries the seconds.
         out.append(f"( spindle spin-up settle {_f(spinup_s)} s before first cut )")

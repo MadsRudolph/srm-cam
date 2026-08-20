@@ -52,6 +52,20 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
         est[fname] = estimate_toolpaths_seconds(placed, job.xy_feed, job.plunge_feed)
         written.append(p)
 
+    # Dry-run outline, written first because it is meant to be run first. It
+    # traces where the board will be with the spindle off and the bit held
+    # clear, so a misplaced piece of copper costs twenty seconds of watching
+    # instead of a board. Deliberately NOT levelled: it is in the air, and it
+    # is the one file that must stay identical whatever the surface does.
+    from gerber2rml.engine.airpass import air_path, DEFAULT_FEED
+    air = offset_paths(air_path(board.outline), *offset)
+    if air:
+        ap_name = f"{name}_airpass{ext}"
+        (out_dir / ap_name).write_text(backend.render(
+            air, xy_feed=DEFAULT_FEED, plunge_feed=DEFAULT_FEED, spindle=False))
+        est[ap_name] = estimate_toolpaths_seconds(air, DEFAULT_FEED, DEFAULT_FEED)
+        written.append(out_dir / ap_name)
+
     _write(f"{name}_traces{ext}",
            _leadin(isolate(board.copper, trace, outline=board.outline)), trace)
     drill_files = drill_jobs(board.holes, drill, f"{name}_drill", ext=ext)
@@ -73,8 +87,12 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
         f"SRM-20 run plan: {name}  [{machine}]\n"
         f"Send each file via VPanel: Cut -> Add -> Output (set the work XY/Z "
         f"origin first; G-code references that as G54).\n"
-        f"Order: 1) traces  2) drill  3) cutout. "
+        f"Order: 0) airpass  1) traces  2) drill  3) cutout. "
         f"Re-set Z-zero after each bit change; keep XY origin.\n"
+        f"0. airpass — {name}_airpass{ext}: DRY RUN, spindle stays off and the "
+        f"bit is held 5 mm up. Watch it trace where the board will be cut. If "
+        f"it leaves the copper, stop and re-place the stock — nothing has been "
+        f"cut yet. Run this before every job.\n"
         f"1. traces  — bit {trace.bit_diameter} mm, {trace.offsets} offsets, "
         f"cut {trace.cut_depth} mm/pass, feed {trace.xy_feed} mm/s\n"
         f"{drill_step}"

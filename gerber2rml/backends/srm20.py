@@ -20,8 +20,10 @@ def _u(mm: float) -> int:
 
 
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
-           rapid_feed: float = DEFAULT_RAPID) -> str:
-    out = ["^IN;!MC1;"]          # init + spindle ON
+           rapid_feed: float = DEFAULT_RAPID, spindle: bool = True) -> str:
+    """``spindle=False`` keeps the spindle OFF for the whole program (the
+    dry-run outline, which is watched from close up)."""
+    out = ["^IN;!MC1;" if spindle else "^IN;!MC0;"]   # init + spindle on/off
     mode = None                  # "cut" | "rapid"
     for tp in toolpaths:
         for m in tp:

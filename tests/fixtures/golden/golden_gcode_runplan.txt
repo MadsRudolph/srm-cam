@@ -1,12 +1,14 @@
 SRM-20 run plan: golden_gcode  [Roland SRM-20 (G-code)]
 Send each file via VPanel: Cut -> Add -> Output (set the work XY/Z origin first; G-code references that as G54).
-Order: 1) traces  2) drill  3) cutout. Re-set Z-zero after each bit change; keep XY origin.
+Order: 0) airpass  1) traces  2) drill  3) cutout. Re-set Z-zero after each bit change; keep XY origin.
+0. airpass — golden_gcode_airpass.nc: DRY RUN, spindle stays off and the bit is held 5 mm up. Watch it trace where the board will be cut. If it leaves the copper, stop and re-place the stock — nothing has been cut yet. Run this before every job.
 1. traces  — bit 0.8 mm, 1 offsets, cut 0.15 mm/pass, feed 4.0 mm/s
 2. drill  — golden_gcode_drill.nc: one 0.8 mm bit, plunge holes that fit + interpolate larger ones, total 1.7 mm
 3. cutout  — bit 0.8 mm, 4 tabs x 1.5 mm, total 1.7 mm
 Board mirrored for bottom-up milling: True.
 Estimated run time (excludes tool changes, spin-up and pauses):
+   golden_gcode_airpass.nc: ~38s
    golden_gcode_traces.nc: ~14m 49s
    golden_gcode_drill.nc: ~2m 41s
    golden_gcode_cutout.nc: ~5m 33s
-   TOTAL: ~23m 03s
+   TOTAL: ~23m 40s
