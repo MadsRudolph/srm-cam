@@ -1509,6 +1509,7 @@ class MainWindow(QMainWindow):
         self.apply_selected_preset()
         self.sidebar.currentRowChanged.connect(self._autofit_panel)
         self._build_mode_menu()
+        self._build_kicad_menu()
         self._apply_mode()               # Novice on a fresh install
         self._autofit_panel()
         self.move_chk.setChecked(True)   # move-on-bed drag on by default
@@ -1714,6 +1715,110 @@ class MainWindow(QMainWindow):
             for act in (self.act_novice, self.act_pro):
                 act.setEnabled(False)
             menu.setTitle("&Mode (locked)")
+
+    # ---- the KiCad build-area plugin -------------------------------------
+    #
+    # A board that does not fit the SRM-20 is normally discovered at the
+    # machine, with the layout finished. KiCad has no idea what an SRM-20 is,
+    # so we ship a small plugin that draws the build area in the PCB editor —
+    # and install it from here, because the path it goes to depends on the OS
+    # and the KiCad version, which is not a thing to talk a first-semester
+    # student through.
+
+    _KICAD_DECLINED_KEY = "kicad/declined_plugin_version"
+
+    def _kicad_settings(self):
+        from PySide6.QtCore import QSettings
+        return QSettings("SRM-CAM", "SRM-CAM")
+
+    def _kicad_plugin_dirs(self):
+        from gerber2rml.engine import kicadplugin
+        dirs = []
+        for root in kicadplugin.config_roots():
+            dirs.extend(kicadplugin.plugin_dirs(root))
+        return dirs
+
+    def _build_kicad_menu(self):
+        from PySide6.QtGui import QAction
+        menu = self.menuBar().addMenu("&KiCad")
+        act = QAction("Set up the build-area plugin...", self)
+        act.setToolTip("Add a button to KiCad's PCB editor that draws the "
+                       "SRM-20's build area and says whether your board fits.")
+        act.triggered.connect(self._on_setup_kicad_plugin)
+        menu.addAction(act)
+
+    def maybe_offer_kicad_plugin(self):
+        """Launch-time offer, asked once per plugin version.
+
+        Best-effort throughout: a machine with no KiCad, an unreadable config
+        folder or a locked-down profile must not stop the app from starting.
+        """
+        from gerber2rml.engine import kicadplugin
+        try:
+            bundled = kicadplugin.bundled_version()
+            dirs = self._kicad_plugin_dirs()
+            declined = self._kicad_settings().value(self._KICAD_DECLINED_KEY) or None
+            if not kicadplugin.should_offer(dirs, bundled, declined):
+                return
+        except Exception:
+            return
+
+        ans = QMessageBox.question(
+            self, "KiCad plugin",
+            "KiCad is installed on this PC. Would you like to add the SRM-20 "
+            "build-area button to its PCB editor?\n\n"
+            "It draws the mill's build area on User.Drawings and tells you "
+            "whether your board fits — while there is still time to change it, "
+            "rather than at the machine.\n\n"
+            "You can do this later from the KiCad menu.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ans != QMessageBox.Yes:
+            self._kicad_settings().setValue(self._KICAD_DECLINED_KEY, bundled)
+            return
+        self._on_setup_kicad_plugin()
+
+    def _on_setup_kicad_plugin(self):
+        """Install the plugin into every KiCad version found on this machine.
+
+        Every version rather than the newest: a PC that has been upgraded keeps
+        both trees, and the student opens whichever shortcut is on the desktop.
+        """
+        from gerber2rml.engine import kicadplugin
+        dirs = self._kicad_plugin_dirs()
+        if not dirs:
+            roots = ", ".join(str(r) for r in kicadplugin.config_roots())
+            QMessageBox.information(
+                self, "KiCad not found",
+                "No KiCad installation was found on this PC.\n\n"
+                f"Looked in: {roots}\n\n"
+                "Install KiCad first, then run this again. SRM-CAM itself "
+                "does not need KiCad — it only reads the Gerbers KiCad "
+                "exports.")
+            return
+
+        done, failed = [], []
+        for d in dirs:
+            try:
+                done.append(kicadplugin.install(kicadplugin.bundled_source(), d))
+            except Exception as e:                       # permissions, mostly
+                failed.append(f"{d}\n    {e}")
+
+        if not done:
+            QMessageBox.critical(
+                self, "Could not install",
+                "The plugin could not be copied into KiCad:\n\n"
+                + "\n".join(failed))
+            return
+
+        where = "\n".join(f"    {p}" for p in done)
+        note = ("\n\nSome locations failed:\n" + "\n".join(failed)) if failed else ""
+        QMessageBox.information(
+            self, "KiCad plugin installed",
+            "Installed to:\n" + where +
+            "\n\nRestart KiCad, then find it in the PCB editor under "
+            "Tools -> External Plugins -> Show SRM-20 build area." + note)
+        # they have it now; a future version asks again on its own merits
+        self._kicad_settings().remove(self._KICAD_DECLINED_KEY)
 
     def _on_mode_chosen(self, mode):
         uimode.set_mode(mode)
@@ -4962,6 +5067,7 @@ def main():
     _preload_demo(win)
     win.show()
     win.tour.maybe_autostart()       # runs the guided walkthrough on first launch
+    win.maybe_offer_kicad_plugin()   # asked once per plugin version, never nags
     return app.exec()
 
 if __name__ == "__main__":

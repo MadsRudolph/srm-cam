@@ -46,6 +46,22 @@ After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 > works manually without it. See
 > [Milling without the Arduino](docs/usage.md#milling-without-the-arduino).
 
+## The KiCad side
+
+A board that doesn't fit the mill is normally discovered *at* the mill, with the
+layout already finished. SRM-CAM ships a small KiCad plugin that answers it in
+the PCB editor instead — **Tools → External Plugins → Show SRM-20 build area**
+draws the machine's build area on User.Drawings and says whether the board fits,
+with the numbers.
+
+Install it from **KiCad → Set up the build-area plugin...**; SRM-CAM copies it
+into every KiCad version on the PC, and offers this once at launch if KiCad is
+there and the plugin isn't. Details: [`kicad-plugin/`](kicad-plugin).
+
+The plugin's dimensions and the CAM backend's `SRM20_BED` are asserted equal by
+the test suite — one definition of the machine, so KiCad can't say a board fits
+while SRM-CAM refuses to cut it.
+
 ## Two modes
 
 **Novice** (the default on a fresh install) is the shortest path from Gerbers to

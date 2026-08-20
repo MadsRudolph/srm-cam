@@ -15,6 +15,7 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 ROOT = Path(SPECPATH).parent                       # repo root (spec lives in packaging/)
 DEMO = ROOT / "examples" / "preload_example"
+KICAD_PLUGIN = ROOT / "kicad-plugin"
 
 # ---- data files ----------------------------------------------------------
 datas = []
@@ -27,6 +28,12 @@ if DEMO.is_dir():
             datas.append((str(f), "examples/preload_example"))
 # window/taskbar icon (the exe icon below covers the desktop shortcut)
 datas.append((str(ROOT / "packaging" / "srm-cam-256.png"), "assets"))
+# the KiCad build-area plugin, so the installed app can offer to set it up.
+# Sub-folders are walked explicitly: PyInstaller's datas takes files, and the
+# plugin is a package (srm20area/) rather than a flat folder.
+for f in KICAD_PLUGIN.rglob("*"):
+    if f.is_file() and "__pycache__" not in f.parts:
+        datas.append((str(f), str(Path("kicad-plugin") / f.relative_to(KICAD_PLUGIN).parent)))
 
 # ---- modules imported dynamically (not seen by static analysis) ----------
 hiddenimports = []

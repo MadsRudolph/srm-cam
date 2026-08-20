@@ -191,6 +191,12 @@ recovery kit — keep one on lab storage.
   `gerber2rml/__init__.py` must agree. `scripts/check_version.py` enforces it in
   CI; run it before tagging.
 - **The golden fixtures** — see above.
+- **`kicad-plugin/VERSION`** — bump it whenever the plugin changes, or installed
+  copies are never recognised as stale and students keep running the old one.
+  `BED_X, BED_Y` in `kicad-plugin/srm20area/geometry.py` must stay equal to
+  `gerber2rml.backends.SRM20_BED`; `tests/test_kicadplugin.py` enforces it,
+  because a drift would have KiCad telling a student their board fits while
+  SRM-CAM refuses to cut it.
 - **Novice mode as a strict subset** — Novice hides controls, it does not take a
   different code path. `tests/test_mode.py` asserts both modes export identical
   bytes. Keep it that way: the moment there are two code paths, a student's board
