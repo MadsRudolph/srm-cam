@@ -23,11 +23,15 @@ Two stages, both driven by `build.ps1`:
 
 ### Isolated build venv — important
 
-`build.ps1` builds inside a dedicated venv at `.build-venv\` created from the
-deps in `requirements-build.txt`. This is deliberate: building from a fat
-environment (e.g. the miniconda base, which has torch/scipy/pygame) makes
-PyInstaller bundle all of it and bloats the installer to multiple GB. The clean
-venv keeps the bundle to just what the app needs.
+`build.ps1` builds inside a dedicated venv at `.build-venv\` created from
+**`requirements-lock.txt`**. This is deliberate on two counts:
+
+- **Clean** — building from a fat environment (e.g. the miniconda base, which
+  has torch/scipy/pygame) makes PyInstaller bundle all of it and bloats the
+  installer to multiple GB.
+- **Pinned** — every version, including transitives, is exact. A rebuild years
+  from now produces the same app instead of whatever PyPI serves that day.
+  `requirements-build.txt` holds the loose ranges the lock is generated from.
 
 The venv is created automatically on first run. After changing dependencies,
 rebuild it:
@@ -38,8 +42,9 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Recreate
 
 ## Prerequisites
 
-- **Python 3.13** (standalone CPython) to seed the build venv. Override the base
-  with `-BasePython <path>` if yours is elsewhere.
+- **Python 3.12** (standalone CPython) to seed the build venv — the version the
+  lock is verified against and what CI builds with. Defaults to the first
+  `python` on PATH; override with `-BasePython <path>`.
 - **Inno Setup 6** for stage 2. Install once:
   `winget install --id JRSoftware.InnoSetup -e`
   (Build still produces the app folder without it; it just skips `Setup.exe`.)
@@ -51,7 +56,9 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Recreate
 | Full installer (+ version-less copy) | `build.ps1` |
 | App folder only (skip Inno) | `build.ps1 -SkipInstaller` |
 | Rebuild venv after dep change | `build.ps1 -Recreate` |
-| Bump version | edit `MyAppVersion` in `installer.iss` (and `pyproject.toml`) |
+| Upgrade a dep (unpinned) | `build.ps1 -Recreate -Loose`, then re-freeze the lock |
+| Bump version | edit all **three**: `pyproject.toml`, `installer.iss`, `gerber2rml/__init__.py` |
+| Check the version agrees | `python scripts/check_version.py` |
 
 ## Publishing a release
 
@@ -60,18 +67,24 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -Recreate
 - `SRM-CAM-Setup-<version>.exe` — the normal versioned installer.
 - `SRM-CAM-Setup.exe` — an identical **version-less** copy.
 
-**Upload both** as assets when you cut a GitHub release. The DTU-PCB-prototyping
-guide links to a permanent one-click URL —
+**Both are uploaded** as release assets. The DTU-PCB-prototyping guide links to
+a permanent one-click URL —
 `https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe`
 — which only resolves if the latest release contains an asset named **exactly**
 `SRM-CAM-Setup.exe`. Skip it and that download link 404s.
 
-```powershell
-# after build.ps1, from the repo root:
-gh release create v<version> --target main `
-  "dist_installer\SRM-CAM-Setup-<version>.exe" `
-  "dist_installer\SRM-CAM-Setup.exe"
-```
+The tag-push flow handles this. Steps:
+
+1. Bump the version in **all three** files (CI fails the build otherwise).
+2. `git tag v<version> && git push --tags`
+3. Watch **Actions → build installer**. It checks the tag matches the version,
+   builds, verifies the installer is a plausible size, writes `SHA256SUMS.txt`,
+   and opens a **draft** release with all three assets.
+4. Review the draft and publish it.
+
+To rehearse without releasing: **Actions → build installer → Run workflow**.
+That produces the same installer as a downloadable artifact and creates no
+release — the way to confirm the build still works after a dependency bump.
 
 ## Files
 
@@ -80,7 +93,8 @@ gh release create v<version> --target main `
 | `build.ps1` | Orchestrator: venv → PyInstaller → Inno Setup |
 | `srm-cam.spec` | PyInstaller recipe (datas, hidden imports, excludes) |
 | `installer.iss` | Inno Setup recipe (shortcuts, uninstaller, AppId) |
-| `requirements-build.txt` | Exact runtime deps for the isolated build venv |
+| `requirements-lock.txt` | **Pinned** deps — what the build actually installs |
+| `requirements-build.txt` | Loose ranges the lock is regenerated from |
 | `launcher.py` | Frozen-app entry point → `gerber2rml.gui.app:main` |
 
 ## Notes / gotchas

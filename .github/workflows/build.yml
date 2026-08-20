@@ -1,0 +1,104 @@
+# Build the SRM-CAM Windows installer on a clean machine.
+#
+# THIS IS THE POINT OF THIS FILE: producing a new SRM-CAM-Setup.exe must not
+# depend on any one person's laptop. Everything the build needs — Python, the
+# pinned dependency set, PyInstaller, Inno Setup — is installed from scratch on
+# a fresh GitHub-hosted Windows runner every time. Anyone with push access to
+# the repo can cut a release; nobody needs a specific machine, a conda env, or
+# a hand-patched venv.
+#
+# To release:
+#   1. bump the version in pyproject.toml, packaging/installer.iss and
+#      gerber2rml/__init__.py (they must agree — CI checks)
+#   2. git tag v0.2.8 && git push --tags
+#   3. the run below builds, tests the artifact exists, and publishes a draft
+#      GitHub Release with both installers + a SHA256 checksum file attached
+#   4. review the draft release and publish it
+#
+# Running it manually (Actions -> build -> Run workflow) produces the same
+# installer as a downloadable artifact without creating a release — that is
+# also the way to verify the build still works without cutting a version.
+name: build installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # needed to create the release; nothing else
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check version consistency (and that it matches the tag)
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            python scripts/check_version.py "${{ github.ref_name }}"
+          } else {
+            python scripts/check_version.py
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Install Inno Setup
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) {
+            Write-Host "Inno Setup already present on the runner image."
+          } else {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build (PyInstaller + Inno Setup)
+        run: |
+          powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -BasePython "$((Get-Command python).Source)"
+
+      - name: Verify the installer was produced
+        run: |
+          $setup = Get-ChildItem "dist_installer\SRM-CAM-Setup-*.exe" |
+                   Sort-Object LastWriteTime | Select-Object -Last 1
+          if (-not $setup) { throw "No installer in dist_installer\" }
+          if ($setup.Length -lt 50MB) {
+            throw "Installer is only $([math]::Round($setup.Length/1MB,1)) MB - the Qt payload is probably missing"
+          }
+          Write-Host "Built $($setup.Name) - $([math]::Round($setup.Length/1MB,1)) MB"
+
+      - name: Checksums
+        # The installer is unsigned, so SmartScreen will warn on first run.
+        # A published SHA256 is how someone confirms the file they downloaded
+        # is the file this workflow built.
+        run: |
+          Get-ChildItem "dist_installer\SRM-CAM-Setup*.exe" |
+            ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + "  " + $_.Name } |
+            Set-Content dist_installer\SHA256SUMS.txt -Encoding utf8
+          Get-Content dist_installer\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SRM-CAM-installer
+          path: |
+            dist_installer/SRM-CAM-Setup*.exe
+            dist_installer/SHA256SUMS.txt
+          retention-days: 90
+
+      - name: Publish draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Both names are uploaded on purpose: the DTU-PCB-prototyping guide
+          # links to releases/latest/download/SRM-CAM-Setup.exe, which only
+          # resolves if every release carries that exact un-versioned name.
+          $assets = @(Get-ChildItem "dist_installer\SRM-CAM-Setup*.exe" |
+                      ForEach-Object { $_.FullName })
+          $assets += (Resolve-Path "dist_installer\SHA256SUMS.txt").Path
+          gh release create "${{ github.ref_name }}" --draft --generate-notes `
+            --title "SRM-CAM ${{ github.ref_name }}" @assets
+          if ($LASTEXITCODE -ne 0) { exit 1 }

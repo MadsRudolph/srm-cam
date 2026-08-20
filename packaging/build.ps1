@@ -11,12 +11,19 @@
 
 .PARAMETER BasePython
     Interpreter used to CREATE the isolated build venv (only its stdlib + venv
-    module are used). Defaults to the standalone CPython 3.13. Deliberately NOT
-    the miniconda base — building from that fat env bundles torch/scipy/pygame
-    and bloats the installer to multiple GB.
+    module are used). Defaults to the first `python` on PATH; CPython 3.12 is
+    what CI builds with and what the pinned lock is verified against.
+    Deliberately NOT the miniconda base — building from
+    that fat env bundles torch/scipy/pygame and bloats the installer to
+    multiple GB.
 
 .PARAMETER Recreate
     Delete and rebuild the build venv from scratch (use after changing deps).
+
+.PARAMETER Loose
+    Install the UNPINNED dependency set (requirements-build.txt) instead of the
+    pinned lock. Only for deliberately upgrading a dependency: build with it,
+    re-freeze the lock, run the tests, then commit the new pins.
 
 .PARAMETER SkipInstaller
     Build only the PyInstaller app folder; skip the Inno Setup step.
@@ -25,8 +32,9 @@
     powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 #>
 param(
-    [string]$BasePython = "C:\Users\Mads2\AppData\Local\Programs\Python\Python313\python.exe",
+    [string]$BasePython = "",
     [switch]$Recreate,
+    [switch]$Loose,
     [switch]$SkipInstaller
 )
 
@@ -44,12 +52,22 @@ if ($Recreate -and (Test-Path $VenvDir)) {
     Remove-Item -Recurse -Force $VenvDir
 }
 if (-not (Test-Path $Python)) {
+    if (-not $BasePython) {
+        $found = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $found) { throw "No 'python' on PATH; pass -BasePython <path to python.exe>" }
+        $BasePython = $found.Source
+    }
     if (-not (Test-Path $BasePython)) { throw "Base Python not found: $BasePython" }
     Write-Host "Creating build venv at $VenvDir ..." -ForegroundColor Yellow
     & $BasePython -m venv $VenvDir
     if ($LASTEXITCODE -ne 0) { throw "venv creation failed" }
     & $Python -m pip install --upgrade pip
-    & $Python -m pip install -r "packaging\requirements-build.txt"
+    # Pinned by default: a release build must be reproducible. -Loose is the
+    # opt-in path for deliberately upgrading a dependency (then re-freeze).
+    $Reqs = if ($Loose) { "packaging\requirements-build.txt" }
+            else        { "packaging\requirements-lock.txt" }
+    Write-Host "deps      : $Reqs"
+    & $Python -m pip install -r $Reqs
     if ($LASTEXITCODE -ne 0) { throw "dependency install failed" }
 }
 Write-Host "python    : $Python"

@@ -1,0 +1,76 @@
+# PINNED build environment for SRM-CAM — the exact package set that produced
+# the shipped installer. build.ps1 and the GitHub Actions build workflow both
+# install from THIS file, so a rebuild in five years produces the same app
+# instead of whatever PyPI happens to serve that day.
+#
+# Why pins matter here: packaging/requirements-build.txt declares loose ranges
+# (PySide6>=6.5, shapely>=2.0, ...). Those are fine for day-to-day development,
+# but an unpinned rebuild after a major PySide6 or numpy release can fail to
+# build, or — worse — build fine and quietly change toolpath output.
+#
+# To regenerate after intentionally upgrading a dependency:
+#   1. powershell -File packaging\build.ps1 -Recreate   (installs the loose set)
+#   2. .build-venv\Scripts\python.exe -m pip freeze > packaging\requirements-lock.txt
+#   3. strip the dev-only lines (pytest, pluggy, iniconfig, py-spy, Pygments)
+#   4. run `pytest` and cut a test board before committing the new pins.
+#
+# Python: CPython 3.12 — the interpreter this pin set is verified against and
+# what the build workflow uses. Bumping it is a deliberate step: let the
+# monthly `canary` CI job (.github/workflows/tests.yml) tell you when to.
+
+# --- direct app dependencies ---------------------------------------------
+gerbonara==1.6.3
+shapely==2.1.2
+PySide6==6.11.1
+matplotlib==3.11.0
+pyqtgraph==0.14.0
+PyOpenGL==3.1.10
+pyserial==3.5
+qrcode==8.2
+
+# --- the freezer ----------------------------------------------------------
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+
+# --- transitive: Qt --------------------------------------------------------
+PySide6_Addons==6.11.1
+PySide6_Essentials==6.11.1
+shiboken6==6.11.1
+
+# --- transitive: numerics / plotting --------------------------------------
+numpy==2.5.0
+contourpy==1.3.3
+cycler==0.12.1
+fonttools==4.63.0
+kiwisolver==1.5.0
+packaging==26.2
+pillow==12.3.0
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+six==1.17.0
+
+# --- transitive: gerbonara (it hard-depends on its Quart web viewer) ------
+click==8.4.2
+rtree==1.4.1
+quart==0.20.0
+aiofiles==25.1.0
+blinker==1.9.0
+flask==3.1.3
+hypercorn==0.18.0
+itsdangerous==2.2.0
+jinja2==3.1.6
+markupsafe==3.0.3
+werkzeug==3.1.8
+h11==0.16.0
+h2==4.3.0
+hpack==4.2.0
+hyperframe==6.1.0
+priority==2.0.0
+wsproto==1.3.2
+
+# --- transitive: pyinstaller / windows ------------------------------------
+altgraph==0.17.5
+colorama==0.4.6
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+setuptools==82.0.1
