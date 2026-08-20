@@ -1970,3 +1970,79 @@ def test_check_for_updates_survives_having_no_internet(monkeypatch):
     MainWindow()._on_check_updates()
 
     assert shown and "Could not check for updates" in shown[0]
+
+
+def test_window_title_is_the_product_name_and_version():
+    """The title bar is where someone reads which version they are running —
+    the first question in any 'it does X on my machine' conversation."""
+    from gerber2rml import __version__
+
+    assert MainWindow().windowTitle() == f"SRM-CAM {__version__}"
+
+
+def _temp_settings(tmp_path):
+    from PySide6.QtCore import QSettings
+    return QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+
+
+def test_launch_update_notice_is_shown_once_and_not_again(tmp_path, monkeypatch):
+    """Told once, ignored once. Announcing the same version every launch is
+    how a useful notice turns into wallpaper people click past."""
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine import updates
+    from gerber2rml.gui.app import MainWindow as MW
+
+    settings = _temp_settings(tmp_path)
+    monkeypatch.setattr(MW, "_app_settings", lambda self: settings)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: asked.append(a[2]) or QMessageBox.No)
+
+    w = MW()
+    result = updates.Result(updates.UPDATE, "9.9.9",
+                            "https://example.invalid/rel", "", "msg")
+    w._on_update_checked(result)
+    w._on_update_checked(result)          # a second launch, same release
+
+    assert len(asked) == 1
+
+
+def test_launch_update_notice_does_not_interrupt_the_guided_tour(tmp_path, monkeypatch):
+    """First launch already opens the tour. A dialog on top of it is the worst
+    possible first five seconds."""
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine import updates
+    from gerber2rml.gui.app import MainWindow as MW
+
+    settings = _temp_settings(tmp_path)
+    monkeypatch.setattr(MW, "_app_settings", lambda self: settings)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: asked.append(a[2]) or QMessageBox.No)
+
+    w = MW()
+    w.tour._active = True                     # ``active`` is a property
+    w._on_update_checked(updates.Result(updates.UPDATE, "9.9.9",
+                                        "https://example.invalid/rel", "", "msg"))
+
+    assert asked == []
+    # ...and it is not marked as seen, so the next launch still says it
+    w.tour._active = False
+    w._on_update_checked(updates.Result(updates.UPDATE, "9.9.9",
+                                        "https://example.invalid/rel", "", "msg"))
+    assert len(asked) == 1
+
+
+def test_launch_check_stays_silent_when_offline(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine import updates
+    from gerber2rml.gui.app import MainWindow as MW
+
+    monkeypatch.setattr(MW, "_app_settings", lambda self: _temp_settings(tmp_path))
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(1))
+
+    MW()._on_update_checked(updates.Result(updates.ERROR, None,
+                                           updates.RELEASES_PAGE, "", "no wifi"))
+
+    assert asked == []

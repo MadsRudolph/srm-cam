@@ -77,3 +77,30 @@ def test_a_tag_that_is_not_a_plain_version_is_ignored_rather_than_guessed(tag):
     result = updates.check("0.2.7", fetch=lambda url, timeout: _release(tag))
 
     assert result.status == updates.ERROR
+
+
+# --- the quiet check at launch --------------------------------------------
+
+def _result(status, latest=None):
+    return updates.Result(status, latest, updates.RELEASES_PAGE, "", "msg")
+
+
+def test_announces_an_update_the_first_time_it_is_seen():
+    assert updates.should_announce(_result(updates.UPDATE, "0.3.0"), dismissed=None)
+
+
+def test_stays_quiet_when_already_up_to_date():
+    assert not updates.should_announce(_result(updates.CURRENT, "0.2.7"), dismissed=None)
+
+
+def test_stays_quiet_when_the_check_failed():
+    """Startup is the worst possible moment to tell someone their wifi is off."""
+    assert not updates.should_announce(_result(updates.ERROR), dismissed=None)
+
+
+def test_does_not_mention_the_same_version_twice():
+    """Told once, ignored once. Announcing 0.3.0 every launch until they act
+    is how a useful notice becomes wallpaper."""
+    assert not updates.should_announce(_result(updates.UPDATE, "0.3.0"), dismissed="0.3.0")
+    # ...but the next release is a new thing to say.
+    assert updates.should_announce(_result(updates.UPDATE, "0.4.0"), dismissed="0.3.0")

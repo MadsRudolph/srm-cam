@@ -15,6 +15,7 @@ import time
 
 from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments
+from gerber2rml import __version__
 from gerber2rml.backends import BACKENDS
 from gerber2rml.gui.form import DataclassForm
 from gerber2rml.gui.canvas import PreviewCanvas
@@ -425,13 +426,35 @@ class _FiducialAlignDialog(QDialog):
         self.accept()
 
 
+class _UpdateProbe(QThread):
+    """Ask GitHub what the newest release is, off the UI thread.
+
+    A lab PC behind a captive portal can take the whole timeout to fail, and
+    nobody should watch a blank window while that happens.
+    """
+    checked = Signal(object)
+
+    def __init__(self, version, parent=None):
+        super().__init__(parent)
+        self._version = version
+
+    def run(self):
+        from gerber2rml.engine import updates
+        try:
+            self.checked.emit(updates.check(self._version))
+        except Exception:                       # noqa: BLE001 - best effort
+            pass
+
+
 class MainWindow(QMainWindow):
     _REWORK_COLORS = ["#ff5252", "#42a5f5", "#66bb6a", "#ffa726",
                       "#ab47bc", "#26c6da", "#ec407a", "#d4e157"]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("gerber2rml - Premium CAM")
+        # The title bar is where someone reads which version they are running.
+        # (gerber2rml is the Python package name; SRM-CAM is the product.)
+        self.setWindowTitle(f"SRM-CAM {__version__}")
         self.resize(1100, 750)
         self._set_app_icon()
         self.state = ProjectState()
@@ -620,7 +643,11 @@ class MainWindow(QMainWindow):
             "Draw the measured copper piece on the bed so you can line the design "
             "(and dowels) up inside it. Turns red if the job spills off the copper.")
         self.stock_show_chk.toggled.connect(self._update_stock_preview)
-        self.stock_here_btn = QPushButton("Corner = tool")
+        # Professional-only: it reads the live tool position over the machine
+        # link, and Novice hides that link entirely — offering it there is a
+        # button that cannot work. Novice places the design with 'Center
+        # design' and the drag controls, which need no hardware.
+        self.stock_here_btn = self._pro(QPushButton("Corner = tool"))
         self.stock_here_btn.setToolTip(
             "Set the copper's front-left corner to the live tool position — jog the "
             "bit to the corner of the copper, then click. Needs the machine connected.")
@@ -1732,7 +1759,7 @@ class MainWindow(QMainWindow):
 
     _KICAD_DECLINED_KEY = "kicad/declined_plugin_version"
 
-    def _kicad_settings(self):
+    def _app_settings(self):
         from PySide6.QtCore import QSettings
         return QSettings("SRM-CAM", "SRM-CAM")
 
@@ -1765,6 +1792,47 @@ class MainWindow(QMainWindow):
         upd.setToolTip("See whether a newer SRM-CAM has been released.")
         upd.triggered.connect(self._on_check_updates)
         menu.addAction(upd)
+
+    _UPDATE_DISMISSED_KEY = "updates/dismissed_version"
+
+    def start_update_check(self):
+        """Quiet background check at launch.
+
+        In a thread, because a lab PC behind a captive portal can take the
+        full timeout to fail and the window must not wait for it. Never
+        speaks unless there is genuinely a newer release.
+        """
+        try:
+            self._update_probe = _UpdateProbe(__version__, self)
+            self._update_probe.checked.connect(self._on_update_checked)
+            self._update_probe.start()
+        except Exception:
+            pass                     # a background nicety, never a blocker
+
+    def _on_update_checked(self, result):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from gerber2rml.engine import updates
+
+        settings = self._app_settings()
+        seen = settings.value(self._UPDATE_DISMISSED_KEY) or None
+        if not updates.should_announce(result, seen):
+            return
+
+        if self.tour.active:
+            # first launch already opens the tour; a dialog on top of it is the
+            # worst possible first five seconds. Say it quietly, ask next time.
+            self.statusBar().showMessage(
+                f"{result.message}  (Help -> Check for updates)", 15000)
+            return
+
+        settings.setValue(self._UPDATE_DISMISSED_KEY, result.latest)
+        ans = QMessageBox.question(
+            self, "Update available",
+            result.message + "\n\nOpen the download page?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ans == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(result.url))
 
     def _on_check_updates(self):
         """Ask GitHub whether a newer release exists, and offer the download.
@@ -1829,7 +1897,7 @@ class MainWindow(QMainWindow):
         try:
             bundled = kicadplugin.bundled_version()
             dirs = self._kicad_plugin_dirs()
-            declined = self._kicad_settings().value(self._KICAD_DECLINED_KEY) or None
+            declined = self._app_settings().value(self._KICAD_DECLINED_KEY) or None
             if not kicadplugin.should_offer(dirs, bundled, declined):
                 return
         except Exception:
@@ -1845,7 +1913,7 @@ class MainWindow(QMainWindow):
             "You can do this later from the KiCad menu.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if ans != QMessageBox.Yes:
-            self._kicad_settings().setValue(self._KICAD_DECLINED_KEY, bundled)
+            self._app_settings().setValue(self._KICAD_DECLINED_KEY, bundled)
             return
         self._on_setup_kicad_plugin()
 
@@ -1890,7 +1958,7 @@ class MainWindow(QMainWindow):
             "\n\nRestart KiCad, then find it in the PCB editor under "
             "Tools -> External Plugins -> Show SRM-20 build area." + note)
         # they have it now; a future version asks again on its own merits
-        self._kicad_settings().remove(self._KICAD_DECLINED_KEY)
+        self._app_settings().remove(self._KICAD_DECLINED_KEY)
 
     def _on_mode_chosen(self, mode):
         uimode.set_mode(mode)
@@ -5140,6 +5208,7 @@ def main():
     win.show()
     win.tour.maybe_autostart()       # runs the guided walkthrough on first launch
     win.maybe_offer_kicad_plugin()   # asked once per plugin version, never nags
+    win.start_update_check()         # background; silent unless there is one
     return app.exec()
 
 if __name__ == "__main__":

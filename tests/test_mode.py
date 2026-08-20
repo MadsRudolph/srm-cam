@@ -213,3 +213,34 @@ def test_tour_steps_over_put_away_widgets(monkeypatch):
     assert w.tour._is_put_away(w.double_sided_chk)   # inside a hidden group
     assert not w.tour._is_put_away(w.load_btn)
     w.close()
+
+
+def test_corner_from_tool_is_not_offered_without_the_machine_link(monkeypatch):
+    """'Corner = tool' reads the live tool position over the Arduino link, and
+    Novice hides the machine dock entirely — so in Novice it is a button that
+    cannot work. 'Center design' is pure placement and stays."""
+    w = _window(monkeypatch, "novice")
+    w.show(); _app.processEvents()
+
+    assert not w.stock_here_btn.isVisible()
+    assert w.stock_center_btn.isVisible()
+    w.close()
+
+
+def test_corner_from_tool_is_available_in_professional(monkeypatch):
+    w = _window(monkeypatch, "pro")
+    w.show(); _app.processEvents()
+
+    assert w.stock_here_btn.isVisible()
+    w.close()
+
+
+def test_the_tour_does_not_teach_a_control_novices_cannot_see():
+    """The tour runs in Novice by default. Telling a beginner to use
+    'Corner = tool' points at something that is not on their screen."""
+    from gerber2rml.gui.tour import steps
+
+    placement = [s for s in steps.CORE_STEPS if s.target == "stock_center_btn"]
+
+    assert placement, "the placement step should still exist"
+    assert "Corner = tool" not in placement[0].body

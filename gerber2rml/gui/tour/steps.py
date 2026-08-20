@@ -61,9 +61,10 @@ CORE_STEPS = [
         target="stock_center_btn", page=0,
         advance_signal="stock_center_btn.clicked",
         title="4 · Place the board on the bed",
-        body="Set your copper stock size, then position the design: 'Center design' "
-             "centres it on the stock, 'Corner = tool' aligns it to the tool's "
-             "current corner. Click 'Center design' to continue.",
+        body="Measure your copper piece with calipers and enter its size, then "
+             "click 'Center design' to place the board in the middle of it — "
+             "that margin all round is what you tape or clamp. Drag the board "
+             "on the preview to nudge it. Click 'Center design' to continue.",
     ),
     TourStep(
         target="preview", page=0, placement="left", explain_only=True,

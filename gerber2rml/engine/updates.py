@@ -81,3 +81,15 @@ def check(current, fetch=None, timeout=6.0):
                       f"SRM-CAM {latest} is available. You are running {current}.")
     return Result(CURRENT, latest, url, notes,
                   f"SRM-CAM {current} is up to date.")
+
+
+def should_announce(result, dismissed=None):
+    """Is this worth interrupting someone with, unprompted, at launch?
+
+    Only a real update they have not already been told about. A failed check
+    stays silent: startup is the worst moment to tell someone their wifi is
+    off, and they did not ask.
+    """
+    if result.status != UPDATE:
+        return False
+    return result.latest != dismissed
