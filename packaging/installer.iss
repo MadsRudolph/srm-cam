@@ -48,6 +48,12 @@ Name: "{userdocs}\SRM-CAM\photos"
 [Files]
 ; The whole PyInstaller output folder (exe + _internal with Qt, numpy, etc.).
 Source: "..\dist\SRM-CAM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Site presets - the one file the lab owner edits so every seat gets the same
+; approved toolpath profile (docs/usage.md, "Presets"). It lands in Program
+; Files, so students can read it and only an admin can change it.
+; onlyifdoesntexist: an upgrade must never overwrite what the teacher put there.
+Source: "..\examples\presets.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "..\examples\presets.example.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

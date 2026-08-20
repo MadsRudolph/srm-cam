@@ -1,5 +1,22 @@
-"""Preset load/merge/apply: built-in + repo examples/presets.json + user JSON."""
+"""Preset load/merge/apply: built-in + site-wide JSON + per-user JSON.
+
+Three layers, lowest to highest precedence:
+
+  1. :data:`BUILTIN_PRESETS` — what we ship in code.
+  2. **Site presets** — one file the lab owner controls, read from next to the
+     installed ``SRM-CAM.exe``. On a normal install that is under Program
+     Files: every student can read it, only an admin can change it. This is how
+     a teacher hands the same approved toolpath profile to every seat instead
+     of talking thirty people through the numbers. Set ``"_hide_builtins":
+     true`` in that file to show ONLY the site profiles.
+  3. **User presets** — whatever the person saved themselves.
+
+Set ``SRM_CAM_PRESETS`` to point the site layer somewhere else (tests, or a
+shared network folder).
+"""
 import json
+import os
+import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -40,8 +57,26 @@ def _user_path():
     return Path.home() / ".gerber2rml" / "presets.json"
 
 
-def _repo_path():
+def _site_path():
+    """The machine-wide presets file.
+
+    Frozen install: beside the executable, i.e. ``presets.json`` in the
+    install folder under Program Files. Resolving it from ``__file__``
+    instead — as this used to — lands inside the bundled ``_internal``
+    folder, where nothing is shipped and nobody can sensibly drop a file,
+    so site presets never reached an installed app at all.
+
+    Source checkout: ``examples/presets.json``.
+    """
+    env = os.environ.get("SRM_CAM_PRESETS")
+    if env:
+        return Path(env)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "presets.json"
     return Path(__file__).resolve().parents[2] / "examples" / "presets.json"
+
+
+_repo_path = _site_path          # pre-0.2.8 name, kept for any external caller
 
 
 def _read_json(path):
@@ -51,10 +86,22 @@ def _read_json(path):
         return {}
 
 
+def _profiles(raw):
+    """Drop the settings keys. JSON has no comments, so a leading underscore
+    is how this format carries anything that is not a toolpath profile —
+    ``_hide_builtins``, and any ``_comment`` someone left for the next person."""
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
 def load_presets():
-    merged = dict(BUILTIN_PRESETS)
-    merged.update(_read_json(_repo_path()))
-    merged.update(_read_json(_user_path()))   # user overrides by name
+    site = _read_json(_site_path())
+    # A lab that wants students to see exactly one approved profile sets this.
+    hide_builtins = bool(site.get("_hide_builtins", False))
+    merged = {} if hide_builtins else dict(BUILTIN_PRESETS)
+    merged.update(_profiles(site))
+    merged.update(_profiles(_read_json(_user_path())))   # user overrides by name
+    if not merged:                            # never hand back an empty list
+        merged = dict(BUILTIN_PRESETS)
     return merged
 
 

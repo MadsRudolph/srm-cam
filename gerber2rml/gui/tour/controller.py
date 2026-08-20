@@ -135,12 +135,36 @@ class TourController(QObject):
         _page, steps = BRANCHES[name]
         self.start(steps=steps, is_branch=True)
 
+    def _is_put_away(self, widget):
+        """True if ``widget`` sits under a control the current UI mode has put
+        away — in practice, a professional-only control while the app is in
+        Novice mode (see gerber2rml/gui/mode.py).
+
+        Keyed on the ``proOnly`` marker that MainWindow._pro sets, not on plain
+        visibility. A QStackedWidget explicitly hides every page except the
+        current one, so an ``isHidden()`` walk would report most of the tour's
+        own targets as unavailable purely for being on another page.
+        """
+        w = widget
+        while w is not None and w is not self.window:
+            if w.property("proOnly") and w.isHidden():
+                return True
+            w = w.parentWidget()
+        return False
+
     # ---- showing a step ----------------------------------------------------
     def _show_step(self):
         step = self._steps[self._i]
         target = getattr(self.window, step.target, None) if step.target else None
         if step.target and target is None:
             return self._next()                 # widget gone -> skip gracefully
+        # A target the current UI mode has put away has nothing to spotlight —
+        # in Novice most professional controls are hidden. Skip before
+        # navigating, so the sidebar is not left sitting on a hidden step.
+        # Steps with a `reveal` are exempt here: revealing is precisely how
+        # they un-hide their own target, so they are re-checked below.
+        if step.target and not step.reveal and self._is_put_away(target):
+            return self._next()
 
         if hasattr(self.window, "_goto_page"):
             self.window._goto_page(step.page)     # spine rows != page indexes
@@ -148,8 +172,13 @@ class TourController(QObject):
             self.window.sidebar.setCurrentRow(step.page)
         if step.reveal:
             chk = getattr(self.window, step.reveal, None)
-            if chk is not None and hasattr(chk, "isChecked") and not chk.isChecked():
+            # Never tick a box the mode has put away: in Novice that would
+            # switch on a feature whose UI the student cannot see.
+            if (chk is not None and hasattr(chk, "isChecked")
+                    and not self._is_put_away(chk) and not chk.isChecked()):
                 chk.setChecked(True)
+        if step.target and self._is_put_away(target):
+            return self._next()                 # still hidden after the reveal
         if target is not None:
             self._ensure_visible(target)
 

@@ -1,0 +1,37 @@
+{
+  "_comment": "COPY THIS TO presets.json TO USE IT. Site presets: the profiles every seat sees. On an installed SRM-CAM this file lives next to SRM-CAM.exe (Program Files), so only an admin can change it and every student gets the same approved numbers. Delete keys you do not want to override; anything omitted falls back to the built-in profile.",
+  "_hide_builtins": false,
+
+  "Course 62768 — 0.8 mm flat, FR-4 1.6 mm": {
+    "trace": {
+      "bit_diameter": 0.8,
+      "cut_depth": 0.15,
+      "offsets": 1,
+      "stepover": 0.5,
+      "xy_feed": 4.0,
+      "plunge_feed": 1.0,
+      "travel_z": 2.0,
+      "tool_type": "flat"
+    },
+    "drill": {
+      "bit_diameter": 0.8,
+      "single_bit": true,
+      "cut_depth": 0.6,
+      "total_depth": 1.7,
+      "peck_retract": 0.5,
+      "xy_feed": 4.0,
+      "plunge_feed": 1.0,
+      "travel_z": 2.0
+    },
+    "cutout": {
+      "bit_diameter": 0.8,
+      "cut_depth": 0.6,
+      "total_depth": 1.7,
+      "tabs": 4,
+      "tab_width": 1.5,
+      "xy_feed": 4.0,
+      "plunge_feed": 1.0,
+      "travel_z": 2.0
+    }
+  }
+}

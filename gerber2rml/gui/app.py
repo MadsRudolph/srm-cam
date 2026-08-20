@@ -19,6 +19,7 @@ from gerber2rml.backends import BACKENDS
 from gerber2rml.gui.form import DataclassForm
 from gerber2rml.gui.canvas import PreviewCanvas
 from gerber2rml.gui.tour import TourController
+from gerber2rml.gui import mode as uimode
 
 _OPS = ["traces", "drill", "cutout"]
 
@@ -430,6 +431,12 @@ class MainWindow(QMainWindow):
         self.resize(1100, 750)
         self._set_app_icon()
         self.state = ProjectState()
+
+        # Professional-only widgets. Tagged with self._pro() at the point they
+        # are laid out (so a form row can hide its label too) and shown/hidden
+        # together by _apply_mode(). Novice is the same UI with these put away
+        # — never a second code path, so the two modes cannot drift apart.
+        self._pro_items = []
 
         # Ensure the per-user workspace (Documents/SRM-CAM/{sessions,exports,
         # photos}) exists; every file dialog starts in its matching folder.
@@ -1185,6 +1192,20 @@ class MainWindow(QMainWindow):
             ("Rework",             3, None, None),
             ("3D viewer",          4, None, None),
         ]
+        # Novice runs one board, one side: load it, drill, cut the traces, cut
+        # it out, look at it in 3D before committing. Bed leveling, the flip
+        # and rework are the steps that need a second bit of judgement, so they
+        # are the ones Professional adds back.
+        self._PRO_STEPS = {1, 2, 6, 7, 8}
+        # ...and with them gone the "1 2 3 4 ... 8" numbering would read
+        # "1 4 5 6 10", so Novice gets its own labels for the steps it keeps.
+        self._NOVICE_LABELS = {
+            0: "1 · Set up board",
+            3: "2 · Drill",
+            4: "3 · Traces",
+            5: "4 · Cut out",
+            9: "5 · Check in 3D",
+        }
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(180)
@@ -1231,20 +1252,27 @@ class MainWindow(QMainWindow):
             b.setToolTip("Show the guided walkthrough for this section.")
             layout.addWidget(b)
             return b
-        self.guide_double_btn = _page_guide(l_double, "Guide: Double-sided")
-        self.guide_level_btn = _page_guide(l_level, "Guide: Bed leveling")
-        self.guide_rework_btn = _page_guide(l_rework, "Guide: Rework")
+        self.guide_double_btn = self._pro(_page_guide(l_double, "Guide: Double-sided"))
+        self.guide_level_btn = self._pro(_page_guide(l_level, "Guide: Bed leveling"))
+        self.guide_rework_btn = self._pro(_page_guide(l_rework, "Guide: Rework"))
 
         self.sidebar.setCurrentRow(0)
 
         # ===== BASIC: the things you set every time =====
         board_group, bl = _group("Board")
         bl.addRow(_row(self.load_btn, self.export_btn))
-        bl.addRow(_row(self.diag_btn, self.feedcard_btn))
+        # Diagnostics stays in Novice on purpose — it is the pre-flight check
+        # that catches a job that won't fit the bed or the Z range, and hiding
+        # a safety net from beginners would be exactly backwards.
+        bl.addRow(_row(self.diag_btn, self._pro(self.feedcard_btn)))
         bl.addRow(_row(self.save_setup_btn, self.load_setup_btn))
         bl.addRow("Name", self.name_edit)
+        # The preset IS the Novice interface to feeds and depths: the lab owner
+        # curates the profiles (see gerber2rml/app/presets.py) and a student
+        # picks one. Saving a new profile is a Professional act.
         bl.addRow("Preset", _row(self.preset_combo, self.apply_preset_btn,
-                                 self.save_preset_btn, stretch_first=True))
+                                 self._pro(self.save_preset_btn),
+                                 stretch_first=True))
         bl.addRow("Tool", self.bit_viz)
         bl.addRow("Stock", self.thickness_spin)
         bl.addRow("", self._auto_depth_row)
@@ -1285,7 +1313,7 @@ class MainWindow(QMainWindow):
             self.params_tabs.setVisible(on)
             self.params_toggle.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
         self.params_toggle.toggled.connect(_params_toggled)
-        l_proj.addWidget(self.params_group)
+        l_proj.addWidget(self._pro(self.params_group))
 
         # ===== VIEW / PLACEMENT =====
         view_group, vl = _group("View / machine")
@@ -1295,7 +1323,10 @@ class MainWindow(QMainWindow):
         vl.addRow("", self.show_bed_chk)
         vl.addRow(_row(self.sim3d_btn, self.sim_file_btn))
         vl.addRow(_row(self.export_img_btn))
-        l_proj.addWidget(view_group)
+        # Output format, mirroring and preview frame all default correctly for
+        # the SRM-20; getting one of them wrong scraps a board. The 3D views in
+        # here are reachable from the "Check in 3D" step instead.
+        l_proj.addWidget(self._pro(view_group))
 
         place_group, pl = _group("Placement on bed")
         pl.addRow("Place", self._place_row)
@@ -1328,7 +1359,7 @@ class MainWindow(QMainWindow):
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
         _ll.addWidget(_row(self.level_top_btn))
-        l_level.addWidget(level_group)
+        l_level.addWidget(self._pro(level_group))
         l_level.addStretch(1)
 
         # ===== DOUBLE-SIDED =====
@@ -1349,7 +1380,7 @@ class MainWindow(QMainWindow):
         self._dsf = _dsf                         # kept so rows can be shown/hidden
         self._ds_controls.setVisible(False)
         _dl.addWidget(self._ds_controls)
-        l_double.addWidget(ds_group)
+        l_double.addWidget(self._pro(ds_group))
         l_double.addStretch(1)
 
         # ===== REWORK =====
@@ -1368,7 +1399,7 @@ class MainWindow(QMainWindow):
         _rl.addWidget(self.rework_table)
         _rl.addWidget(_row(self.export_sel_btn, self.probe_boxes_btn,
                            stretch_first=True))
-        l_rework.addWidget(rework_group)
+        l_rework.addWidget(self._pro(rework_group))
         l_rework.addStretch(1)
 
         # ===== 3D VIEWER (a hub to re-open the windowed 3D views) =====
@@ -1430,21 +1461,25 @@ class MainWindow(QMainWindow):
         machine_bar.setObjectName("machineBar")
         _mb = QHBoxLayout(machine_bar)
         _mb.setContentsMargins(8, 2, 8, 2)
+        # Guide stays for everyone — it is how a first-timer gets going.
+        # Everything else on this strip drives the mill over the serial link;
+        # a Novice sends the exported files from VPanel and never touches it,
+        # so the whole row of machine controls goes away with the mode.
         _mb.addWidget(self.guide_btn)
-        _mb.addWidget(self.dro_label)
-        _mb.addWidget(self.touch_label)
+        _mb.addWidget(self._pro(self.dro_label))
+        _mb.addWidget(self._pro(self.touch_label))
         _mb.addStretch(1)
-        _mb.addWidget(self.trail_chk)
-        _mb.addWidget(self.trail_clear_btn)
-        _mb.addWidget(self.zero_btn)
-        _mb.addWidget(self.machine_zero_btn)
-        _mb.addWidget(self.stream_btn)
-        _mb.addWidget(self.align_btn)
-        _mb.addWidget(self.jog_chk)
-        _mb.addWidget(QLabel("port"))
-        _mb.addWidget(self.level_port_combo)
-        _mb.addWidget(self.connect_btn)
-        _mb.addWidget(self.stop_btn)
+        _mb.addWidget(self._pro(self.trail_chk))
+        _mb.addWidget(self._pro(self.trail_clear_btn))
+        _mb.addWidget(self._pro(self.zero_btn))
+        _mb.addWidget(self._pro(self.machine_zero_btn))
+        _mb.addWidget(self._pro(self.stream_btn))
+        _mb.addWidget(self._pro(self.align_btn))
+        _mb.addWidget(self._pro(self.jog_chk))
+        _mb.addWidget(self._pro(QLabel("port")))
+        _mb.addWidget(self._pro(self.level_port_combo))
+        _mb.addWidget(self._pro(self.connect_btn))
+        _mb.addWidget(self._pro(self.stop_btn))
 
         # Run-progress row: the dock's second line.
         progress_bar_row = QWidget()
@@ -1465,7 +1500,7 @@ class MainWindow(QMainWindow):
         _cv.setSpacing(0)
         _cv.addWidget(splitter, 1)
         _cv.addWidget(machine_bar)
-        _cv.addWidget(progress_bar_row)
+        _cv.addWidget(self._pro(progress_bar_row))
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready", 5000)
 
@@ -1473,6 +1508,8 @@ class MainWindow(QMainWindow):
         # values match the selected preset in the dropdown
         self.apply_selected_preset()
         self.sidebar.currentRowChanged.connect(self._autofit_panel)
+        self._build_mode_menu()
+        self._apply_mode()               # Novice on a fresh install
         self._autofit_panel()
         self.move_chk.setChecked(True)   # move-on-bed drag on by default
 
@@ -1628,8 +1665,116 @@ class MainWindow(QMainWindow):
                 isolate(mlay.top_copper, self.state.trace, outline=mlay.top_outline))
         return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
 
-    def _on_advanced_toggled(self, on):
-        pass
+    # ---- Novice / Professional mode ---------------------------------------
+    def _pro(self, widget, form=None):
+        """Tag ``widget`` as Professional-only and hand it straight back, so it
+        can be wrapped inline at the point it is laid out.
+
+        Pass ``form`` when the widget is a field in a QFormLayout row that has
+        a label — hiding the field on its own would strand the label next to
+        empty space.
+        """
+        # The marker is what the tour reads to tell "hidden because Novice"
+        # apart from "on a stacked page that isn't showing right now" — Qt
+        # hides the latter explicitly too, so plain visibility can't separate
+        # them (see TourController._is_put_away).
+        widget.setProperty("proOnly", True)
+        self._pro_items.append((widget, form))
+        return widget
+
+    def _build_mode_menu(self):
+        """The Mode menu. Deliberately a plain menu item, not a password: this
+        manages how much UI a beginner faces, it does not defend anything."""
+        from PySide6.QtGui import QAction, QActionGroup
+        menu = self.menuBar().addMenu("&Mode")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+
+        self.act_novice = QAction("&Novice", self, checkable=True)
+        self.act_novice.setToolTip(
+            "Load Gerbers, pick a profile, export the three files. Everything "
+            "else is put away.")
+        self.act_pro = QAction("&Professional", self, checkable=True)
+        self.act_pro.setToolTip(
+            "Every control: job parameters, double-sided, bed leveling, "
+            "rework, machine link.")
+        for act, m in ((self.act_novice, uimode.NOVICE), (self.act_pro, uimode.PRO)):
+            group.addAction(act)
+            menu.addAction(act)
+            act.triggered.connect(lambda _checked=False, m=m: self._on_mode_chosen(m))
+
+        menu.addSeparator()
+        self.act_whats_hidden = QAction("What's hidden in Novice?", self)
+        self.act_whats_hidden.triggered.connect(self._show_mode_help)
+        menu.addAction(self.act_whats_hidden)
+
+        if uimode.forced_mode():
+            # SRM_CAM_MODE pins the mode for this machine — show which one is
+            # active but don't pretend it can be changed from here.
+            for act in (self.act_novice, self.act_pro):
+                act.setEnabled(False)
+            menu.setTitle("&Mode (locked)")
+
+    def _on_mode_chosen(self, mode):
+        uimode.set_mode(mode)
+        self._apply_mode()
+
+    def _show_mode_help(self):
+        """List what Novice puts away. A beginner should never have to wonder
+        whether the thing they half-remember is gone or just tucked out of the
+        way, and a teacher should be able to answer that without a manual."""
+        hidden = "".join(f"\u2022  {line}\n" for line in uimode.HIDDEN_IN_NOVICE)
+        QMessageBox.information(
+            self, "Novice mode",
+            "Novice mode shows the shortest path from Gerbers to three files "
+            "you can send from VPanel:\n\n"
+            "    load  ->  drill  ->  traces  ->  cut out  ->  export\n\n"
+            "It puts these away:\n\n"
+            + hidden +
+            "\nNothing is removed and nothing behaves differently - the same "
+            "settings export the same files in either mode. Switch to "
+            "Professional from this menu whenever you need the rest.")
+
+    def _apply_mode(self):
+        """Show or hide everything the current mode governs.
+
+        Called once at startup and again on every switch. Idempotent: it sets
+        state from the mode rather than toggling, so it can be re-run freely.
+        """
+        pro = uimode.is_pro()
+
+        for widget, form in self._pro_items:
+            if form is not None:
+                try:
+                    form.setRowVisible(widget, pro)      # Qt 6.4+
+                except (AttributeError, TypeError):
+                    widget.setVisible(pro)               # older Qt: field only
+            else:
+                widget.setVisible(pro)
+
+        for row in range(self.sidebar.count()):
+            hidden = (not pro) and row in self._PRO_STEPS
+            self.sidebar.setRowHidden(row, hidden)
+            label = (self._SPINE[row][0] if pro
+                     else self._NOVICE_LABELS.get(row, self._SPINE[row][0]))
+            self.sidebar.item(row).setText(label)
+
+        if not pro:
+            # A double-sided job needs the flip and align steps to be run
+            # safely, and Novice does not have them. Leaving the checkbox on
+            # would export a job whose second half has no UI behind it.
+            if self.double_sided_chk.isChecked():
+                self.double_sided_chk.setChecked(False)
+                self.statusBar().showMessage(
+                    "Novice mode is single-sided — double-sided turned off. "
+                    "Switch to Professional to mill both sides.", 10000)
+            # Never leave someone parked on a step they can no longer see.
+            if self.sidebar.currentRow() in self._PRO_STEPS:
+                self.sidebar.setCurrentRow(0)
+
+        act = self.act_pro if pro else self.act_novice
+        act.setChecked(True)
+        self._autofit_panel()
 
     def _on_toggle_panel(self, collapsed):
         """Hide the settings panel for a full-width preview, or restore it.
