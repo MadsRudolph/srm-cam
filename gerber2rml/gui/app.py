@@ -652,6 +652,17 @@ class MainWindow(QMainWindow):
             "Set the copper's front-left corner to the live tool position — jog the "
             "bit to the corner of the copper, then click. Needs the machine connected.")
         self.stock_here_btn.clicked.connect(self._on_stock_corner_from_tool)
+        # Professional-only on purpose: this cuts into the shared sacrificial
+        # bed and is done ONCE by whoever owns the machine, not by each of
+        # thirty students. Novices get the benefit (pins already in the bed)
+        # without the ability to drill more holes in it.
+        self.bedfix_btn = QPushButton("Export bed fixture (pin holes)...")
+        self.bedfix_btn.setToolTip(
+            "Drill three dowel-pin holes in the sacrificial bed for this stock "
+            "size. Push the copper against the pins and its corner lands on the "
+            "work origin every time — no jogging to the corner by eye, and no "
+            "machine link needed. Cut once per bed.")
+        self.bedfix_btn.clicked.connect(self._on_export_bed_fixture)
         self.stock_center_btn = QPushButton("Center design")
         self.stock_center_btn.setToolTip(
             "Move the design so it's centred on the copper stock — a starting point "
@@ -1370,6 +1381,7 @@ class MainWindow(QMainWindow):
         sg.addRow("Size", self._stock_wh_row)
         sg.addRow("Corner", self._stock_xy_row)
         sg.addRow("", _row(self.stock_here_btn, self.stock_center_btn))
+        sg.addRow("", self._pro(self.bedfix_btn))
         sg.addRow("", self.stock_show_chk)
         l_proj.addWidget(stock_group)
         l_proj.addStretch(1)
@@ -1833,6 +1845,39 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if ans == QMessageBox.Yes:
             QDesktopServices.openUrl(QUrl(result.url))
+
+    def _on_export_bed_fixture(self):
+        """Write the pin-hole program and the procedure that goes with it.
+
+        Both, always: the .nc on its own is useless to whoever picks it up,
+        because it wants a sacrificial bed, a work origin set 10 mm in, and
+        three pins pressed in afterwards.
+        """
+        from gerber2rml.engine import bedfixture
+
+        w, h = self.stock_w_spin.value(), self.stock_h_spin.value()
+        try:
+            paths = bedfixture.fixture_toolpaths(w, h)
+            text = bedfixture.procedure(w, h)
+        except ValueError as e:
+            QMessageBox.warning(self, "Stock too big", str(e))
+            return
+
+        out = self._pick_out_dir()
+        if not out:
+            return
+        out = Path(out)
+        backend = BACKENDS[self.machine_combo.currentText()]
+        stem = f"{int(round(w))}x{int(round(h))}_bedfixture"
+        nc = out / f"{stem}{backend.ext}"
+        nc.write_text(backend.render(paths, xy_feed=4.0, plunge_feed=1.0))
+        (out / f"{stem}.txt").write_text(text, encoding="utf-8")
+
+        QMessageBox.information(
+            self, "Bed fixture exported",
+            f"Wrote {nc.name} and {stem}.txt to:\n{out}\n\n"
+            "Read the .txt first — it cuts into the sacrificial bed and only "
+            "wants doing once per bed.")
 
     def _on_check_updates(self):
         """Ask GitHub whether a newer release exists, and offer the download.

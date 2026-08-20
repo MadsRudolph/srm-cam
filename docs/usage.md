@@ -141,6 +141,62 @@ In the GUI, connect to the Uno, build a grid, and **Probe over SPI** — the bit
 taps each point and records its true height into the table; the engrave depth then
 follows the surface. You can also save/load the height map as CSV.
 
+## Keeping the copper and the machine in sync
+
+The machine cuts where the **G54 work origin** says, and nothing tells it where
+your copper actually is. Normally a person jogs the spindle to the corner of the
+stock and calls that zero — a sheared edge, judged by eye, differently by every
+student. Two things go wrong:
+
+- the cut lands a millimetre or two off the copper, or off it entirely;
+- worse, if the origin moves *between passes*, traces / drill / cut-out stop
+  registering **with each other**. Every pass looks fine and the board is scrap.
+
+Neither needs the Arduino to fix. Three parts:
+
+### 1 · Let the machine drill its own datum
+
+**Copper stock → Export bed fixture (pin holes)...** (Professional mode) writes a
+program that drills **three Ø3 mm dowel-pin holes** into the sacrificial bed,
+plus a `.txt` telling the operator what to do with them. Press pins in, push the
+copper against them, tape it down — the stock's front-left corner now lands on
+the work origin **every time**, with nothing measured by eye.
+
+It works because anything the machine cuts is *already* in machine coordinates.
+A jig you bolt down sits somewhere unknown until you measure it; a hole the
+machine drilled sits exactly where it was told.
+
+Three pins, not four — **3-2-1 locating**: two along the bottom edge fix rotation
+and Y, one on the left edge fixes X. A fourth has nothing left to constrain and
+can only fight the others. Pins rather than a milled corner because an inside
+corner packs with chips, and a chip behind the stock is the exact error being
+removed here.
+
+Cut **once per sacrificial bed**, by whoever owns the machine — which is why it
+is Professional-only. Students get the pins, not the ability to drill more holes
+in a shared bed.
+
+### 2 · Never move XY again
+
+Re-zero **Z** after every bit change. Never XY. The fixture makes this practical:
+there is no reason to touch XY once the pins are in.
+
+### 3 · Prove it before you cut — the dry run
+
+Every export writes **`<name>_airpass.nc`**, and it is step 0 in the run plan.
+Spindle **off**, bit held 5 mm up, tracing the board outline at a feed slow
+enough to watch. If the stock is misplaced you see the bit leave the copper and
+you stop — having spent seconds instead of a board.
+
+This is the part that actually answers *"is it aligned?"*, it needs no hardware
+at all, and it is worth running before **every** job, fixture or not.
+
+> **One thing to check on your machine:** whether the SRM-20 keeps its user
+> origin across a power cycle. If it does, set XY zero once per term against the
+> fixture and never again. If it does not, the daily ritual is "seat the bit in
+> pin hole 1, set origin" — still far better than finding a sheared stock corner
+> by eye, because a drilled hole is a crisp feature you can drop a bit into.
+
 ## Milling without the Arduino
 
 A bare, unmodified SRM-20 with nothing but VPanel is a fully supported setup, and
@@ -152,6 +208,7 @@ Everything below works with no board fitted to the machine:
 | Trace isolation, drilling, cut-out | Automatic probing over SPI |
 | Double-sided registration — dowel pins *and* fiducials | Live DRO / click-to-jog |
 | Rework, photo check, 3D simulation, diagnostics | Electrical touch-off (`Probe Z`) |
+| Bed fixture + the dry-run outline (see above) | `Corner = tool` |
 | Presets, calibration coupon, every export | |
 
 **Bed leveling still works without it** — manually. Build the grid, click
