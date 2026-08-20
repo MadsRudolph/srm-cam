@@ -21,6 +21,10 @@ from gerber2rml.gui.canvas import PreviewCanvas
 from gerber2rml.gui.tour import TourController
 from gerber2rml.gui import mode as uimode
 
+# The user guide. Published from website/ by .github/workflows/pages.yml, and
+# linked from the README — tests/test_window.py asserts the two agree.
+USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/index.html"
+
 _OPS = ["traces", "drill", "cutout"]
 
 
@@ -1520,6 +1524,7 @@ class MainWindow(QMainWindow):
         self.guide_double_btn.clicked.connect(lambda: self.tour.start_branch("Double-sided"))
         self.guide_level_btn.clicked.connect(lambda: self.tour.start_branch("Bed leveling"))
         self.guide_rework_btn.clicked.connect(lambda: self.tour.start_branch("Rework"))
+        self._build_help_menu()          # after the tour: it links to it
 
     _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
 
@@ -1737,6 +1742,73 @@ class MainWindow(QMainWindow):
         for root in kicadplugin.config_roots():
             dirs.extend(kicadplugin.plugin_dirs(root))
         return dirs
+
+    def _build_help_menu(self):
+        """A Help menu whose first item is the guide itself.
+
+        The step-by-step guide is what turns "I have Gerbers" into "I have a
+        board". A student who has to go and find the URL will not.
+        """
+        from PySide6.QtGui import QAction, QKeySequence
+        menu = self.menuBar().addMenu("&Help")
+        guide = QAction("SRM-CAM &user guide (web)...", self)
+        guide.setShortcut(QKeySequence.HelpContents)          # F1
+        guide.setToolTip(USER_GUIDE_URL)
+        guide.triggered.connect(self._on_open_user_guide)
+        menu.addAction(guide)
+        menu.addSeparator()
+        tour = QAction("Replay the guided tour", self)
+        tour.triggered.connect(lambda: self.tour.start())
+        menu.addAction(tour)
+        menu.addSeparator()
+        upd = QAction("Check for &updates...", self)
+        upd.setToolTip("See whether a newer SRM-CAM has been released.")
+        upd.triggered.connect(self._on_check_updates)
+        menu.addAction(upd)
+
+    def _on_check_updates(self):
+        """Ask GitHub whether a newer release exists, and offer the download.
+
+        Not a self-updater: a frozen app cannot safely overwrite itself while
+        running, and a lab PC's install is often not the student's to replace.
+        This finds out and points at the download; the install is their click.
+        """
+        from PySide6.QtCore import Qt, QUrl
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtWidgets import QApplication
+        from gerber2rml import __version__
+        from gerber2rml.engine import updates
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = updates.check(__version__)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if result.status != updates.UPDATE:
+            # up to date, or we could not find out — both are just information
+            QMessageBox.information(self, "Check for updates", result.message)
+            return
+
+        notes = result.notes.strip()
+        if len(notes) > 600:
+            notes = notes[:600].rstrip() + "…"
+        body = result.message + (f"\n\nWhat's new:\n{notes}" if notes else "")
+        ans = QMessageBox.question(
+            self, "Update available",
+            body + "\n\nOpen the download page?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ans == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(result.url))
+
+    def _on_open_user_guide(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        if not QDesktopServices.openUrl(QUrl(USER_GUIDE_URL)):
+            QMessageBox.information(
+                self, "User guide",
+                "Could not open a browser. The guide is at:\n\n"
+                + USER_GUIDE_URL)
 
     def _build_kicad_menu(self):
         from PySide6.QtGui import QAction

@@ -1898,3 +1898,75 @@ def test_job_parameter_forms_are_on_screen():
     # the traces form is the first tab and really is the live form object
     assert w.params_tabs.widget(0) is w.forms["traces"]
     w.close()
+
+
+def test_help_menu_opens_the_online_user_guide(monkeypatch):
+    """The guide is the thing that turns 'I have Gerbers' into 'I have a
+    board', and a student who has to go find a URL will not."""
+    from PySide6.QtGui import QDesktopServices
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl",
+                        lambda url: opened.append(url.toString()) or True)
+
+    MainWindow()._on_open_user_guide()
+
+    assert opened == ["https://madsrudolph.github.io/srm-cam/index.html"]
+
+
+def test_user_guide_url_matches_the_one_the_readme_advertises():
+    """Two places that must not drift: the app's Help menu and the README
+    badge students land on from GitHub."""
+    from pathlib import Path
+    from gerber2rml.gui import app as appmod
+
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+
+    assert appmod.USER_GUIDE_URL.rstrip("/index.html").rstrip("/") in \
+        readme.read_text(encoding="utf-8")
+
+
+def test_check_for_updates_opens_the_download_when_one_exists(monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine import updates
+
+    monkeypatch.setattr(updates, "check", lambda *a, **k: updates.Result(
+        updates.UPDATE, "9.9.9", "https://example.invalid/rel", "", "msg"))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl",
+                        lambda url: opened.append(url.toString()) or True)
+
+    MainWindow()._on_check_updates()
+
+    assert opened == ["https://example.invalid/rel"]
+
+
+def test_check_for_updates_says_so_when_already_current(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine import updates
+
+    monkeypatch.setattr(updates, "check", lambda *a, **k: updates.Result(
+        updates.CURRENT, "0.2.7", updates.RELEASES_PAGE, "", "SRM-CAM 0.2.7 is up to date."))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    MainWindow()._on_check_updates()
+
+    assert shown and "up to date" in shown[0]
+
+
+def test_check_for_updates_survives_having_no_internet(monkeypatch):
+    """A lab PC with no internet is normal — this must report, not raise."""
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.engine import updates
+
+    monkeypatch.setattr(updates, "check", lambda *a, **k: updates.Result(
+        updates.ERROR, None, updates.RELEASES_PAGE, "",
+        "Could not check for updates: getaddrinfo failed"))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    MainWindow()._on_check_updates()
+
+    assert shown and "Could not check for updates" in shown[0]
