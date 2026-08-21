@@ -1,5 +1,13 @@
 # HANDOFF — gerber2rml (next task: double-sided-aware preview)
 
+> **2026-08-21 — SPI gives spindle ON/OFF, but NOT speed.** `turnSpindle` is
+> proven working over SPI — but measured on the machine, the RPM argument is
+> **ignored**: 500, 1000, 2000 and 3000 all settle at the same speed, which is
+> whatever VPanel's slider is set to. So the note below stands — RPM is still a
+> VPanel cut-setting — and SPI adds an `M3`/`M5` equivalent, not speed control.
+> Also proven over SPI: pause/resume/stopMoving, jumpToView, and the full status
+> word. See `docs/2026-08-21-spi-command-audit.md`.
+
 > **2026-06-30 — spindle spin-up settle + ramped lead-in.** NC header dwells
 > (`G04 X<sec>`, default 2 s) after `M3` so the spindle is at full RPM before the
 > first cut (SRM-20 has no programmable spindle speed — RPM is a VPanel setting).

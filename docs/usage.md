@@ -278,6 +278,80 @@ literally, because once the holes are drilled in a piece of copper they are a
 fact about it; an untouched automatic choice is stored as "automatic" so it
 keeps tracking the design if you move it later.
 
+## Machine control (Professional)
+
+With the Arduino fitted and **Connect** on, the machine dock drives the mill
+directly. Every control here uses an SRM-20 SPI command verified on the machine
+([audit](2026-08-21-spi-command-audit.md)).
+
+The **dock** keeps what you reach for with a hand on the machine:
+
+| Control | What it does | VPanel equivalent |
+|---|---|---|
+| **Z ▲ / ▼** + step | Raises/lowers the bit by 0.01–5 mm. **PageUp / PageDown** do the same | its Z jog |
+| **Probe Z** | Touches off on the surface and zeroes Z there | — |
+| **Spindle** | Starts/stops the tool | its Spindle on/off |
+| **Pause** / **Resume** | Holds the machine mid-move and carries on | Pause / Resume |
+| **STOP** | Kills the move in flight, stops the spindle, lifts | Stop |
+| status strip | `LID OPEN`, `spindle 8600`, `paused`, `ERROR`, `FAULT` | its status display |
+
+Everything else is in the **Machine menu**: click-to-jog, align overlay, tool
+trail, zero Z on the machine, move to the view position, stream a job, and the
+machine test. They are one click away from every page rather than crowding the
+strip — which had grown long enough to push Connect and STOP off the screen.
+
+Z jogging down is refused while the probe says the bit is already touching;
+jogging up always works, since backing off contact is the point.
+
+**Spindle speed is still a VPanel setting.** The machine accepts start/stop over
+the link but *ignores* the RPM value — 500 and 3000 produce identical speed. Set
+the speed on VPanel's slider; use the button here to turn it on and off.
+
+Safety, all enforced in firmware so they survive the app crashing:
+
+- the spindle **will not start with the lid open**, or with the bit resting on
+  the probe-wired plate;
+- a **deadman** stops it if the app stops talking to the board for 10 s;
+- **STOP** halts the queued move rather than waiting for it to finish;
+- the status strip turns red for anything that stops work.
+
+The **Spindle** button follows the machine, so it shows a spindle you started
+from VPanel too — and disconnecting never stops a spindle SRM-CAM did not start.
+
+### Streaming a job without VPanel
+
+**Stream (exp.)** sends a job move-by-move over the link. A **wet run** now
+starts and stops the spindle itself, holds on **Pause**, and aborts if the lid
+opens mid-job. It still needs the speed set in VPanel first, and it is still
+experimental: always do the dry run on a new job.
+
+## Machine test — what this machine can actually do
+
+**Machine test…** in the machine dock (Professional) probes the SRM-20's SPI
+command set and reports PASS / FAIL / UNKNOWN per command, with a **Copy report**
+button. Needs firmware v3 (`hardware/srm20_spi_probe`).
+
+It exists because the app has only ever used 5 of the machine's 17 SPI commands,
+and the rest — spindle control, the full status word, pause/resume/stop, View —
+are what a VPanel-free workflow would be built on. Some Roland commands are
+already known not to work on this machine, so each one gets tested before
+anything relies on it. See
+[2026-08-21-spi-command-audit.md](2026-08-21-spi-command-audit.md).
+
+| Arming | What runs |
+|---|---|
+| (none) | Read-only: firmware + machine version, status word, framing delay, cover-bit check, idle job-control acks |
+| **Allow motion** | Move to View, interrupt a move, pause/resume, speed calibration. Each returns the head where it started — keep 20 mm of clear travel in Y |
+| **Allow spindle** | Runs the tool at 3000 RPM for a few seconds. **Remove the tool** and close the lid |
+
+**Run the cover test first.** Open and close the lid while it runs: if the
+`cover` flag follows in the live status strip, the machine's status bits are
+real and the firmware's safety guard works. If it never changes, disarm the
+guard before probing — a stuck bit would abort good probe runs.
+
+`scripts/srm20_bench.py` does the same from the command line and adds the long
+sweeps (SPI framing delay vs read corruption; speed units vs mm/s).
+
 ## Milling without the Arduino
 
 A bare, unmodified SRM-20 with nothing but VPanel is a fully supported setup.
