@@ -34,7 +34,11 @@ After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 - **Traces / drill / cut-out** from Gerber + Excellon, exported per operation.
 - **G-code default** (`.nc`, G54 origin) for VPanel NC mode; RML available.
 - **Double-sided** registration — dowel pins or measured fiducials.
-- **Bed leveling** — probe a height map so depth follows an uneven surface.
+- **Bed leveling** — probe a height map so depth follows an uneven surface;
+  one guided button in Novice.
+- **Screw fixture** — bolt the copper to the plate through the spoilboard's
+  hole grid, so it cannot creep and no clamp sits in the cutter's way. Travel
+  height is raised automatically to clear the screw heads.
 - **Rework** — mark several spots, re-cut them in one pass at per-region depth.
 - **3D views** — toolpath simulation + bed height-map.
 - **Guided tour** — launches on first run; replay via the **Guide** button (and
@@ -64,10 +68,13 @@ while SRM-CAM refuses to cut it.
 
 ## Two modes
 
-**Novice** (the default on a fresh install) is the shortest path from Gerbers to
-three files you can send from VPanel — load, drill, traces, cut out, export. Job
-parameters, double-sided, bed leveling, rework and the machine link are put
-away; Diagnostics and the Guide stay, because a beginner needs those most.
+**Novice** (the default on a fresh install) is the short path from Gerbers to
+files you can send from VPanel — load, level, drill, traces, cut out, export.
+Job parameters, double-sided, rework, the bed-leveling workbench and the live
+DRO / jog / streaming dock are put away. Diagnostics, the Guide, one-button bed
+leveling, `Corner = tool` and the screw fixture stay, because a beginner needs
+those most — and because hiding the screw checkbox would make Novice the more
+dangerous mode.
 
 **Professional** is every control.
 
