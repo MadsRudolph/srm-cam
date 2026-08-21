@@ -464,6 +464,15 @@ class MainWindow(QMainWindow):
         # together by _apply_mode(). Novice is the same UI with these put away
         # — never a second code path, so the two modes cannot drift apart.
         self._pro_items = []
+        # ...and the mirror image: widgets that exist ONLY in Novice, because
+        # a beginner needs a guided version of something the full UI exposes
+        # as a workbench.
+        self._novice_items = []
+
+        # Screw positions chosen by hand, or None for "let the app pick".
+        # Kept separate from the automatic result rather than seeding it, so
+        # "go back to automatic" is always available and always meaningful.
+        self._manual_screws = None
 
         # Ensure the per-user workspace (Documents/SRM-CAM/{sessions,exports,
         # photos}) exists; every file dialog starts in its matching folder.
@@ -643,14 +652,18 @@ class MainWindow(QMainWindow):
             "Draw the measured copper piece on the bed so you can line the design "
             "(and dowels) up inside it. Turns red if the job spills off the copper.")
         self.stock_show_chk.toggled.connect(self._update_stock_preview)
-        # Professional-only: it reads the live tool position over the machine
-        # link, and Novice hides that link entirely — offering it there is a
-        # button that cannot work. Novice places the design with 'Center
-        # design' and the drag controls, which need no hardware.
-        self.stock_here_btn = self._pro(QPushButton("Corner = tool"))
+        # This used to be Professional-only, on the reasoning that it reads the
+        # live tool position and Novice hid the machine link entirely. That
+        # stopped being true when the lab was allowed to fit the Arduino and
+        # Novice gained guided probing. Without this a beginner's only way to
+        # say where their copper is, is to TYPE machine coordinates they have
+        # no way of knowing — so the design lands somewhere arbitrary and the
+        # probe grid goes with it. Jogging to the corner and pressing a button
+        # is the whole point of having the link.
+        self.stock_here_btn = QPushButton("Corner = tool")
         self.stock_here_btn.setToolTip(
             "Set the copper's front-left corner to the live tool position — jog the "
-            "bit to the corner of the copper, then click. Needs the machine connected.")
+            "bit to the corner of the copper (here or in VPanel), then click.")
         self.stock_here_btn.clicked.connect(self._on_stock_corner_from_tool)
         # Professional-only on purpose: this cuts into the shared sacrificial
         # bed and is done ONCE by whoever owns the machine, not by each of
@@ -663,6 +676,32 @@ class MainWindow(QMainWindow):
             "work origin every time — no jogging to the corner by eye, and no "
             "machine link needed. Cut once per bed.")
         self.bedfix_btn.clicked.connect(self._on_export_bed_fixture)
+        # Screw fixture: bolt the copper through the spoilboard grid into the
+        # threaded plate. A checkbox rather than something inferred, because
+        # only a person can know whether the screws are actually IN — and the
+        # answer changes the safe travel height, so guessing is not an option.
+        self.screws_chk = QCheckBox("Copper screwed down (M4)")
+        self.screws_chk.setToolTip(
+            "Tick once the M4 screws are in. Raises the travel height on every "
+            "operation so a rapid clears the screw heads, and shows where they "
+            "sit so you can keep the design clear of them.")
+        self.screws_chk.toggled.connect(self._on_screws_toggled)
+        self.screws_pick_chk = QCheckBox("Pick holes")
+        self.screws_pick_chk.setToolTip(
+            "Click holes on the bed to add or remove them as fastening points. "
+            "Starts from the app's suggestion so you are editing it, not "
+            "starting from an empty board.")
+        self.screws_pick_chk.toggled.connect(self._on_screw_pick_toggled)
+        self.screws_auto_btn = QPushButton("Auto")
+        self.screws_auto_btn.setToolTip(
+            "Discard hand-picked holes and go back to the automatic choice.")
+        self.screws_auto_btn.clicked.connect(self._on_screws_auto)
+        self.screws_btn = QPushButton("Export screw fixture...")
+        self.screws_btn.setToolTip(
+            "Write a small program that drills M4 clearance holes through the "
+            "copper, on the spoilboard's hole grid. Run it FIRST, screw the "
+            "copper down, re-zero Z, then cut the job.")
+        self.screws_btn.clicked.connect(self._on_export_screw_fixture)
         self.stock_center_btn = QPushButton("Center design")
         self.stock_center_btn.setToolTip(
             "Move the design so it's centred on the copper stock — a starting point "
@@ -1238,15 +1277,22 @@ class MainWindow(QMainWindow):
         # it out, look at it in 3D before committing. Bed leveling, the flip
         # and rework are the steps that need a second bit of judgement, so they
         # are the ones Professional adds back.
-        self._PRO_STEPS = {1, 2, 6, 7, 8}
+        # Bed leveling used to be in here. It came out when the lab was allowed
+        # to fit the Arduino: probing is the single biggest thing the board buys
+        # a beginner, because it makes cut depth follow the real surface, and
+        # that is what decides whether isolation actually separates traces.
+        # Novice gets a guided one-button version (see novice_level_btn); the
+        # full probe workbench above it stays professional.
+        self._PRO_STEPS = {2, 6, 7, 8}
         # ...and with them gone the "1 2 3 4 ... 8" numbering would read
         # "1 4 5 6 10", so Novice gets its own labels for the steps it keeps.
         self._NOVICE_LABELS = {
             0: "1 · Set up board",
-            3: "2 · Drill",
-            4: "3 · Traces",
-            5: "4 · Cut out",
-            9: "5 · Check in 3D",
+            1: "2 · Level the bed",
+            3: "3 · Drill",
+            4: "4 · Traces",
+            5: "5 · Cut out",
+            9: "6 · Check in 3D",
         }
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
@@ -1382,6 +1428,9 @@ class MainWindow(QMainWindow):
         sg.addRow("Corner", self._stock_xy_row)
         sg.addRow("", _row(self.stock_here_btn, self.stock_center_btn))
         sg.addRow("", self._pro(self.bedfix_btn))
+        sg.addRow("", _row(self.screws_chk))
+        sg.addRow("", _row(self.screws_pick_chk, self.screws_auto_btn))
+        sg.addRow("", _row(self.screws_btn))
         sg.addRow("", self.stock_show_chk)
         l_proj.addWidget(stock_group)
         l_proj.addStretch(1)
@@ -1402,6 +1451,64 @@ class MainWindow(QMainWindow):
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
         _ll.addWidget(_row(self.level_top_btn))
+        # ===== BED LEVELING - the guided version ============================
+        # The group above is a workbench: grid size, retouch interval, export,
+        # save/load, 3D, the raw table. All of it earns its place for someone
+        # who knows what a height map is. For someone who does not, the useful
+        # question is just "make the depth follow the surface", and this is the
+        # one control that answers it.
+        nov_level = QGroupBox("Level the bed")
+        _nl = QVBoxLayout(nov_level)
+        _nl.setContentsMargins(14, 16, 14, 12)
+        _nl.setSpacing(10)
+        nov_hint = QLabel("""Measures the height of the copper across your board, so the
+cut depth follows the real surface instead of assuming it is flat.
+
+Set up before you press it:
+
+   1.  Paper or tape UNDER the board, isolating it from the bed.
+   2.  Clip the red lead to the copper.
+   3.  Bit in the spindle. Spindle OFF.
+   4.  Jog the bit 2-3 mm above the front-left corner of the board.
+
+The machine will move. You get a confirmation first.""")
+        nov_hint.setWordWrap(True)
+        nov_hint.setObjectName("helpText")
+        _nl.addWidget(nov_hint)
+
+        # How many points, in the units a person thinks in. The professional
+        # panel above exposes nx/ny separately; nobody new to this needs a
+        # non-square grid before they need a working one.
+        self.novice_grid_combo = QComboBox()
+        self.novice_grid_combo.addItems(
+            ["Quick - 9 points", "Normal - 16 points", "Fine - 25 points"])
+        self.novice_grid_combo.setCurrentIndex(1)
+        self.novice_grid_combo.setMaximumWidth(190)
+        self.novice_grid_combo.setToolTip(
+            "More points measure the surface more faithfully and take longer. "
+            "Fine is worth it for a V-bit, whose cut width changes with depth.")
+        self.novice_grid_combo.currentIndexChanged.connect(
+            self._on_novice_grid_changed)
+        _nl.addWidget(_row(QLabel("Detail"), self.novice_grid_combo,
+                           stretch_first=False))
+
+        # Answering "where will it measure?" BEFORE anything taps the board.
+        # The grid follows the design's placement on the copper, so a wrong
+        # placement produces visibly wrong probe points - which is the point.
+        self.novice_showprobe_btn = QPushButton("Show where it will probe")
+        self.novice_showprobe_btn.setToolTip(
+            "Draw the planned probe points on the preview. Moves nothing.")
+        self.novice_showprobe_btn.clicked.connect(self._on_novice_show_probes)
+        _nl.addWidget(self.novice_showprobe_btn)
+
+        self.novice_level_btn = QPushButton("Level the bed")
+        self.novice_level_btn.setToolTip(
+            "Find the Arduino, lay out a probe grid over the board, and measure "
+            "the surface height at each point.")
+        self.novice_level_btn.clicked.connect(self._on_novice_level)
+        _nl.addWidget(self.novice_level_btn)
+        l_level.addWidget(self._novice(nov_level))
+
         l_level.addWidget(self._pro(level_group))
         l_level.addStretch(1)
 
@@ -1481,6 +1588,7 @@ class MainWindow(QMainWindow):
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
         self.preview.on_align_pick = self._on_align_pick
+        self.preview.on_screw_pick = self._on_screw_pick
         self.preview.on_pin_moved = self._on_fid_pin_moved
         self.preview.on_jog_step = self._on_jog_step
         # The panel collapse toggle lives on the viewer's control bar.
@@ -1601,6 +1709,28 @@ class MainWindow(QMainWindow):
         self.state.drill = self.forms["drill"].value()
         self.state.cutout = self.forms["cutout"].value()
         self.state.set_placement(self.place_x_spin.value(), self.place_y_spin.value())
+        self._apply_screw_travel_z()
+
+    def _apply_screw_travel_z(self):
+        """Raise every operation's travel height clear of the screw heads.
+
+        Done here, in _sync_state, because that is the single point every path
+        goes through — preview, estimate and export alike. Setting it on the
+        forms instead would let one path miss it, and the one that missed it
+        would be the one that drives the machine.
+
+        Only ever raises. Someone who has deliberately set a higher travel for
+        their own reasons keeps it.
+        """
+        if not self.screws_chk.isChecked():
+            return
+        from dataclasses import replace
+        from gerber2rml.engine.spoilboard import min_travel_z
+        z = min_travel_z()
+        for attr in ("trace", "drill", "cutout"):
+            job = getattr(self.state, attr)
+            if job.travel_z < z:
+                setattr(self.state, attr, replace(job, travel_z=z))
 
     def _on_mirror_toggled(self):
         if self.state.gerber_dir is not None:
@@ -1727,6 +1857,16 @@ class MainWindow(QMainWindow):
         self._pro_items.append((widget, form))
         return widget
 
+    def _novice(self, widget, form=None):
+        """Tag ``widget`` as Novice-only - the mirror of :meth:`_pro`.
+
+        Used for guided stand-ins: one button that wraps a professional
+        workflow, shown exactly when the workbench version is hidden.
+        """
+        widget.setProperty("noviceOnly", True)
+        self._novice_items.append((widget, form))
+        return widget
+
     def _build_mode_menu(self):
         """The Mode menu. Deliberately a plain menu item, not a password: this
         manages how much UI a beginner faces, it does not defend anything."""
@@ -1845,6 +1985,223 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if ans == QMessageBox.Yes:
             QDesktopServices.openUrl(QUrl(result.url))
+
+    def _update_hole_grid_overlay(self, show):
+        """Draw the spoilboard's own hole grid, or clear it.
+
+        Shown with the bed because the holes ARE the bed - the point is to see
+        where the copper can be bolted down while positioning it, before any
+        screw hole is committed to. Every hole is drawn, including the outer
+        mounting ring: this is a picture of the plate, not of the subset a
+        screw may use.
+        """
+        from gerber2rml.engine import spoilboard as sb
+        if not show:
+            self.preview.set_hole_grid(None)
+            return
+        g = sb.measured_grid()
+        pts = [g.centre(i, j) for j in range(g.ny) for i in range(g.nx)]
+        self.preview.set_hole_grid(pts, g.hole_diameter)
+
+    # ---- screw fixture: bolt the copper to the plate ----------------------
+    def _stock_rect(self):
+        """The copper's footprint in machine mm: (x0, y0, w, h)."""
+        return (self.stock_x_spin.value(), self.stock_y_spin.value(),
+                self.stock_w_spin.value(), self.stock_h_spin.value())
+
+    def _screw_keepout(self):
+        """Everything a screw head has to stay clear of.
+
+        Not just the board outline. The CUT-OUT pass runs AROUND the outside of
+        it — the path centreline sits at ``outline.buffer(bit_r)`` and the
+        cutter sweeps a further ``bit_r`` beyond that — so a screw sitting just
+        past the outline is still in the cutter's way, and the outline alone
+        would happily offer it.
+
+        Built from the real cut-out toolpaths rather than an assumed offset, so
+        it cannot drift if the cut-out engine changes how far out it runs, how
+        it handles tabs, or how it leads in.
+        """
+        from shapely.geometry import LineString
+        from shapely.ops import unary_union
+        outline = self._display_outline()
+        if outline is None or outline.is_empty:
+            return None
+
+        job = self.forms["cutout"].value()      # read directly: no sync ordering
+        parts = [outline]
+        try:
+            from gerber2rml.engine.cutout import cut_outline
+            r = max(job.bit_diameter, 0.1) / 2.0
+            for tp in cut_outline(outline, job):
+                pts = [(m.x, m.y) for m in tp if not m.rapid]
+                if len(pts) >= 2:
+                    parts.append(LineString(pts).buffer(r))
+        except Exception:
+            # Geometric equivalent, if the engine refuses this outline: the
+            # swept band reaches one full bit diameter beyond the edge.
+            parts.append(outline.buffer(max(job.bit_diameter, 0.1)))
+        return unary_union(parts)
+
+    def _screw_points(self):
+        """Where the M4 screws should go for the current placement.
+
+        The design outline is the keep-out: screws live on the copper AROUND
+        the board, never under it. May legitimately return fewer than four,
+        or none at all.
+        """
+        from gerber2rml.engine import spoilboard as sb
+        from gerber2rml.backends import SRM20_BED
+        if self._manual_screws is not None:
+            return list(self._manual_screws)
+        return sb.pick_fasteners(sb.measured_grid(), self._stock_rect(),
+                                 SRM20_BED, keepout=self._screw_keepout())
+
+    def _on_screw_pick_toggled(self, on):
+        self.preview.set_screw_pick(on)
+        if on:
+            self.screws_chk.setChecked(True)      # you are choosing screw holes
+            self.statusBar().showMessage(
+                "Click a hole on the bed to use it as a fastening point; click "
+                "it again to drop it. Press Auto to go back to the suggestion.",
+                15000)
+
+    def _on_screws_auto(self):
+        """Throw away hand-picked holes and return to the automatic choice."""
+        self._manual_screws = None
+        self._update_screw_overlay()
+        self.generate_preview()
+        self.statusBar().showMessage(
+            f"Back to the automatic choice: {len(self._screw_points())} screws.",
+            8000)
+
+    def _on_screw_pick(self, x, y):
+        """Toggle the grid hole nearest the click as a fastening point.
+
+        Starts from whatever is currently shown, so the first click EDITS the
+        app's suggestion rather than clearing the board — otherwise wanting to
+        move one screw would mean placing all four by hand.
+
+        Any grid hole may be chosen, including one the automatic pass rejected.
+        The operator can see the bed and may have a reason; Diagnostics reports
+        a bad choice rather than refusing to make it.
+        """
+        from gerber2rml.engine import spoilboard as sb
+        g = sb.measured_grid()
+        best, best_d2 = None, (g.pitch / 2.0) ** 2
+        for j in range(g.ny):
+            for i in range(g.nx):
+                hx, hy = g.centre(i, j)
+                d2 = (hx - x) ** 2 + (hy - y) ** 2
+                if d2 <= best_d2:
+                    best, best_d2 = (hx, hy), d2
+        if best is None:
+            self.statusBar().showMessage(
+                "No spoilboard hole there — click closer to one.", 5000)
+            return
+
+        current = list(self._screw_points()) if self._manual_screws is None             else list(self._manual_screws)
+        key = (round(best[0], 3), round(best[1], 3))
+        kept = [p for p in current if (round(p[0], 3), round(p[1], 3)) != key]
+        if len(kept) == len(current):
+            kept.append(best)
+            verb = "added"
+        else:
+            verb = "removed"
+        self._manual_screws = kept
+        self._update_screw_overlay()
+        self.generate_preview()
+        self.statusBar().showMessage(
+            f"Screw {verb} at X {best[0]:.2f} Y {best[1]:.2f} — "
+            f"{len(kept)} hand-picked.", 8000)
+
+    def _update_screw_overlay(self):
+        """Draw the screw heads on the preview, or clear them."""
+        from gerber2rml.engine import spoilboard as sb
+        if not self.screws_chk.isChecked():
+            self.preview.set_screws(None)
+            return
+        self.preview.set_screws(self._screw_points(), sb.M4_HEAD_D)
+
+    def _on_screws_toggled(self, on):
+        """Ticking this changes the travel height, so say so rather than let it
+        happen silently — a quietly altered Z is exactly the kind of thing that
+        is impossible to debug at the machine."""
+        from gerber2rml.engine.spoilboard import min_travel_z, M4_HEAD_H
+        self._update_screw_overlay()
+        self.generate_preview()
+        if on and not self._screw_points():
+            # Silence here is confusing: the box is ticked, nothing appears,
+            # and the usual reason is that nobody has said how big the copper
+            # is yet (the size defaults to 0 x 0).
+            w, h = self.stock_w_spin.value(), self.stock_h_spin.value()
+            why = ("set the copper Size first" if w <= 0 or h <= 0
+                   else "no grid hole is clear of the design with the whole "
+                        "head on copper")
+            self.statusBar().showMessage(
+                f"Travel height raised, but no screw positions yet - {why}.",
+                12000)
+            return
+        if on:
+            self.statusBar().showMessage(
+                f"Screws in: travel height raised to {min_travel_z():g} mm on "
+                f"every operation, so rapids clear the {M4_HEAD_H:g} mm heads.",
+                12000)
+        else:
+            self.statusBar().showMessage("Screws off: travel height back to "
+                                         "the values in Job parameters.", 8000)
+
+    def _on_export_screw_fixture(self):
+        """Write the drilling program for the screw holes, plus its procedure."""
+        from gerber2rml.engine import spoilboard as sb
+        if self.state.board is None:
+            QMessageBox.information(
+                self, "Load a board first",
+                "The screw positions depend on where the design sits on the "
+                "copper, so load and place a board first.")
+            return
+
+        points = self._screw_points()
+        if not points:
+            QMessageBox.warning(
+                self, "Nowhere to put a screw",
+                "No grid hole is both clear of the design and far enough from "
+                "the edge for the whole screw head to land on copper. Use a "
+                "larger piece of copper, or move the design so it leaves a "
+                "margin over the spoilboard grid.")
+            return
+        spread = sb.spread_problem(points, self._stock_rect())
+        if spread and QMessageBox.question(
+                self, "Screws cannot hold it flat", spread
+                + "  Export anyway?") != QMessageBox.Yes:
+            return
+        if len(points) < 4:
+            if QMessageBox.question(
+                    self, "Only " + str(len(points)) + " screw positions",
+                    "Only " + str(len(points)) + " grid holes work for this "
+                    "placement. Fewer screws leave part of the copper free to "
+                    "lift and chatter. Export anyway?") != QMessageBox.Yes:
+                return
+
+        out = self._pick_out_dir()
+        if not out:
+            return
+        out = Path(out)
+        backend = BACKENDS[self.machine_combo.currentText()]
+        stem = f"{self.state.name}_screws"
+        paths = sb.fastener_toolpaths(
+            points, copper_thickness=self.thickness_spin.value())
+        nc = out / f"{stem}{backend.ext}"
+        nc.write_text(backend.render(paths, xy_feed=4.0, plunge_feed=1.0))
+        (out / f"{stem}.txt").write_text(
+            sb.procedure(points, sb.measured_grid()), encoding="utf-8")
+
+        self.screws_chk.setChecked(True)      # they are about to be in
+        QMessageBox.information(
+            self, "Screw fixture exported",
+            f"Wrote {nc.name} and {stem}.txt to: {out}   —   Run it FIRST, screw "
+            f"the copper down, re-zero Z, then run the job. Travel height is now "
+            f"{sb.min_travel_z():g} mm so rapids clear the heads.")
 
     def _on_export_bed_fixture(self):
         """Write the pin-hole program and the procedure that goes with it.
@@ -2033,14 +2390,18 @@ class MainWindow(QMainWindow):
         """
         pro = uimode.is_pro()
 
-        for widget, form in self._pro_items:
-            if form is not None:
-                try:
-                    form.setRowVisible(widget, pro)      # Qt 6.4+
-                except (AttributeError, TypeError):
-                    widget.setVisible(pro)               # older Qt: field only
-            else:
-                widget.setVisible(pro)
+        def _show(items, visible):
+            for widget, form in items:
+                if form is not None:
+                    try:
+                        form.setRowVisible(widget, visible)   # Qt 6.4+
+                    except (AttributeError, TypeError):
+                        widget.setVisible(visible)            # older Qt: field only
+                else:
+                    widget.setVisible(visible)
+
+        _show(self._pro_items, pro)
+        _show(self._novice_items, not pro)
 
         for row in range(self.sidebar.count()):
             hidden = (not pro) and row in self._PRO_STEPS
@@ -2447,6 +2808,7 @@ class MainWindow(QMainWindow):
         self.preview.set_pin_drag(False)      # only the DS X-ray view re-enables it
         bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
         self.preview.set_bed(bed)
+        self._update_hole_grid_overlay(bed is not None)
         oxy, holes = self._snap_geometry()
         self.preview.set_snap_geometry(oxy, holes)
         self.preview.set_board_outline(oxy)        # draw the board edge (single-sided)
@@ -3376,6 +3738,92 @@ class MainWindow(QMainWindow):
                   for (r, x, y, _h) in sel]
         return points, x0, y0
 
+    def _autoselect_port(self):
+        """Point the port selector at whatever looks like the Arduino.
+
+        Returns True when a board was found. Only CHANGES the selection if the
+        current one does not look like a board, so a deliberate override in
+        Professional mode is never silently overwritten.
+        """
+        from gerber2rml.engine.spi_probe import best_port, rank_ports
+        try:
+            import serial.tools.list_ports
+            ports = [(pt.device, pt.hwid)
+                     for pt in serial.tools.list_ports.comports()]
+        except Exception:
+            ports = []
+
+        current = self.level_port_combo.currentText().strip()
+        if any(dev == current and why != "unknown device"
+               for dev, why in rank_ports(ports)):
+            return True
+
+        found = best_port(ports)
+        if found is None:
+            QMessageBox.warning(
+                self, "No Arduino found",
+                "Nothing plugged into this PC looks like the SRM-20 probe board. "
+                "Check the USB cable, and close the Arduino IDE Serial Monitor "
+                "if it is open - only one program can hold the port at a time.")
+            return False
+        self.level_port_combo.setCurrentText(found)
+        return True
+
+    def _on_novice_grid_changed(self, idx):
+        """Translate the plain-language detail choice into nx/ny."""
+        n = (3, 4, 5)[max(0, min(2, idx))]
+        self.level_nx_spin.setValue(n)
+        self.level_ny_spin.setValue(n)
+        if self.level_table.rowCount():
+            self._on_novice_show_probes()      # keep what is drawn honest
+
+    def _on_novice_show_probes(self):
+        """Lay out the probe grid and draw it on the preview. Moves nothing.
+
+        Without this a beginner has no way to check that the probe points land
+        on their copper before a bit starts tapping. The grid is laid over the
+        placed design, so this doubles as a check that the design is actually
+        where they think it is.
+        """
+        if self.state.board is None:
+            QMessageBox.information(
+                self, "Load a board first",
+                "The probe grid is laid out over your board, so load and place "
+                "one before checking where it will measure.")
+            return
+        self._on_build_level_grid()
+        self.level_gridshow_chk.setChecked(True)
+        self._update_grid_overlay()
+        self.statusBar().showMessage(
+            f"{self.level_table.rowCount()} probe points drawn on the preview - "
+            f"check they land on your copper, then Level the bed.", 12000)
+
+    def _on_novice_level(self):
+        """One action for "make the cut depth follow the surface".
+
+        Deliberately a thin wrapper over the professional path, not a second
+        probe implementation: find the port, lay out a grid, hand off to
+        :meth:`_on_probe_spi`. Same worker, same firmware protocol, same
+        confirmation before anything moves, same results. A beginner simply
+        never has to assemble those three steps - or know that the other COM
+        port on this PC is a motherboard feature that will never be a board.
+        """
+        if not self.state.gerber_dir:
+            QMessageBox.information(
+                self, "Load a board first",
+                "Bed leveling measures the surface under your board, so it "
+                "needs a board loaded and placed on the bed first.")
+            return
+        if not self._autoselect_port():
+            return
+        if not self.level_table.rowCount():
+            self._on_build_level_grid()
+        # Draw the points before the confirmation dialog, so "probe 16 points?"
+        # is a question about something visible rather than a number.
+        self.level_gridshow_chk.setChecked(True)
+        self._update_grid_overlay()
+        self._on_probe_spi()
+
     def _on_probe_spi(self):
         """Auto-probe the grid over the SPI link and fill the Z column."""
         if not self.level_table.rowCount():
@@ -3858,6 +4306,15 @@ class MainWindow(QMainWindow):
             "stock": {"w": self.stock_w_spin.value(), "h": self.stock_h_spin.value(),
                       "x": self.stock_x_spin.value(), "y": self.stock_y_spin.value(),
                       "show": self.stock_show_chk.isChecked()},
+            # Screw positions are part of the SETUP, not something to re-derive:
+            # once the holes are drilled in a piece of copper they are a fact
+            # about it, and hand-picked ones cannot be recovered by re-running
+            # the automatic choice. `manual` stays null while the choice is
+            # automatic, so reloading an untouched setup still tracks the
+            # design if it moves.
+            "screws": {"on": self.screws_chk.isChecked(),
+                       "manual": ([list(p) for p in self._manual_screws]
+                                  if self._manual_screws is not None else None)},
             "level": {"nx": self.level_nx_spin.value(), "ny": self.level_ny_spin.value(),
                       "apply": self.level_chk.isChecked(), "rows": rows},
         }
@@ -3947,6 +4404,13 @@ class MainWindow(QMainWindow):
                       (self.stock_x_spin, "x"), (self.stock_y_spin, "y")):
             _spin(sp, st.get(k, 0.0))
         _chk(self.stock_show_chk, st.get("show", False))
+
+        sc = d.get("screws", {})
+        manual = sc.get("manual")
+        self._manual_screws = ([tuple(p) for p in manual]
+                               if manual is not None else None)
+        _chk(self.screws_chk, sc.get("on", False))
+        self._update_screw_overlay()
 
         lv = d.get("level", {})
         _spin(self.level_nx_spin, lv.get("nx", 3))
@@ -4147,6 +4611,7 @@ class MainWindow(QMainWindow):
                            design_bounds=self._diag_bounds(), surface_z=self._z_zero,
                            holes=holes, bit_diameter=self.state.drill.bit_diameter,
                            trace=self.state.trace, leveled=leveled)
+        checks += self._screw_checks()
         lvl = worst(checks)
         box = QMessageBox(self)
         box.setWindowTitle("Pre-flight diagnostics")
@@ -4158,6 +4623,127 @@ class MainWindow(QMainWindow):
         box.setInformativeText(format_report(checks))
         box.exec()
         self.statusBar().showMessage(f"Diagnostics: {lvl.upper()}", 8000)
+
+    def _pass_sweeps(self):
+        """What each pass actually removes, as ``{op: geometry}`` or None.
+
+        The live overlay judges screws against the outline plus the cut-out
+        band, which is cheap and right in practice. This is the exact version:
+        every pass's real toolpaths, each buffered by its own tool radius, so
+        nothing rests on "inside the outline" standing in for "where the traces
+        and drill go". It runs the toolpath engines, so it belongs in
+        pre-flight rather than in something that recomputes while the copper is
+        being dragged about.
+        """
+        from shapely.geometry import LineString, Point
+        from shapely.ops import unary_union
+        sweeps = {}
+        for op in _OPS:
+            job = self._job_for_op(op)
+            # a V-bit's cut width depends on depth, so ask the job, not the shank
+            width = (job.effective_diameter() if hasattr(job, "effective_diameter")
+                     else job.bit_diameter)
+            r = max(width, 0.1) / 2.0
+            parts = []
+            try:
+                paths = self._toolpaths_for(op)
+            except Exception:
+                sweeps[op] = None       # a pass that will not build cannot be checked
+                continue
+            for tp in paths:
+                pts = [(m.x, m.y) for m in tp if not m.rapid]
+                if len(pts) >= 2:
+                    parts.append(LineString(pts).buffer(r))
+                elif pts:
+                    parts.append(Point(pts[0]).buffer(r))
+            sweeps[op] = unary_union(parts) if parts else None
+        return sweeps
+
+    def _screw_toolpath_check(self, points):
+        """Every screw head against every pass. Exact, and the last word."""
+        from shapely.geometry import Point
+        from gerber2rml.engine.diagnostics import Check
+        from gerber2rml.engine import spoilboard as sb
+        if not points or self.state.board is None:
+            return []
+        try:
+            sweeps = self._pass_sweeps()
+        except Exception as e:
+            return [Check("warn", "Screw heads vs toolpaths",
+                          f"Could not build the toolpaths to check: {e}")]
+
+        hits = []
+        for (x, y) in points:
+            head = Point(x, y).buffer(sb.M4_HEAD_D / 2.0)
+            for op, geom in sweeps.items():
+                if geom is not None and geom.intersects(head):
+                    hits.append(f"X {x:.1f} Y {y:.1f} is in the {op} path")
+        if hits:
+            return [Check("fail", "Screw heads vs toolpaths",
+                          "; ".join(hits) + " — the cutter would hit the screw.")]
+        checked = ", ".join(op for op, g in sweeps.items() if g is not None)
+        return [Check("ok", "Screw heads vs toolpaths",
+                      f"No pass reaches a screw head (checked: {checked}).")]
+
+    def _screw_checks(self):
+        """Pre-flight checks that only apply when the copper is screwed down.
+
+        The travel-height one exists because that failure is invisible to every
+        other check: the XY is right, the depths are right, the preview is
+        right, and the spindle drives into a screw head on the first traverse.
+        The screws are not in the geometry, so no geometric check can find it.
+        """
+        from gerber2rml.engine.diagnostics import Check
+        from gerber2rml.engine import spoilboard as sb
+        if not self.screws_chk.isChecked():
+            return []
+
+        out = []
+        lowest = min(j.travel_z for j in (self.state.trace, self.state.drill,
+                                          self.state.cutout))
+        problem = sb.travel_z_problem(lowest)
+        if problem:
+            out.append(Check("fail", "Travel height vs screw heads", problem))
+        else:
+            out.append(Check(
+                "ok", "Travel height vs screw heads",
+                f"Rapids at {lowest:g} mm clear the {sb.M4_HEAD_H:g} mm heads."))
+
+        points = self._screw_points()
+        if not points:
+            out.append(Check(
+                "fail", "Screw positions",
+                "No grid hole is clear of the design with the whole head on "
+                "copper. The copper cannot be screwed down at this placement."))
+        elif len(points) < 4:
+            out.append(Check(
+                "warn", "Screw positions",
+                f"Only {len(points)} of 4 screw positions are usable — part of "
+                f"the copper is free to lift and chatter."))
+        else:
+            out.append(Check("ok", "Screw positions",
+                             "4 screw positions, spread across the copper."))
+
+        spread = sb.spread_problem(points, self._stock_rect())
+        if spread:
+            out.append(Check("warn", "Screw spread", spread))
+
+        out += self._screw_toolpath_check(points)
+
+        if self._manual_screws is not None:
+            # Hand-picked holes are allowed anywhere on the grid, so this is
+            # where a questionable choice gets reported instead of refused.
+            stock, keep = self._stock_rect(), self._screw_keepout()
+            bad = [(pt, sb.point_problem(pt, stock, keep)) for pt in points]
+            bad = [(pt, why) for pt, why in bad if why]
+            if bad:
+                out.append(Check(
+                    "warn", "Hand-picked screw positions",
+                    "; ".join(f"X {x:.1f} Y {y:.1f} {why}" for (x, y), why in bad)))
+            else:
+                out.append(Check("ok", "Hand-picked screw positions",
+                                 f"{len(points)} chosen by hand, all usable."))
+        return out
 
     def _on_export_image(self):
         if self.state.board is None:
@@ -4374,6 +4960,10 @@ class MainWindow(QMainWindow):
     # ---- copper stock alignment -----------------------------------------
     def _update_stock_preview(self, *_):
         """Push the measured copper rectangle to the preview (or hide it)."""
+        # Screws first, and unconditionally: they follow the copper's position
+        # but are not part of the stock OUTLINE, so hiding the outline must not
+        # hide where the machine is about to drill.
+        self._update_screw_overlay()
         if not self.stock_show_chk.isChecked():
             self.preview.set_stock(None)
             return
@@ -4381,10 +4971,26 @@ class MainWindow(QMainWindow):
                                 self.stock_w_spin.value(), self.stock_h_spin.value()))
 
     def _on_stock_corner_from_tool(self):
-        """Capture the live tool XY as the copper's front-left corner."""
+        """Capture the live tool XY as the copper's front-left corner.
+
+        Connects on demand. A beginner does not have the Connect button (it
+        lives in the professional machine dock), and telling them to press
+        something they cannot see would make this unusable in Novice — which
+        is the mode that needs it most, because the alternative is typing
+        machine coordinates by hand.
+        """
         if self._tool_xyz is None:
-            self.statusBar().showMessage(
-                "Connect the machine and jog the bit to the copper corner first", 6000)
+            if self._dro is None:
+                if not self._autoselect_port():
+                    return
+                self._start_dro()
+                self.statusBar().showMessage(
+                    "Connecting… jog the bit to the front-left corner of the "
+                    "copper, then press Corner = tool again.", 12000)
+            else:
+                self.statusBar().showMessage(
+                    "Waiting for a position from the machine — jog the bit, "
+                    "then press Corner = tool again.", 8000)
             return
         x, y, _z = self._tool_xyz
         self.stock_x_spin.setValue(max(0.0, x))     # valueChanged -> _update_stock_preview

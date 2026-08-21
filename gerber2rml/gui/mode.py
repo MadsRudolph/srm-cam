@@ -82,9 +82,10 @@ HIDDEN_IN_NOVICE = [
     "Job parameters — feeds, depths, offsets, stepover, V-bit geometry "
     "(the preset sets these)",
     "Double-sided milling — registration, flip + align, top traces",
-    "Bed leveling — probing the surface and the height map",
+    "The bed-leveling workbench — grid size, retouch interval, height-map "
+    "import/export (Novice gets a guided “Level the bed” button instead)",
     "Rework — boxing spots to re-cut",
-    "Machine control — connect, DRO, jog, probe, streaming (use VPanel)",
+    "Machine control — live DRO, jog, streaming (bed leveling still works)",
     "Output format, mirroring and preview frame (the defaults are correct)",
     "The feed test card and saving your own presets",
 ]

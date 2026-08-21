@@ -316,3 +316,58 @@ def deviations_mm(results, ref_id=0):
         ref_id = next(iter(by_id))           # fall back to first good point
     z0 = by_id[ref_id]
     return {i: (z - z0) / 1000.0 for i, z in by_id.items()}
+
+
+# --- finding the board ------------------------------------------------------
+# USB-serial chips these boards actually ship with. The lab's Uno is a CH340
+# clone; genuine Unos use an ATmega16U2 under Arduino's own VID.
+BOARD_VIDS = {
+    "1A86": "CH340 (Uno clone)",
+    "2341": "Arduino",
+    "2A03": "Arduino (.org)",
+    "0403": "FTDI",
+    "10C4": "CP210x",
+}
+
+
+def rank_ports(ports):
+    """Order candidate serial ports, most-likely-Arduino first.
+
+    ``ports`` is a sequence of ``(device, hwid)`` pairs — exactly what
+    ``serial.tools.list_ports.comports()`` yields the parts of. Returns
+    ``[(device, why), ...]``: ports whose hwid carries a known USB-serial VID
+    come first, each labelled with the chip; everything else follows in the
+    order given, labelled ``"unknown device"``.
+
+    This exists because picking the wrong port is the commonest way probing
+    fails for someone doing it for the first time. On the lab PC the other
+    port is Intel AMT Serial-over-LAN — a motherboard feature that will never
+    be an Arduino, and nothing on screen tells a beginner that.
+
+    Ordering only. The caller still decides, and a human can always override:
+    a board behind an unrecognised chip must stay selectable, so nothing is
+    filtered out.
+    """
+    known, unknown = [], []
+    for device, hwid in ports:
+        text = (hwid or "").upper()
+        for vid, chip in BOARD_VIDS.items():
+            if f"VID:PID={vid}:" in text or f"VID_{vid}" in text:
+                known.append((device, chip))
+                break
+        else:
+            unknown.append((device, "unknown device"))
+    return known + unknown
+
+
+def best_port(ports):
+    """The single most likely Arduino port, or None if nothing looks like one.
+
+    None rather than a guess: silently probing on the wrong port produces a
+    confusing timeout, and telling someone "no board found, check the cable"
+    is far more use than that.
+    """
+    for device, why in rank_ports(ports):
+        if why != "unknown device":
+            return device
+    return None
