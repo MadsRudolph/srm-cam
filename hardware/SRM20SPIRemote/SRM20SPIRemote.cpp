@@ -13,6 +13,7 @@
 
 SRM20SPIRemote::SRM20SPIRemote()
 {
+  frame_delay_us = 5000;   // PATCH: Roland's original hard-coded delay(5)
 }
 
 bool SRM20SPIRemote::begin(const int sspin,const int readypin)
@@ -276,8 +277,31 @@ byte SRM20SPIRemote::SPITxRx(byte tx)
 {
   byte rx;
   digitalWrite(slave_select_pin,LOW);
-  delay(5);
+  if(frame_delay_us) delayMicroseconds(frame_delay_us);   // PATCH: was delay(5)
   rx = SPI.transfer(tx);
   digitalWrite(slave_select_pin,HIGH);
   return rx;
+}
+
+//////////////////////////////////////////////////////////////////////
+// PATCH (SRM-CAM): additions only -- nothing above this line changed
+// behaviour except the framing delay becoming tunable.
+
+byte SRM20SPIRemote::rawTxRx(byte tx)
+{
+  return SPITxRx(tx);
+}
+
+void SRM20SPIRemote::setFrameDelayUs(unsigned int us)
+{
+  // AVR delayMicroseconds() is only accurate below ~16383 us; clamp rather
+  // than silently wrapping to a near-zero delay, which would look like a
+  // spectacular speed-up and quietly corrupt every transfer.
+  if(us > 16000) us = 16000;
+  frame_delay_us = us;
+}
+
+unsigned int SRM20SPIRemote::frameDelayUs()
+{
+  return frame_delay_us;
 }
