@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox, QSlider
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QPalette, QColor, QAction
 from pathlib import Path
 import math
 import sys
@@ -81,27 +81,37 @@ class _StreamWorker(QThread):
     progress = Signal(int, int)
     done = Signal(str)            # "" on success, else an error message
 
-    def __init__(self, port, toolpaths, speed=-1, dry_run=True):
+    def __init__(self, port, toolpaths, speed=-1, dry_run=True, spindle_rpm=0):
         super().__init__()
         self._port, self._tps = port, toolpaths
         self._speed, self._dry = speed, dry_run
+        self._spindle_rpm = spindle_rpm
         self._abort = False
+        self._paused = False
 
     def abort(self):
         self._abort = True
 
+    def set_paused(self, on):
+        """Hold/release the run. The firmware honours pause mid-move, so this
+        is safe to hit at any point in a job."""
+        self._paused = bool(on)
+
     def run(self):
         from gerber2rml.engine import spi_probe, spi_stream
         try:
-            ser = spi_probe.open_link(self._port)
+            ser = spi_probe.open_link(
+                self._port, frame_us=spi_probe.DEFAULT_FRAME_US)
         except Exception as e:
             self.done.emit(str(e))
             return
         try:
             spi_stream.stream_toolpaths(
                 ser, self._tps, speed=self._speed, dry_run=self._dry,
+                spindle_rpm=self._spindle_rpm,
                 on_progress=lambda i, n: self.progress.emit(i, n),
-                should_abort=lambda: self._abort)
+                should_abort=lambda: self._abort,
+                should_pause=lambda: self._paused)
             self.done.emit("")
         except Exception as e:
             self.done.emit(str(e))
@@ -170,28 +180,75 @@ class _FidFindWorker(QThread):
 
 
 class _DROPoller(QThread):
-    """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
+    """Holds the Arduino link open, polls live position (~4 Hz) for the DRO and
+    the machine's own status word (~1 Hz), and carries out machine commands.
+
+    The status half is what the 2026-08 SPI audit unlocked: cover open, spindle
+    running, error and fatal come straight from the machine (proven on hardware
+    — the cover bit follows the lid). Polled at a quarter of the position rate
+    because at the stock SPI framing delay a status read costs ~55 ms and the
+    DRO has to stay smooth while jogging.
+    """
     position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
+    status = Signal(dict)                           # decoded machine status word
     touch_done = Signal(bool, float, float, float)  # ok, x, y, z (mm) of surface
     zero_done = Signal(bool, float)                 # ok, new origin z (mm)
+    spindle_done = Signal(bool, int)                # ok, rpm the firmware took
     failed = Signal(str)
 
-    def __init__(self, port):
+    def __init__(self, port, frame_us=None):
         super().__init__()
         self._port, self._run = port, True
+        self._frame_us = frame_us
         self._lock = QMutex()
         self._pending_move = None       # (x_um, y_um) queued jog target
         self._pending_touch = False     # queued touch-off request
         self._pending_zero = False      # queued machine-origin Z zero (W)
+        self._pending_spindle = None    # queued spindle rpm (0 = off)
+        self._pending_jobctl = None     # queued 'pause' / 'resume' / 'view'
+        self._pending_zjog = None       # accumulated relative Z jog (um)
         self._abort = False             # STOP: lift the tool and stop polling
+        self._status_tick = 0
+        self._spindle_ours = False      # did WE start the spindle? (see run())
 
     def request_abort(self):
-        """STOP: drop any queued motion; the loop sends ``!`` (lift) and exits."""
+        """STOP: drop any queued motion; the loop halts the machine and exits."""
         self._lock.lock()
         self._abort = True
         self._pending_move = None
         self._pending_touch = False
         self._pending_zero = False
+        self._pending_spindle = None
+        self._pending_jobctl = None
+        self._pending_zjog = None
+        self._lock.unlock()
+
+    def request_spindle(self, rpm):
+        """Start (rpm > 0) or stop (0) the spindle.
+
+        Speed is NOT settable this way: measured on the machine, turnSpindle's
+        argument is ignored and the actual speed comes from VPanel's slider.
+        This is an M3/M5 equivalent, nothing more.
+        """
+        self._lock.lock()
+        self._pending_spindle = int(rpm)
+        self._lock.unlock()
+
+    def request_jobctl(self, what):
+        """Queue 'pause', 'resume' or 'view'."""
+        self._lock.lock()
+        self._pending_jobctl = what
+        self._lock.unlock()
+
+    def request_jog_z(self, dz_um):
+        """Queue a relative Z move (microns; positive = up, away from the work).
+
+        Steps ACCUMULATE rather than last-one-wins: hitting the button four
+        times means four steps, and dropping three of them would leave the bit
+        somewhere the operator did not ask for.
+        """
+        self._lock.lock()
+        self._pending_zjog = (self._pending_zjog or 0) + int(dz_um)
         self._lock.unlock()
 
     def request_move(self, x_um, y_um):
@@ -216,7 +273,7 @@ class _DROPoller(QThread):
     def run(self):
         from gerber2rml.engine import spi_probe
         try:
-            ser = spi_probe.open_link(self._port)
+            ser = spi_probe.open_link(self._port, frame_us=self._frame_us)
         except Exception as e:
             self.failed.emit(str(e)); return
         try:
@@ -225,17 +282,44 @@ class _DROPoller(QThread):
                 mv = self._pending_move
                 to = self._pending_touch
                 zo = self._pending_zero
+                sp = self._pending_spindle
+                jc = self._pending_jobctl
+                zj = self._pending_zjog
                 ab = self._abort
                 self._pending_move = None
                 self._pending_touch = False
                 self._pending_zero = False
+                self._pending_spindle = None
+                self._pending_jobctl = None
+                self._pending_zjog = None
                 self._lock.unlock()
                 if ab:
+                    # Halt first, THEN lift. The move lives in the Roland
+                    # controller, so '!' alone would have to wait for a long
+                    # travel to finish before the lift could even be commanded.
+                    spi_probe.stop_moving_now(ser)
+                    spi_probe.spindle_off(ser)
                     spi_probe.send_abort(ser)                 # lift the tool, then stop
                     break
                 try:
-                    if mv is not None:
+                    if zj:
+                        # Relative Z only — X and Y are left exactly where they
+                        # are, so a nudge can never drag the bit sideways.
+                        spi_probe.timed_move(ser, 0, 0, zj, -1, timeout=30.0)
+                    elif mv is not None:
                         spi_probe.jog_to(ser, mv[0], mv[1])   # lifts then travels XY
+                    elif sp is not None:
+                        got = spi_probe.set_spindle(ser, sp)
+                        if got is not None:
+                            self._spindle_ours = sp > 0
+                        self.spindle_done.emit(got is not None, got or 0)
+                    elif jc is not None:
+                        if jc == "pause":
+                            spi_probe.suspend_job(ser)
+                        elif jc == "resume":
+                            spi_probe.resume_job(ser)
+                        elif jc == "view":
+                            spi_probe.jump_to_view(ser)
                     elif zo:
                         r = spi_probe.zero_z(ser, should_abort=lambda: self._abort)
                         if r is not None:
@@ -252,12 +336,26 @@ class _DROPoller(QThread):
                         p = spi_probe.query_position(ser)
                         if p is not None:
                             self.position.emit(*p)
+                        # Status costs ~55 ms at stock framing, so poll it at a
+                        # quarter of the DRO rate — often enough to catch a lid
+                        # opening, rare enough to keep jogging smooth.
+                        self._status_tick += 1
+                        if self._status_tick % 4 == 0:
+                            st = spi_probe.machine_status(ser)
+                            if st is not None:
+                                self.status.emit(st)
                 except Exception:
                     pass
                 self.msleep(60 if (self._pending_move or self._pending_touch
-                                   or self._pending_zero) else 250)
+                                   or self._pending_zero or self._pending_zjog)
+                            else 250)
         finally:
             try:
+                # Stop the spindle only if WE started it. The operator also
+                # drives it from VPanel by hand, and killing that on disconnect
+                # would stop a spindle that was never ours to control.
+                if self._spindle_ours:
+                    spi_probe.spindle_off(ser)
                 ser.close()
             except Exception:
                 pass
@@ -819,7 +917,13 @@ class MainWindow(QMainWindow):
             "Open the Arduino link and show live X/Y/Z + the tool position on the "
             "preview. Uses the same port as probing; Serial Monitor must be closed.")
         self.connect_btn.toggled.connect(self._on_connect_toggled)
-        self.jog_chk = QCheckBox("Click to jog")
+        # Controls that are not needed at arm's length while standing at the
+        # mill live in the Machine MENU instead of the dock — the strip had
+        # grown past the window edge, pushing Connect and STOP off screen.
+        # QAction is used rather than QCheckBox/QPushButton because it takes the
+        # same setEnabled/setChecked/isChecked calls the rest of the code makes.
+        self.jog_chk = QAction("Click to jog", self)
+        self.jog_chk.setCheckable(True)
         self.jog_chk.setEnabled(False)        # only meaningful while connected
         self.jog_chk.setToolTip(
             "Click a point on the preview to move the tool there (lifts ~5 mm "
@@ -827,16 +931,17 @@ class MainWindow(QMainWindow):
             "dowel/fiducial pin when one is close — Ctrl+click for the exact "
             "clicked position. Needs the machine connected.")
         self.jog_chk.toggled.connect(self._on_jog_mode_toggled)
-        self.trail_chk = QCheckBox("Trail")
+        self.trail_chk = QAction("Tool trail", self)
+        self.trail_chk.setCheckable(True)
         self.trail_chk.setChecked(True)
         self.trail_chk.setToolTip(
             "Leave a fading amber breadcrumb trail of where the bit has already "
             "travelled, so you can follow its tracks during a rework pass.")
         self.trail_chk.toggled.connect(
             lambda on: self.preview.set_tool_trail_visible(on))
-        self.trail_clear_btn = QPushButton("Clear trail")
+        self.trail_clear_btn = QAction("Clear trail", self)
         self.trail_clear_btn.setToolTip("Wipe the breadcrumb trail and start fresh.")
-        self.trail_clear_btn.clicked.connect(lambda: self.preview.clear_tool_trail())
+        self.trail_clear_btn.triggered.connect(lambda: self.preview.clear_tool_trail())
         self.zero_btn = QPushButton("Probe Z")
         self.zero_btn.setEnabled(False)
         self.zero_btn.setToolTip(
@@ -844,15 +949,15 @@ class MainWindow(QMainWindow):
             "surface, and set that Z as the work-surface zero. Needs the touch "
             "clips connected; start a few mm above the surface.")
         self.zero_btn.clicked.connect(self._on_probe_z)
-        self.machine_zero_btn = QPushButton("Zero Z on machine")
+        self.machine_zero_btn = QAction("Zero Z on machine", self)
         self.machine_zero_btn.setEnabled(False)
         self.machine_zero_btn.setToolTip(
             "Verified touch-off, then the FIRMWARE writes origin Z = the copper "
             "surface (v2 'W' command) and lifts 2 mm - no VPanel round-trip.\n"
             "NOTE: this sets the origin VPanel displays (User CS). Check "
             "VPanel's G54 Z once before trusting it for NC jobs.")
-        self.machine_zero_btn.clicked.connect(self._on_machine_zero)
-        self.stream_btn = QPushButton("Stream (exp.)")
+        self.machine_zero_btn.triggered.connect(self._on_machine_zero)
+        self.stream_btn = QAction("Stream job over the link (experimental)…", self)
         self.stream_btn.setEnabled(False)
         self.stream_btn.setToolTip(
             "EXPERIMENTAL: stream the picked op's toolpaths over the SPI link "
@@ -860,8 +965,84 @@ class MainWindow(QMainWindow):
             "with Z held 2 mm above the origin — nothing can cut. A wet run "
             "additionally needs the spindle started in VPanel by hand and the "
             "raw speed value calibrated on dry runs first.")
-        self.stream_btn.clicked.connect(self._on_stream_job)
-        self.align_btn = QPushButton("Align overlay")
+        self.stream_btn.triggered.connect(self._on_stream_job)
+        # ---- machine transport: VPanel's Pause / Resume / Stop / View / spindle,
+        # in the app. Every one drives an SPI command proven on the machine in
+        # the 2026-08 audit (docs/2026-08-21-spi-command-audit.md).
+        self.spindle_btn = QPushButton("Spindle")
+        self.spindle_btn.setCheckable(True)
+        self.spindle_btn.setEnabled(False)
+        self.spindle_btn.setToolTip(
+            "Start and stop the spindle over the machine link — no VPanel "
+            "round-trip.\n"
+            "SPEED IS NOT SET HERE: the machine ignores the RPM argument, so "
+            "the actual speed is still whatever VPanel's spindle slider says. "
+            "This is an M3/M5 equivalent.\n"
+            "Refused while the lid is open, and the firmware stops the spindle "
+            "by itself if the app stops talking to it.")
+        self.spindle_btn.toggled.connect(self._on_spindle_toggled)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setToolTip(
+            "Hold the machine where it is (VPanel's Pause). Works mid-move — "
+            "the bit stops in place and Resume carries on.")
+        self.pause_btn.clicked.connect(lambda: self._on_jobctl("pause"))
+        self.resume_btn = QPushButton("Resume")
+        self.resume_btn.setEnabled(False)
+        self.resume_btn.setToolTip("Carry on from a Pause (VPanel's Resume).")
+        self.resume_btn.clicked.connect(lambda: self._on_jobctl("resume"))
+        self.view_btn = QAction("Move head to view position", self)
+        self.view_btn.setEnabled(False)
+        self.view_btn.setToolTip(
+            "Send the head to the view position (VPanel's View button) so you "
+            "can change the bit or swap the board, then jog back.")
+        self.view_btn.triggered.connect(lambda: self._on_jobctl("view"))
+        # ---- Z jog: raise/lower the bit by a chosen step, from the dock.
+        # Z is the axis you nudge by hand constantly — setting up a touch-off,
+        # backing off after a probe, easing down to eyeball a depth — and until
+        # now the only way to move it was click-to-jog, which is XY only.
+        self.zjog_step = QComboBox()
+        for mm in (0.01, 0.05, 0.1, 0.5, 1.0, 5.0):
+            self.zjog_step.addItem(f"{mm:g} mm", mm)
+        self.zjog_step.setCurrentIndex(3)          # 0.5 mm: a useful default
+        self.zjog_step.setToolTip("How far each Z step moves the bit.")
+        self.zjog_up_btn = QPushButton("Z ▲")
+        self.zjog_up_btn.setToolTip(
+            "Raise the bit by one step (away from the work). Also PageUp.")
+        self.zjog_up_btn.clicked.connect(lambda: self._on_jog_z(+1))
+        self.zjog_down_btn = QPushButton("Z ▼")
+        self.zjog_down_btn.setToolTip(
+            "Lower the bit by one step (toward the work). Also PageDown.\n"
+            "Refused while the probe says the bit is already touching.")
+        self.zjog_down_btn.clicked.connect(lambda: self._on_jog_z(-1))
+        for b in (self.zjog_up_btn, self.zjog_down_btn):
+            b.setEnabled(False)                    # needs the machine link
+            b.setMaximumWidth(48)
+        self._zjog_row = QWidget()
+        _zj = QHBoxLayout(self._zjog_row)
+        _zj.setContentsMargins(0, 0, 0, 0)
+        _zj.setSpacing(2)
+        _zj.addWidget(self.zjog_up_btn)
+        _zj.addWidget(self.zjog_step)
+        _zj.addWidget(self.zjog_down_btn)
+
+        self.machine_label = QLabel("")
+        self.machine_label.setToolTip(
+            "What the machine itself reports: lid open, spindle running, error "
+            "or fault. Read straight off its status word.")
+        self.machine_label.setStyleSheet(
+            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+        self._machine_status = {}
+
+        self.machinetest_btn = QAction("Machine test…", self)
+        self.machinetest_btn.setToolTip(
+            "Find out which SPI commands this machine actually obeys — spindle "
+            "control, the full status word, pause/resume/stop, View, and the "
+            "speed-unit calibration. Read-only tests by default; motion and "
+            "spindle tests are separately armed.\n"
+            "Needs firmware v3 (reflash hardware/srm20_spi_probe).")
+        self.machinetest_btn.triggered.connect(self._on_machine_test)
+        self.align_btn = QAction("Align overlay to the bit", self)
         self.align_btn.setCheckable(True)
         self.align_btn.setEnabled(False)      # only meaningful while connected
         self.align_btn.setToolTip(
@@ -1619,14 +1800,17 @@ The machine will move. You get a confirmation first.""")
         _mb.addWidget(self.guide_btn)
         _mb.addWidget(self._pro(self.dro_label))
         _mb.addWidget(self._pro(self.touch_label))
+        _mb.addWidget(self._pro(self.machine_label))
         _mb.addStretch(1)
-        _mb.addWidget(self._pro(self.trail_chk))
-        _mb.addWidget(self._pro(self.trail_clear_btn))
+        # What is left here is what you reach for with a hand on the machine:
+        # move Z, find the surface, spindle, hold, and stop. Everything else
+        # moved to the Machine menu — the strip used to run past the window
+        # edge, which hid Connect and STOP.
+        _mb.addWidget(self._pro(self._zjog_row))
         _mb.addWidget(self._pro(self.zero_btn))
-        _mb.addWidget(self._pro(self.machine_zero_btn))
-        _mb.addWidget(self._pro(self.stream_btn))
-        _mb.addWidget(self._pro(self.align_btn))
-        _mb.addWidget(self._pro(self.jog_chk))
+        _mb.addWidget(self._pro(self.spindle_btn))
+        _mb.addWidget(self._pro(self.pause_btn))
+        _mb.addWidget(self._pro(self.resume_btn))
         _mb.addWidget(self._pro(QLabel("port")))
         _mb.addWidget(self._pro(self.level_port_combo))
         _mb.addWidget(self._pro(self.connect_btn))
@@ -1671,6 +1855,8 @@ The machine will move. You get a confirmation first.""")
         self.guide_double_btn.clicked.connect(lambda: self.tour.start_branch("Double-sided"))
         self.guide_level_btn.clicked.connect(lambda: self.tour.start_branch("Bed leveling"))
         self.guide_rework_btn.clicked.connect(lambda: self.tour.start_branch("Rework"))
+        self._build_machine_menu()       # the dock's overflow lives here
+        self._build_zjog_shortcuts()     # PageUp / PageDown move Z
         self._build_help_menu()          # after the tour: it links to it
 
     _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
@@ -1921,6 +2107,47 @@ The machine will move. You get a confirmation first.""")
         for root in kicadplugin.config_roots():
             dirs.extend(kicadplugin.plugin_dirs(root))
         return dirs
+
+    def _build_zjog_shortcuts(self):
+        """PageUp/PageDown nudge Z by the selected step.
+
+        Window-level shortcuts rather than button focus: you are looking at the
+        bit, not at the screen, and having to click into the right widget first
+        is exactly the friction that makes people reach for VPanel instead.
+        """
+        from PySide6.QtGui import QKeySequence
+        for key, direction in ((Qt.Key_PageUp, +1), (Qt.Key_PageDown, -1)):
+            act = QAction(self)
+            act.setShortcut(QKeySequence(key))
+            act.setShortcutContext(Qt.ApplicationShortcut)
+            act.triggered.connect(lambda _c=False, d=direction: self._on_jog_z(d))
+            self.addAction(act)
+
+    def _build_machine_menu(self):
+        """The machine controls that do not need to be under your hand.
+
+        The dock strip had grown to sixteen widgets and ran off the right-hand
+        edge of the window — taking Connect and STOP with it, which is the worst
+        possible thing to lose. The dock now keeps only what you reach for while
+        standing at the mill (move Z, find the surface, spindle, hold, stop) and
+        everything else lives here. A menu, not the settings panel, because that
+        panel belongs to one page and the machine does not.
+        """
+        menu = self.menuBar().addMenu("&Machine")
+        self._machine_menu = menu
+        menu.addAction(self.jog_chk)
+        menu.addAction(self.align_btn)
+        menu.addSeparator()
+        menu.addAction(self.machine_zero_btn)
+        menu.addAction(self.view_btn)
+        menu.addSeparator()
+        menu.addAction(self.trail_chk)
+        menu.addAction(self.trail_clear_btn)
+        menu.addSeparator()
+        menu.addAction(self.stream_btn)
+        menu.addAction(self.machinetest_btn)
+        # Novice sends files from VPanel and never opens this.
+        menu.menuAction().setVisible(uimode.is_pro())
 
     def _build_help_menu(self):
         """A Help menu whose first item is the guide itself.
@@ -3238,10 +3465,13 @@ The machine will move. You get a confirmation first.""")
 
     def _start_dro(self):
         port = self.level_port_combo.currentText().strip() or "COM5"
-        self._dro = _DROPoller(port)
+        from gerber2rml.engine.spi_probe import DEFAULT_FRAME_US
+        self._dro = _DROPoller(port, frame_us=DEFAULT_FRAME_US)
         self._dro.position.connect(self._on_position)
+        self._dro.status.connect(self._on_machine_status)
         self._dro.touch_done.connect(self._on_touch_done)
         self._dro.zero_done.connect(self._on_zero_done)
+        self._dro.spindle_done.connect(self._on_spindle_done)
         self._dro.failed.connect(self._on_dro_failed)
         self._dro.start()
         self.connect_btn.setText("Disconnect")
@@ -3250,6 +3480,9 @@ The machine will move. You get a confirmation first.""")
         self.machine_zero_btn.setEnabled(True)
         self.stream_btn.setEnabled(True)
         self.align_btn.setEnabled(True)
+        for w in (self.spindle_btn, self.pause_btn, self.resume_btn,
+                  self.view_btn, self.zjog_up_btn, self.zjog_down_btn):
+            w.setEnabled(True)
         if self._sim_window is not None:
             self._sim_window.set_live_enabled(True)
         self.dro_label.setText(f"●  connecting on {port}…")
@@ -3273,6 +3506,14 @@ The machine will move. You get a confirmation first.""")
         self.zero_btn.setEnabled(False)
         self.machine_zero_btn.setEnabled(False)
         self.stream_btn.setEnabled(False)
+        for w in (self.spindle_btn, self.pause_btn, self.resume_btn,
+                  self.view_btn, self.zjog_up_btn, self.zjog_down_btn):
+            w.setEnabled(False)
+        self.spindle_btn.blockSignals(True)   # the link is gone; the button must
+        self.spindle_btn.setChecked(False)    # not keep claiming it is running
+        self.spindle_btn.blockSignals(False)
+        self.machine_label.setText("")
+        self._machine_status = {}
         self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
         self.align_btn.setEnabled(False)
         self.preview.set_align_pick(False)
@@ -3624,9 +3865,11 @@ The machine will move. You get a confirmation first.""")
         elif box.clickedButton() is wet:
             if QMessageBox.question(
                     self, "Wet run — really cut?",
-                    "Spindle running (VPanel)? Z zeroed on the copper? Dry run "
-                    "verified on THIS job?\n\nThe bit will plunge to cut depth "
-                    "on the first move.") != QMessageBox.Yes:
+                    "Z zeroed on the copper? Dry run verified on THIS job?\n\n"
+                    "SRM-CAM will START THE SPINDLE itself and stop it at the "
+                    "end. Its SPEED still comes from VPanel's spindle slider — "
+                    "set that before you continue.\n\nThe bit will plunge to "
+                    "cut depth on the first move.") != QMessageBox.Yes:
                 return
             dry_run = False
         else:
@@ -3637,7 +3880,11 @@ The machine will move. You get a confirmation first.""")
         self.statusBar().showMessage(
             f"Streaming {n_moves} moves ({'DRY' if dry_run else 'WET'}) — "
             f"press STOP or close the lid to abort…")
-        self._stream_worker = _StreamWorker(port, toolpaths, dry_run=dry_run)
+        # A wet run starts and stops the spindle itself (proven over SPI); a dry
+        # run never spins the tool at all.
+        self._stream_worker = _StreamWorker(
+            port, toolpaths, dry_run=dry_run,
+            spindle_rpm=0 if dry_run else self._SPINDLE_RPM)
         self._stream_worker.progress.connect(
             lambda i, n: self.run_bar.setValue(int(round(100 * i / max(n, 1)))))
         self._stream_worker.done.connect(self._on_stream_done)
@@ -3653,6 +3900,125 @@ The machine will move. You get a confirmation first.""")
             self.statusBar().showMessage("Stream stopped — tool lifted", 10000)
         else:
             self.statusBar().showMessage("Stream complete", 10000)
+
+    _SPINDLE_RPM = 3000        # any non-zero value starts it; the machine
+                               # ignores the number (speed comes from VPanel)
+
+    def _untick_spindle(self):
+        """Un-tick without re-entering the handler — otherwise every refused
+        start would turn round and send a spurious 'stop' to the machine."""
+        self.spindle_btn.blockSignals(True)
+        self.spindle_btn.setChecked(False)
+        self.spindle_btn.blockSignals(False)
+
+    def _on_spindle_toggled(self, on):
+        """Start/stop the spindle over the machine link."""
+        if self._dro is None:
+            self._untick_spindle()
+            return
+        if on:
+            if self._machine_status.get("cover"):
+                self._untick_spindle()
+                QMessageBox.warning(
+                    self, "Lid is open",
+                    "The machine reports its cover open. Close it before "
+                    "starting the spindle.")
+                return
+            if QMessageBox.question(
+                    self, "Start the spindle?",
+                    "The tool will start turning at whatever speed VPanel's "
+                    "spindle slider is set to.\n\nEveryone clear of the "
+                    "machine and the lid shut?") != QMessageBox.Yes:
+                self._untick_spindle()
+                return
+        self._dro.request_spindle(self._SPINDLE_RPM if on else 0)
+        self.statusBar().showMessage(
+            "Starting the spindle…" if on else "Stopping the spindle…", 5000)
+
+    def _on_spindle_done(self, ok, rpm):
+        if not ok:
+            self._untick_spindle()
+            QMessageBox.warning(
+                self, "Spindle refused",
+                "The machine would not start the spindle. The lid must be "
+                "shut, and the bit must not be resting on the probe-wired "
+                "plate.")
+
+    def _on_jog_z(self, direction):
+        """Move Z by one step. ``direction`` is +1 (up, away) or -1 (down)."""
+        if self._dro is None:
+            return
+        step_mm = self.zjog_step.currentData()
+        if direction < 0 and self._touching:
+            # The probe already says metal-to-metal. Going further down drives
+            # the bit into the work, so refuse rather than trust the operator
+            # to have noticed the indicator.
+            QMessageBox.warning(
+                self, "Bit is touching",
+                "The probe reports the bit already touching the plate. Raise "
+                "it before jogging further down.")
+            return
+        self._dro.request_jog_z(int(round(direction * step_mm * 1000)))
+        self.statusBar().showMessage(
+            f"Z {'up' if direction > 0 else 'down'} {step_mm:g} mm", 3000)
+
+    def _on_jobctl(self, what):
+        # During a stream the worker owns the serial port, not the DRO poller,
+        # so pause/resume has to go through it or it would go nowhere.
+        sw = getattr(self, "_stream_worker", None)
+        if sw is not None and sw.isRunning() and what in ("pause", "resume"):
+            sw.set_paused(what == "pause")
+            self.statusBar().showMessage(
+                "Run paused — press Resume to carry on" if what == "pause"
+                else "Resuming the run…", 8000)
+            return
+        if self._dro is None:
+            return
+        self._dro.request_jobctl(what)
+        self.statusBar().showMessage(
+            {"pause": "Pausing the machine…",
+             "resume": "Resuming…",
+             "view": "Moving the head to the view position…"}[what], 6000)
+
+    def _on_machine_status(self, st):
+        """Live machine status: lid, spindle, error, fault."""
+        self._machine_status = st
+        flags = []
+        if st.get("cover"):
+            flags.append("LID OPEN")
+        if st.get("spindle"):
+            flags.append(f"spindle {st.get('rpm', 0)}")
+        if st.get("paused"):
+            flags.append("paused")
+        if st.get("error"):
+            flags.append("ERROR")
+        if st.get("fatal"):
+            flags.append("FAULT")
+        self.machine_label.setText("  ".join(flags))
+        # Red for anything that stops work, amber for a turning tool.
+        bad = st.get("cover") or st.get("error") or st.get("fatal")
+        colour = "#e08585" if bad else ("#e0c185" if st.get("spindle") else "#888")
+        self.machine_label.setStyleSheet(
+            f"color:{colour}; font-family:Consolas,monospace; "
+            f"font-size:13px; padding:4px 10px;")
+        # Keep the spindle button honest about what the machine is doing, even
+        # when the spindle was started from VPanel rather than from here.
+        if self.spindle_btn.isChecked() != bool(st.get("spindle")):
+            self.spindle_btn.blockSignals(True)
+            self.spindle_btn.setChecked(bool(st.get("spindle")))
+            self.spindle_btn.blockSignals(False)
+
+    def _on_machine_test(self):
+        """Open the capability tester. It owns the serial link for its lifetime,
+        so the DRO poller has to let go of the port first and is restored after."""
+        from gerber2rml.gui.machinetest import MachineTestDialog
+        port = self.level_port_combo.currentText().strip() or "COM5"
+        was_on = self._pause_dro()
+        try:
+            MachineTestDialog(port, self).exec()
+        finally:
+            if was_on:
+                self._start_dro()
 
     def _on_machine_zero(self):
         """Verified touch-off, then the firmware writes origin Z on the surface."""

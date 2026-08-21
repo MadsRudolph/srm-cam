@@ -207,8 +207,34 @@ def probe_grid(port, points, baud=115200, point_timeout=90.0,
         ser.close()
 
 
-def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None):
-    """Open the prober serial port and wait out the Uno's reset-on-open."""
+# SPI per-byte framing delay used for normal work, in microseconds.
+#
+# Roland hard-coded 5000. Measured on the machine 2026-08-21, transfers stay
+# clean all the way down to 50 us — but corruption there is intermittent and
+# this link drives a bit toward a board, so the default keeps a 10x margin over
+# the lowest clean value rather than chasing the floor. At 500 us a position
+# read costs ~13 ms instead of ~89 ms, which is most of the available win:
+# probing and streaming are dominated by these transfers.
+#
+# Raise it back to 5000 if reads ever look unstable; scripts/srm20_bench.py
+# --frame-soak is how to justify moving it.
+DEFAULT_FRAME_US = 500
+
+
+def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None,
+              prime=True, frame_us=None):
+    """Open the prober serial port and wait out the Uno's reset-on-open.
+
+    ``prime`` sends one throwaway position query. Measured on the machine: the
+    FIRST SPI transaction after the Uno resets comes back all zeros, so whatever
+    command a caller happens to run first would read as garbage — a status word
+    of 0x00000000, a position of 0,0,0. Burning one read here means every
+    caller's first real command is clean.
+
+    ``frame_us`` sets the SPI framing delay for this session (None leaves the
+    firmware's own default alone). Needs the patched library; silently does
+    nothing without it, which is the right failure — slow but correct.
+    """
     ser = (serial_factory or _open_serial)(port, baud, 1.0)
     if startup_wait:
         time.sleep(startup_wait)
@@ -216,6 +242,16 @@ def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None):
         ser.reset_input_buffer()
     except Exception:
         pass
+    if prime:
+        try:
+            query_position(ser)
+        except Exception:
+            pass
+    if frame_us is not None:
+        try:
+            frame_delay(ser, frame_us)
+        except Exception:
+            pass
     return ser
 
 
@@ -224,19 +260,29 @@ def query_position(ser, timeout=1.0):
     ``(x_mm, y_mm, z_mm, touch_bool)`` or None. A single fast read (no stable
     filtering) so jogging shows live; the caller rejects implausible jumps
     (garbage SPI reads). ``touch`` is the external probe contact state (the 5th
-    field; defaults False for an older sketch without it)."""
+    field; defaults False for an older sketch without it).
+
+    Resyncs first (see :func:`_flush_stale`): a stale line left by an
+    interrupted move would otherwise be mistaken for this query's answer and
+    report the position as unreadable."""
+    _flush_stale(ser)
     ser.write(b"Q\n")
-    line = _read_line(ser, time.monotonic() + timeout)
-    if line and line.startswith("Q"):
+    deadline = time.monotonic() + timeout
+    while True:
+        line = _read_line(ser, deadline)
+        if line is None:
+            return None
+        if not line.startswith("Q"):
+            continue                      # someone else's reply — keep looking
         parts = line.split()
-        if len(parts) >= 4:
-            try:
-                touch = len(parts) >= 5 and int(parts[4]) != 0
-                return (int(parts[1]) / 1000.0, int(parts[2]) / 1000.0,
-                        int(parts[3]) / 1000.0, touch)
-            except ValueError:
-                return None
-    return None
+        if len(parts) < 4:
+            return None
+        try:
+            touch = len(parts) >= 5 and int(parts[4]) != 0
+            return (int(parts[1]) / 1000.0, int(parts[2]) / 1000.0,
+                    int(parts[3]) / 1000.0, touch)
+        except ValueError:
+            return None
 
 
 def touch_off(ser, timeout=40.0, should_abort=None):
@@ -304,6 +350,283 @@ def zero_z(ser, timeout=60.0, should_abort=None):
             except ValueError:
                 return None
     return None
+
+
+# --- v3: the machine remote (status, spindle, job control, calibration) -----
+# Everything below drives an SPI command the project shipped without ever
+# calling — see docs/2026-08-21-spi-command-audit.md. None of it is proven on
+# the machine yet, so every function FAILS SOFT (None / False, never an
+# exception) and the caller decides whether the feature exists. The GUI's
+# Machine test panel is what turns "unproven" into "proven".
+
+# The system status word, decoded from Roland's own getStatus example
+# (hardware/SRM20SPIRemote/examples/getStatus/getStatus.ino). v2 firmware read
+# only ``moving`` and left the rest of the word unexamined.
+SYSTEM_BITS = (
+    (0x00000020, "paused",  "paused"),
+    (0x00000040, "error",   "error"),
+    (0x00000800, "moving",  "motors running"),
+    (0x00001000, "fatal",   "fatal error"),
+    (0x00010000, "spindle", "spindle running"),
+    (0x00020000, "cover",   "cover open"),
+)
+STATE_MASK = 0x00000007          # machine state code; the values are unmapped
+# The remote word carries one bit we care about: the machine telling us it
+# refused the last command. Nothing in the project has ever looked at it, so a
+# rejected move has always been indistinguishable from a completed one.
+REMOTE_BITS = (
+    (0x00000010, "cmderr", "last remote command rejected"),
+)
+
+
+def decode_status(system, remote):
+    """Decode the raw ``X`` words into ``{name: bool}`` plus ``state``/raw.
+
+    Pure and hardware-free so the bit table has one home and can be unit
+    tested; the firmware deliberately forwards the raw words rather than
+    decoding them on the Arduino.
+    """
+    out = {"state": system & STATE_MASK, "system": system, "remote": remote}
+    for mask, key, _desc in SYSTEM_BITS:
+        out[key] = bool(system & mask)
+    for mask, key, _desc in REMOTE_BITS:
+        out[key] = bool(remote & mask)
+    return out
+
+
+def _flush_stale(ser):
+    """Drop anything sitting in the input buffer.
+
+    This protocol is strict request/response, so bytes waiting *before* we send
+    a command are by definition left over from something else — an interrupted
+    move's late ``E N ABORT``, a ``% ok`` that arrived after its move finished.
+    Without this, one stray line desyncs the stream permanently: every command
+    reads the PREVIOUS command's reply and the failures march forward one step
+    at a time, which is exactly what the first machine test run showed.
+    """
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+
+
+def _ack(ser, cmd, prefix, timeout=3.0, should_abort=None, return_error=False):
+    """Send ``cmd``, resync, and return the reply's fields (prefix included).
+
+    Returns None when the board reports an error or says nothing — firmware
+    older than v3 simply does not answer these. With ``return_error`` the
+    result is ``(parts_or_None, error_line_or_None)`` so a caller can say *why*
+    rather than just "no answer".
+    """
+    _flush_stale(ser)
+    try:
+        ser.write((cmd + "\n").encode())
+    except Exception:
+        return (None, "write failed") if return_error else None
+    deadline = time.monotonic() + timeout
+    err = None
+    while True:
+        line = _read_line(ser, deadline, should_abort)
+        if line is None:
+            break
+        if line.split()[:1] == [prefix]:
+            parts = line.split()
+            return (parts, None) if return_error else parts
+        if line.startswith("E "):
+            # The board's own error for this command — terminal, and far more
+            # useful to report than a bare timeout.
+            err = line
+            break
+        # Anything else is an unrelated ack that overtook us (e.g. '~ ok'
+        # emitted mid-move); skip it rather than mistaking it for the reply.
+    return (None, err) if return_error else None
+
+
+def machine_status(ser, timeout=2.0, retries=2):
+    """Send ``X`` -> decoded status dict (plus ``rpm``), or None.
+
+    This is the whole VPanel status display: paused, cover open, error, fatal,
+    spindle state and the actual spindle RPM.
+
+    An all-zero or all-ones system word is what a FAILED SPI transfer looks
+    like, not an idle machine, so those are retried — the project's standing
+    rule is never to trust a single SPI read. If every attempt comes back that
+    way the value is returned anyway, so a genuinely dead link still reports as
+    dead rather than as None.
+    """
+    last = None
+    for _ in range(max(1, retries + 1)):
+        parts = _ack(ser, "X", "X", timeout)
+        if not parts or len(parts) < 4:
+            continue
+        try:
+            st = decode_status(int(parts[1]), int(parts[2]))
+            st["rpm"] = int(parts[3])
+        except ValueError:
+            continue
+        last = st
+        if st["system"] not in (0, 0xFFFFFFFF):
+            return st
+    return last
+
+
+def set_spindle(ser, rpm, timeout=3.0):
+    """Send ``S <rpm>`` (0 = off) -> the RPM the firmware accepted, or None.
+
+    The firmware clamps to the SRM-20's rated 7000 RPM, refuses to start with
+    the lid open (``E S COVER``), and stops the spindle by itself if the host
+    goes quiet for 10 s — so a caller that starts the spindle MUST keep talking
+    to the board (polling :func:`machine_status` is enough).
+    """
+    parts = _ack(ser, f"S {int(rpm)}", "S", timeout)
+    if not parts or len(parts) < 2:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def spindle_off(ser):
+    """Stop the spindle, swallowing every failure (used on abort paths, where
+    the caller is already in trouble and must not be derailed)."""
+    try:
+        ser.write(b"S 0\n")
+        ser.flush()
+    except Exception:
+        pass
+
+
+def suspend_job(ser, timeout=3.0):
+    """VPanel's Pause (``suspendJob``). True if the board acked."""
+    return _ack(ser, "~", "~", timeout) is not None
+
+
+def resume_job(ser, timeout=3.0):
+    """VPanel's Resume (``resumeJob``). True if the board acked."""
+    return _ack(ser, "^", "^", timeout) is not None
+
+
+def stop_moving(ser, timeout=3.0):
+    """``stopMoving`` — drop the move in flight. This is what lets an abort
+    interrupt a LONG move instead of waiting for it to finish."""
+    return _ack(ser, "%", "%", timeout) is not None
+
+
+def stop_moving_now(ser):
+    """Halt motion, fire-and-forget — no ack wait, every failure swallowed.
+
+    The version to call when something has already gone wrong. Waiting for an
+    ack while the machine is still travelling is the wrong trade: the byte is
+    picked up by the firmware's mid-move abort scan either way.
+    """
+    try:
+        ser.write(b"%\n")
+        ser.flush()
+    except Exception:
+        pass
+
+
+def cancel_job(ser, timeout=3.0):
+    """VPanel's Stop (``cancelJob``); the firmware also stops the spindle."""
+    return _ack(ser, "K", "K", timeout) is not None
+
+
+def jump_to_view(ser, speed=None, timeout=30.0):
+    """VPanel's View button (``jumpToView``) — MOVES the head forward for a bit
+    change or board swap. True if the board acked the completed move."""
+    cmd = "Y" if speed is None else f"Y {int(speed)}"
+    return _ack(ser, cmd, "Y", timeout) is not None
+
+
+def command_version(ser, timeout=3.0):
+    """The MACHINE's remote-command version (``getCommandVersion``), or None.
+
+    Distinct from :func:`firmware_version`, which is our own sketch's. Needs
+    the patched library (the call is private upstream) — an unpatched build
+    answers ``E I NOPATCH``, which reads as None here.
+    """
+    parts = _ack(ser, "I", "I", timeout)
+    if not parts or len(parts) < 2:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def frame_delay(ser, us=None, timeout=3.0):
+    """Get (``us=None``) or set the SPI per-byte framing delay, in microseconds.
+
+    Roland hard-coded 5000 us. At that rate a single ``jumpTo`` spends ~90 ms
+    asleep and a status poll ~55 ms, which is the real ceiling on how fast
+    moves can be streamed. Returns the delay now in effect, or None (unpatched
+    library / older firmware).
+    """
+    cmd = "F" if us is None else f"F {int(us)}"
+    parts = _ack(ser, cmd, "F", timeout)
+    if not parts or len(parts) < 2:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def status_guard(ser, on=None, timeout=3.0):
+    """Get/set the firmware's v3 status guard (stop on PAUSE / COVER / FATAL).
+
+    Armed by default because it is strictly safer than v2's 8-second stall
+    heuristic — but if the status bits turn out to be unreliable on this
+    machine it can be disarmed rather than causing spurious aborts.
+    """
+    cmd = "A" if on is None else f"A {1 if on else 0}"
+    parts = _ack(ser, cmd, "A", timeout)
+    if not parts or len(parts) < 2:
+        return None
+    return parts[1] == "1"
+
+
+def timed_move(ser, dx_um=0, dy_um=0, dz_um=0, speed=-1, timeout=120.0,
+               should_abort=None, last_error=None):
+    """Send ``N`` — a relative move timed ON THE BOARD — and return a dict with
+    ``ms``, ``dist_um``, ``speed``, the end position in mm, and the derived
+    ``mm_per_s``. None on error/abort.
+
+    This is the primitive that calibrates ``jumpTo``'s ``movespeed`` argument
+    against real mm/s. The units are Roland-internal and uncalibrated, which is
+    the reason move streaming is still marked EXPERIMENTAL. Board-side timing
+    keeps the USB round-trip out of the measurement, but the resolution is the
+    firmware's status-poll interval (~100 ms at the stock framing delay), so
+    measure with moves of several seconds.
+
+    Pass ``last_error`` as a list to receive the board's failure line (e.g.
+    ``E N ABORT``) when the move does not complete.
+    """
+    cmd = f"N {int(dx_um)} {int(dy_um)} {int(dz_um)} {int(speed)}"
+    parts, err = _ack(ser, cmd, "N", timeout, should_abort, return_error=True)
+    if not parts or len(parts) < 7:
+        # Surface the board's reason. 'E N ABORT' means the machine stopped or
+        # refused; a bare timeout means it never answered at all. Callers
+        # report this, because "the move did not complete" on its own gives
+        # nobody anything to act on.
+        if last_error is not None:
+            last_error.append(err or "no reply")
+        # The move lives in the Roland controller, not in the firmware, so
+        # giving up on the REPLY does not stop the machine — observed
+        # 2026-08-21, a move the host had already declared failed kept driving
+        # Y across the table. Halt it explicitly.
+        stop_moving_now(ser)
+        return None
+    try:
+        ms, dist, sp = int(parts[1]), int(parts[2]), int(parts[3])
+        x, y, z = (int(parts[4]), int(parts[5]), int(parts[6]))
+    except ValueError:
+        return None
+    # mm/s = (dist_um / 1000) / (ms / 1000) = dist_um / ms
+    return {"ms": ms, "dist_um": dist, "speed": sp,
+            "x_mm": x / 1000.0, "y_mm": y / 1000.0, "z_mm": z / 1000.0,
+            "mm_per_s": (dist / ms) if ms > 0 else None}
 
 
 def deviations_mm(results, ref_id=0):

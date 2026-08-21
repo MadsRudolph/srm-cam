@@ -85,7 +85,8 @@ HIDDEN_IN_NOVICE = [
     "The bed-leveling workbench — grid size, retouch interval, height-map "
     "import/export (Novice gets a guided “Level the bed” button instead)",
     "Rework — boxing spots to re-cut",
-    "Machine control — live DRO, jog, streaming (bed leveling still works)",
+    "Machine control — live DRO, jog, streaming, the machine test panel "
+    "(bed leveling still works)",
     "Output format, mirroring and preview frame (the defaults are correct)",
     "The feed test card and saving your own presets",
 ]

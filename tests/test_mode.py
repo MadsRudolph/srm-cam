@@ -86,9 +86,14 @@ def test_novice_hides_the_professional_controls(monkeypatch):
     # the big one: feeds, depths, offsets, V-bit geometry
     assert not w.params_group.isVisible()
     # machine control — a Novice sends files from VPanel
-    for widget in (w.connect_btn, w.stream_btn, w.jog_chk, w.dro_label,
-                   w.level_port_combo, w.stop_btn):
+    for widget in (w.connect_btn, w.dro_label, w.level_port_combo, w.stop_btn,
+                   w.spindle_btn, w.pause_btn, w.resume_btn, w.machine_label,
+                   w.zjog_up_btn, w.zjog_down_btn, w.zjog_step):
         assert not widget.isVisible(), widget
+    # The rest of the machine controls moved off the dock strip into the
+    # Machine MENU, so what has to be hidden in Novice is the menu itself —
+    # the actions inside it are never reachable without it.
+    assert not w._machine_menu.menuAction().isVisible()
     # ...but the things a beginner actually needs are all still there
     for widget in (w.load_btn, w.export_btn, w.preset_combo,
                    w.apply_preset_btn, w.thickness_spin, w.tabs,
@@ -100,10 +105,14 @@ def test_novice_hides_the_professional_controls(monkeypatch):
 def test_professional_shows_everything(monkeypatch):
     w = _window(monkeypatch, "pro")
     w.show(); _app.processEvents()
-    for widget in (w.params_group, w.connect_btn, w.stream_btn, w.jog_chk,
-                   w.load_btn, w.export_btn, w.diag_btn, w.feedcard_btn,
-                   w.save_preset_btn):
+    for widget in (w.params_group, w.connect_btn, w.load_btn, w.export_btn,
+                   w.diag_btn, w.feedcard_btn, w.save_preset_btn,
+                   w.zjog_up_btn, w.zjog_down_btn):
         assert widget.isVisible(), widget
+    assert w._machine_menu.menuAction().isVisible()
+    for act in (w.stream_btn, w.jog_chk, w.machinetest_btn, w.align_btn,
+                w.machine_zero_btn, w.view_btn, w.trail_chk):
+        assert act in w._machine_menu.actions(), act
     w.close()
 
 
