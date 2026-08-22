@@ -5,6 +5,15 @@ from gerber2rml.engine.spi_stream import StreamError, stream_toolpaths
 from gerber2rml.toolpath import Move
 
 
+# The idle word observed on the real machine in the 2026-08 audit. NOT zero:
+# an all-zero (or all-ones) system word is what a FAILED SPI transfer looks
+# like, and both machine_status and the stream's cover watch treat it as
+# "I could not read that" rather than a healthy, lid-shut machine.
+IDLE_SYSTEM = 0x01000082
+COVER_BIT = 0x20000
+SPINDLE_BIT = 0x10000
+
+
 class StreamSerial:
     """Fake v2 board: acks C with an origin, echoes M moves; records them."""
     def __init__(self, fail_at=None):
@@ -12,9 +21,14 @@ class StreamSerial:
         self.moves = []            # (x, y, z, speed) um as received
         self.aborted = False
         self.fail_at = fail_at
+        self.status_reads = 0
 
     def write(self, data):
         s = data.decode().strip()
+        if s == "X":
+            self.status_reads += 1
+            self._out.append(f"X {IDLE_SYSTEM} 4 0\n".encode())
+            return
         if s == "C":
             self._out.append(b"C 120000 26000 -54260\n")
         elif s.startswith("M"):
@@ -104,8 +118,11 @@ class V3Serial(StreamSerial):
     def write(self, data):
         s = data.decode().strip()
         if s == "X":
-            sys_word = (0x20000 if self.cover else 0) | (0x10000 if self.spindle else 0)
-            self._out.append(f"X {sys_word} 0 {8600 if self.spindle else 0}\n".encode())
+            self.status_reads += 1
+            sys_word = (IDLE_SYSTEM
+                        | (COVER_BIT if self.cover else 0)
+                        | (SPINDLE_BIT if self.spindle else 0))
+            self._out.append(f"X {sys_word} 4 {8600 if self.spindle else 0}\n".encode())
             return
         if s.startswith("S"):
             rpm = int(s[1:])
@@ -190,4 +207,92 @@ def test_lid_opening_mid_run_stops_and_lifts():
 
     with pytest.raises(StreamError, match="lid opened"):
         stream_toolpaths(s, long_job, dry_run=True, on_progress=open_lid)
+    assert s.aborted
+
+
+# --- the deadman, the short job, and the blind read ------------------------
+# All three are ways the machine could keep cutting while the app believed it
+# had things under control.
+
+def test_a_held_pause_keeps_talking_to_the_board(monkeypatch):
+    """The firmware stops a spindle it started if the host goes quiet for 10 s.
+    A held pause IS silence, so the pause loop has to keep the link busy or the
+    operator's own Pause kills the tool mid-cut."""
+    from gerber2rml.engine import spi_stream
+    monkeypatch.setattr(spi_stream, "PAUSE_KEEPALIVE_S", 0.0)
+    s = V3Serial()
+    held = {"n": 0}
+
+    def should_pause():
+        held["n"] += 1
+        return held["n"] < 8        # hold for a few loop turns, then release
+
+    before = s.status_reads
+    stream_toolpaths(s, _job(), dry_run=False, spindle_rpm=3000,
+                     should_pause=should_pause)
+    assert s.status_reads > before, "the pause loop never spoke to the board"
+
+
+def test_resume_refuses_if_the_spindle_died_during_the_pause(monkeypatch):
+    """If the deadman (or anything else) stopped the tool while we were held,
+    resuming would feed a stationary bit into copper."""
+    from gerber2rml.engine import spi_stream
+    monkeypatch.setattr(spi_stream, "PAUSE_KEEPALIVE_S", 0.0)
+    s = V3Serial()
+    held = {"n": 0}
+
+    def should_pause():
+        held["n"] += 1
+        if held["n"] == 3:
+            s.spindle = False       # the deadman fires while we are held
+        return held["n"] < 6
+
+    with pytest.raises(StreamError, match="spindle stopped"):
+        stream_toolpaths(s, _job(), dry_run=False, spindle_rpm=3000,
+                         should_pause=should_pause)
+    assert s.aborted
+
+
+def test_short_job_with_the_lid_open_never_starts():
+    """_job() is 6 moves. The old poll fired on `i % 20 == 19`, so a job this
+    short was never checked at all."""
+    s = V3Serial(cover=True)
+    with pytest.raises(StreamError, match="lid"):
+        stream_toolpaths(s, _job(), dry_run=True)
+    assert not s.moves, "streamed into an open lid"
+
+
+def test_lid_is_polled_by_move_count_not_only_by_clock():
+    """The guarantee is: checked before the first move, then at least once a
+    second AND at least every COVER_POLL_MOVES moves. This exercises the move
+    counter - the whole job runs in well under the one-second clock, so only
+    the count can catch it."""
+    from gerber2rml.engine.spi_stream import COVER_POLL_MOVES
+    job = [[Move(i, 0, 2.0) for i in range(COVER_POLL_MOVES + 4)]]
+    s = V3Serial()
+
+    def open_lid(i, _n):
+        if i >= 2:
+            s.cover = True
+
+    with pytest.raises(StreamError, match="lid opened"):
+        stream_toolpaths(s, job, dry_run=True, on_progress=open_lid)
+    assert s.aborted
+
+
+def test_an_unreadable_status_word_stops_the_run():
+    """An all-zero word is a failed SPI transfer, not a shut lid. Cutting on
+    the assumption that no news is good news is how the cover watch silently
+    stops working."""
+    class Blind(V3Serial):
+        def write(self, data):
+            if data.decode().strip() == "X":
+                self.status_reads += 1
+                self._out.append(b"X 0 0 0\n")
+                return
+            super().write(data)
+
+    s = Blind()
+    with pytest.raises(StreamError, match="status word"):
+        stream_toolpaths(s, [[Move(i, 0, 2.0) for i in range(60)]], dry_run=True)
     assert s.aborted

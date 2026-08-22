@@ -227,12 +227,41 @@ void spindleOff() {
 // from here too, so the host sees the same reply whether the board was busy or
 // idle when it arrived.
 bool gAbort = false;
+// Set when '!' arrives MID-MOVE, where checkAbort() consumes the byte
+// and handleLine() never sees it. The abnormal exits below act on it,
+// so "stopped and lifted" is true however the abort arrived.
+bool gLiftPending = false;
 bool gPauseRequested = false;    // operator pause: an expected pause, not a fault
+// Stop, kill the spindle, release any hold, and retract to safe Z.
+//
+// Shared by the '!' line handler and by every abnormal exit from a streamed
+// move, because those are the two ways an abort arrives and only one of them
+// used to retract. Re-entrancy matters: this calls waitForMotorStop(), which
+// calls checkAbort(), so a naive version could call itself forever.
+void abortLift() {
+  static bool busy = false;
+  if (busy) return;
+  busy = true;
+  gLiftPending = false;
+  spindleOff();
+  // stopMoving first, so a long move in flight is dropped rather than having
+  // to finish before the lift can even be commanded.
+  srm20.stopMoving();
+  // A suspended machine will not execute the lift, and the hold flag would
+  // make waitForMotorStop sit waiting for a resume that is never coming.
+  if (gPauseRequested) { srm20.resumeJob(); gPauseRequested = false; }
+  long x, y, z;
+  if (readPos(x, y, z)) { srm20.jumpTo(x, y, safeZ, MOVE_SPEED); waitForMotorStop(); }
+  Serial.println(F("# ABORT lifted to safe Z, spindle off"));
+  busy = false;
+}
+
 bool checkAbort() {
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '!') {
       gAbort = true;
+      gLiftPending = true;      // retract at the exit, not from in here
     } else if (c == '%') {                       // stopMoving: drop this move
       srm20.stopMoving();
       gAbort = true;                             // ...and stop the sequence
@@ -279,6 +308,7 @@ bool statusAbnormal(unsigned long sys) {
 // abort the fresh operation. Resume the machine, then clear.
 void clearHold() {
   gAbort = false;
+  gLiftPending = false;
   if (gPauseRequested) {
     srm20.resumeJob();
     gPauseRequested = false;
@@ -644,7 +674,8 @@ void handleLine(char *s) {
     if (!readPos(ax, ay, az)) { ax = x + dx; ay = y + dy; az = tz; }
     float fx = (float)(ax - x), fy = (float)(ay - y), fz = (float)(az - z);
     long dist = (long)sqrt(fx * fx + fy * fy + fz * fz);
-    if (!ok) { Serial.println(F("E N ABORT")); return; }
+    if (!ok) { if (gLiftPending) abortLift();
+               Serial.println(F("E N ABORT")); return; }
     Serial.print(F("N ")); Serial.print(ms); Serial.print(' ');
     Serial.print(dist); Serial.print(' '); Serial.print(sp); Serial.print(' ');
     Serial.print(ax); Serial.print(' '); Serial.print(ay); Serial.print(' ');
@@ -692,7 +723,8 @@ void handleLine(char *s) {
     Serial.print(strOY); Serial.print(' '); Serial.println(strOZ);
   } else if (s[0] == 'M') {        // EXPERIMENTAL stream move: work-frame um
     if (!haveStreamOrigin) { Serial.println(F("E M NOSESSION")); return; }
-    if (checkAbort()) { Serial.println(F("E M ABORT")); return; }
+    if (checkAbort()) { if (gLiftPending) abortLift();
+                        Serial.println(F("E M ABORT")); return; }
     char *p = s + 1;
     long x = strtol(p, &p, 10);
     long y = strtol(p, &p, 10);
@@ -702,7 +734,8 @@ void handleLine(char *s) {
     if (mz > 0) mz = 0;            // never above machine Z home
     sawCmdErr = false;
     srm20.jumpTo(strOX + x, strOY + y, mz, (int)sp);
-    if (!waitForMotorStop()) { Serial.println(F("E M ABORT")); return; }
+    if (!waitForMotorStop()) { if (gLiftPending) abortLift();
+                               Serial.println(F("E M ABORT")); return; }
     // v3: the machine can REJECT a command (remote word bit 0x10). v2 never
     // looked, so a refused move was acked as if it had run.
     if (sawCmdErr) { sawCmdErr = false; Serial.println(F("E M CMDERR")); return; }
@@ -766,17 +799,7 @@ void handleLine(char *s) {
     }
   } else if (s[0] == '!') {                  // ABORT: stop, spindle off, lift
     gAbort = true;
-    spindleOff();
-    // v3: stopMoving first so a long move in flight is dropped instead of
-    // having to finish before the lift can even be commanded.
-    srm20.stopMoving();
-    // A suspended machine will not execute the lift below, and the hold flag
-    // would make waitForMotorStop sit there waiting for a resume that is never
-    // coming. Release the hold so the abort can actually retract the tool.
-    if (gPauseRequested) { srm20.resumeJob(); gPauseRequested = false; }
-    long x, y, z;
-    if (readPos(x, y, z)) { srm20.jumpTo(x, y, safeZ, MOVE_SPEED); waitForMotorStop(); }
-    Serial.println(F("# ABORT lifted to safe Z, spindle off"));
+    abortLift();
   }
 }
 

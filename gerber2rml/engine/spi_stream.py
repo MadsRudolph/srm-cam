@@ -24,8 +24,38 @@ from gerber2rml.engine import spi_probe
 from gerber2rml.engine.spi_probe import _read_line, send_abort
 
 
+# The firmware stops a spindle IT was told to start if the host goes quiet
+# for SPINDLE_DEADMAN_MS (10 s). A held pause is silence, so the pause loop has
+# to keep talking. Status reads are the documented keep-alive and cost nothing.
+PAUSE_KEEPALIVE_S = 2.0
+
+# Poll the lid on a clock OR a move count, whichever comes first. The count
+# alone (the old `i % 20 == 19`) never checked a job shorter than 20 moves.
+# The clock alone misses the opposite case: 40 short moves can all execute
+# inside one poll interval. Both, and neither hole is open.
+COVER_POLL_S = 1.0
+COVER_POLL_MOVES = 10
+
+# An unreadable status word is not "the lid is shut" - it is no information.
+# Tolerate a couple in a row (SPI reads are flaky by nature), then stop.
+COVER_BLIND_LIMIT = 3
+
+
 class StreamError(RuntimeError):
     pass
+
+
+def _status_or_none(ser):
+    """``machine_status`` but with the known-dead words folded into None.
+
+    ``machine_status`` deliberately returns an all-zero/all-ones word rather
+    than None so a dead link reports as dead. For a safety interlock that
+    distinction matters the other way round: we need "I could not read it".
+    """
+    st = spi_probe.machine_status(ser)
+    if st is None or st.get("system") in (0, 0xFFFFFFFF):
+        return None
+    return st
 
 
 def begin_stream(ser, timeout=3.0):
@@ -108,7 +138,16 @@ def stream_toolpaths(ser, toolpaths, speed=-1, dry_run=True, dry_lift_mm=2.0,
     n = len(moves)
     spindle_started = False
     paused = False
+    blind = 0                 # consecutive unreadable status words
+    next_cover = 0.0          # monotonic deadline for the next lid poll
     try:
+        # Check the lid BEFORE the spindle, not 20 moves in.
+        if watch_cover:
+            st = _status_or_none(ser)
+            if st is not None and st.get("cover"):
+                raise StreamError(
+                    "the machine reports its lid open — close it before "
+                    "starting a run")
         if spindle_rpm and not dry_run:
             _start_spindle(ser, spindle_rpm)
             spindle_started = True
@@ -120,6 +159,7 @@ def stream_toolpaths(ser, toolpaths, speed=-1, dry_run=True, dry_lift_mm=2.0,
             # firmware honours '~'/'^' mid-move, so this is safe to enter at
             # any point in the job.
             if should_pause is not None:
+                next_ka = 0.0
                 while should_pause():
                     if not paused:
                         spi_probe.suspend_job(ser)
@@ -127,10 +167,33 @@ def stream_toolpaths(ser, toolpaths, speed=-1, dry_run=True, dry_lift_mm=2.0,
                     if should_abort is not None and should_abort():
                         _halt(ser)
                         raise StreamError(f"aborted while paused at move {i}/{n}")
+                    # Keep the link busy. Without this the firmware's spindle
+                    # deadman sees a silent host and stops the tool, and the
+                    # resume below would drive a stationary bit into copper.
+                    now = time.monotonic()
+                    if now >= next_ka:
+                        next_ka = now + PAUSE_KEEPALIVE_S
+                        st = _status_or_none(ser)
+                        if watch_cover and st is not None and st.get("cover"):
+                            _halt(ser)
+                            raise StreamError(
+                                f"lid opened while paused at move {i}/{n} — "
+                                f"stopped and lifted")
                     time.sleep(0.2)
                 if paused:
                     spi_probe.resume_job(ser)
                     paused = False
+                    # The pause may have outlived the spindle regardless (a
+                    # deadman that already fired, someone hitting stop on the
+                    # machine). Never resume a wet cut on an unverified tool.
+                    if spindle_started:
+                        st = _status_or_none(ser)
+                        if st is not None and not st.get("spindle"):
+                            _halt(ser)
+                            raise StreamError(
+                                f"the spindle stopped during the pause at move "
+                                f"{i}/{n} — stopped and lifted rather than "
+                                f"resuming the cut with a stationary tool")
             z_mm = dry_lift_mm if dry_run else m.z
             ser.write(f"M {round(m.x * 1000)} {round(m.y * 1000)} "
                       f"{round(z_mm * 1000)} {int(speed)}\n".encode())
@@ -145,15 +208,28 @@ def stream_toolpaths(ser, toolpaths, speed=-1, dry_run=True, dry_lift_mm=2.0,
                     f"opening or a timeout stops the stream, never continues it")
             if on_progress:
                 on_progress(i + 1, n)
-            # Cheap safety poll: the machine's own cover bit is proven to follow
-            # the lid, so a run can be stopped by opening it. Once every 20
-            # moves keeps the cost off the critical path.
-            if watch_cover and i % 20 == 19:
-                st = spi_probe.machine_status(ser)
-                if st is not None and st.get("cover"):
-                    _halt(ser)
-                    raise StreamError(
-                        f"lid opened at move {i}/{n} — stopped and lifted")
+            # Safety poll on a CLOCK. This used to be `i % 20 == 19`, which
+            # meant a job of fewer than 20 moves - a drill file, a small
+            # cut-out - was never checked at all.
+            due = (time.monotonic() >= next_cover
+                   or i % COVER_POLL_MOVES == COVER_POLL_MOVES - 1)
+            if watch_cover and due:
+                next_cover = time.monotonic() + COVER_POLL_S
+                st = _status_or_none(ser)
+                if st is None:
+                    blind += 1
+                    if blind >= COVER_BLIND_LIMIT:
+                        _halt(ser)
+                        raise StreamError(
+                            f"lost the machine's status word for "
+                            f"{blind} reads at move {i}/{n} — stopped and "
+                            f"lifted rather than cut blind")
+                else:
+                    blind = 0
+                    if st.get("cover"):
+                        _halt(ser)
+                        raise StreamError(
+                            f"lid opened at move {i}/{n} — stopped and lifted")
         return n
     finally:
         if spindle_started:
