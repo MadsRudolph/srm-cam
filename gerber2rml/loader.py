@@ -429,7 +429,11 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
 
     if bcu_path is None:
         raise ValueError(
-            f"No bottom-copper (B.Cu) gerber found in {folder}"
+            f"No bottom-copper (B.Cu) gerber found in {folder}.\n\n"
+            f"SRM-CAM mills bottom-side-up, so the copper it cuts has to be "
+            f"the B.Cu layer. If you drew a single-sided board on the TOP "
+            f"layer, either move the tracks to B.Cu in KiCad, or re-plot "
+            f"with B.Cu selected."
         )
     if edge_path is None:
         raise ValueError(

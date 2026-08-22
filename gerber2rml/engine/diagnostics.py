@@ -37,14 +37,16 @@ def cut_depths(trace, drill, cutout, dowel_depth=None):
 
 def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
               holes=None, bit_diameter=None, trace=None, leveled=False,
-              z_floor=SRM20_Z_FLOOR):
+              z_floor=SRM20_Z_FLOOR, shorts=None):
     """Run the checks and return a list of :class:`Check`.
 
     ``depths``: {op: mm} from :func:`cut_depths`. ``design_bounds``: placed
     (x0,y0,x1,y1) incl. dowels. ``surface_z``: probed surface in MACHINE mm
     (negative); without it the Z-reach check can only advise. ``trace`` (the
     :class:`TraceJob`) + ``leveled`` (is a bed height-map being applied?) drive
-    the V-bit flatness check."""
+    the V-bit flatness check. ``shorts`` is the output of
+    :func:`gerber2rml.engine.drc.isolation_bridges` - places the cutter
+    physically cannot separate two nets."""
     checks = []
 
     # --- fits the bed -------------------------------------------------------
@@ -101,6 +103,25 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
                 checks.append(Check("ok", "Holes fit the bit",
                                     f"smallest hole {dmin:.2f} mm >= {bit_diameter:.2f} "
                                     f"mm bit."))
+
+    # --- guaranteed shorts --------------------------------------------------
+    # This is the only check here that fails on the DESIGN rather than the
+    # setup, and it is the most expensive to discover late: a board milled
+    # perfectly to a layout the bit cannot separate is scrap either way.
+    if shorts is not None:
+        if shorts:
+            worst = min(s["gap"] for s in shorts)
+            checks.append(Check(
+                "fail", "Nets closer than the bit",
+                f"{len(shorts)} spot(s) where two SEPARATE nets sit closer than "
+                f"the cutter can go (worst {worst:.2f} mm, marked X on the "
+                f"Traces preview). The copper between them cannot be removed, so "
+                f"those nets WILL be shorted on the finished board. Use a "
+                f"narrower bit (a V-bit cuts narrower at a shallower depth), or "
+                f"move the tracks apart in KiCad."))
+        else:
+            checks.append(Check(
+                "ok", "Net clearance", "no two nets sit closer than the bit."))
 
     # --- V-bit: cut width is depth-sensitive, so the bed MUST be levelled ----
     if trace is not None and getattr(trace, "tool_type", "flat") == "vbit":

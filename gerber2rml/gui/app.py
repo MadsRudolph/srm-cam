@@ -593,10 +593,19 @@ class MainWindow(QMainWindow):
         # Toolbar / Top Controls
         self.load_btn = QPushButton("Load Gerber folder...")
         self.load_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self.load_btn.setToolTip(
+            "Open the folder KiCad plotted into. SRM-CAM needs the bottom "
+            "copper (B.Cu), the board outline (Edge.Cuts) and the drill "
+            "file (.drl); front copper (F.Cu) as well for a double-sided "
+            "board.")
         self.load_btn.clicked.connect(self._on_load_clicked)
         
         self.export_btn = QPushButton("Export toolpaths...")
         self.export_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.export_btn.setToolTip(
+            "Write the machine files - one per operation, plus a spindle-off "
+            "dry run and a run plan telling you what order to send them in "
+            "and which bit each one needs.")
         self.export_btn.clicked.connect(self._on_export_clicked)
 
         self.diag_btn = QPushButton("Diagnostics")
@@ -1285,7 +1294,25 @@ class MainWindow(QMainWindow):
         self.preset_combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.preset_combo.setMinimumWidth(100)
         self.preset_combo.addItems(list(self._presets.keys()))
+        # The closed combo is far too narrow for these names, and the popup
+        # was the same width, so the choice was made half-blind. Show the
+        # full name in the popup and on hover.
+        self.preset_combo.view().setMinimumWidth(520)
+        for _i, _name in enumerate(self._presets.keys()):
+            self.preset_combo.setItemData(_i, _name, Qt.ToolTipRole)
+        self.preset_combo.setToolTip(
+            "The preset sets every feed and depth. Picking one here applies "
+            "it immediately - what you see is what gets exported.")
+        # Picking a preset APPLIES it. It used to only change the label
+        # while the app went on exporting the previous one, which is the
+        # worst failure mode a control can have: it lies, silently, and the
+        # first evidence is a ruined board. Apply stays for re-applying
+        # after hand-editing a field.
+        self.preset_combo.activated.connect(self.apply_selected_preset)
         self.apply_preset_btn = QPushButton("Apply")
+        self.apply_preset_btn.setToolTip(
+            "Re-apply the selected preset, discarding any hand edits to the "
+            "job parameters.")
         self.apply_preset_btn.clicked.connect(self.apply_selected_preset)
         self.save_preset_btn = QPushButton("Save...")
         self.save_preset_btn.clicked.connect(self._on_save_preset)
@@ -4340,6 +4367,84 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Load failed", str(e))
 
+    def _show_export_summary(self, out, written, total_secs=0):
+        """Put the run plan in front of the operator instead of in a .txt.
+
+        The run plan is the best thing the app produces - the order, the bit
+        for each step, when to re-zero Z, and what the dry run is for. It was
+        being announced by a status-bar line that expires in twelve seconds,
+        next to four .nc files, to people who have never seen a .nc file. Nobody
+        opens the .txt.
+        """
+        from pathlib import Path as _P
+        out = _P(out)
+        plan = next((p for p in map(_P, written)
+                     if p.name.endswith("_runplan.txt")), None)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Exported - what to do next")
+        head = f"{len(written)} file(s) written to:\n{out}"
+        if total_secs:
+            from gerber2rml.engine.estimate import format_duration
+            head += (f"\n\nEstimated total run time ~{format_duration(total_secs)}.")
+        box.setText(head)
+        if plan is not None and plan.exists():
+            try:
+                box.setInformativeText(plan.read_text(encoding="utf-8").strip())
+            except OSError:
+                pass
+        open_btn = box.addButton("Open folder", QMessageBox.ActionRole)
+        box.addButton("Close", QMessageBox.AcceptRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(out)))
+
+    def _isolation_shorts(self):
+        """Spots where the cutter cannot separate two nets, or None if unknown.
+
+        Computed on demand rather than left over from the last preview: the
+        preview only runs this on the Traces tab, so relying on that meant the
+        answer depended on which tab you happened to have open.
+        """
+        if self.state.board is None:
+            return None
+        try:
+            from gerber2rml.engine.drc import isolation_bridges
+            return isolation_bridges(self.state.board.copper,
+                                     self.state.trace.effective_diameter())
+        except Exception:
+            return None            # a DRC that crashes must not block an export
+
+    def _confirm_shorts(self):
+        """Ask before exporting a board that cannot work. True = go ahead.
+
+        Deliberately a modal question and not another status-bar line: the
+        status bar is where this finding used to go to die.
+        """
+        shorts = self._isolation_shorts()
+        if not shorts:
+            return True
+        worst = min(s["gap"] for s in shorts)
+        box = QMessageBox(QMessageBox.Warning, "These nets will be shorted",
+                          f"{len(shorts)} spot(s) on this board have two "
+                          f"separate nets closer together than the "
+                          f"{self.state.trace.effective_diameter():.2f} mm cut "
+                          f"width (worst {worst:.2f} mm).\n\n"
+                          f"The bit cannot remove the copper between them, so "
+                          f"those nets will be joined on the finished board. "
+                          f"Milling it will not fix itself.",
+                          parent=self)
+        box.setInformativeText(
+            "Fix it in KiCad, or use a narrower bit - a 30\u00b0 V-bit cuts "
+            "narrower the shallower it goes. They are marked X on the Traces "
+            "preview.")
+        go = box.addButton("Export anyway", QMessageBox.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is go
+
     def _on_export_clicked(self):
         if self.state.gerber_dir is None:
             QMessageBox.warning(self, "Nothing to export", "Load a Gerber folder first.")
@@ -4348,6 +4453,8 @@ class MainWindow(QMainWindow):
                 and self.state.board.copper_top.is_empty:
             QMessageBox.warning(self, "No F.Cu",
                                 "Double-sided needs front copper (F.Cu); none found in this export.")
+        if not self._confirm_shorts():
+            return
         out = self._pick_out_dir()
         if out:
             try:
@@ -4363,6 +4470,7 @@ class MainWindow(QMainWindow):
                 msg += f"  ·  est. total run ~{format_duration(total)} (see runplan)"
             msg += self._note_tool_wear()
             self.statusBar().showMessage(msg, 12000)
+            self._show_export_summary(out, written, total)
 
     def _note_tool_wear(self, toolpaths=None):
         """Record this export's cut distance in the per-tool wear ledger and
@@ -4925,7 +5033,8 @@ class MainWindow(QMainWindow):
         checks = preflight(depths=depths, bed=BACKENDS[self.state.machine].bed,
                            design_bounds=self._diag_bounds(), surface_z=self._z_zero,
                            holes=holes, bit_diameter=self.state.drill.bit_diameter,
-                           trace=self.state.trace, leveled=leveled)
+                           trace=self.state.trace, leveled=leveled,
+                           shorts=self._isolation_shorts())
         checks += self._screw_checks()
         lvl = worst(checks)
         box = QMessageBox(self)

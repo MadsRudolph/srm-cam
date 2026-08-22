@@ -2060,3 +2060,100 @@ def test_launch_check_stays_silent_when_offline(tmp_path, monkeypatch):
                                            updates.RELEASES_PAGE, "", "no wifi"))
 
     assert asked == []
+
+
+# ---- the app knew the board would short and said nothing ------------------
+
+def test_preflight_fails_on_nets_closer_than_the_bit():
+    from gerber2rml.engine.diagnostics import preflight, cut_depths
+    from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+    depths = cut_depths(TraceJob(), DrillJob(), CutoutJob())
+    checks = preflight(depths=depths, shorts=[{"gap": 0.04}, {"gap": 0.12}])
+    hit = [c for c in checks if "closer than the bit" in c.title.lower()]
+    assert hit and hit[0].level == "fail", [(c.level, c.title) for c in checks]
+    assert "0.04" in hit[0].detail
+
+
+def test_preflight_says_so_when_clearance_is_fine():
+    from gerber2rml.engine.diagnostics import preflight, cut_depths
+    from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+    depths = cut_depths(TraceJob(), DrillJob(), CutoutJob())
+    checks = preflight(depths=depths, shorts=[])
+    assert any(c.level == "ok" and "clearance" in c.title.lower() for c in checks)
+
+
+def test_export_asks_before_writing_a_board_that_will_short(monkeypatch, tmp_path):
+    """The whole point: this must be a modal question, not a status-bar line
+    that expires in twelve seconds."""
+    from PySide6.QtWidgets import QMessageBox
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    monkeypatch.setattr(w, "_isolation_shorts", lambda: [{"gap": 0.04}])
+    asked = {"n": 0}
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: asked.__setitem__("n", asked["n"] + 1))
+    picked = []
+    monkeypatch.setattr(w, "_pick_out_dir", lambda: picked.append(1) or str(tmp_path))
+    w._on_export_clicked()
+    assert asked["n"], "exported a shorted board without asking"
+    assert not picked, "reached the folder picker despite Cancel being the default"
+
+
+def test_export_does_not_ask_when_the_board_is_clean(monkeypatch, tmp_path):
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    monkeypatch.setattr(w, "_isolation_shorts", lambda: [])
+    monkeypatch.setattr(w, "_pick_out_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(w, "_show_export_summary", lambda *a, **k: None)
+    w._on_export_clicked()
+    assert any(tmp_path.iterdir()), "clean board should export without a prompt"
+
+
+def test_a_drc_crash_never_blocks_an_export(monkeypatch):
+    """A diagnostic that throws must not become a wall between the user and
+    their files."""
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    import gerber2rml.engine.drc as drc
+    monkeypatch.setattr(drc, "isolation_bridges",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert w._isolation_shorts() is None
+    assert w._confirm_shorts() is True
+
+
+# ---- controls that told the truth -----------------------------------------
+
+def test_picking_a_preset_applies_it():
+    """It used to change the label only, and export the PREVIOUS preset."""
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    names = [w.preset_combo.itemText(i) for i in range(w.preset_combo.count())]
+    vbit = next((i for i, n in enumerate(names) if "bit" in n.lower()
+                 and "v-bit" in n.lower()), None)
+    if vbit is None:
+        import pytest
+        pytest.skip("no V-bit preset in this build")
+    w.preset_combo.setCurrentIndex(vbit)
+    w.preset_combo.activated.emit(vbit)
+    assert w.state.trace.tool_type == "vbit", (
+        "the combo showed one preset while the app held another")
+
+
+def test_the_two_primary_buttons_explain_themselves():
+    w = MainWindow()
+    assert w.load_btn.toolTip().strip()
+    assert w.export_btn.toolTip().strip()
+    assert "B.Cu" in w.load_btn.toolTip()
+
+
+def test_missing_bcu_says_what_to_do_about_it(tmp_path):
+    """A single-sided board drawn on the top layer used to hit a full stop."""
+    from gerber2rml.loader import load_board
+    (tmp_path / "x-Edge_Cuts.gbr").write_text("")
+    try:
+        load_board(str(tmp_path))
+    except ValueError as e:
+        msg = str(e)
+    else:
+        raise AssertionError("expected a ValueError")
+    assert "B.Cu" in msg
+    assert "KiCad" in msg or "re-plot" in msg, msg
