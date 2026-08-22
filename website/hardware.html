@@ -56,7 +56,7 @@
 <p class="lead">An Arduino on the SRM-20's internal SPI bus = live DRO, electrical touch sensing, auto probing, click-to-jog, auto fiducial finding — and, since firmware v3, the spindle and transport controls too (<a href="machine-control.html">Machine control</a>).</p>
 
 <div class="note"><span class="t">Optional — everything else works without it</span>
-<p>This whole page is about one convenience: <strong>automatic</strong> probing. Traces, drilling, cut-out, double-sided registration, rework, simulation and every export run on a stock SRM-20 through VPanel with nothing fitted to the machine, and <a href="getting-started.html#modes">Novice mode</a> hides the machine <em>dock</em> — live DRO, jog, streaming, the machine test — but keeps the two things the link buys a beginner: one-button bed leveling and <span class="ui">Corner = tool</span>. Bed leveling still works too — <a href="bed-leveling.html">measure the grid by hand</a> and type the heights in.</p></div>
+<p>This whole page is about one convenience: <strong>automatic</strong> probing. Traces, drilling, cut-out, double-sided registration, rework, simulation and every export run on a stock SRM-20 through VPanel with nothing fitted to the machine, and <a href="getting-started.html#modes">Novice mode</a> hides the machine <em>dock</em> — live DRO, jog, streaming, the machine test — and bed leveling with it, because probing drives the machine and <span class="ui">STOP</span> is in that dock. Novice keeps <span class="ui">Corner = tool</span>, which only reads the tool position. Bed leveling without the Arduino works in either mode — <a href="bed-leveling.html">measure the grid by hand</a> and type the heights in.</p></div>
 
 <h2>Install (one-time)</h2>
 <ol class="steps">

@@ -88,7 +88,7 @@ python -m gerber2rml</code></pre>
 </figure>
 
 <ul>
-  <li><strong>Sidebar</strong> — the run plan. In <strong>Novice</strong> (the default): <span class="ui">1 · Set up board</span> → <span class="ui">2 · Level the bed</span> → <span class="ui">3 · Drill</span> → <span class="ui">4 · Traces</span> → <span class="ui">5 · Cut out</span> → <span class="ui">6 · Check in 3D</span>. In <strong>Professional</strong>: <span class="ui">1 · Setup board</span> → <span class="ui">8 · Top traces</span>, plus <span class="ui">Rework</span> and <span class="ui">3D viewer</span>. Click any step, nothing is locked — it is a map, not a gate.</li>
+  <li><strong>Sidebar</strong> — the run plan. In <strong>Novice</strong> (the default): <span class="ui">1 · Set up board</span> → <span class="ui">2 · Traces</span> → <span class="ui">3 · Drill</span> → <span class="ui">4 · Cut out</span> → <span class="ui">5 · Check in 3D</span>. In <strong>Professional</strong>: <span class="ui">1 · Setup board</span> → <span class="ui">8 · Top traces</span>, plus <span class="ui">Rework</span> and <span class="ui">3D viewer</span>. Click any step, nothing is locked — it is a map, not a gate.</li>
   <li><strong>Preview</strong> — toolpaths on the bed. Drag to place the board, scrub the slider to see cut order, <span class="ui">Fit</span> to re-center. Click-to-jog when connected.</li>
   <li><strong>Machine dock</strong> (Professional) — <span class="ui">Connect</span> + port, live DRO, <span class="ui">bit ○</span> touch indicator, <span class="ui">Z ▲/▼</span> + step, <span class="ui">Probe Z</span>, <span class="ui">Spindle</span>, <span class="ui">Pause</span>, <span class="ui">Resume</span>, a live machine-status strip, red <span class="ui">STOP</span>, and the <span class="ui">Run:</span> progress row. Click-to-jog, tool trail, align overlay, <span class="ui">Zero Z on machine</span>, streaming and the machine test are on the <span class="ui">Machine</span> menu — see <a href="machine-control.html">Machine control</a>.</li>
   <li><strong>Status chips</strong> — <em>board · mesh · fit · photo · boxes · link</em> light up as your setup completes.</li>
@@ -102,7 +102,7 @@ python -m gerber2rml</code></pre>
 <div class="tbl-wrap"><table>
 <tr><th>Novice keeps</th><th>Novice puts away</th></tr>
 <tr><td>Load, drill, traces, cut out, export</td><td>Job parameters — feeds, depths, offsets, stepover, V-bit geometry (the preset sets these)</td></tr>
-<tr><td>One-button bed leveling</td><td>The bed-leveling workbench — grid size, retouch interval, height-map import/export</td></tr>
+<tr><td>The dry-run outline, exported with every job</td><td>Bed leveling — probing drives the machine, and <span class="ui">STOP</span> is in the Professional-only dock</td></tr>
 <tr><td><span class="ui">Corner = tool</span></td><td>Double-sided milling — registration, flip + align, top traces</td></tr>
 <tr><td>The screw fixture</td><td>Rework — boxing spots to re-cut</td></tr>
 <tr><td>Diagnostics and the Guide</td><td>The machine dock and menu — live DRO, jog, streaming, the machine test</td></tr>
@@ -114,8 +114,8 @@ python -m gerber2rml</code></pre>
 <div class="note"><span class="t">Pinning the mode for a shared machine</span>
 <p>Switching is a menu item, not a password. A lab that wants it fixed can set the <code>SRM_CAM_MODE</code> environment variable to <code>novice</code> or <code>pro</code> — machine-wide, or in the shortcut that launches the app. That overrides the stored preference and greys out the menu.</p></div>
 
-<div class="warn"><span class="t">Novice has no STOP button</span>
-<p>The machine dock is hidden in Novice, and <span class="ui">STOP</span> is part of it — but <span class="ui">Level the bed</span> still drives the machine. If a guided levelling run has to be stopped in Novice, <strong>use the machine's own front panel.</strong></p></div>
+<div class="note"><span class="t">Why bed leveling is not in Novice</span>
+<p>Probing <em>drives the machine</em> — it steps Z down onto the copper, repeatedly. The <span class="ui">STOP</span> button lives in the machine dock, which is Professional-only, so a Novice user could start that motion with no in-app way to stop it. Either both belong in Novice or neither does; for now, neither. Switch to Professional to level the bed.</p></div>
 
 <h2>Files from KiCad</h2>
 <ol class="steps">

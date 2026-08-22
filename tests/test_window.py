@@ -2309,3 +2309,34 @@ def test_depth_far_past_the_stock_is_a_failure_not_a_shrug():
     bad = [c for c in checks if c.level == "fail" and "cutout" in c.title.lower()]
     assert bad, [(c.level, c.title) for c in checks]
     assert "17" in bad[0].detail and "1.6" in bad[0].detail
+
+
+# ---- keyboard and menus ---------------------------------------------------
+
+def test_the_primary_actions_have_a_menu_and_a_shortcut():
+    """Load and Export existed only as buttons inside a scrolling panel - at
+    1280x720 that panel scrolls, so the primary action could be off-screen."""
+    w = MainWindow()
+    menus = {m.title().replace("&", ""): m for m in w.menuBar().findChildren(type(w.menuBar().addMenu("x")))}
+    assert "File" in menus, list(menus)
+    acts = {a.text().replace("&", ""): a for a in menus["File"].actions() if a.text()}
+    assert any("Load Gerber" in k for k in acts), list(acts)
+    assert any("Export toolpaths" in k for k in acts), list(acts)
+    seqs = {a.shortcut().toString() for a in acts.values() if not a.shortcut().isEmpty()}
+    assert "Ctrl+O" in seqs and "Ctrl+E" in seqs, seqs
+    w.close()
+
+
+def test_escape_is_the_emergency_stop(monkeypatch):
+    """On an app that drives a machine, the key everybody already reaches for
+    when something looks wrong should do the thing they want."""
+    from PySide6.QtGui import QKeySequence
+    w = MainWindow()
+    assert w._esc_shortcut.key() == QKeySequence("Esc")
+    fired = []
+    monkeypatch.setattr(w, "_on_emergency_stop", lambda: fired.append(True))
+    w._esc_shortcut.activated.disconnect()
+    w._esc_shortcut.activated.connect(w._on_emergency_stop)
+    w._esc_shortcut.activated.emit()
+    assert fired
+    w.close()

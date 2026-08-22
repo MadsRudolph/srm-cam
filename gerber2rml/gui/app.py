@@ -1850,6 +1850,7 @@ class MainWindow(QMainWindow):
         # values match the selected preset in the dropdown
         self.apply_selected_preset()
         self.sidebar.currentRowChanged.connect(self._autofit_panel)
+        self._build_file_menu()          # Load/Export had no menu home at all
         self._build_mode_menu()
         self._build_kicad_menu()
         self._uppercase_group_titles()
@@ -2064,6 +2065,42 @@ class MainWindow(QMainWindow):
         widget.setProperty("proOnly", True)
         self._pro_items.append((widget, form))
         return widget
+
+    def _build_file_menu(self):
+        """A File menu, and keyboard shortcuts for the two primary actions.
+
+        Load and Export are the whole point of the app and existed only as
+        buttons inside a scrolling settings panel - at 1280x720 that panel
+        scrolls, so the primary action could be off-screen. There were exactly
+        two shortcuts in the entire application, both for jogging Z.
+
+        Escape is bound to the emergency stop. On an app that drives a machine
+        that is a safety feature, not a convenience: the one key everybody
+        already reaches for when something looks wrong.
+        """
+        from PySide6.QtGui import QAction, QKeySequence, QShortcut
+        menu = self.menuBar().addMenu("&File")
+
+        def _act(label, slot, seq=None):
+            a = QAction(label, self)
+            if seq:
+                a.setShortcut(QKeySequence(seq))
+            a.triggered.connect(slot)
+            menu.addAction(a)
+            return a
+
+        _act("&Load Gerber folder...", self._on_load_clicked, "Ctrl+O")
+        _act("&Export toolpaths...", self._on_export_clicked, "Ctrl+E")
+        menu.addSeparator()
+        _act("&Save setup...", self._on_save_setup, "Ctrl+S")
+        _act("Load set&up...", self._on_load_setup, "Ctrl+Shift+O")
+        menu.addSeparator()
+        _act("E&xit", self.close, "Ctrl+Q")
+
+        esc = QShortcut(QKeySequence("Esc"), self)
+        esc.setContext(Qt.ApplicationShortcut)
+        esc.activated.connect(self._on_emergency_stop)
+        self._esc_shortcut = esc
 
     def _build_mode_menu(self):
         """The Mode menu. Deliberately a plain menu item, not a password: this

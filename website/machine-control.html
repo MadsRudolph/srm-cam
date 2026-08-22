@@ -123,15 +123,15 @@
   <li>A <strong>dry run never spins the tool at all.</strong></li>
 </ul>
 
-<div class="warn"><span class="t">A long pause and the deadman</span>
-<p>The deadman counts host silence, and a hold is silence. If you pause a <em>streamed wet run</em> for more than about ten seconds, check the spindle is actually turning before you resume — do not assume it survived the hold.</p></div>
+<div class="tip"><span class="t">Pausing a streamed run is safe to hold</span>
+<p>The deadman counts host silence, and a hold would once have <em>been</em> silence — pause a wet run for more than ten seconds and the spindle stopped, then the run resumed into copper with a stationary tool. SRM-CAM now keeps talking to the board while it holds, and re-checks that the spindle is actually turning before resuming. If it is not, the run stops and lifts instead of cutting.</p></div>
 
 <h2 id="streaming">Streaming a job (experimental)</h2>
 
 <div class="warn"><span class="t">This is not the normal path</span>
 <p>For real jobs, export <code>.nc</code> files and play them from VPanel. Streaming exists so the machine can eventually be driven end to end from SRM-CAM, but the speed units are not calibrated yet. Treat it as a bench feature.</p></div>
 
-<p>Every session <strong>starts as a dry run</strong> — Z is held 2&nbsp;mm above the work origin and nothing can cut. A wet run starts and stops the spindle itself, holds on <span class="ui">Pause</span>, and aborts if the lid opens mid-job — but the <strong>spindle speed must still be set on VPanel's slider first</strong>, and the raw speed value has to be validated on dry runs.</p>
+<p>Every session <strong>starts as a dry run</strong> — Z is held 2&nbsp;mm above the work origin and nothing can cut. A wet run starts and stops the spindle itself, holds on <span class="ui">Pause</span>, and aborts if the lid opens — checked before the first move, then at least once a second and at least every ten moves, so a short job is covered too — but the <strong>spindle speed must still be set on VPanel's slider first</strong>, and the raw speed value has to be validated on dry runs.</p>
 
 <div class="note"><span class="t">Bed leveling is not applied to a streamed job</span>
 <p>The height map warps <em>exported</em> files. A streamed job runs at nominal Z. If you have probed a map and need it honoured, export and run from VPanel.</p></div>
@@ -145,7 +145,7 @@
 </ol>
 
 <div class="note"><span class="t">In Novice mode</span>
-<p>The machine dock and this whole menu are hidden — <strong>including <span class="ui">STOP</span></strong>. Novice keeps the two things the link buys a beginner: one-button bed leveling and <span class="ui">Corner = tool</span>. If a guided bed-levelling run has to be stopped in Novice, <strong>use the machine's own front panel.</strong></p></div>
+<p>The machine dock and this whole menu are hidden, <strong>including <span class="ui">STOP</span></strong> — and so is bed leveling, for exactly that reason: probing drives the machine, and a mode with no stop button has no business starting motion. Novice keeps <span class="ui">Corner = tool</span>, which only <em>reads</em> the tool position and commands nothing. Switch to Professional to drive the machine.</p></div>
 
 <div class="page-nav">
   <a href="hardware.html"><span class="lbl">Previous</span><span class="ttl">← Hardware &amp; firmware</span></a>
