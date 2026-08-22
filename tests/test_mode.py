@@ -120,8 +120,8 @@ def test_novice_sidebar_is_the_short_path(monkeypatch):
     w = _window(monkeypatch, "novice")
     visible = [w.sidebar.item(i).text() for i in range(w.sidebar.count())
                if not w.sidebar.isRowHidden(i)]
-    assert visible == ["1 · Set up board", "2 · Level the bed", "3 · Drill",
-                       "4 · Traces", "5 · Cut out", "6 · Check in 3D"]
+    assert visible == ["1 · Set up board", "2 · Drill", "3 · Traces",
+                       "4 · Cut out", "5 · Check in 3D"]
     w.close()
 
 
@@ -282,49 +282,68 @@ def test_the_tour_does_not_teach_a_control_novices_cannot_see():
     assert "Corner = tool" not in placement[0].body
 
 
-# ---- guided bed leveling (Novice) -----------------------------------------
+# ---- bed leveling is professional-only ------------------------------------
 
-def test_novice_gets_the_guided_leveller_not_the_workbench(monkeypatch):
-    """Probing is the biggest thing the Arduino buys a beginner: it makes cut
-    depth follow the real surface. Novice gets one button for it; the grid /
-    retouch / import-export workbench stays professional."""
+def test_novice_has_no_bed_leveling_step(monkeypatch):
+    """Probing DRIVES THE MACHINE - it steps Z down onto the copper - and the
+    machine dock, STOP included, is professional-only. A Novice user must not
+    be able to start motion they have no in-app way to stop."""
     w = _window(monkeypatch, "novice")
     w.show(); _app.processEvents()
-    w._goto_page(2)                       # the bed-leveling page
-    _app.processEvents()
-    assert w.novice_level_btn.isVisible()
-    assert not w.level_grid_btn.isVisible()
-    assert not w.level_table.isVisible()
-    assert not w.level_retouch_spin.isVisible()
+    labels = [w.sidebar.item(i).text() for i in range(w.sidebar.count())
+              if not w.sidebar.isRowHidden(i)]
+    assert not any("level" in s.lower() for s in labels), labels
+    assert not w.stop_btn.isVisible(), (
+        "if Novice ever regains a way to move the machine, STOP has to come "
+        "back with it")
     w.close()
 
 
-def test_professional_gets_the_workbench_not_the_guided_button(monkeypatch):
+def test_novice_cannot_reach_the_leveling_page(monkeypatch):
+    """Not just unlabelled - unreachable. The page index must not be in the
+    Novice sidebar's routing table at all."""
+    w = _window(monkeypatch, "novice")
+    w.show(); _app.processEvents()
+    assert 1 in w._PRO_STEPS
+    for i in range(w.sidebar.count()):
+        if w.sidebar.isRowHidden(i):
+            continue
+        w.sidebar.setCurrentRow(i)
+        _app.processEvents()
+        assert w.stacked_widget.currentIndex() != 2, (
+            f"sidebar row {i} routes a Novice to the bed-leveling page")
+    w.close()
+
+
+def test_novice_steps_are_numbered_without_a_gap(monkeypatch):
+    """Dropping a step must renumber the rest - '1 2 4 5' reads as a bug."""
+    w = _window(monkeypatch, "novice")
+    w.show(); _app.processEvents()
+    nums = [w.sidebar.item(i).text().split("\u00b7")[0].strip()
+            for i in range(w.sidebar.count())
+            if not w.sidebar.isRowHidden(i)]
+    nums = [n for n in nums if n.isdigit()]
+    assert nums == [str(k) for k in range(1, len(nums) + 1)], nums
+    w.close()
+
+
+def test_professional_still_has_the_leveling_workbench(monkeypatch):
     w = _window(monkeypatch, "pro")
     w.show(); _app.processEvents()
     w._goto_page(2)
     _app.processEvents()
-    assert not w.novice_level_btn.isVisible()
     assert w.level_grid_btn.isVisible()
     assert w.level_table.isVisible()
     w.close()
 
 
-def test_guided_leveller_refuses_without_a_board(monkeypatch):
-    """It must not reach for the serial port, let alone move anything, when
-    there is no board to probe under."""
-    from PySide6.QtWidgets import QMessageBox
-    w = _window(monkeypatch, "novice")
-    shown = []
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: shown.append(a[1:3]))
-    probed = []
-    monkeypatch.setattr(w, "_on_probe_spi", lambda: probed.append(True))
-    w.state.gerber_dir = None
-    w._on_novice_level()
-    assert shown and "board" in shown[0][0].lower()
-    assert not probed, "guided leveller tried to probe with no board loaded"
-    w.close()
+def test_hidden_list_names_bed_leveling(monkeypatch):
+    """The Mode menu's "what's hidden" list is the app's own answer to "where
+    did it go?" - it has to actually say so."""
+    from gerber2rml.gui import mode as uimode
+    joined = " ".join(uimode.HIDDEN_IN_NOVICE).lower()
+    assert "bed leveling" in joined
+    assert "guided" not in joined, "the guided button no longer exists"
 
 
 def test_guided_leveller_picks_the_arduino_port(monkeypatch):
@@ -381,42 +400,3 @@ def test_autoselect_reports_when_no_board_is_present(monkeypatch):
     assert w._autoselect_port() is False
     assert warned and "Arduino" in warned[0]
     w.close()
-
-
-# ---- seeing where it will probe -------------------------------------------
-
-def test_novice_can_see_the_probe_points_without_moving(monkeypatch):
-    """The grid is laid over the placed design, so drawing it also checks the
-    design is where the student thinks it is."""
-    w = _window(monkeypatch, "novice")
-    w.load_folder(str(FIXT))
-    probed = []
-    monkeypatch.setattr(w, "_on_probe_spi", lambda: probed.append(True))
-
-    w._on_novice_show_probes()
-    assert w.level_table.rowCount() >= 4         # a grid got laid out
-    assert w.level_gridshow_chk.isChecked()      # ...and is drawn
-    assert not probed, "showing the probe points must not start a probe run"
-    w.close()
-
-
-def test_novice_detail_setting_changes_the_grid_size(monkeypatch):
-    w = _window(monkeypatch, "novice")
-    for idx, expected in ((0, 3), (1, 4), (2, 5)):
-        w.novice_grid_combo.setCurrentIndex(idx)
-        assert w.level_nx_spin.value() == expected
-        assert w.level_ny_spin.value() == expected
-    w.close()
-
-
-def test_show_probes_needs_a_board(monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-    w = _window(monkeypatch, "novice")
-    shown = []
-    monkeypatch.setattr(QMessageBox, "information",
-                        lambda *a, **k: shown.append(a[1]))
-    w.state.board = None
-    w._on_novice_show_probes()
-    assert shown, "should explain rather than lay out a grid over nothing"
-    w.close()
-

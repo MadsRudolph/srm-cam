@@ -82,11 +82,10 @@ HIDDEN_IN_NOVICE = [
     "Job parameters — feeds, depths, offsets, stepover, V-bit geometry "
     "(the preset sets these)",
     "Double-sided milling — registration, flip + align, top traces",
-    "The bed-leveling workbench — grid size, retouch interval, height-map "
-    "import/export (Novice gets a guided “Level the bed” button instead)",
+    "Bed leveling — probing drives the machine, and the STOP button lives "
+    "in the machine dock, which is professional-only",
     "Rework — boxing spots to re-cut",
-    "Machine control — live DRO, jog, streaming, the machine test panel "
-    "(bed leveling still works)",
+    "Machine control — live DRO, jog, streaming, the machine test panel",
     "Output format, mirroring and preview frame (the defaults are correct)",
     "The feed test card and saving your own presets",
 ]

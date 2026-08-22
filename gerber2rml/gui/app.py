@@ -565,7 +565,6 @@ class MainWindow(QMainWindow):
         # ...and the mirror image: widgets that exist ONLY in Novice, because
         # a beginner needs a guided version of something the full UI exposes
         # as a workbench.
-        self._novice_items = []
 
         # Screw positions chosen by hand, or None for "let the app pick".
         # Kept separate from the automatic result rather than seeding it, so
@@ -1459,22 +1458,21 @@ class MainWindow(QMainWindow):
         # it out, look at it in 3D before committing. Bed leveling, the flip
         # and rework are the steps that need a second bit of judgement, so they
         # are the ones Professional adds back.
-        # Bed leveling used to be in here. It came out when the lab was allowed
-        # to fit the Arduino: probing is the single biggest thing the board buys
-        # a beginner, because it makes cut depth follow the real surface, and
-        # that is what decides whether isolation actually separates traces.
-        # Novice gets a guided one-button version (see novice_level_btn); the
-        # full probe workbench above it stays professional.
-        self._PRO_STEPS = {2, 6, 7, 8}
+        # Bed leveling is one of them, and the reason is safety rather than
+        # complexity: probing DRIVES THE MACHINE, stepping Z down onto the
+        # copper, and the machine dock - STOP included - is professional-only.
+        # A guided one-button version briefly lived here, which meant the least
+        # experienced user could start machine motion with no in-app way to
+        # stop it. Either both come back or neither does; for now, neither.
+        self._PRO_STEPS = {1, 2, 6, 7, 8}
         # ...and with them gone the "1 2 3 4 ... 8" numbering would read
         # "1 4 5 6 10", so Novice gets its own labels for the steps it keeps.
         self._NOVICE_LABELS = {
             0: "1 · Set up board",
-            1: "2 · Level the bed",
-            3: "3 · Drill",
-            4: "4 · Traces",
-            5: "5 · Cut out",
-            9: "6 · Check in 3D",
+            3: "2 · Drill",
+            4: "3 · Traces",
+            5: "4 · Cut out",
+            9: "5 · Check in 3D",
         }
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
@@ -1633,64 +1631,6 @@ class MainWindow(QMainWindow):
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
         _ll.addWidget(_row(self.level_top_btn))
-        # ===== BED LEVELING - the guided version ============================
-        # The group above is a workbench: grid size, retouch interval, export,
-        # save/load, 3D, the raw table. All of it earns its place for someone
-        # who knows what a height map is. For someone who does not, the useful
-        # question is just "make the depth follow the surface", and this is the
-        # one control that answers it.
-        nov_level = QGroupBox("Level the bed")
-        _nl = QVBoxLayout(nov_level)
-        _nl.setContentsMargins(14, 16, 14, 12)
-        _nl.setSpacing(10)
-        nov_hint = QLabel("""Measures the height of the copper across your board, so the
-cut depth follows the real surface instead of assuming it is flat.
-
-Set up before you press it:
-
-   1.  Paper or tape UNDER the board, isolating it from the bed.
-   2.  Clip the red lead to the copper.
-   3.  Bit in the spindle. Spindle OFF.
-   4.  Jog the bit 2-3 mm above the front-left corner of the board.
-
-The machine will move. You get a confirmation first.""")
-        nov_hint.setWordWrap(True)
-        nov_hint.setObjectName("helpText")
-        _nl.addWidget(nov_hint)
-
-        # How many points, in the units a person thinks in. The professional
-        # panel above exposes nx/ny separately; nobody new to this needs a
-        # non-square grid before they need a working one.
-        self.novice_grid_combo = QComboBox()
-        self.novice_grid_combo.addItems(
-            ["Quick - 9 points", "Normal - 16 points", "Fine - 25 points"])
-        self.novice_grid_combo.setCurrentIndex(1)
-        self.novice_grid_combo.setMaximumWidth(190)
-        self.novice_grid_combo.setToolTip(
-            "More points measure the surface more faithfully and take longer. "
-            "Fine is worth it for a V-bit, whose cut width changes with depth.")
-        self.novice_grid_combo.currentIndexChanged.connect(
-            self._on_novice_grid_changed)
-        _nl.addWidget(_row(QLabel("Detail"), self.novice_grid_combo,
-                           stretch_first=False))
-
-        # Answering "where will it measure?" BEFORE anything taps the board.
-        # The grid follows the design's placement on the copper, so a wrong
-        # placement produces visibly wrong probe points - which is the point.
-        self.novice_showprobe_btn = QPushButton("Show where it will probe")
-        self.novice_showprobe_btn.setToolTip(
-            "Draw the planned probe points on the preview. Moves nothing.")
-        self.novice_showprobe_btn.clicked.connect(self._on_novice_show_probes)
-        _nl.addWidget(self.novice_showprobe_btn)
-
-        self.novice_level_btn = QPushButton("Level the bed")
-        self.novice_level_btn.setToolTip(
-            "Find the Arduino, lay out a probe grid over the board, and measure "
-            "the surface height at each point.")
-        self.novice_level_btn.clicked.connect(self._on_novice_level)
-        _nl.addWidget(self.novice_level_btn)
-        l_level.addWidget(self._novice(nov_level))
-
         l_level.addWidget(self._pro(level_group))
         l_level.addStretch(1)
 
@@ -2042,16 +1982,6 @@ The machine will move. You get a confirmation first.""")
         # them (see TourController._is_put_away).
         widget.setProperty("proOnly", True)
         self._pro_items.append((widget, form))
-        return widget
-
-    def _novice(self, widget, form=None):
-        """Tag ``widget`` as Novice-only - the mirror of :meth:`_pro`.
-
-        Used for guided stand-ins: one button that wraps a professional
-        workflow, shown exactly when the workbench version is hidden.
-        """
-        widget.setProperty("noviceOnly", True)
-        self._novice_items.append((widget, form))
         return widget
 
     def _build_mode_menu(self):
@@ -2629,7 +2559,6 @@ The machine will move. You get a confirmation first.""")
                     widget.setVisible(visible)
 
         _show(self._pro_items, pro)
-        _show(self._novice_items, not pro)
 
         for row in range(self.sidebar.count()):
             hidden = (not pro) and row in self._PRO_STEPS
@@ -4136,61 +4065,6 @@ The machine will move. You get a confirmation first.""")
             return False
         self.level_port_combo.setCurrentText(found)
         return True
-
-    def _on_novice_grid_changed(self, idx):
-        """Translate the plain-language detail choice into nx/ny."""
-        n = (3, 4, 5)[max(0, min(2, idx))]
-        self.level_nx_spin.setValue(n)
-        self.level_ny_spin.setValue(n)
-        if self.level_table.rowCount():
-            self._on_novice_show_probes()      # keep what is drawn honest
-
-    def _on_novice_show_probes(self):
-        """Lay out the probe grid and draw it on the preview. Moves nothing.
-
-        Without this a beginner has no way to check that the probe points land
-        on their copper before a bit starts tapping. The grid is laid over the
-        placed design, so this doubles as a check that the design is actually
-        where they think it is.
-        """
-        if self.state.board is None:
-            QMessageBox.information(
-                self, "Load a board first",
-                "The probe grid is laid out over your board, so load and place "
-                "one before checking where it will measure.")
-            return
-        self._on_build_level_grid()
-        self.level_gridshow_chk.setChecked(True)
-        self._update_grid_overlay()
-        self.statusBar().showMessage(
-            f"{self.level_table.rowCount()} probe points drawn on the preview - "
-            f"check they land on your copper, then Level the bed.", 12000)
-
-    def _on_novice_level(self):
-        """One action for "make the cut depth follow the surface".
-
-        Deliberately a thin wrapper over the professional path, not a second
-        probe implementation: find the port, lay out a grid, hand off to
-        :meth:`_on_probe_spi`. Same worker, same firmware protocol, same
-        confirmation before anything moves, same results. A beginner simply
-        never has to assemble those three steps - or know that the other COM
-        port on this PC is a motherboard feature that will never be a board.
-        """
-        if not self.state.gerber_dir:
-            QMessageBox.information(
-                self, "Load a board first",
-                "Bed leveling measures the surface under your board, so it "
-                "needs a board loaded and placed on the bed first.")
-            return
-        if not self._autoselect_port():
-            return
-        if not self.level_table.rowCount():
-            self._on_build_level_grid()
-        # Draw the points before the confirmation dialog, so "probe 16 points?"
-        # is a question about something visible rather than a number.
-        self.level_gridshow_chk.setChecked(True)
-        self._update_grid_overlay()
-        self._on_probe_spi()
 
     def _on_probe_spi(self):
         """Auto-probe the grid over the SPI link and fill the Z column."""
