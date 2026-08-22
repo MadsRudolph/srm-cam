@@ -137,7 +137,10 @@ def test_build_double_sided_writes_jobs(tmp_path):
     for p in written:
         if p.suffix == ".rml":
             t = p.read_text()
-            assert t.startswith("^IN;!MC1;") and t.rstrip().endswith("!MC0;^IN;")
+            # the dry run is the one file that deliberately does NOT spin up
+            head = "^IN;!MC0;" if p.name == "ds_airpass.rml" else "^IN;!MC1;"
+            assert t.startswith(head), (p.name, t[:20])
+            assert t.rstrip().endswith("!MC0;^IN;")
 
 
 def test_double_sided_leveling_warps_bottom_only(tmp_path):
@@ -498,3 +501,36 @@ def test_fiducial_top_traces_apply_measured_transform(tmp_path):
     base = build_top_traces(FIXT, tmp_path, "base", registration="fiducial",
                             fiducials=FiducialSpec(count=4))
     assert shifted != base.read_text()          # transform changed the output
+
+
+# ---- the dry run ----------------------------------------------------------
+
+def test_double_sided_export_writes_an_airpass(tmp_path):
+    """cli.py writes <name>_airpass on every single-sided export and calls it
+    step 0. The double-sided path wrote none at all - on the one job where the
+    first cut (align) goes into the spoilboard and cannot be taken back."""
+    written = build_double_sided(str(FIXT), tmp_path, "ds")
+    names = [pp.name for pp in written]
+    assert "ds_airpass.nc" in names, names
+
+
+def test_double_sided_airpass_does_not_spin_or_cut(tmp_path):
+    build_double_sided(str(FIXT), tmp_path, "ds")
+    nc = (tmp_path / "ds_airpass.nc").read_text()
+    words = {tok for line in nc.splitlines() for tok in line.split()}
+    assert "M3" not in words and "M03" not in words, (
+        f"dry run must not start the spindle: {sorted(w for w in words if w.startswith('M'))}")
+    # G28 Z0. is homing, not a plunge - only the G0/G1 moves describe the cut
+    zs = [float(tok[1:].rstrip(".")) for line in nc.splitlines()
+          if line.startswith(("G0 ", "G1 ")) and not line.startswith("G28")
+          for tok in line.split() if tok.startswith("Z")]
+    assert zs, "no Z moves at all in the dry run"
+    assert min(zs) >= 2.0, f"dry run drops to the work surface: min Z {min(zs)}"
+    assert max(zs) == 5.0, f"dry run should trace at 5 mm up, got {max(zs)}"
+
+
+def test_double_sided_runplan_leads_with_the_dry_run(tmp_path):
+    build_double_sided(str(FIXT), tmp_path, "ds")
+    rp = (tmp_path / "ds_runplan.txt").read_text(encoding="utf-8")
+    assert "ds_airpass.nc" in rp
+    assert "DRY RUN" in rp

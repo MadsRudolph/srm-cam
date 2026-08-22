@@ -816,19 +816,30 @@ def test_top_view_pins_reflect_before_the_fit():
         assert abs(px - ex) < 1e-9 and abs(py - ey) < 1e-9
 
 
+def _row(w, needle):
+    """Sidebar row whose label contains `needle`. Indexed by label, not by
+    number, because the spine is reordered for double-sided jobs."""
+    for i in range(w.sidebar.count()):
+        if needle.lower() in w.sidebar.item(i).text().lower():
+            return i
+    raise AssertionError(
+        f"no sidebar row matching {needle!r} in "
+        f"{[w.sidebar.item(i).text() for i in range(w.sidebar.count())]}")
+
+
 def test_runplan_spine_routes_page_op_and_side():
     w = MainWindow()
     w.load_folder(str(FIXT))
     w.double_sided_chk.setChecked(True)
-    w.sidebar.setCurrentRow(4)                       # 5 · Bottom traces
+    w.sidebar.setCurrentRow(_row(w, "Bottom traces"))
     assert w.stacked_widget.currentIndex() == 0
     assert w.tabs.currentIndex() == 0 and w.view_combo.currentText() == "Bottom"
-    w.sidebar.setCurrentRow(7)                       # 8 · Top traces
+    w.sidebar.setCurrentRow(_row(w, "Top traces"))
     assert w.tabs.currentIndex() == 0 and w.view_combo.currentText() == "Top"
-    w.sidebar.setCurrentRow(1)                       # 2 · Bed leveling
+    w.sidebar.setCurrentRow(_row(w, "Bed leveling"))
     assert w.stacked_widget.currentIndex() == 2
     # never blocking: any row is selectable regardless of state
-    w.sidebar.setCurrentRow(8)                       # Rework
+    w.sidebar.setCurrentRow(_row(w, "Rework"))
     assert w.stacked_widget.currentIndex() == 3
     # tour navigation by PAGE still lands on a matching step
     w._goto_page(1)
@@ -1696,9 +1707,12 @@ def test_double_sided_enable_refits_panel():
     # must re-fit so they aren't clipped.
     w = MainWindow()
     w.resize(1916, 1000); w.show(); _app.processEvents()
-    w.sidebar.setCurrentRow(2); _app.processEvents()       # 3 · Registration (DS page)
+    # the registration page exists in both spines, but only carries the
+    # double-sided controls once the box is ticked
+    w._goto_page(1); w._autofit_panel(); _app.processEvents()
     before = w._settings_container.minimumWidth()
     w.double_sided_chk.setChecked(True); _app.processEvents()
+    w._goto_page(1); w._autofit_panel(); _app.processEvents()
     assert w._settings_container.minimumWidth() > before   # re-fit wider
 
 

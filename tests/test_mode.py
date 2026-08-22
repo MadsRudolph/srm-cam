@@ -120,7 +120,9 @@ def test_novice_sidebar_is_the_short_path(monkeypatch):
     w = _window(monkeypatch, "novice")
     visible = [w.sidebar.item(i).text() for i in range(w.sidebar.count())
                if not w.sidebar.isRowHidden(i)]
-    assert visible == ["1 · Set up board", "2 · Drill", "3 · Traces",
+    # traces before drill, matching the run plan cli.py writes:
+    #   "Order: 0) airpass  1) traces  2) drill  3) cutout"
+    assert visible == ["1 · Set up board", "2 · Traces", "3 · Drill",
                        "4 · Cut out", "5 · Check in 3D"]
     w.close()
 
@@ -399,4 +401,57 @@ def test_autoselect_reports_when_no_board_is_present(monkeypatch):
     w = _window(monkeypatch, "novice")
     assert w._autoselect_port() is False
     assert warned and "Arduino" in warned[0]
+    w.close()
+
+
+# ---- the sidebar must agree with the exported run plan --------------------
+
+def test_double_sided_puts_the_cutout_after_the_flip(monkeypatch):
+    """Cutting the outline before the flip frees the board from the waste AND
+    from the dowels it is registered on. The exported run plan says
+    "cutout LAST"; the sidebar used to say step 6 of 8, ahead of the flip."""
+    w = _window(monkeypatch, "pro")
+    w.show(); _app.processEvents()
+    w.double_sided_chk.setChecked(True)
+    _app.processEvents()
+    labels = [w.sidebar.item(i).text() for i in range(w.sidebar.count())
+              if not w.sidebar.isRowHidden(i)]
+    low = [s.lower() for s in labels]
+    cut = next(i for i, s in enumerate(low) if "cut out" in s)
+    flip = next(i for i, s in enumerate(low) if "flip" in s)
+    top = next(i for i, s in enumerate(low) if "top traces" in s)
+    assert cut > flip, labels
+    assert cut > top, labels
+    w.close()
+
+
+def test_single_sided_order_matches_the_runplan(monkeypatch):
+    w = _window(monkeypatch, "pro")
+    w.show(); _app.processEvents()
+    assert w.double_sided_chk.isChecked() is False
+    low = [w.sidebar.item(i).text().lower() for i in range(w.sidebar.count())]
+    assert low.index("3 · traces") < low.index("4 · drill") < low.index("5 · cut out")
+    w.close()
+
+
+def test_spine_swaps_back_when_double_sided_is_turned_off(monkeypatch):
+    """The rebuild has to be reversible, not a one-way door."""
+    w = _window(monkeypatch, "pro")
+    w.show(); _app.processEvents()
+    before = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
+    w.double_sided_chk.setChecked(True); _app.processEvents()
+    w.double_sided_chk.setChecked(False); _app.processEvents()
+    after = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
+    assert before == after
+    w.close()
+
+
+def test_spine_rebuild_leaves_a_valid_selection(monkeypatch):
+    """Swapping the list must not leave the sidebar on a row that no longer
+    exists - _on_spine_changed would route nowhere."""
+    w = _window(monkeypatch, "pro")
+    w.show(); _app.processEvents()
+    w.sidebar.setCurrentRow(w.sidebar.count() - 1)     # 3D viewer
+    w.double_sided_chk.setChecked(True); _app.processEvents()
+    assert 0 <= w.sidebar.currentRow() < len(w._SPINE)
     w.close()

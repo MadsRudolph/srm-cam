@@ -507,6 +507,19 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
         est[fname] = estimate_toolpaths_seconds(paths, job.xy_feed, job.plunge_feed)
         written.append(out_dir / fname)
 
+    # Step 0, exactly as on the single-sided path: a spindle-off lap of the
+    # outline before anything touches the stock. This matters MORE here, not
+    # less - the align job drills into the spoilboard, so it is the one job in
+    # the app you cannot undo by re-zeroing and trying again.
+    from gerber2rml.engine.airpass import air_path, DEFAULT_FEED as _AIR_FEED
+    _air = air_path(lay.outline)          # lay is already in the machine frame
+    if _air:
+        _ap = f"{name}_airpass{ext}"
+        (out_dir / _ap).write_text(backend.render(
+            _air, xy_feed=_AIR_FEED, plunge_feed=_AIR_FEED, spindle=False))
+        est[_ap] = estimate_toolpaths_seconds(_air, _AIR_FEED, _AIR_FEED)
+        written.append(out_dir / _ap)
+
     # Bottom-side setup (the probed surface) -> leveled. Top traces are cut after
     # the flip on the other face, so they are NOT leveled.
     _write(f"{name}_align{ext}", drill_single_bit(lay.align_holes, align_drill),
@@ -539,7 +552,15 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     else:
         rp = _runplan_text(name, machine, lay, dowels, drill_step,
                            align_depth, board_thickness)
-    runplan.write_text(rp + est_block, encoding="utf-8")
+    air_block = (
+        f"0. {name}_airpass{ext}: DRY RUN, run it FIRST. Spindle stays off\n"
+        f"   and the bit is held 5 mm up while it traces where the board\n"
+        f"   will be cut. If it leaves the copper, stop and re-place the\n"
+        f"   stock - nothing has been cut. Worth doing before every job,\n"
+        f"   and especially this one: the align step drills into the\n"
+        f"   spoilboard, so it is the one cut you cannot take back.\n"
+        if f"{name}_airpass{ext}" in est else "")
+    runplan.write_text(rp + air_block + est_block, encoding="utf-8")
     written.append(runplan)
     return written
 

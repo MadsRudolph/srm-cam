@@ -1441,39 +1441,68 @@ class MainWindow(QMainWindow):
         # The sidebar IS the run plan: the steps in machining order, each
         # routing to the page/op/side it needs. NEVER blocking — every step
         # is clickable at any time; it's a map, not a gate.
+        # There are two orders, because there are two jobs, and the exported
+        # run plans state them differently:
+        #   single-sided (cli.py)       airpass -> traces -> drill -> cutout
+        #   double-sided (doublesided)  align -> drill -> bottom traces ->
+        #                               FLIP -> top traces -> cutout LAST
+        # The sidebar used to state a third order of its own, with Cutout ahead
+        # of Flip + align. Freeing the board from the waste - and from the
+        # dowels it is registered on - before the top side has been cut is
+        # scrap, every time. Between a .txt nobody opens and the always-visible
+        # sidebar, the sidebar is the louder document, so it was the one doing
+        # the damage.
         # (label, stacked page, op tab index or None, DS view or None)
-        self._SPINE = [
+        self._SPINE_SINGLE = [
+            ("1 · Setup board",    0, None, None),
+            ("2 · Bed leveling",   2, None, None),
+            ("3 · Traces",         0, 0,    "Bottom"),
+            ("4 · Drill",          0, 1,    "Bottom"),
+            ("5 · Cut out",        0, 2,    "Bottom"),
+            ("Rework",             3, None, None),
+            ("3D viewer",          4, None, None),
+        ]
+        self._SPINE_DOUBLE = [
             ("1 · Setup board",    0, None, None),
             ("2 · Bed leveling",   2, None, None),
             ("3 · Registration",   1, None, None),
             ("4 · Drill",          0, 1,    "Bottom"),
             ("5 · Bottom traces",  0, 0,    "Bottom"),
-            ("6 · Cutout",         0, 2,    "Bottom"),
-            ("7 · Flip + align",   1, None, None),
-            ("8 · Top traces",     0, 0,    "Top"),
+            ("6 · Flip + align",   1, None, None),
+            ("7 · Top traces",     0, 0,    "Top"),
+            ("8 · Cut out",        0, 2,    "Bottom"),
             ("Rework",             3, None, None),
             ("3D viewer",          4, None, None),
         ]
-        # Novice runs one board, one side: load it, drill, cut the traces, cut
-        # it out, look at it in 3D before committing. Bed leveling, the flip
-        # and rework are the steps that need a second bit of judgement, so they
-        # are the ones Professional adds back.
-        # Bed leveling is one of them, and the reason is safety rather than
-        # complexity: probing DRIVES THE MACHINE, stepping Z down onto the
-        # copper, and the machine dock - STOP included - is professional-only.
-        # A guided one-button version briefly lived here, which meant the least
-        # experienced user could start machine motion with no in-app way to
-        # stop it. Either both come back or neither does; for now, neither.
-        self._PRO_STEPS = {1, 2, 6, 7, 8}
-        # ...and with them gone the "1 2 3 4 ... 8" numbering would read
-        # "1 4 5 6 10", so Novice gets its own labels for the steps it keeps.
-        self._NOVICE_LABELS = {
+        # Novice runs one board, one side: load it, cut the traces, drill, cut
+        # it out, look at it in 3D before committing. The flip and rework need
+        # a second bit of judgement, so Professional adds those back.
+        # Bed leveling is professional for a different reason - safety. Probing
+        # DRIVES THE MACHINE, stepping Z down onto the copper, and the machine
+        # dock - STOP included - is professional-only. A guided one-button
+        # version briefly lived in Novice, which meant the least experienced
+        # user could start machine motion with no in-app way to stop it. Either
+        # both come back or neither does; for now, neither.
+        self._PRO_STEPS_SINGLE = {1, 5}
+        # ...and with them gone the numbering would read "1 3 4 5 7", so Novice
+        # gets its own labels for the steps it keeps.
+        self._NOVICE_LABELS_SINGLE = {
             0: "1 · Set up board",
-            3: "2 · Drill",
-            4: "3 · Traces",
-            5: "4 · Cut out",
-            9: "5 · Check in 3D",
+            2: "2 · Traces",
+            3: "3 · Drill",
+            4: "4 · Cut out",
+            6: "5 · Check in 3D",
         }
+        # Novice never sees the double-sided spine: _apply_mode turns the
+        # checkbox off, because a job whose second half has no UI behind it is
+        # worse than no job at all.
+        self._PRO_STEPS_DOUBLE = set()
+        self._NOVICE_LABELS_DOUBLE = {}
+
+        self._SPINE = self._SPINE_SINGLE
+        self._PRO_STEPS = self._PRO_STEPS_SINGLE
+        self._NOVICE_LABELS = self._NOVICE_LABELS_SINGLE
+
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(180)
@@ -2560,12 +2589,7 @@ class MainWindow(QMainWindow):
 
         _show(self._pro_items, pro)
 
-        for row in range(self.sidebar.count()):
-            hidden = (not pro) and row in self._PRO_STEPS
-            self.sidebar.setRowHidden(row, hidden)
-            label = (self._SPINE[row][0] if pro
-                     else self._NOVICE_LABELS.get(row, self._SPINE[row][0]))
-            self.sidebar.item(row).setText(label)
+        self._sync_sidebar_labels()
 
         if not pro:
             # A double-sided job needs the flip and align steps to be run
@@ -2607,6 +2631,54 @@ class MainWindow(QMainWindow):
         """Set the registration method programmatically ('dowel'|'fiducial')."""
         self.regmethod_combo.setCurrentIndex(1 if mode == "fiducial" else 0)
         self._update_ds_controls()
+
+    def _sync_sidebar_labels(self):
+        """Hide the steps this mode does not have, and number what is left.
+
+        Split out of :meth:`_apply_mode` so :meth:`_rebuild_spine` can reuse it
+        without re-entering the mode switch - the double-sided checkbox is one
+        of the things _apply_mode sets, so calling back into it would loop.
+        """
+        pro = uimode.is_pro()
+        for row in range(self.sidebar.count()):
+            hidden = (not pro) and row in self._PRO_STEPS
+            self.sidebar.setRowHidden(row, hidden)
+            label = (self._SPINE[row][0] if pro
+                     else self._NOVICE_LABELS.get(row, self._SPINE[row][0]))
+            self.sidebar.item(row).setText(label)
+
+    def _rebuild_spine(self):
+        """Swap the sidebar between the single- and double-sided run orders.
+
+        Called whenever the double-sided checkbox moves. The two orders differ
+        by more than a label: on a double-sided job the cut-out has to come
+        AFTER the flip and the top traces, or the board is freed from its own
+        registration before the second side exists.
+        """
+        double = self.double_sided_chk.isChecked()
+        want = self._SPINE_DOUBLE if double else self._SPINE_SINGLE
+        if want is self._SPINE and self.sidebar.count() == len(want):
+            return
+        page = None
+        row = self.sidebar.currentRow()
+        if 0 <= row < len(self._SPINE):
+            page = self._SPINE[row][1]
+        self._SPINE = want
+        self._PRO_STEPS = (self._PRO_STEPS_DOUBLE if double
+                           else self._PRO_STEPS_SINGLE)
+        self._NOVICE_LABELS = (self._NOVICE_LABELS_DOUBLE if double
+                               else self._NOVICE_LABELS_SINGLE)
+        blocked = self.sidebar.blockSignals(True)
+        self.sidebar.clear()
+        self.sidebar.addItems([s[0] for s in self._SPINE])
+        self.sidebar.blockSignals(blocked)
+        self._sync_sidebar_labels()
+        # Land somewhere sane: the step the user was on if it survived the
+        # swap, otherwise the top of the plan.
+        if page is not None and any(p == page for _l, p, _o, _v in self._SPINE):
+            self._goto_page(page)
+        else:
+            self.sidebar.setCurrentRow(0)
 
     def _on_spine_changed(self, row):
         """A runplan step was clicked: route to its page and pre-select the op
@@ -2744,6 +2816,7 @@ class MainWindow(QMainWindow):
         self._set_ds_row(self._fid_row, fiducial)
 
     def _on_double_sided_toggled(self, checked):
+        self._rebuild_spine()                    # the two jobs run in different orders
         self._update_ds_controls()
         self.level_top_btn.setEnabled(checked)   # top-side leveling is DS-only
         self._autofit_panel()                    # the revealed controls widen the page
