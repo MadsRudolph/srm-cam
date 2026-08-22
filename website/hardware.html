@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link active" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
         <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -51,23 +53,26 @@
 <div class="content">
 
 <h1>Hardware &amp; firmware</h1>
-<p class="lead">An Arduino on the SRM-20's internal SPI bus = live DRO, electrical touch sensing, auto probing, click-to-jog, auto fiducial finding.</p>
+<p class="lead">An Arduino on the SRM-20's internal SPI bus = live DRO, electrical touch sensing, auto probing, click-to-jog, auto fiducial finding — and, since firmware v3, the spindle and transport controls too (<a href="machine-control.html">Machine control</a>).</p>
 
 <div class="note"><span class="t">Optional — everything else works without it</span>
-<p>This whole page is about one convenience: <strong>automatic</strong> probing. Traces, drilling, cut-out, double-sided registration, rework, simulation and every export run on a stock SRM-20 through VPanel with nothing fitted to the machine, and <a href="getting-started.html">Novice mode</a> hides the machine link entirely. Bed leveling still works too — <a href="bed-leveling.html">measure the grid by hand</a> and type the heights in.</p></div>
+<p>This whole page is about one convenience: <strong>automatic</strong> probing. Traces, drilling, cut-out, double-sided registration, rework, simulation and every export run on a stock SRM-20 through VPanel with nothing fitted to the machine, and <a href="getting-started.html#modes">Novice mode</a> hides the machine <em>dock</em> — live DRO, jog, streaming, the machine test — but keeps the two things the link buys a beginner: one-button bed leveling and <span class="ui">Corner = tool</span>. Bed leveling still works too — <a href="bed-leveling.html">measure the grid by hand</a> and type the heights in.</p></div>
 
 <h2>Install (one-time)</h2>
 <ol class="steps">
   <li><span class="st">Fit the Arduino</span>
     Behind the SRM-20's back panel, wired to the controller's SPI header. Full wiring: <code>docs/2026-06-25-srm20-spi-and-bed-leveling.md</code> in the repo.</li>
   <li><span class="st">Flash</span>
-    <code>hardware/srm20_spi_probe/srm20_spi_probe.ino</code> (needs the bundled <code>SRM20SPIRemote</code> library). 115200 baud.</li>
+    <code>python scripts/flash_firmware.py</code> — syncs the bundled library, compiles, uploads, and verifies the board came back as v3 with the patched features. <code>--compile-only</code> just checks the build; <code>--port COM4</code> pins the port. Needs an <code>arduino-cli</code> (the Arduino IDE bundles one). 115200 baud.</li>
   <li><span class="st">Verify, then close the Serial Monitor</span>
-    You should see <code># SRM-20 grid prober v2 ready</code>. The app can't open the port while the Serial Monitor holds it.</li>
+    You should see <code># SRM-20 prober v3 ready.</code> followed by the command list. The app can't open the port while the Serial Monitor holds it.</li>
 </ol>
 
+<div class="danger"><span class="t">Do not flash from the Arduino IDE</span>
+<p>The sketch includes the library with angle brackets, so the IDE resolves it from <code>Documents\Arduino\libraries</code> — <strong>not from this repo</strong>. If that copy is stale you get a firmware that compiles cleanly, boots, answers the version query and probes fine, but is quietly missing commands (they build as <code>NOPATCH</code> stubs). <code>flash_firmware.py</code> syncs first, every time, so the two cannot drift.</p></div>
+
 <div class="note"><span class="t">Old firmware?</span>
-<p>If probing works but <span class="ui">Auto</span> fiducials or drift correction don't, reflash — one flash gets everything (v2).</p></div>
+<p>If probing works but <span class="ui">Auto</span> fiducials or drift correction don't, reflash — one flash gets everything (v3).</p></div>
 
 <h2>Probe wiring (every session)</h2>
 <p><strong>One clip: red (D7) → the copper board.</strong> The tool is already grounded through the collet/spindle to the machine frame. Bit touches copper → D7 pulled LOW = contact.</p>
@@ -78,15 +83,27 @@
 </ul>
 
 <h2>Machine dock tools</h2>
+<p>The dock keeps what you reach for with a hand on the machine; the rest moved to the <span class="ui">Machine</span> menu. Both are covered in full on <a href="machine-control.html">Machine control</a>.</p>
 <div class="tbl-wrap"><table>
 <tr><th>Control</th><th>Does</th></tr>
 <tr><td><span class="ui">Connect</span> + port</td><td>Open/close the serial link; DRO goes live</td></tr>
+<tr><td><span class="ui">Z ▲ / ▼</span> + step</td><td>Jog Z. <kbd>PageUp</kbd>/<kbd>PageDown</kbd> do the same app-wide</td></tr>
 <tr><td><span class="ui">Probe Z</span></td><td>Touch-off: descend until contact, stop at the surface</td></tr>
-<tr><td><span class="ui">Zero Z on machine</span></td><td>Touch-off + write origin Z. Writes the User CS origin — verify VPanel's G54 Z once before trusting for NC</td></tr>
+<tr><td><span class="ui">Spindle</span></td><td>Start/stop the tool. <strong>Speed is not set here</strong> — it stays on VPanel's slider</td></tr>
+<tr><td><span class="ui">Pause</span> / <span class="ui">Resume</span></td><td>Hold and release the move in progress</td></tr>
+<tr><td>Status strip</td><td><code>LID OPEN</code> · <code>spindle</code> · <code>ERROR</code> · <code>FAULT</code>, polled ~1 Hz from the machine's own status word</td></tr>
+<tr><td><span class="ui">STOP</span></td><td>Abort now: stop the queued move, lift, disconnect</td></tr>
+</table></div>
+
+<h3>On the Machine menu</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Item</th><th>Does</th></tr>
 <tr><td><span class="ui">Click to jog</span></td><td>Click the preview → tool lifts ~5 mm, travels there. Snaps to holes/pins; <kbd>Ctrl</kbd>+click = exact point</td></tr>
-<tr><td><span class="ui">Align overlay</span></td><td>Sync the preview to reality (display only; exports untouched)</td></tr>
-<tr><td><span class="ui">Trail</span></td><td>Draw the tool's path during a run</td></tr>
-<tr><td><span class="ui">STOP</span></td><td>Abort now: halt, lift, disconnect. Checked between every probe step</td></tr>
+<tr><td><span class="ui">Align overlay to the bit</span></td><td>Sync the preview to reality (display only; exports untouched)</td></tr>
+<tr><td><span class="ui">Zero Z on machine</span></td><td>Touch-off + write origin Z. Writes the User CS origin — verify VPanel's G54 Z once before trusting for NC</td></tr>
+<tr><td><span class="ui">Move head to view position</span></td><td>Sends the head out of the way so you can reach the bed</td></tr>
+<tr><td><span class="ui">Tool trail</span> / <span class="ui">Clear trail</span></td><td>Draw the tool's path during a run</td></tr>
+<tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command, PASS / FAIL / UNKNOWN</td></tr>
 </table></div>
 
 <h2>How a touch is measured</h2>
@@ -115,16 +132,20 @@
 <tr><td><code>J x y</code> / <code>L</code></td><td>Jog (lifts first) / lift to safe Z</td></tr>
 <tr><td><code>Q</code> / <code>G</code> / <code>V</code></td><td>Position+touch / work origin / version+features</td></tr>
 <tr><td><code>C</code> / <code>M x y z s</code></td><td>Experimental streaming: begin session / one move</td></tr>
-<tr><td><code>!</code></td><td>ABORT — always honoured</td></tr>
+<tr><td><code>X</code> / <code>S rpm</code></td><td>Full status word / spindle on-off (the rpm value is ignored by the machine)</td></tr>
+<tr><td><code>~</code> <code>^</code> <code>%</code> <code>K</code></td><td>Pause / resume / stop the move / cancel the job</td></tr>
+<tr><td><code>Y</code> / <code>I</code></td><td>Move to view position (<strong>moves the head</strong>) / machine remote-protocol version</td></tr>
+<tr><td><code>F us</code> / <code>N dx dy dz s</code> / <code>A 0|1</code></td><td>SPI framing delay / timed relative move / status-guard toggle</td></tr>
+<tr><td><code>!</code></td><td>ABORT — stops the spindle, drops the move in flight, releases a pause hold, then lifts</td></tr>
 </table></div>
-<p>Errors: <code>E &lt;id&gt; NOTOUCH | UNSTABLE | NODATUM | ABORT | RUNAWAY</code> — meanings in <a href="troubleshooting.html">Troubleshooting</a>.</p>
+<p>Errors: <code>E &lt;id|cmd&gt; NOTOUCH | UNSTABLE | NODATUM | ABORT | RUNAWAY | LOW | COVER | NOPATCH | NOSESSION | CMDERR | DEADMAN | NOREF | PAUSETIMEOUT</code>. For probe points the second field is the point id; for every other command it is the command letter. Meanings in <a href="troubleshooting.html">Troubleshooting</a>.</p>
 
 <h2>Streaming (experimental)</h2>
-<p><span class="ui">Stream (exp.)</span> sends toolpaths move-by-move over SPI — no VPanel. Every session <strong>starts as a dry run</strong> (Z held 2&nbsp;mm up, can't cut); a wet run needs the spindle started by hand + confirmation + speed calibrated on dry runs. For real jobs, use exported <code>.nc</code> through VPanel.</p>
+<p><span class="ui">Stream (exp.)</span> sends toolpaths move-by-move over SPI — no VPanel. Every session <strong>starts as a dry run</strong> (Z held 2&nbsp;mm up, can't cut); a wet run starts and stops the spindle itself, holds on <span class="ui">Pause</span> and aborts if the lid opens — but the <strong>spindle speed must still be set on VPanel's slider first</strong>, and the raw speed value has to be calibrated on dry runs. For real jobs, use exported <code>.nc</code> through VPanel. Full detail on <a href="machine-control.html">Machine control</a>.</p>
 
 <div class="page-nav">
   <a href="photo-and-rework.html"><span class="lbl">Previous</span><span class="ttl">← Photo check &amp; rework</span></a>
-  <a class="next" href="reference.html"><span class="lbl">Next</span><span class="ttl">Files &amp; reference →</span></a>
+  <a class="next" href="machine-control.html"><span class="lbl">Next</span><span class="ttl">Machine control →</span></a>
 </div>
 
 <footer class="site">

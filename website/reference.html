@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link active" href="reference.html">Files &amp; reference</a>
         <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -67,8 +69,12 @@
 <div class="tbl-wrap"><table>
 <tr><th>File</th><th>Contents</th></tr>
 <tr><td><code>&lt;name&gt;_runplan.txt</code></td><td><strong>Read this first.</strong> Run order, bit per step, spindle notes, zeroing instructions, pin sizes.</td></tr>
-<tr><td><code>&lt;name&gt;_bottom_traces.nc</code></td><td>Isolation milling (mirrored). Leveled if <span class="ui">Apply bed leveling on export</span> is on.</td></tr>
-<tr><td><code>&lt;name&gt;_drill_&lt;dia&gt;mm.nc</code></td><td>One per hole diameter (smallest first), or one single-bit file with interpolated large holes.</td></tr>
+<tr><td><code>&lt;name&gt;_airpass.nc</code></td><td><strong>Dry run.</strong> Spindle off, bit held 5&nbsp;mm up, traces the outline. Step 0 of the run plan. Single-sided exports only.</td></tr>
+<tr><td><code>&lt;name&gt;_traces.nc</code></td><td>Isolation milling (mirrored). Leveled if <span class="ui">Apply bed leveling on export</span> is on. Named <code>&lt;name&gt;_bottom_traces.nc</code> on a double-sided job.</td></tr>
+<tr><td><code>&lt;name&gt;_drill.nc</code></td><td>All holes with one bit, larger ones interpolated — <strong>the default</strong>.</td></tr>
+<tr><td><code>&lt;name&gt;_drill_&lt;dia&gt;mm.nc</code></td><td>One file per hole diameter, smallest first. Multi-bit mode only (<code>--multi-bit</code>).</td></tr>
+<tr><td><code>&lt;name&gt;_screws.nc</code> + <code>.txt</code></td><td>Screw fixture: M4 clearance holes through the copper, plus the procedure. See <a href="holding-the-copper.html">Holding the copper</a>.</td></tr>
+<tr><td><code>&lt;W&gt;x&lt;H&gt;_bedfixture.nc</code> + <code>.txt</code></td><td>Bed fixture: three dowel-pin holes. Named after the <em>stock size</em>, not the board — the fixture is per-bed.</td></tr>
 <tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>Board outline with holding tabs. Run last.</td></tr>
 <tr><td><code>&lt;name&gt;_align.nc</code></td><td>Double-sided only: dowel/fiducial holes.</td></tr>
 <tr><td><code>&lt;name&gt;_top_traces.nc</code></td><td>Double-sided only: top isolation (fiducial mode: warped to the measured fit; optionally leveled).</td></tr>
@@ -103,7 +109,7 @@
 <tr><td><code>tool_type</code></td><td>traces</td><td><code>flat</code> endmill or <code>vbit</code> engraver.</td></tr>
 <tr><td><code>tip_diameter</code>, <code>included_angle</code>, <code>target_width</code></td><td>traces (V-bit)</td><td>V geometry; depth is back-solved from the target cut width.</td></tr>
 <tr><td><code>cut_depth</code></td><td>all</td><td>Depth per pass (peck depth for drills).</td></tr>
-<tr><td><code>total_depth</code></td><td>all</td><td>Total depth (auto = stock + breakthrough when Auto depth is on).</td></tr>
+<tr><td><code>total_depth</code></td><td>drill, cut-out</td><td>Total depth (auto = stock + breakthrough when Auto depth is on).</td></tr>
 <tr><td><code>offsets</code></td><td>traces</td><td>Number of isolation passes; <strong>-1</strong> = clear all copper (rubout).</td></tr>
 <tr><td><code>stepover</code></td><td>traces</td><td>Spacing between passes, as a fraction of bit diameter.</td></tr>
 <tr><td><code>single_bit</code></td><td>drill</td><td>One bit for all holes: plunge matching, interpolate larger.</td></tr>
@@ -132,19 +138,18 @@ python -m gerber2rml.doctor                                   # fix deps after g
 </table></div>
 
 <h2>Status chips</h2>
-<p>The status-bar chips light as your setup completes. Green means in place:</p>
+<p>Six chips in the status bar light as your setup completes. Green means in place. They refresh on a timer rather than on every event, so a chip can lag a second or so behind the thing it reports:</p>
 <div class="tbl-wrap"><table>
 <tr><th>Chip</th><th>Lit when</th></tr>
-<tr><td><em>board</em></td><td>a Gerber folder is loaded</td></tr>
-<tr><td><em>placed</em></td><td>the board has been positioned on the bed</td></tr>
-<tr><td><em>grid</em> / <em>mesh</em></td><td>a probe grid is built / the height map is probed or loaded (with point count)</td></tr>
-<tr><td><em>photo</em> / <em>boxes</em></td><td>a photo overlay is aligned / rework boxes are marked</td></tr>
-<tr><td><em>machine</em> / <em>touch</em></td><td>the serial link is connected (shows the port) / the touch probe reads</td></tr>
+<tr><td><em>board</em></td><td>a Gerber folder is loaded (shows the board name)</td></tr>
+<tr><td><em>mesh</em></td><td>the height map has at least 3 points <em>and</em> bed leveling is ticked (shows the count)</td></tr>
 <tr><td><em>fit</em></td><td>a fiducial fit has been computed (shows the RMS)</td></tr>
+<tr><td><em>photo</em> / <em>boxes</em></td><td>a photo overlay is aligned / rework boxes are marked</td></tr>
+<tr><td><em>link</em></td><td>the machine link is connected</td></tr>
 </table></div>
 
 <div class="page-nav">
-  <a href="hardware.html"><span class="lbl">Previous</span><span class="ttl">← Hardware &amp; firmware</span></a>
+  <a href="machine-control.html"><span class="lbl">Previous</span><span class="ttl">← Machine control</span></a>
   <a class="next" href="troubleshooting.html"><span class="lbl">Next</span><span class="ttl">Troubleshooting →</span></a>
 </div>
 

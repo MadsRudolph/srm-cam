@@ -8,8 +8,9 @@ point says EXPERIMENTAL:
 
 - the SPI ``jumpTo`` speed value's units are Roland-internal and NOT yet
   calibrated against mm/s;
-- the spindle is not controllable over this link — it must be started in
-  VPanel by hand for a wet run.
+- the spindle can be started and stopped over this link, but NOT set: the
+  ``turnSpindle`` RPM argument is ignored, so the actual speed is whatever
+  VPanel's slider says.
 
 Therefore the mandatory first step on any new setup is a DRY RUN
 (``dry_run=True``, the default): the full job traces in XY with Z clamped

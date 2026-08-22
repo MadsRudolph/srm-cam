@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link active" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
         <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -54,7 +56,7 @@
 <p class="lead">Isolation cuts are ~0.15&nbsp;mm deep; FR-4 bows more than that. Probe the surface, and every cut follows it.</p>
 
 <div class="note"><span class="t">Needs the probe hardware</span>
-<p>One-time Arduino install + flash: <a href="hardware.html">Hardware &amp; firmware</a>. Without it, <span class="ui">Export probe files...</span> gives you per-point programs for VPanel and you type the Z values in by hand.</p></div>
+<p>One-time Arduino install, then <code>python scripts/flash_firmware.py</code> — see <a href="hardware.html">Hardware &amp; firmware</a>. Without it, <span class="ui">Export probe files...</span> gives you per-point programs for VPanel and you type the Z values in by hand.</p></div>
 
 <h2>Setup</h2>
 <ol class="steps">

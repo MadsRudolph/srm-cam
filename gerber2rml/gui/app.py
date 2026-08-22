@@ -963,8 +963,9 @@ class MainWindow(QMainWindow):
             "EXPERIMENTAL: stream the picked op's toolpaths over the SPI link "
             "move-by-move (no VPanel file player). ALWAYS starts as a DRY RUN "
             "with Z held 2 mm above the origin — nothing can cut. A wet run "
-            "additionally needs the spindle started in VPanel by hand and the "
-            "raw speed value calibrated on dry runs first.")
+            "starts and stops the spindle itself, but the spindle SPEED still "
+            "comes from VPanel's slider, and the raw speed value must be "
+            "calibrated on dry runs first.")
         self.stream_btn.triggered.connect(self._on_stream_job)
         # ---- machine transport: VPanel's Pause / Resume / Stop / View / spindle,
         # in the app. Every one drives an SPI command proven on the machine in
@@ -3852,9 +3853,10 @@ The machine will move. You get a confirmation first.""")
             f"Stream {n_moves} moves of '{op}' over the SPI link, bypassing "
             f"VPanel.\n\nDRY RUN traces the whole job with Z held 2 mm above "
             f"the work origin — nothing can cut; use it to verify motion and "
-            f"calibrate timing.\n\nWET RUN cuts for real: spindle must be "
-            f"started in VPanel BY HAND first, Z zeroed on the copper, and "
-            f"the speed value validated on dry runs. The speed units are "
+            f"calibrate timing.\n\nWET RUN cuts for real: SRM-CAM starts "
+            f"and stops the spindle itself, but set the spindle SPEED on "
+            f"VPanel's slider first, zero Z on the copper, and validate the "
+            f"speed value on dry runs. The speed units are "
             f"Roland-internal and NOT calibrated to mm/s yet.",
             QMessageBox.Cancel, self)
         dry = box.addButton("Dry run (safe)", QMessageBox.AcceptRole)

@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
         <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -60,7 +62,7 @@
   <li><span class="st">Run the installer</span>
     Creates the Start-menu entry and <code>Documents\SRM-CAM\</code> workspace folders.</li>
   <li><span class="st">Launch</span>
-    A demo board loads and the guided tour starts. Replay it anytime with <span class="ui">Guide</span>.</li>
+    A demo board loads and the guided tour starts. Replay it anytime with <span class="ui">Guide</span>, or <span class="ui">Help → Replay the guided tour</span>. <kbd>F1</kbd> opens this guide, and <span class="ui">Help → Check for updates…</span> asks GitHub whether a newer release exists — the app also checks quietly at launch and speaks only when there is one.</li>
 </ol>
 
 <p>From source:</p>
@@ -86,11 +88,34 @@ python -m gerber2rml</code></pre>
 </figure>
 
 <ul>
-  <li><strong>Sidebar</strong> — the run plan: <span class="ui">1 · Setup board</span> → <span class="ui">8 · Top traces</span>, plus <span class="ui">Rework</span> and <span class="ui">3D viewer</span>. Click any step, nothing is locked. Single-sided boards mostly live in step 1.</li>
+  <li><strong>Sidebar</strong> — the run plan. In <strong>Novice</strong> (the default): <span class="ui">1 · Set up board</span> → <span class="ui">2 · Level the bed</span> → <span class="ui">3 · Drill</span> → <span class="ui">4 · Traces</span> → <span class="ui">5 · Cut out</span> → <span class="ui">6 · Check in 3D</span>. In <strong>Professional</strong>: <span class="ui">1 · Setup board</span> → <span class="ui">8 · Top traces</span>, plus <span class="ui">Rework</span> and <span class="ui">3D viewer</span>. Click any step, nothing is locked — it is a map, not a gate.</li>
   <li><strong>Preview</strong> — toolpaths on the bed. Drag to place the board, scrub the slider to see cut order, <span class="ui">Fit</span> to re-center. Click-to-jog when connected.</li>
-  <li><strong>Machine dock</strong> — <span class="ui">Connect</span> + port, live DRO, <span class="ui">bit ○</span> touch indicator, <span class="ui">Probe Z</span>, <span class="ui">Click to jog</span>, red <span class="ui">STOP</span> (always works), and the <span class="ui">Run:</span> progress row.</li>
-  <li><strong>Status chips</strong> — <em>board · placed · mesh · photo · boxes · machine · touch · fit</em> light up as your setup completes.</li>
+  <li><strong>Machine dock</strong> (Professional) — <span class="ui">Connect</span> + port, live DRO, <span class="ui">bit ○</span> touch indicator, <span class="ui">Z ▲/▼</span> + step, <span class="ui">Probe Z</span>, <span class="ui">Spindle</span>, <span class="ui">Pause</span>, <span class="ui">Resume</span>, a live machine-status strip, red <span class="ui">STOP</span>, and the <span class="ui">Run:</span> progress row. Click-to-jog, tool trail, align overlay, <span class="ui">Zero Z on machine</span>, streaming and the machine test are on the <span class="ui">Machine</span> menu — see <a href="machine-control.html">Machine control</a>.</li>
+  <li><strong>Status chips</strong> — <em>board · mesh · fit · photo · boxes · link</em> light up as your setup completes.</li>
 </ul>
+
+<h2 id="modes">Novice &amp; Professional</h2>
+<p>SRM-CAM has two UI modes. <strong>Novice is the default on a fresh install</strong>, because the person who has never opened the app before is exactly the person the default is for. Switch from the <span class="ui">Mode</span> menu.</p>
+
+<p>Novice is a <strong>strict subset</strong>, not a separate program: same widgets, same handlers, same exports. What you produce in Novice is byte-identical to what the same settings produce in Professional.</p>
+
+<div class="tbl-wrap"><table>
+<tr><th>Novice keeps</th><th>Novice puts away</th></tr>
+<tr><td>Load, drill, traces, cut out, export</td><td>Job parameters — feeds, depths, offsets, stepover, V-bit geometry (the preset sets these)</td></tr>
+<tr><td>One-button bed leveling</td><td>The bed-leveling workbench — grid size, retouch interval, height-map import/export</td></tr>
+<tr><td><span class="ui">Corner = tool</span></td><td>Double-sided milling — registration, flip + align, top traces</td></tr>
+<tr><td>The screw fixture</td><td>Rework — boxing spots to re-cut</td></tr>
+<tr><td>Diagnostics and the Guide</td><td>The machine dock and menu — live DRO, jog, streaming, the machine test</td></tr>
+<tr><td></td><td>Output format, mirroring, preview frame, the feed test card, saving presets</td></tr>
+</table></div>
+
+<p>Controls are <strong>hidden, not disabled</strong> — a greyed-out control still invites clicking and still has to be explained; a hidden one costs a beginner nothing. <span class="ui">Mode → What's hidden in Novice?</span> lists all of it in the app, so nobody has to guess whether a feature is gone or just tucked away.</p>
+
+<div class="note"><span class="t">Pinning the mode for a shared machine</span>
+<p>Switching is a menu item, not a password. A lab that wants it fixed can set the <code>SRM_CAM_MODE</code> environment variable to <code>novice</code> or <code>pro</code> — machine-wide, or in the shortcut that launches the app. That overrides the stored preference and greys out the menu.</p></div>
+
+<div class="warn"><span class="t">Novice has no STOP button</span>
+<p>The machine dock is hidden in Novice, and <span class="ui">STOP</span> is part of it — but <span class="ui">Level the bed</span> still drives the machine. If a guided levelling run has to be stopped in Novice, <strong>use the machine's own front panel.</strong></p></div>
 
 <h2>Files from KiCad</h2>
 <ol class="steps">

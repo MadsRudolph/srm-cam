@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
         <a class="nav-link active" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -80,7 +82,7 @@
 <tr><th>Symptom</th><th>Cause → fix</th></tr>
 <tr><td>Top mirrored/offset after the flip</td><td>Physical flip ≠ configured direction. Fiducial fits <strong>can't catch this</strong>. Prevention: jog to a distinctive board hole in Top view before cutting — bit must hover over it.</td></tr>
 <tr><td>Large fiducial fit RMS</td><td>Re-capture the worst fiducial (<span class="ui">Auto</span> is repeatable), clamp before measuring, use all 4 corners.</td></tr>
-<tr><td><span class="ui">Auto</span> finder fails</td><td>Start within ~1 mm of the hole; needs copper 2.5 mm west of it; needs firmware v2 (<a href="hardware.html">reflash</a>).</td></tr>
+<tr><td><span class="ui">Auto</span> finder fails</td><td>Start within ~1 mm of the hole; needs copper 2.5 mm west of it; needs firmware v3 (<a href="hardware.html">reflash</a> with <code>python scripts/flash_firmware.py</code>).</td></tr>
 <tr><td>NC job ignores my origin</td><td>NC obeys <strong>G54</strong> only, not the User CS. Set G54 in VPanel: XY at machine origin, zero only Z. Verify G54 Z once after <span class="ui">Zero Z on machine</span>.</td></tr>
 </table></div>
 

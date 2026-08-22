@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link active" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
         <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -97,20 +99,24 @@
 </figure>
 
 <h2>4. Export</h2>
-<pre><code>&lt;name&gt;_bottom_traces.nc     isolation (mirrored)
-&lt;name&gt;_drill_0.8mm.nc       per diameter (or one single-bit file)
+<pre><code>&lt;name&gt;_airpass.nc           DRY RUN — spindle off, bit 5 mm up. RUN FIRST.
+&lt;name&gt;_traces.nc            isolation (mirrored)
+&lt;name&gt;_drill.nc             one bit, larger holes interpolated (default)
+&lt;name&gt;_drill_&lt;dia&gt;mm.nc     one file per diameter (multi-bit mode)
 &lt;name&gt;_cutout.nc            outline + tabs — run LAST
 &lt;name&gt;_runplan.txt          READ FIRST: order, bits, zeroing</code></pre>
 <p><span class="ui">Machine</span> = <strong>Roland SRM-20 (G-code)</strong> (default, recommended). RML available as fallback.</p>
 
 <h2>5. Run in VPanel</h2>
 <ol class="steps">
+  <li><span class="st">Watch the dry run first</span>
+    Send <code>&lt;name&gt;_airpass.nc</code> before anything else. The spindle stays off, the bit is held 5&nbsp;mm up, and it traces where the board will be cut, slowly enough to follow. If the bit leaves the copper, stop and re-place the stock — nothing has been cut. Worth doing before <em>every</em> job. See <a href="holding-the-copper.html">Holding the copper</a>.</li>
   <li><span class="st">Set the G54 origin</span>
     XY zero <strong>once</strong> for the whole board. Re-zero <strong>Z only</strong> after every bit change.</li>
   <li><span class="st">NC-code mode</span>
     <span class="ui">Cut → Add → Output</span> — the <code>.nc</code> streams like RML.</li>
   <li><span class="st">Run-plan order</span>
-    Traces → drill → cutout last. Re-zero Z at each bit change (<span class="ui">Zero Z on machine</span> does it electrically — <a href="hardware.html">hardware</a>).</li>
+    Airpass → traces → drill → cutout last. Re-zero Z at each bit change (<span class="ui">Zero Z on machine</span> does it electrically — <a href="hardware.html">hardware</a>).</li>
 </ol>
 
 <div class="danger"><span class="t">Z travel</span>
@@ -121,7 +127,7 @@
 
 <div class="page-nav">
   <a href="getting-started.html"><span class="lbl">Previous</span><span class="ttl">← Getting started</span></a>
-  <a class="next" href="double-sided.html"><span class="lbl">Next</span><span class="ttl">Double-sided boards →</span></a>
+  <a class="next" href="holding-the-copper.html"><span class="lbl">Next</span><span class="ttl">Holding the copper →</span></a>
 </div>
 
 <footer class="site">

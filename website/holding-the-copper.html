@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holding the copper — SRM-CAM</title>
+<meta name="description" content="Give the machine a datum it drills itself, bolt the copper through the spoilboard grid, and prove the placement with a spindle-off dry run before anything cuts.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link active" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<div class="hero">
+  <h1>Holding the copper</h1>
+  <p class="lead">Almost every ruined board comes down to one question: <strong>does the machine know where the copper is, and will it still be there in ten minutes?</strong> Three features answer it — a datum the machine drills for itself, screws through the spoilboard grid, and a spindle-off rehearsal before anything cuts.</p>
+</div>
+
+<h2>The problem</h2>
+<p>Traces, drilling and the cut-out are three separate passes with a bit change between them. They only line up if the copper has not moved and the work origin has not moved. Tape lets the stock creep. Clamps sit where the cutter wants to go. And finding the same corner by eye takes two attempts on a good day — every student does it differently.</p>
+
+<h2>1 · Let the machine drill its own datum</h2>
+<p><span class="ui">Export bed fixture (pin holes)…</span> writes a small job that drills <strong>three dowel-pin holes into the spoilboard</strong>. Press pins in, and the stock corner lands on the work origin every time, without anyone measuring anything.</p>
+<ol class="steps">
+  <li><span class="st">Export it</span>
+    You get <code>&lt;W&gt;x&lt;H&gt;_bedfixture.nc</code> and a matching <code>.txt</code> procedure — named after the <em>stock size</em>, not the board, because the fixture is per-bed and gets reused.</li>
+  <li><span class="st">Set the origin, once</span>
+    In VPanel, set the XY work origin at least 10&nbsp;mm in from the front-left of the machine's travel — the pin holes sit just outside the stock, at slightly negative X and Y, and the machine has to be able to reach them.</li>
+  <li><span class="st">Run it, press the pins in</span>
+    Push the stock up against the pins. Its front-left corner is now exactly on the work origin.</li>
+  <li><span class="st">Never move XY again</span>
+    Re-zero <strong>Z</strong> after every bit change. Never XY. If the XY origin moves between passes, the traces, holes and outline stop agreeing with each other.</li>
+</ol>
+
+<h2>2 · Bolt it down through the spoilboard</h2>
+<p>The spoilboard has a grid of M4 threads on a 10&nbsp;mm pitch. Tick <span class="ui">Copper screwed down (M4)</span> and SRM-CAM picks the grid holes your stock actually covers, then <span class="ui">Export screw fixture…</span> writes <code>&lt;name&gt;_screws.nc</code> — clearance holes through the copper only.</p>
+<p>Run that file first, drop an M4 screw through each hole and tighten into the plate — snug, not hard; you are clamping copper, not building a bridge. Re-zero Z afterwards, because the board may have pulled down slightly as you tightened.</p>
+
+<div class="danger"><span class="t">The screw file is in machine coordinates</span>
+<p>The thread grid is modelled from a measured position on the machine itself, and the file is emitted at those absolute coordinates. It only lands on the threads if the <strong>XY work origin is the machine origin</strong> — the standing convention for this app, where you zero <em>only Z</em> and leave X/Y at the machine origin.</p>
+<p><strong>If you set the XY origin somewhere else — including the ≥10&nbsp;mm inset the bed-fixture procedure asks for — the screw holes will be displaced by that same offset.</strong> They can then miss the clearance holes in the MDF and go into the threaded steel plate underneath. Check which origin you are on before running this file.</p></div>
+
+<div class="tip"><span class="t">Travel height is handled for you</span>
+<p>The screw heads stand about 3&nbsp;mm above the copper and the default travel height is 2&nbsp;mm — a rapid would drive the spindle straight into a screw. Ticking the box <strong>raises travel Z to 4&nbsp;mm on all three operations automatically</strong>, and only ever raises it, so a deliberately higher setting of your own is kept. Nothing in the toolpath geometry would have caught this: the XY is right, the depths are right, and the preview looks perfect.</p></div>
+
+<p><span class="ui">Diagnostics</span> gains three checks once the fixture is on: travel height against head height, whether four usable positions exist, and every screw head against the real swept material of all three passes — the cut-out matters most, because it runs <em>around</em> the outline.</p>
+
+<h2>3 · Prove it before you cut</h2>
+<p>Every single-sided export writes <code>&lt;name&gt;_airpass.nc</code>, and it is <strong>step 0</strong> in the run plan.</p>
+<ul>
+  <li>The spindle stays <strong>off</strong>.</li>
+  <li>The bit is held <strong>5&nbsp;mm up</strong>.</li>
+  <li>It traces the board outline, slowly enough to follow with your eye.</li>
+</ul>
+<p>If the bit wanders off the copper, stop and re-place the stock — nothing has been cut and nothing has been lost. It is the cheapest insurance in the whole workflow, and it is worth running before <em>every</em> job, not just the first one.</p>
+
+<div class="note"><span class="t">Double-sided jobs have no airpass file</span>
+<p>The double-sided run plan does not include one. There, the <code>_align</code> job is your first contact with the stock — so check the placement on screen before you run it.</p></div>
+
+<h2>Which one do I need?</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Situation</th><th>Use</th></tr>
+<tr><td>One board, tape is holding fine</td><td>The dry run alone</td></tr>
+<tr><td>Repeating the same stock size often</td><td>Bed fixture — set it up once, reuse it</td></tr>
+<tr><td>Deep cut-out, thin stock, or the board chatters</td><td>Screw fixture</td></tr>
+<tr><td>Double-sided</td><td>Dowel registration — see <a href="double-sided.html">Double-sided boards</a></td></tr>
+</table></div>
+
+<div class="page-nav">
+  <a href="milling-a-board.html"><span class="lbl">Previous</span><span class="ttl">← Milling a board</span></a>
+  <a class="next" href="double-sided.html"><span class="lbl">Next</span><span class="ttl">Double-sided boards →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+</div>
+</body>
+</html>

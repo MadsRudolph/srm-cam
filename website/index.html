@@ -33,6 +33,7 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
         <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
@@ -40,6 +41,7 @@
       <div class="nav-group">
         <div class="nav-title">Setup &amp; reference</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
         <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
@@ -73,7 +75,7 @@
 </figure>
 
 <h2>How it works</h2>
-<p>One tool for the whole SRM-20 flow — replaces the mods site and FlatCAM. One job file per operation: traces, drill, cut-out.</p>
+<p>One tool for the whole SRM-20 flow — replaces the mods site and FlatCAM. One job file per operation — traces, drill, cut-out — plus a spindle-off dry-run outline that traces where the board will be cut before anything touches copper.</p>
 
 <div class="pill-flow">
   <span class="pf">KiCad Gerbers</span><span class="arr">→</span>
@@ -82,6 +84,7 @@
   <span class="pf">VPanel</span><span class="arr">→</span>
   <span class="pf">Milled board</span>
 </div>
+<p style="text-align:center;color:#8b94a1;font-size:13px;margin-top:-4px">With the Arduino fitted, SRM-CAM also drives the machine directly — spindle, pause, resume, jog and probing — while VPanel still plays the file and sets the spindle speed. <a href="machine-control.html">Machine control →</a></p>
 
 <h2>Guide contents</h2>
 <div class="cards">
@@ -92,6 +95,10 @@
   <a class="card" href="milling-a-board.html">
     <span class="ct"><span class="ico">🛠️</span>Milling a board</span>
     <span class="cd">The full single-sided workflow: import, traces, drilling, cut-out, presets, export, and running jobs in VPanel.</span>
+  </a>
+  <a class="card" href="holding-the-copper.html">
+    <span class="ct"><span class="ico">🔩</span>Holding the copper</span>
+    <span class="cd">A datum the machine drills itself, screws through the spoilboard grid, and a spindle-off rehearsal before anything cuts.</span>
   </a>
   <a class="card" href="double-sided.html">
     <span class="ct"><span class="ico">🔁</span>Double-sided boards</span>
@@ -107,7 +114,11 @@
   </a>
   <a class="card" href="hardware.html">
     <span class="ct"><span class="ico">🔌</span>Hardware &amp; firmware</span>
-    <span class="cd">The Arduino SPI probe board: wiring, flashing, what each firmware feature does, and safety limits.</span>
+    <span class="cd">The Arduino on the machine's SPI bus: wiring, one-command flashing, firmware v3, and the safety limits.</span>
+  </a>
+  <a class="card" href="machine-control.html">
+    <span class="ct"><span class="ico">🎛️</span>Machine control</span>
+    <span class="cd">Drive the mill from SRM-CAM: spindle, pause, resume, jog, live status — and an honest list of what the link cannot do.</span>
   </a>
   <a class="card" href="reference.html">
     <span class="ct"><span class="ico">📄</span>Files &amp; reference</span>
@@ -123,6 +134,9 @@
 <ul>
   <li><strong>Trustworthy depth</strong> — probe the surface electrically, cut depth follows the real board. Drift-corrected, double-verified touches; mesh sanity check before you cut.</li>
   <li><strong>Double-sided that registers</strong> — dowel pins (sub-0.1&nbsp;mm, zero measurement) or probed fiducials with an <span class="ui">Auto</span> hole finder (~50&nbsp;µm, no jogging by eye).</li>
+  <li><strong>Held down, and proven before you cut</strong> — bolt the copper through the spoilboard grid (travel height raises itself to clear the screw heads), let the machine drill its own dowel datum, and watch the spindle-off outline pass before the first cut.</li>
+  <li><strong>The machine, from the app</strong> — spindle, pause, resume, view and a live status strip over the Arduino link. Spindle <em>speed</em> stays on VPanel's slider.</li>
+  <li><strong>Two modes</strong> — Novice is the short path from Gerbers to files; Professional is every control.</li>
   <li><strong>Problems caught early</strong> — preflight flags channels the bit can't cut; 3D simulation plays the whole job; after cutting, a board photo detects missed channels automatically.</li>
 </ul>
 
