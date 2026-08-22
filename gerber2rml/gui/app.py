@@ -553,7 +553,10 @@ class MainWindow(QMainWindow):
         # The title bar is where someone reads which version they are running.
         # (gerber2rml is the Python package name; SRM-CAM is the product.)
         self.setWindowTitle(f"SRM-CAM {__version__}")
-        self.resize(1100, 750)
+        # 1100 was below the layout's own minimum width, so the app always
+        # opened wider than it asked for. Ask for something it can honour,
+        # and that fits the settings panel and preview side by side.
+        self.resize(1400, 900)
         self._set_app_icon()
         self.state = ProjectState()
 
@@ -842,6 +845,7 @@ class MainWindow(QMainWindow):
             "probing or apply leveling.")
         self.level_load_btn.clicked.connect(self._on_load_level_grid)
         self.level_clear_btn = QPushButton("Clear Z")
+        self.level_clear_btn.setObjectName("dangerBtn")
         self.level_clear_btn.setToolTip(
             "Clear the measured Z values so you can re-probe (keeps the X/Y grid). "
             "Also turns off leveling and the height-map overlay.")
@@ -1324,6 +1328,9 @@ class MainWindow(QMainWindow):
                                    "is added to the list below.")
         self.select_chk.toggled.connect(self._on_select_toggled)
         self.clear_sel_btn = QPushButton("Clear all")
+        self.clear_sel_btn.setObjectName("dangerBtn")
+        self.clear_sel_btn.setToolTip(
+            "Remove every rework area from the list. Cannot be undone.")
         self.clear_sel_btn.clicked.connect(self._clear_rework)
         # Default depth for the NEXT box you draw — independent of the original job
         # so you can re-cut a missed area deeper; edit any box's depth in the table.
@@ -1443,6 +1450,9 @@ class MainWindow(QMainWindow):
         # Preview mode toggle
         from PySide6.QtWidgets import QTabBar
         self.tabs = QTabBar()
+        # Without this Qt draws a hard rule under the unselected tabs that
+        # stops dead at the selected one, which reads as a rendering bug.
+        self.tabs.setDrawBase(False)
         for op in _OPS:
             self.tabs.addTab(op.capitalize())
         self.tabs.currentChanged.connect(self.generate_preview)
@@ -1842,6 +1852,7 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self._autofit_panel)
         self._build_mode_menu()
         self._build_kicad_menu()
+        self._uppercase_group_titles()
         self._apply_mode()               # Novice on a fresh install
         self._autofit_panel()
         self.move_chk.setChecked(True)   # move-on-bed drag on by default
@@ -2596,6 +2607,19 @@ class MainWindow(QMainWindow):
             "settings export the same files in either mode. Switch to "
             "Professional from this menu whenever you need the rest.")
 
+    def _uppercase_group_titles(self):
+        """Small-caps section headings, done in Python.
+
+        The stylesheet asks for text-transform: uppercase, which Qt Style
+        Sheets do not support and silently drop - so these have always
+        rendered as ordinary mixed case. Only some groups go through the
+        _group() helper, so this sweeps every QGroupBox instead.
+        """
+        from PySide6.QtWidgets import QGroupBox
+        for g in self.findChildren(QGroupBox):
+            if g.title():
+                g.setTitle(g.title().upper())
+
     def _apply_mode(self):
         """Show or hide everything the current mode governs.
 
@@ -3059,6 +3083,7 @@ class MainWindow(QMainWindow):
     def generate_preview(self):
         if self.state.board is None:
             self.preview.set_estimate("")
+            self.preview.show_empty()
             return
         self._sync_state()
         self._apply_preview_frame()
@@ -3770,8 +3795,24 @@ class MainWindow(QMainWindow):
     def _update_chips(self):
         """Refresh the workflow chips (status bar, right side)."""
         if not self._chip_labels:
+            _CHIP_TIPS = {
+                "board": "The loaded Gerber folder. Shows the job name that "
+                         "every exported file will be named after.",
+                "mesh": "Bed height map: lit once at least 3 points are "
+                        "measured AND 'Apply bed leveling on export' is on. "
+                        "Shows the point count.",
+                "fit": "Fiducial registration fit for a double-sided flip. "
+                       "Shows the RMS error of the measured-to-nominal fit.",
+                "photo": "A photo of the milled board is aligned over the "
+                         "design, so uncut copper can be detected.",
+                "boxes": "Rework areas marked for a second pass. Shows how "
+                         "many.",
+                "link": "The machine link. Filled when SRM-CAM is connected "
+                        "to the Arduino on the SRM-20.",
+            }
             for name in ("board", "mesh", "fit", "photo", "boxes", "link"):
                 lbl = QLabel("")
+                lbl.setToolTip(_CHIP_TIPS[name])
                 self._chip_labels[name] = lbl
                 self.statusBar().addPermanentWidget(lbl)
 
@@ -3890,6 +3931,8 @@ class MainWindow(QMainWindow):
             QMessageBox.Cancel, self)
         dry = box.addButton("Dry run (safe)", QMessageBox.AcceptRole)
         wet = box.addButton("Wet run…", QMessageBox.DestructiveRole)
+        wet.setObjectName("dangerBtn")
+        wet.setStyleSheet(_DANGER_QSS)   # dialog buttons miss the app sheet
         box.exec()
         if box.clickedButton() is dry:
             dry_run = True
@@ -4177,15 +4220,26 @@ class MainWindow(QMainWindow):
         # part-done grid -> offer to resume rather than start over
         resume = False
         if filled and unfilled:
-            ans = QMessageBox.question(
-                self, "Resume or re-probe?",
-                f"{filled} of {filled + unfilled} points are already measured.\n\n"
-                f"Resume: probe only the {unfilled} remaining (re-probes point 1 as "
-                f"the reference, keeps the rest).\nRe-probe all: start over.",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-            if ans == QMessageBox.Cancel:
+            # Named buttons, not Yes/No: this sits directly in front of a
+            # physical probing run, and "Yes" does not say which of the two
+            # options in the body text it means.
+            _box = QMessageBox(QMessageBox.Question, "Resume or re-probe?",
+                               f"{filled} of {filled + unfilled} points are "
+                               f"already measured.", parent=self)
+            _box.setInformativeText(
+                f"Resume probes only the {unfilled} remaining (point 1 is "
+                f"re-probed as the reference; the rest are kept).\n"
+                f"Re-probe all starts the whole grid again.")
+            _resume = _box.addButton(f"Resume — probe the {unfilled} remaining",
+                                     QMessageBox.AcceptRole)
+            _all = _box.addButton(f"Re-probe all {filled + unfilled}",
+                                  QMessageBox.DestructiveRole)
+            _box.addButton(QMessageBox.Cancel)
+            _box.setDefaultButton(_resume)
+            _box.exec()
+            if _box.clickedButton() not in (_resume, _all):
                 return
-            resume = ans == QMessageBox.Yes
+            resume = _box.clickedButton() is _resume
         points, x0, y0 = self._probe_points(resume)
         port = self.level_port_combo.currentText().strip() or "COM5"
         if QMessageBox.question(
@@ -6073,6 +6127,13 @@ class MainWindow(QMainWindow):
             f"{f', {n_leveled} height-map leveled' if n_leveled else ''}"
             f"{self._note_tool_wear(clipped)}", 10000)
 
+# A QMessageBox builds its own buttons, which do not pick up the application
+# stylesheet by object name, so the danger treatment has to be set on them
+# directly. Same colours as QPushButton#dangerBtn below.
+_DANGER_QSS = (
+    "background: #4a2326; border: 1px solid #d64541; color: #ff9b97; "
+    "font-weight: 600; border-radius: 6px; padding: 6px 14px;")
+
 _STYLESHEET = """
 QWidget { color: #dde3ea; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
 QMainWindow, QScrollArea, #settingsPanel { background: #14171c; }
@@ -6107,8 +6168,11 @@ QGroupBox {
 QGroupBox::title {
     subcontrol-origin: margin; subcontrol-position: top left;
     left: 14px; top: 4px; padding: 2px 6px;
-    color: #8fb8c9; font-size: 12px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 1px;
+    /* Qt Style Sheets support NEITHER text-transform NOR letter-spacing;
+       both were being silently discarded, which is why these titles have
+       always rendered as ordinary mixed case. The uppercasing is done in
+       the _group() helper instead. */
+    color: #8fb8c9; font-size: 11px; font-weight: 700;
 }
 QLabel { background: transparent; color: #a5adb9; font-weight: 500; }
 #helpText { color: #8fb8c9; font-size: 13px; font-style: italic; margin-bottom: 4px; border: 1px solid #1e3a42; background: #14232a; border-radius: 6px; padding: 8px; }
@@ -6127,6 +6191,17 @@ QPushButton#primaryBtn:disabled { background: #1e3a42; color: #52707a; }
 QPushButton#stopBtn { background: #d64541; border: none; color: #ffffff; font-weight: 700; }
 QPushButton#stopBtn:hover { background: #e8615d; }
 QPushButton#stopBtn:pressed { background: #a83531; }
+/* Offline, STOP has nothing to stop. Leaving it the loudest object on screen
+   at all times trains the eye to ignore it, which is exactly what you do not
+   want from an emergency control. */
+QPushButton#stopBtn:disabled { background: #3a2224; color: #8b6a6c; }
+/* Irreversible actions should not look like ordinary ones. Wet run spins a
+   cutter into copper; Clear Z throws away a hand-probed height map. */
+QPushButton#dangerBtn {
+    background: #4a2326; border: 1px solid #d64541; color: #ff9b97; font-weight: 600;
+}
+QPushButton#dangerBtn:hover { background: #5e2b2f; color: #ffbdba; }
+QPushButton#dangerBtn:pressed { background: #3a1c1f; }
 
 /* the machine dock keeps AMBER accents: amber = live machine, everywhere */
 #machineBar { background: #181c22; border-top: 1px solid #262c35; }
@@ -6146,6 +6221,36 @@ QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #4dd0e1
 QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #4dd0e1; }
 QComboBox:disabled, QAbstractSpinBox:disabled { color: #525b66; background: #191d23; }
 QComboBox::drop-down { border: none; width: 24px; }
+/* Qt stops drawing the built-in arrow as soon as ::drop-down is styled, so it
+   has to be declared explicitly or every combo looks like a text field. Drawn
+   with borders rather than an image: no asset to ship or find at runtime. */
+QComboBox::down-arrow {
+    image: none; width: 0; height: 0; margin-right: 9px;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid #8b94a1;
+}
+QComboBox::down-arrow:hover { border-top-color: #4dd0e1; }
+QComboBox::down-arrow:disabled { border-top-color: #525b66; }
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
+    subcontrol-origin: border; width: 18px; background: transparent;
+    border: none;
+}
+QAbstractSpinBox::up-button { subcontrol-position: top right; margin: 2px 4px 0 0; }
+QAbstractSpinBox::down-button { subcontrol-position: bottom right; margin: 0 4px 2px 0; }
+QAbstractSpinBox::up-arrow {
+    image: none; width: 0; height: 0;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-bottom: 5px solid #8b94a1;
+}
+QAbstractSpinBox::down-arrow {
+    image: none; width: 0; height: 0;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid #8b94a1;
+}
+QAbstractSpinBox::up-arrow:hover { border-bottom-color: #4dd0e1; }
+QAbstractSpinBox::down-arrow:hover { border-top-color: #4dd0e1; }
+QAbstractSpinBox::up-arrow:disabled { border-bottom-color: #525b66; }
+QAbstractSpinBox::down-arrow:disabled { border-top-color: #525b66; }
 QComboBox QAbstractItemView {
     background: #232a33; border: 1px solid #313a46; border-radius: 6px;
     selection-background-color: #4dd0e1; selection-color: #0d1418; outline: none;
@@ -6161,7 +6266,13 @@ QCheckBox::indicator {
     border: 1px solid #3d4754; background: #232a33;
 }
 QCheckBox::indicator:hover { border-color: #4dd0e1; }
-QCheckBox::indicator:checked { background: #4dd0e1; border-color: #4dd0e1; }
+/* A solid fill and nothing else means "checked" is carried by hue alone -
+   invisible to a colour-blind reader and easy to mistake for a swatch. The
+   tick is an inline SVG data URI so there is no file to lose. */
+QCheckBox::indicator:checked {
+    background: #4dd0e1; border-color: #4dd0e1;
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'><path d='M4 9.5 L7.5 13 L14 5.5' fill='none' stroke='%230d1418' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
 QCheckBox::indicator:checked:hover { background: #80e5f2; border-color: #80e5f2; }
 
 QTabWidget::pane { border: 1px solid #262c35; border-radius: 8px; top: -1px; background: #1b2027; }

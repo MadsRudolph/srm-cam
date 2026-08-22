@@ -22,7 +22,52 @@ _TOOLTIPS = {
     "plunge_feed": "Vertical plunging speed into the material in mm/s.",
     "travel_z": "Safe Z height for rapid movements above the material.",
     "tabs": "Number of holding tabs to leave on the cutout path.",
-    "tab_width": "Width of each holding tab in mm."
+    "tab_width": "Width of each holding tab in mm.",
+    "peck_retract": "How far the drill lifts between pecks to clear swarf.",
+}
+
+# The form labelled every field with its Python attribute name - "xy feed",
+# "travel z", "cut depth" - in a UI where every other label is capitalised, and
+# with no units anywhere. "stepover 0.500" is a FRACTION and "travel z 2.000" is
+# millimetres, formatted identically. The app already knows how to do this: the
+# stock thickness spin has shown " mm" all along.
+_LABELS = {
+    "bit_diameter": "Bit diameter",
+    "tool_type": "Tool type",
+    "tip_diameter": "V-bit tip width",
+    "included_angle": "V-bit angle",
+    "target_width": "Target cut width",
+    "single_bit": "One bit for all holes",
+    "cut_depth": "Depth per pass",
+    "total_depth": "Total depth",
+    "offsets": "Isolation passes",
+    "stepover": "Stepover (of bit dia.)",
+    "xy_feed": "Cutting speed",
+    "plunge_feed": "Plunge speed",
+    "travel_z": "Travel height",
+    "tabs": "Holding tabs",
+    "tab_width": "Tab width",
+    "peck_retract": "Peck retract",
+}
+
+_SUFFIX = {
+    "bit_diameter": " mm", "tip_diameter": " mm", "target_width": " mm",
+    "cut_depth": " mm", "total_depth": " mm", "travel_z": " mm",
+    "tab_width": " mm", "peck_retract": " mm",
+    "xy_feed": " mm/s", "plunge_feed": " mm/s",
+    "included_angle": "°",
+}
+
+# Every float field was setRange(-1000, 100000): a negative feed, a 100 m cut
+# depth and a 100000 mm bit were all accepted in silence. These are the ranges
+# an SRM-20 can actually be asked for.
+_RANGES = {
+    "bit_diameter": (0.05, 6.0), "tip_diameter": (0.0, 3.0),
+    "target_width": (0.05, 6.0), "cut_depth": (0.001, 10.0),
+    "total_depth": (0.001, 60.0), "travel_z": (0.1, 40.0),
+    "tab_width": (0.1, 20.0), "peck_retract": (0.05, 10.0),
+    "xy_feed": (0.1, 60.0), "plunge_feed": (0.1, 60.0),
+    "included_angle": (5.0, 180.0), "stepover": (0.05, 1.0),
 }
 
 class DataclassForm(QWidget):
@@ -54,13 +99,17 @@ class DataclassForm(QWidget):
                     w = QLineEdit(val)
                     w.textChanged.connect(self._on_changed)
             else:  # float
-                w = QDoubleSpinBox(); w.setDecimals(3); w.setRange(-1000.0, 100000.0)
+                w = QDoubleSpinBox(); w.setDecimals(3)
+                lo, hi = _RANGES.get(f.name, (-1000.0, 100000.0))
+                w.setRange(lo, hi)
+                if f.name in _SUFFIX:
+                    w.setSuffix(_SUFFIX[f.name])
                 w.setSingleStep(0.1); w.setValue(float(val))
                 w.valueChanged.connect(self._on_changed)
             if f.name in _TOOLTIPS:
                 w.setToolTip(_TOOLTIPS[f.name])
             self._editors[f.name] = w
-            layout.addRow(f.name.replace("_", " "), w)
+            layout.addRow(_LABELS.get(f.name, f.name.replace("_", " ")), w)
 
     def _on_changed(self, *args):
         if not self._updating:

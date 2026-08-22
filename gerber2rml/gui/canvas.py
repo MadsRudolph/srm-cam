@@ -221,6 +221,29 @@ class PreviewCanvas(QWidget):
         self.canvas.mpl_connect("key_press_event", self._on_key)
         self.canvas.mpl_connect("scroll_event", self._on_scroll)
 
+
+        # Start in the designed empty state rather than matplotlib's
+        # default 0.0-1.0 unit square, which reads as a valid 1 mm board.
+        self.show_empty()
+
+    def show_empty(self, message="No board loaded",
+                   hint="Load a Gerber folder to begin"):
+        """Draw a deliberate empty state.
+
+        Without this the user sees matplotlib's default unit square: ticks at
+        0.0 .. 1.0, a grid, and an axis labelled "X (mm)". That does not read
+        as "nothing here" - it reads as a valid 1 mm board, which is worse than
+        a blank panel.
+        """
+        self.ax.clear()
+        self.ax.set_axis_off()
+        self.ax.set_facecolor("#1e1e1e")
+        self.ax.text(0.5, 0.54, message, transform=self.ax.transAxes,
+                     ha="center", va="center", color="#c8ced8", fontsize=13)
+        self.ax.text(0.5, 0.44, hint, transform=self.ax.transAxes,
+                     ha="center", va="center", color="#8b94a1", fontsize=10)
+        self.canvas.draw_idle()
+
     def _on_panel_btn(self, collapsed):
         """Viewer's settings-panel collapse toggle: flip the label and report it."""
         self.panel_btn.setText("▶  Show panel" if collapsed else "◀  Hide panel")

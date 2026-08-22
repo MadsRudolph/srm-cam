@@ -2157,3 +2157,97 @@ def test_missing_bcu_says_what_to_do_about_it(tmp_path):
         raise AssertionError("expected a ValueError")
     assert "B.Cu" in msg
     assert "KiCad" in msg or "re-plot" in msg, msg
+
+
+# ---- the stylesheet was stripping the glyphs that identify a control ------
+
+def test_combo_and_spin_arrows_are_declared():
+    """Qt stops drawing a built-in sub-control glyph as soon as you style the
+    sub-control. ::drop-down was styled and ::down-arrow was never declared, so
+    every combo rendered as a plain rounded box - identical to a QLineEdit."""
+    from gerber2rml.gui import app as A
+    qss = A._STYLESHEET
+    assert "QComboBox::down-arrow" in qss
+    assert "QAbstractSpinBox::up-arrow" in qss
+    assert "QAbstractSpinBox::down-arrow" in qss
+
+
+def test_checked_checkbox_is_not_carried_by_colour_alone():
+    from gerber2rml.gui import app as A
+    i = A._STYLESHEET.index("QCheckBox::indicator:checked")
+    block = A._STYLESHEET[i:i + 400]
+    assert "image:" in block, "a solid fill with no tick is hue-only state"
+
+
+def test_stylesheet_has_no_properties_qt_silently_ignores():
+    """text-transform and letter-spacing are not supported by Qt Style Sheets.
+    They were being discarded, which is why the group titles never rendered as
+    the small caps the sheet asked for."""
+    import re
+    from gerber2rml.gui import app as A
+    live = re.sub(r"/\*.*?\*/", "", A._STYLESHEET, flags=re.S)   # drop comments
+    assert "text-transform" not in live
+    assert "letter-spacing" not in live
+
+
+def test_group_titles_are_actually_uppercased():
+    from PySide6.QtWidgets import QGroupBox
+    w = MainWindow()
+    titles = [g.title() for g in w.findChildren(QGroupBox) if g.title()]
+    assert titles
+    assert all(s == s.upper() for s in titles), [s for s in titles if s != s.upper()]
+
+
+def test_destructive_buttons_are_marked_as_such():
+    w = MainWindow()
+    assert w.level_clear_btn.objectName() == "dangerBtn"
+    assert w.clear_sel_btn.objectName() == "dangerBtn"
+    assert "QPushButton#dangerBtn" in __import__(
+        "gerber2rml.gui.app", fromlist=["x"])._STYLESHEET
+
+
+# ---- states and labels ----------------------------------------------------
+
+def test_empty_state_is_drawn_not_left_as_a_unit_square():
+    """With no board the user used to get matplotlib's default 0.0-1.0 axes,
+    which reads as a valid 1 mm board rather than as 'nothing loaded'."""
+    w = MainWindow()
+    w.state.board = None
+    w.generate_preview()
+    texts = [t.get_text() for t in w.preview.ax.texts]
+    assert any("No board loaded" in s for s in texts), texts
+    assert w.preview.ax.axison is False, "axes still drawn behind the message"
+
+
+def test_job_parameters_have_human_labels_and_units():
+    from gerber2rml.gui.form import DataclassForm
+    from gerber2rml.config import TraceJob
+    from PySide6.QtWidgets import QFormLayout, QDoubleSpinBox
+    f = DataclassForm(TraceJob())
+    lay = f.layout()
+    labels = [lay.itemAt(i, QFormLayout.LabelRole).widget().text()
+              for i in range(lay.rowCount())
+              if lay.itemAt(i, QFormLayout.LabelRole)]
+    assert "xy feed" not in labels, "raw attribute names still on screen"
+    assert "Cutting speed" in labels, labels
+    assert f._editors["xy_feed"].suffix().strip() == "mm/s"
+    assert f._editors["travel_z"].suffix().strip() == "mm"
+
+
+def test_job_parameter_ranges_reject_nonsense():
+    from gerber2rml.gui.form import DataclassForm
+    from gerber2rml.config import TraceJob
+    f = DataclassForm(TraceJob())
+    xy = f._editors["xy_feed"]
+    assert xy.minimum() > 0, "a negative cutting speed was accepted"
+    assert xy.maximum() <= 60.0
+    step = f._editors["stepover"]
+    assert step.maximum() <= 1.0, "stepover is a fraction of the bit diameter"
+
+
+def test_status_chips_explain_themselves():
+    w = MainWindow()
+    w._update_chips()
+    assert w._chip_labels, "no chips built"
+    missing = [n for n, l in w._chip_labels.items() if not l.toolTip().strip()]
+    assert not missing, f"chips with no tooltip: {missing}"
