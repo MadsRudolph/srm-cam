@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QToolTip,
 )
 from PySide6.QtCore import Qt, QEvent, QPoint
+from gerber2rml.gui import theme
 
 _CMAP = colormaps["coolwarm"]
 _HOVER_PX = 18                       # pick radius for the hover tooltip (pixels)
@@ -71,7 +72,7 @@ class BedVisualizerWindow(QMainWindow):
         self._surface = self._scatter = None
 
         self.view = gl.GLViewWidget()
-        self.view.setBackgroundColor("#1e1e1e")
+        self.view.setBackgroundColor(theme.CANVAS_BG)
         self.view.setMouseTracking(True)         # fire move events without a button
         self.view.installEventFilter(self)       # so we can read the surface on hover
 
@@ -81,7 +82,7 @@ class BedVisualizerWindow(QMainWindow):
         self.exag_slider.setToolTip("Z exaggeration — scales the deviation so the warp is visible")
         self.exag_slider.valueChanged.connect(self._on_exag)
         self.range_lbl = QLabel()
-        self.range_lbl.setStyleSheet("color:#d4d4d4;")
+        self.range_lbl.setStyleSheet(f"color:{theme.TICK};")
 
         self._build_static()
         self._rebuild()      # needs range_lbl, so build controls first
@@ -89,10 +90,10 @@ class BedVisualizerWindow(QMainWindow):
         controls = QWidget()
         cl = QHBoxLayout(controls)
         cl.setContentsMargins(8, 4, 8, 6)
-        cl.addWidget(QLabel("Z ×", styleSheet="color:#d4d4d4;"))
+        cl.addWidget(QLabel("Z ×", styleSheet=f"color:{theme.TICK};"))
         cl.addWidget(self.exag_slider)
         cl.addWidget(QLabel("hover a point for its value",
-                            styleSheet="color:#888;"))
+                            styleSheet=f"color:{theme.DRO_TEXT};"))
         cl.addStretch(1)
         cl.addWidget(self.range_lbl)
 

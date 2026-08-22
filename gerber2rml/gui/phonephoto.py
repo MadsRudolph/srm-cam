@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
 from gerber2rml.engine import photorelay
 from gerber2rml.engine.photoshare import PhotoShareServer
 from gerber2rml.gui.workspace import _settings
+from gerber2rml.gui import theme
 
 # The team relay (relay/worker.js on Cloudflare). Used when the Relay
 # field is empty, so the dialog works on any network with zero setup;
@@ -96,7 +97,7 @@ class PhonePhotoDialog(QDialog):
 
         self.hint = QLabel()
         self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: #98a2b3;")
+        self.hint.setStyleSheet(f"color: {theme.TEXT_4};")
         lay.addWidget(self.hint)
         self.status = QLabel("Waiting for a photo…")
         lay.addWidget(self.status)

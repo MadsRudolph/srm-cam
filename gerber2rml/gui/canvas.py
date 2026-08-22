@@ -7,13 +7,14 @@ from matplotlib.figure import Figure
 from matplotlib.collections import LineCollection, PatchCollection
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from gerber2rml.gui import theme
 
 
 class PreviewCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.figure = Figure(figsize=(5, 5))
-        self.figure.patch.set_facecolor('#1e1e1e')
+        self.figure.patch.set_facecolor(theme.CANVAS_BG)
         self.canvas = FigureCanvasQTAgg(self.figure)
         
         self.ax = self.figure.add_subplot(111)
@@ -21,11 +22,11 @@ class PreviewCanvas(QWidget):
         # there) and just enough left/bottom for the axis tick labels + titles.
         self.figure.subplots_adjust(left=0.085, right=0.99, top=0.99, bottom=0.075)
         self.ax.set_aspect("equal")
-        self.ax.set_facecolor('#1e1e1e')
-        self.ax.tick_params(colors='#d4d4d4')
-        self.ax.grid(True, color='#333333', linestyle='--')
+        self.ax.set_facecolor(theme.CANVAS_BG)
+        self.ax.tick_params(colors=theme.TICK)
+        self.ax.grid(True, color=theme.GRID_MINOR, linestyle='--')
         for spine in self.ax.spines.values():
-            spine.set_color('#333333')
+            spine.set_color(theme.GRID_MINOR)
 
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 1000)
@@ -51,7 +52,7 @@ class PreviewCanvas(QWidget):
 
         # Persistent run-time estimate for the previewed op (set by the app).
         self.est_lbl = QLabel("")
-        self.est_lbl.setStyleSheet("color: #9a9a9a;")
+        self.est_lbl.setStyleSheet(f"color: {theme.TEXT_3};")
         self.est_lbl.setToolTip(
             "Estimated cut time — optimistic; excludes spin-up, tool changes, "
             "pauses and accel/decel.")
@@ -84,7 +85,7 @@ class PreviewCanvas(QWidget):
         # the un-mirrored "as designed" orientation WITHOUT changing any
         # coordinates (data, selection and export stay in the real frame).
         self._frame_label = None
-        self._frame_color = "#ffb000"
+        self._frame_color = theme.WARN
         self._flip_x = False
 
         # Persistent "DEMO BOARD" badge (top-right) shown when the bundled demo is
@@ -237,11 +238,11 @@ class PreviewCanvas(QWidget):
         """
         self.ax.clear()
         self.ax.set_axis_off()
-        self.ax.set_facecolor("#1e1e1e")
+        self.ax.set_facecolor(theme.CANVAS_BG)
         self.ax.text(0.5, 0.54, message, transform=self.ax.transAxes,
-                     ha="center", va="center", color="#c8ced8", fontsize=13)
+                     ha="center", va="center", color=theme.TEXT, fontsize=13)
         self.ax.text(0.5, 0.44, hint, transform=self.ax.transAxes,
-                     ha="center", va="center", color="#8b94a1", fontsize=10)
+                     ha="center", va="center", color=theme.TEXT_3, fontsize=10)
         self.canvas.draw_idle()
 
     def _on_panel_btn(self, collapsed):
@@ -285,7 +286,7 @@ class PreviewCanvas(QWidget):
         self.slider.setValue(1000)
         self._draw_fraction(1.0)
 
-    def set_frame(self, label, color="#ffb000", flip_x=False):
+    def set_frame(self, label, color=theme.WARN, flip_x=False):
         """Set the persistent orientation badge and whether to flip the view
         horizontally. ``flip_x`` only mirrors the *display* (to show the design
         orientation); coordinates, selection and export are untouched."""
@@ -429,7 +430,7 @@ class PreviewCanvas(QWidget):
         if not self._tool_pos:
             return
         x, y = self._tool_pos
-        c = "#ff3b3b" if self._tool_touch else "#39ff14"   # red on contact, else green
+        c = theme.TOUCH_ON if self._tool_touch else theme.LINK_LIVE   # red on contact, else green
         self._tool_artists = [
             self.ax.axhline(y, color=c, lw=0.5, alpha=0.4, zorder=15),
             self.ax.axvline(x, color=c, lw=0.5, alpha=0.4, zorder=15),
@@ -462,16 +463,16 @@ class PreviewCanvas(QWidget):
                            shading="auto", vmin=-zmax, vmax=zmax)
         if points:
             self.ax.scatter([p[0] for p in points], [p[1] for p in points],
-                            s=18, facecolors="none", edgecolors="#1e1e1e", zorder=3)
+                            s=18, facecolors="none", edgecolors=theme.ON_BRIGHT, zorder=3)
             for (x, y, dz) in points:           # label each point in microns
-                self.ax.annotate(f"{dz * 1000:+.0f}", (x, y), color="#1e1e1e",
+                self.ax.annotate(f"{dz * 1000:+.0f}", (x, y), color=theme.ON_BRIGHT,
                                  fontsize=7, ha="center", va="bottom", zorder=3)
             lo = min(p[2] for p in points) * 1000.0
             hi = max(p[2] for p in points) * 1000.0
             self.ax.text(0.98, 0.98, f"surface {lo:+.0f}..{hi:+.0f} um",
                          transform=self.ax.transAxes, va="top", ha="right",
-                         fontsize=9, color="#1e1e1e", zorder=20,
-                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#88bbff",
+                         fontsize=9, color=theme.ON_BRIGHT, zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor=theme.BADGE_INFO,
                                    edgecolor="none", alpha=0.95))
 
     def _add_copper_fills(self):
@@ -537,13 +538,13 @@ class PreviewCanvas(QWidget):
 
     def _style_axes(self):
         self.ax.set_aspect("equal")
-        self.ax.set_facecolor('#1e1e1e')
+        self.ax.set_facecolor(theme.CANVAS_BG)
         self.ax.set_axisbelow(True)                 # grid behind the toolpaths
-        self.ax.tick_params(colors='#d4d4d4', labelsize=8)
-        self.ax.set_xlabel("X (mm)", color="#8a9099", fontsize=8)
-        self.ax.set_ylabel("Y (mm)", color="#8a9099", fontsize=8)
+        self.ax.tick_params(colors=theme.TICK, labelsize=8)
+        self.ax.set_xlabel("X (mm)", color=theme.AXIS_LABEL, fontsize=8)
+        self.ax.set_ylabel("Y (mm)", color=theme.AXIS_LABEL, fontsize=8)
         for spine in self.ax.spines.values():
-            spine.set_color('#333333')
+            spine.set_color(theme.GRID_MINOR)
         # the actual mm grid is set in _apply_ruler_grid (needs the view limits)
 
     @staticmethod
@@ -571,10 +572,10 @@ class PreviewCanvas(QWidget):
         for axis in (self.ax.xaxis, self.ax.yaxis):
             axis.set_major_locator(MultipleLocator(major))
             axis.set_minor_locator(MultipleLocator(minor))
-        self.ax.grid(True, which="major", color="#45454a", linewidth=0.7, alpha=0.9)
-        self.ax.grid(True, which="minor", color="#2b2b2e", linewidth=0.4, alpha=0.7)
-        self.ax.tick_params(which="major", length=5, colors="#d4d4d4", labelsize=8)
-        self.ax.tick_params(which="minor", length=2, colors="#666666")
+        self.ax.grid(True, which="major", color=theme.GRID_MAJOR, linewidth=0.7, alpha=0.9)
+        self.ax.grid(True, which="minor", color=theme.GRID_MINOR, linewidth=0.4, alpha=0.7)
+        self.ax.tick_params(which="major", length=5, colors=theme.TICK, labelsize=8)
+        self.ax.tick_params(which="minor", length=2, colors=theme.TICK_MINOR)
 
     # ---- zoom / pan -----------------------------------------------------
     _MIN_SPAN_MM = 0.2          # don't zoom in past ~0.2 mm (well under a step)
@@ -625,7 +626,7 @@ class PreviewCanvas(QWidget):
             self._bed_fits = db is None or (
                 db[0] >= -1e-6 and db[1] >= -1e-6
                 and db[2] <= bw + 1e-6 and db[3] <= bh + 1e-6)
-            bed_color = "#33cc88" if self._bed_fits else "#ff4444"
+            bed_color = theme.FIT_OK if self._bed_fits else theme.FIT_BAD_BED
             self.ax.add_patch(Rectangle((0, 0), bw, bh, fill=False,
                                         edgecolor=bed_color, linewidth=1.5, zorder=1))
             self.ax.scatter([0], [0], s=40, c=bed_color, marker="s", zorder=2)  # home
@@ -637,7 +638,7 @@ class PreviewCanvas(QWidget):
             # on every pan, zoom and slider move.
             self.ax.add_collection(PatchCollection(
                 [Circle((hx, hy), r) for (hx, hy) in pts],
-                facecolor="#2a2f36", edgecolor="#4a5158", linewidths=0.6,
+                facecolor=theme.RAISED_ALT, edgecolor=theme.BED_EDGE, linewidths=0.6,
                 zorder=2))
 
         self._stock_fits = True
@@ -648,8 +649,8 @@ class PreviewCanvas(QWidget):
             self._stock_fits = db is None or (
                 db[0] >= sx - 1e-6 and db[1] >= sy - 1e-6
                 and db[2] <= sx + sw + 1e-6 and db[3] <= sy + sh + 1e-6)
-            edge = "#d9943f" if self._stock_fits else "#ff4444"
-            self.ax.add_patch(Rectangle((sx, sy), sw, sh, facecolor="#b87333",
+            edge = theme.STOCK_EDGE if self._stock_fits else theme.FIT_BAD_STOCK
+            self.ax.add_patch(Rectangle((sx, sy), sw, sh, facecolor=theme.COPPER,
                                         alpha=0.16, edgecolor=edge, linewidth=1.6,
                                         zorder=0.5))
 
@@ -667,7 +668,7 @@ class PreviewCanvas(QWidget):
             # outline is always visible, not just the cuts inside it
             ox = [p[0] for p in self._outline_xy] + [self._outline_xy[0][0]]
             oy = [p[1] for p in self._outline_xy] + [self._outline_xy[0][1]]
-            self.ax.plot(ox, oy, color="#9aa0a6", lw=1.2, alpha=0.9, zorder=1)
+            self.ax.plot(ox, oy, color=theme.OUTLINE, lw=1.2, alpha=0.9, zorder=1)
 
         if self._level_overlay is not None:
             self._draw_level_overlay()
@@ -677,19 +678,19 @@ class PreviewCanvas(QWidget):
             for (sx, sy) in pts:
                 # the head footprint: what the cutter must stay out of
                 self.ax.add_patch(Circle((sx, sy), max(head_d, 0.1) / 2.0,
-                                         facecolor="#4da3ff", alpha=0.30,
-                                         edgecolor="#4da3ff", lw=1.4, zorder=14))
+                                         facecolor=theme.REGION_FILL, alpha=0.30,
+                                         edgecolor=theme.REGION_FILL, lw=1.4, zorder=14))
             self.ax.scatter([p[0] for p in pts], [p[1] for p in pts],
-                            s=28, marker="x", color="#1e3a5f", linewidths=1.6,
+                            s=28, marker="x", color=theme.REGION_MARK, linewidths=1.6,
                             zorder=15)
 
         if self._probe_grid:
             gx = [p[0] for p in self._probe_grid]
             gy = [p[1] for p in self._probe_grid]
-            self.ax.scatter(gx, gy, s=70, marker="P", facecolors="#ff9a3c",
-                            edgecolors="#1e1e1e", linewidths=0.8, zorder=13)
+            self.ax.scatter(gx, gy, s=70, marker="P", facecolors=theme.PROBE_POINT,
+                            edgecolors=theme.ON_BRIGHT, linewidths=0.8, zorder=13)
             for i, (px, py) in enumerate(self._probe_grid, 1):
-                self.ax.annotate(str(i), (px, py), color="#ff9a3c", fontsize=7,
+                self.ax.annotate(str(i), (px, py), color=theme.PROBE_POINT, fontsize=7,
                                  ha="left", va="bottom", zorder=13,
                                  xytext=(3, 3), textcoords="offset points")
 
@@ -706,22 +707,22 @@ class PreviewCanvas(QWidget):
         ta = self._trace_alpha
         if rapids:
             self.ax.add_collection(
-                LineCollection(rapids, colors="#555555", linewidths=0.6, alpha=ta))
+                LineCollection(rapids, colors=theme.RAPID, linewidths=0.6, alpha=ta))
         if cuts:
             self.ax.add_collection(
-                LineCollection(cuts, colors="#00ffff", linewidths=1.2, alpha=ta))
+                LineCollection(cuts, colors=theme.CUT, linewidths=1.2, alpha=ta))
         if top_cuts:
             # reflected front-side isolation, second colour so the two registered
             # sides are visually distinct
             self.ax.add_collection(
-                LineCollection(top_cuts, colors="#ff55ff", linewidths=1.2, alpha=ta))
+                LineCollection(top_cuts, colors=theme.CUT_TOP, linewidths=1.2, alpha=ta))
         if holes:
             for (x, y, d) in holes:
                 self.ax.add_patch(Circle((x, y), max(d, 0.1) / 2.0, fill=False,
-                                         edgecolor="#ff5555", linewidth=1.2,
+                                         edgecolor=theme.HOLE, linewidth=1.2,
                                          alpha=ta))
             self.ax.scatter([h[0] for h in holes], [h[1] for h in holes],
-                            s=15, c="#ff5555", marker="+", alpha=ta)
+                            s=15, c=theme.HOLE, marker="+", alpha=ta)
         # dowel/alignment holes: always drawn in full (registration features,
         # never scrubbed away) and clearly distinct from the board's own holes
         self._pin_artists = []
@@ -731,10 +732,10 @@ class PreviewCanvas(QWidget):
         if self._photo_anchors:
             self.ax.scatter([p[0] for p in self._photo_anchors],
                             [p[1] for p in self._photo_anchors], s=150,
-                            facecolors="none", edgecolors="#4dd0e1",
+                            facecolors="none", edgecolors=theme.ACCENT,
                             linewidths=1.8, zorder=12)
             for i, (px, py) in enumerate(self._photo_anchors, 1):
-                self.ax.annotate(str(i), (px, py), color="#4dd0e1", fontsize=10,
+                self.ax.annotate(str(i), (px, py), color=theme.ACCENT, fontsize=10,
                                  fontweight="bold", xytext=(6, 4),
                                  textcoords="offset points", zorder=12)
         if self._view_limits is not None:    # user zoom/pan overrides the auto-fit
@@ -760,24 +761,24 @@ class PreviewCanvas(QWidget):
         self._add_measure_artist()
         if self._frame_label:
             self.ax.text(0.02, 0.98, self._frame_label, transform=self.ax.transAxes,
-                         va="top", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
+                         va="top", ha="left", fontsize=9, color=theme.ON_BRIGHT, zorder=20,
                          bbox=dict(boxstyle="round,pad=0.3", facecolor=self._frame_color,
                                    edgecolor="none", alpha=0.95))
         if self._demo:
             self.ax.text(0.98, 0.98, "DEMO BOARD — load your own Gerbers",
                          transform=self.ax.transAxes, va="top", ha="right",
-                         fontsize=9, color="#1e1e1e", zorder=20,
-                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#26c6da",
+                         fontsize=9, color=theme.ON_BRIGHT, zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor=theme.ACCENT_DIM,
                                    edgecolor="none", alpha=0.95))
         if self._bed and not self._bed_fits:
             self.ax.text(0.98, 0.02, "DESIGN EXCEEDS BED", transform=self.ax.transAxes,
-                         va="bottom", ha="right", fontsize=9, color="#1e1e1e", zorder=20,
-                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#ff4444",
+                         va="bottom", ha="right", fontsize=9, color=theme.ON_BRIGHT, zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor=theme.FIT_BAD_BED,
                                    edgecolor="none", alpha=0.95))
         if self._stock and not self._stock_fits:
             self.ax.text(0.02, 0.02, "DESIGN EXCEEDS COPPER", transform=self.ax.transAxes,
-                         va="bottom", ha="left", fontsize=9, color="#1e1e1e", zorder=20,
-                         bbox=dict(boxstyle="round,pad=0.3", facecolor="#ff4444",
+                         va="bottom", ha="left", fontsize=9, color=theme.ON_BRIGHT, zorder=20,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor=theme.FIT_BAD_BED,
                                    edgecolor="none", alpha=0.95))
         self.canvas.draw_idle()
 
@@ -787,13 +788,13 @@ class PreviewCanvas(QWidget):
         live pin drag can redraw just them."""
         for (x, y, d) in self._pins:
             c = Circle((x, y), max(d, 0.1) / 2.0, fill=False,
-                       edgecolor="#ffd700", linewidth=2.0, zorder=6)
+                       edgecolor=theme.PIN, linewidth=2.0, zorder=6)
             self.ax.add_patch(c)
             self._pin_artists.append(c)
         if self._pins:
             self._pin_artists.append(self.ax.scatter(
                 [p[0] for p in self._pins], [p[1] for p in self._pins],
-                s=80, c="#ffd700", marker="+", zorder=6))
+                s=80, c=theme.PIN, marker="+", zorder=6))
 
     def _redraw_pins_only(self):
         """Cheap update of just the pin markers during a live drag."""
@@ -883,7 +884,7 @@ class PreviewCanvas(QWidget):
         x0, y0, x1, y1 = self._move_bbox0
         self._move_ghost = Rectangle(
             (x0 + dx, y0 + dy), x1 - x0, y1 - y0, fill=False,
-            edgecolor="#ffd700", linestyle="--", linewidth=1.5, zorder=11)
+            edgecolor=theme.PIN, linestyle="--", linewidth=1.5, zorder=11)
         self.ax.add_patch(self._move_ghost)
         self.canvas.draw_idle()
 
@@ -919,7 +920,7 @@ class PreviewCanvas(QWidget):
         if self._drag_bbox:
             x0, y0, x1, y1 = self._drag_bbox
             live = Rectangle((min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
-                             fill=False, edgecolor="#ffffff", linestyle=":",
+                             fill=False, edgecolor=theme.GHOST, linestyle=":",
                              linewidth=1.2, zorder=12)
             self.ax.add_patch(live)
             self._rework_artists.append(live)
@@ -1135,18 +1136,18 @@ class PreviewCanvas(QWidget):
             return
         from math import hypot
         x0, y0, x1, y1 = self._measure_line
-        col = "#ffd24a"
+        col = theme.SCREW
         self._measure_artists = [
             self.ax.plot([x0, x1], [y0, y1], color=col, lw=1.4, zorder=18)[0],
             self.ax.scatter([x0, x1], [y0, y1], s=32, facecolors=col,
-                            edgecolors="#1e1e1e", linewidths=0.8, zorder=19),
+                            edgecolors=theme.ON_BRIGHT, linewidths=0.8, zorder=19),
         ]
         L = hypot(x1 - x0, y1 - y0)
         if L > 1e-6:
             mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
             label = f"{L:.2f} mm   (dx {abs(x1 - x0):.2f}, dy {abs(y1 - y0):.2f})"
             self._measure_artists.append(
-                self.ax.annotate(label, (mx, my), color="#1e1e1e", fontsize=8,
+                self.ax.annotate(label, (mx, my), color=theme.ON_BRIGHT, fontsize=8,
                                  ha="center", va="center", zorder=20,
                                  bbox=dict(boxstyle="round,pad=0.3", facecolor=col,
                                            edgecolor="none", alpha=0.95)))
@@ -1172,7 +1173,7 @@ class PreviewCanvas(QWidget):
         for p in polys:
             if not p.is_empty and p.geom_type == "Polygon":
                 xs, ys = p.exterior.xy
-                self.ax.fill(list(xs), list(ys), color="#ff0000", alpha=0.5, zorder=5)
+                self.ax.fill(list(xs), list(ys), color=theme.OVERFLOW, alpha=0.5, zorder=5)
         self.canvas.draw_idle()
 
     def show_shorts(self, hits):
@@ -1180,9 +1181,9 @@ class PreviewCanvas(QWidget):
         an X at each pinch with the actual copper-to-copper gap labeled."""
         for h in hits:
             self.ax.scatter([h["x"]], [h["y"]], s=110, marker="x",
-                            c="#ff2222", linewidths=2.2, zorder=17)
+                            c=theme.SHORT, linewidths=2.2, zorder=17)
             self.ax.annotate(f"{h['gap']:.2f}", (h["x"], h["y"]),
-                             color="#ff2222", fontsize=8, fontweight="bold",
+                             color=theme.SHORT, fontsize=8, fontweight="bold",
                              xytext=(6, 6), textcoords="offset points",
                              zorder=17)
         self.canvas.draw_idle()

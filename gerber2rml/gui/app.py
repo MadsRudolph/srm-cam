@@ -21,6 +21,8 @@ from gerber2rml.gui.form import DataclassForm
 from gerber2rml.gui.canvas import PreviewCanvas
 from gerber2rml.gui.tour import TourController
 from gerber2rml.gui import mode as uimode
+from string import Template as _Template
+from gerber2rml.gui import theme
 
 # The user guide. Published from website/ by .github/workflows/pages.yml, and
 # linked from the README — tests/test_window.py asserts the two agree.
@@ -545,8 +547,9 @@ class _UpdateProbe(QThread):
 
 
 class MainWindow(QMainWindow):
-    _REWORK_COLORS = ["#ff5252", "#42a5f5", "#66bb6a", "#ffa726",
-                      "#ab47bc", "#26c6da", "#ec407a", "#d4e157"]
+    # Categorical, not ordinal - the colours only have to be telling
+    # apart from one another. See theme.REWORK_SERIES.
+    _REWORK_COLORS = theme.REWORK_SERIES
 
     def __init__(self):
         super().__init__()
@@ -1044,7 +1047,7 @@ class MainWindow(QMainWindow):
             "What the machine itself reports: lid open, spindle running, error "
             "or fault. Read straight off its status word.")
         self.machine_label.setStyleSheet(
-            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+            f"color:{theme.DRO_TEXT}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
         self._machine_status = {}
 
         self.machinetest_btn = QAction("Machine test…", self)
@@ -1070,13 +1073,13 @@ class MainWindow(QMainWindow):
         self._touching = False      # last reported probe contact state
         self.dro_label = QLabel("○  machine offline")
         self.dro_label.setStyleSheet(
-            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+            f"color:{theme.DRO_TEXT}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
         self.touch_label = QLabel("bit ○")        # contact indicator (D7 probe)
         self.touch_label.setToolTip(
             "Whether the bit is touching the (probe-wired) plate. Needs the touch "
             "clips connected to mean anything.")
         self.touch_label.setStyleSheet(
-            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+            f"color:{theme.DRO_TEXT}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
         # ---- live run-progress bar (driven by the DRO position) ----
         self.run_op_combo = QComboBox()
         self.run_op_combo.addItems(["Traces", "Drill", "Cut-out"])
@@ -1109,7 +1112,7 @@ class MainWindow(QMainWindow):
         self.run_bar.setTextVisible(True)
         self.run_eta_lbl = QLabel("—")
         self.run_eta_lbl.setStyleSheet(
-            "color:#aab; font-family:Consolas,monospace; font-size:13px; padding:0 8px;")
+            f"color:{theme.DRO_DIM}; font-family:Consolas,monospace; font-size:13px; padding:0 8px;")
         self._run_progress = None   # engine.progress.RunProgress while tracking
 
         self._dro = None            # _DROPoller when connected
@@ -3042,12 +3045,12 @@ class MainWindow(QMainWindow):
                 holes = self._top_fit_holes(
                     reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos))
                 outline = self._top_fit_geom(mlay.top_outline)
-                copper = (self._top_fit_geom(mlay.top_copper), "#ff55ff")
+                copper = (self._top_fit_geom(mlay.top_copper), theme.CUT_TOP)
                 pins = self._top_fit_holes(
                     reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos))
             else:
                 holes = mlay.holes
-                outline, copper = mlay.outline, (mlay.bottom_copper, "#00ffff")
+                outline, copper = mlay.outline, (mlay.bottom_copper, theme.CUT)
                 pins = mlay.align_holes
             cuts, rapids = toolpath_segments(self._drill_toolpaths(holes))
             self.preview.set_board_outline(self._poly_xy(outline))
@@ -3075,12 +3078,12 @@ class MainWindow(QMainWindow):
                         reflect_holes(mlay.holes, mlay.axis, mlay.flip_pos)),
                     pins=self._top_fit_holes(
                         reflect_holes(mlay.align_holes, mlay.axis, mlay.flip_pos)),
-                    copper=[(self._top_fit_geom(mlay.top_copper), "#ff55ff")])
+                    copper=[(self._top_fit_geom(mlay.top_copper), theme.CUT_TOP)])
             else:
                 self.preview.set_board_outline(self._poly_xy(mlay.outline))
                 self.preview.show_segments(cuts, rapids, ref_holes=mlay.holes,
                                            pins=mlay.align_holes,
-                                           copper=[(mlay.bottom_copper, "#00ffff")])
+                                           copper=[(mlay.bottom_copper, theme.CUT)])
             return
         # Both sides (or the drill tab): design-frame X-ray for registration.
         lay = self._double_sided_layout()
@@ -3089,9 +3092,9 @@ class MainWindow(QMainWindow):
         bottom_cuts, bottom_rapids, top_cuts = [], [], []
         copper = []
         if view in ("Both sides", "Bottom"):
-            copper.append((lay.bottom_copper, "#00ffff"))
+            copper.append((lay.bottom_copper, theme.CUT))
         if view in ("Both sides", "Top"):
-            copper.append((lay.top_copper, "#ff55ff"))
+            copper.append((lay.top_copper, theme.CUT_TOP))
         if op == "cutout":
             # The edge cut is one job around the outline (run from the bottom
             # side), not a per-layer isolation — show it instead of the traces.
@@ -3138,7 +3141,7 @@ class MainWindow(QMainWindow):
         """Set the preview's orientation badge (and a view-only flip) so it's
         always obvious whether you're looking at the design or the mirrored
         as-milled cut. Never changes the exported geometry."""
-        AMBER, GREEN = "#ffb000", "#33cc88"
+        AMBER, GREEN = theme.WARN, theme.FIT_OK
         ds = self.double_sided_chk.isChecked()
         # Mirror + preview-frame are single-sided controls; in double-sided mode
         # the frame resolver owns the frame, so grey these out rather than let
@@ -3208,7 +3211,7 @@ class MainWindow(QMainWindow):
         if op == "drill":
             cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes,
-                                       copper=[(self.state.board.copper, "#00ffff")])
+                                       copper=[(self.state.board.copper, theme.CUT)])
             drill_tps = self._drill_toolpaths(self.state.board.holes)
             est = self._estimate_str(drill_tps, self.state.drill)
             self.preview.set_estimate(self._est_text(drill_tps, self.state.drill))
@@ -3597,8 +3600,8 @@ class MainWindow(QMainWindow):
 
     # ---- live machine link (DRO + tool overlay) -------------------------
 
-    _DRO_OFF = "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
-    _DRO_ON = "color:#39ff14; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+    _DRO_OFF = f"color:{theme.DRO_TEXT}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+    _DRO_ON = f"color:{theme.LINK_LIVE}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
 
     def _on_connect_toggled(self, on):
         if on:
@@ -3875,9 +3878,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Auto-started run tracking from tool motion", 4000)
 
-    _CHIP_ON = ("background:#1d3a2a; color:#6be49a; border:1px solid #2c5a40; "
+    _CHIP_ON = (f"background:{theme.OK_BG}; color:{theme.OK}; border:1px solid {theme.OK_BORDER}; "
                 "border-radius:9px; padding:1px 9px; font-size:11px;")
-    _CHIP_OFF = ("background:#23262c; color:#7c828c; border:1px solid #34383f; "
+    _CHIP_OFF = (f"background:{theme.FIELD_ALT}; color:{theme.TEXT_MUTED}; border:1px solid {theme.BORDER_DIM}; "
                  "border-radius:9px; padding:1px 9px; font-size:11px;")
 
     def _update_chips(self):
@@ -3944,8 +3947,8 @@ class MainWindow(QMainWindow):
         else:
             self.run_eta_lbl.setText(f"{format_duration(rem)} left")
 
-    _TOUCH_ON = "color:#ff3b3b; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
-    _TOUCH_OFF = "color:#39ff14; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+    _TOUCH_ON = f"color:{theme.TOUCH_ON}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
+    _TOUCH_OFF = f"color:{theme.LINK_LIVE}; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;"
 
     def _on_position(self, x, y, z, touching):
         # reject implausible jumps (garbage SPI reads) but re-sync after a few in
@@ -4159,7 +4162,7 @@ class MainWindow(QMainWindow):
         self.machine_label.setText("  ".join(flags))
         # Red for anything that stops work, amber for a turning tool.
         bad = st.get("cover") or st.get("error") or st.get("fatal")
-        colour = "#e08585" if bad else ("#e0c185" if st.get("spindle") else "#888")
+        colour = theme.STATUS_FAULT if bad else (theme.STATUS_SPIN if st.get("spindle") else theme.DRO_TEXT)
         self.machine_label.setStyleSheet(
             f"color:{colour}; font-family:Consolas,monospace; "
             f"font-size:13px; padding:4px 10px;")
@@ -6220,38 +6223,38 @@ class MainWindow(QMainWindow):
 # stylesheet by object name, so the danger treatment has to be set on them
 # directly. Same colours as QPushButton#dangerBtn below.
 _DANGER_QSS = (
-    "background: #4a2326; border: 1px solid #d64541; color: #ff9b97; "
+    f"background: {theme.DANGER_BG}; border: 1px solid {theme.DANGER}; color: {theme.DANGER_TEXT}; "
     "font-weight: 600; border-radius: 6px; padding: 6px 14px;")
 
-_STYLESHEET = """
-QWidget { color: #dde3ea; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
-QMainWindow, QScrollArea, #settingsPanel { background: #14171c; }
+_STYLESHEET = _Template("""
+QWidget { color: $TEXT; font-size: 13px; font-family: 'Segoe UI Variable', 'Inter', 'Roboto', sans-serif; }
+QMainWindow, QScrollArea, #settingsPanel { background: $BG; }
 QScrollArea { border: none; }
 
 #sidebar {
-    background: #181c22;
-    border-right: 1px solid #262c35;
+    background: $SURFACE_ALT;
+    border-right: 1px solid $RAISED;
     outline: none;
     padding: 10px 0px;
 }
 #sidebar::item {
     padding: 12px 20px;
-    color: #8b94a1;
+    color: $TEXT_3;
     font-size: 14px;
     font-weight: 500;
 }
 #sidebar::item:hover {
-    background: #1f242c;
-    color: #dde3ea;
+    background: $SLATE_DEEP;
+    color: $TEXT;
 }
 #sidebar::item:selected {
-    background: #12262b;
-    color: #4dd0e1;
-    border-left: 3px solid #4dd0e1;
+    background: $ACCENT_BG_2;
+    color: $ACCENT;
+    border-left: 3px solid $ACCENT;
 }
 
 QGroupBox {
-    background: #1b2027; border: 1px solid #262c35; border-radius: 10px;
+    background: $SURFACE; border: 1px solid $RAISED; border-radius: 10px;
     margin-top: 18px; padding-top: 8px;
 }
 QGroupBox::title {
@@ -6261,54 +6264,54 @@ QGroupBox::title {
        both were being silently discarded, which is why these titles have
        always rendered as ordinary mixed case. The uppercasing is done in
        the _group() helper instead. */
-    color: #8fb8c9; font-size: 11px; font-weight: 700;
+    color: $ACCENT_TEXT; font-size: 11px; font-weight: 700;
 }
-QLabel { background: transparent; color: #a5adb9; font-weight: 500; }
-#helpText { color: #8fb8c9; font-size: 13px; font-style: italic; margin-bottom: 4px; border: 1px solid #1e3a42; background: #14232a; border-radius: 6px; padding: 8px; }
+QLabel { background: transparent; color: $TEXT_2; font-weight: 500; }
+#helpText { color: $ACCENT_TEXT; font-size: 13px; font-style: italic; margin-bottom: 4px; border: 1px solid $ACCENT_LINE; background: $ACCENT_BG; border-radius: 6px; padding: 8px; }
 
 QPushButton {
-    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
+    background: $FIELD; border: 1px solid $BORDER; border-radius: 6px;
     padding: 8px 14px; font-weight: 500;
 }
-QPushButton:hover { background: #2b3440; border-color: #4dd0e1; }
-QPushButton:pressed { background: #1b2027; }
-QPushButton:disabled { color: #525b66; background: #191d23; border-color: #262c35; }
-QPushButton#primaryBtn { background: #4dd0e1; border: none; color: #0d1418; font-weight: 700; }
-QPushButton#primaryBtn:hover { background: #80e5f2; }
-QPushButton#primaryBtn:pressed { background: #26b8cc; }
-QPushButton#primaryBtn:disabled { background: #1e3a42; color: #52707a; }
-QPushButton#stopBtn { background: #d64541; border: none; color: #ffffff; font-weight: 700; }
-QPushButton#stopBtn:hover { background: #e8615d; }
-QPushButton#stopBtn:pressed { background: #a83531; }
+QPushButton:hover { background: $SLATE_MID; border-color: $ACCENT; }
+QPushButton:pressed { background: $SURFACE; }
+QPushButton:disabled { color: $TEXT_OFF; background: $SURFACE_SUNK; border-color: $RAISED; }
+QPushButton#primaryBtn { background: $ACCENT; border: none; color: $BG_DEEP; font-weight: 700; }
+QPushButton#primaryBtn:hover { background: $ACCENT_HI; }
+QPushButton#primaryBtn:pressed { background: $ACCENT_DEEP; }
+QPushButton#primaryBtn:disabled { background: $ACCENT_LINE; color: $ACCENT_MUTE; }
+QPushButton#stopBtn { background: $DANGER; border: none; color: $GHOST; font-weight: 700; }
+QPushButton#stopBtn:hover { background: $DANGER_HI; }
+QPushButton#stopBtn:pressed { background: $DANGER_LO; }
 /* Offline, STOP has nothing to stop. Leaving it the loudest object on screen
    at all times trains the eye to ignore it, which is exactly what you do not
    want from an emergency control. */
-QPushButton#stopBtn:disabled { background: #3a2224; color: #8b6a6c; }
+QPushButton#stopBtn:disabled { background: $DANGER_OFF; color: $DANGER_MUTE; }
 /* Irreversible actions should not look like ordinary ones. Wet run spins a
    cutter into copper; Clear Z throws away a hand-probed height map. */
 QPushButton#dangerBtn {
-    background: #4a2326; border: 1px solid #d64541; color: #ff9b97; font-weight: 600;
+    background: $DANGER_BG; border: 1px solid $DANGER; color: $DANGER_TEXT; font-weight: 600;
 }
-QPushButton#dangerBtn:hover { background: #5e2b2f; color: #ffbdba; }
-QPushButton#dangerBtn:pressed { background: #3a1c1f; }
+QPushButton#dangerBtn:hover { background: $DANGER_BG_HI; color: $DANGER_TEXT_HI; }
+QPushButton#dangerBtn:pressed { background: $DANGER_BG_LO; }
 
 /* the machine dock keeps AMBER accents: amber = live machine, everywhere */
-#machineBar { background: #181c22; border-top: 1px solid #262c35; }
-#progressBar { background: #181c22; }
+#machineBar { background: $SURFACE_ALT; border-top: 1px solid $RAISED; }
+#progressBar { background: $SURFACE_ALT; }
 QProgressBar {
-    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
-    min-height: 18px; text-align: center; color: #dde3ea;
+    background: $FIELD; border: 1px solid $BORDER; border-radius: 6px;
+    min-height: 18px; text-align: center; color: $TEXT;
 }
-QProgressBar::chunk { background: #ffb000; border-radius: 5px; }
+QProgressBar::chunk { background: $WARN; border-radius: 5px; }
 
 QComboBox, QLineEdit, QAbstractSpinBox {
-    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
-    padding: 6px 10px; min-height: 20px; selection-background-color: #4dd0e1;
-    selection-color: #0d1418;
+    background: $FIELD; border: 1px solid $BORDER; border-radius: 6px;
+    padding: 6px 10px; min-height: 20px; selection-background-color: $ACCENT;
+    selection-color: $BG_DEEP;
 }
-QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: #4dd0e1; }
-QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: #4dd0e1; }
-QComboBox:disabled, QAbstractSpinBox:disabled { color: #525b66; background: #191d23; }
+QComboBox:hover, QLineEdit:hover, QAbstractSpinBox:hover { border-color: $ACCENT; }
+QComboBox:focus, QLineEdit:focus, QAbstractSpinBox:focus { border-color: $ACCENT; }
+QComboBox:disabled, QAbstractSpinBox:disabled { color: $TEXT_OFF; background: $SURFACE_SUNK; }
 QComboBox::drop-down { border: none; width: 24px; }
 /* Qt stops drawing the built-in arrow as soon as ::drop-down is styled, so it
    has to be declared explicitly or every combo looks like a text field. Drawn
@@ -6316,10 +6319,10 @@ QComboBox::drop-down { border: none; width: 24px; }
 QComboBox::down-arrow {
     image: none; width: 0; height: 0; margin-right: 9px;
     border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 5px solid #8b94a1;
+    border-top: 5px solid $TEXT_3;
 }
-QComboBox::down-arrow:hover { border-top-color: #4dd0e1; }
-QComboBox::down-arrow:disabled { border-top-color: #525b66; }
+QComboBox::down-arrow:hover { border-top-color: $ACCENT; }
+QComboBox::down-arrow:disabled { border-top-color: $TEXT_OFF; }
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {
     subcontrol-origin: border; width: 18px; background: transparent;
     border: none;
@@ -6329,70 +6332,72 @@ QAbstractSpinBox::down-button { subcontrol-position: bottom right; margin: 0 4px
 QAbstractSpinBox::up-arrow {
     image: none; width: 0; height: 0;
     border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-bottom: 5px solid #8b94a1;
+    border-bottom: 5px solid $TEXT_3;
 }
 QAbstractSpinBox::down-arrow {
     image: none; width: 0; height: 0;
     border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 5px solid #8b94a1;
+    border-top: 5px solid $TEXT_3;
 }
-QAbstractSpinBox::up-arrow:hover { border-bottom-color: #4dd0e1; }
-QAbstractSpinBox::down-arrow:hover { border-top-color: #4dd0e1; }
-QAbstractSpinBox::up-arrow:disabled { border-bottom-color: #525b66; }
-QAbstractSpinBox::down-arrow:disabled { border-top-color: #525b66; }
+QAbstractSpinBox::up-arrow:hover { border-bottom-color: $ACCENT; }
+QAbstractSpinBox::down-arrow:hover { border-top-color: $ACCENT; }
+QAbstractSpinBox::up-arrow:disabled { border-bottom-color: $TEXT_OFF; }
+QAbstractSpinBox::down-arrow:disabled { border-top-color: $TEXT_OFF; }
 QComboBox QAbstractItemView {
-    background: #232a33; border: 1px solid #313a46; border-radius: 6px;
-    selection-background-color: #4dd0e1; selection-color: #0d1418; outline: none;
+    background: $FIELD; border: 1px solid $BORDER; border-radius: 6px;
+    selection-background-color: $ACCENT; selection-color: $BG_DEEP; outline: none;
 }
 
-QCheckBox { spacing: 10px; background: transparent; color: #dde3ea; font-weight: 500; }
-QCheckBox:hover { color: #80e5f2; }
-QCheckBox:pressed { color: #4dd0e1; }
-QCheckBox:checked { color: #4dd0e1; }
-QCheckBox:checked:hover { color: #80e5f2; }
+QCheckBox { spacing: 10px; background: transparent; color: $TEXT; font-weight: 500; }
+QCheckBox:hover { color: $ACCENT_HI; }
+QCheckBox:pressed { color: $ACCENT; }
+QCheckBox:checked { color: $ACCENT; }
+QCheckBox:checked:hover { color: $ACCENT_HI; }
 QCheckBox::indicator {
     width: 18px; height: 18px; border-radius: 4px;
-    border: 1px solid #3d4754; background: #232a33;
+    border: 1px solid $BORDER_HARD; background: $FIELD;
 }
-QCheckBox::indicator:hover { border-color: #4dd0e1; }
+QCheckBox::indicator:hover { border-color: $ACCENT; }
 /* A solid fill and nothing else means "checked" is carried by hue alone -
    invisible to a colour-blind reader and easy to mistake for a swatch. The
    tick is an inline SVG data URI so there is no file to lose. */
 QCheckBox::indicator:checked {
-    background: #4dd0e1; border-color: #4dd0e1;
+    background: $ACCENT; border-color: $ACCENT;
     image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'><path d='M4 9.5 L7.5 13 L14 5.5' fill='none' stroke='%230d1418' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
 }
-QCheckBox::indicator:checked:hover { background: #80e5f2; border-color: #80e5f2; }
+QCheckBox::indicator:checked:hover { background: $ACCENT_HI; border-color: $ACCENT_HI; }
 
-QTabWidget::pane { border: 1px solid #262c35; border-radius: 8px; top: -1px; background: #1b2027; }
+QTabWidget::pane { border: 1px solid $RAISED; border-radius: 8px; top: -1px; background: $SURFACE; }
 QTabBar::tab {
-    background: transparent; color: #8b94a1; padding: 8px 18px; margin-right: 2px;
+    background: transparent; color: $TEXT_3; padding: 8px 18px; margin-right: 2px;
     border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: 600;
 }
 QTabBar::tab:selected {
-    background: #1b2027; color: #4dd0e1;
-    border: 1px solid #262c35; border-bottom: none;
+    background: $SURFACE; color: $ACCENT;
+    border: 1px solid $RAISED; border-bottom: none;
 }
-QTabBar::tab:hover:!selected { color: #dde3ea; }
+QTabBar::tab:hover:!selected { color: $TEXT; }
 
 QScrollBar:vertical { background: transparent; width: 12px; margin: 2px; }
-QScrollBar::handle:vertical { background: #313a46; border-radius: 6px; min-height: 30px; }
-QScrollBar::handle:vertical:hover { background: #3d4754; }
+QScrollBar::handle:vertical { background: $BORDER; border-radius: 6px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: $BORDER_HARD; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
-QSlider::groove:horizontal { height: 4px; background: #313a46; border-radius: 2px; }
+QSlider::groove:horizontal { height: 4px; background: $BORDER; border-radius: 2px; }
 QSlider::handle:horizontal {
-    background: #4dd0e1; width: 16px; margin: -6px 0; border-radius: 8px;
+    background: $ACCENT; width: 16px; margin: -6px 0; border-radius: 8px;
 }
-QSlider::handle:horizontal:hover { background: #80e5f2; }
+QSlider::handle:horizontal:hover { background: $ACCENT_HI; }
 
-QStatusBar { background: #14171c; color: #8b94a1; font-weight: 500; }
+QStatusBar { background: $BG; color: $TEXT_3; font-weight: 500; }
 QToolTip {
-    color: #dde3ea; background-color: #232a33; border: 1px solid #313a46;
+    color: $TEXT; background-color: $FIELD; border: 1px solid $BORDER;
     border-radius: 6px; padding: 6px 8px; font-size: 12px;
 }
-"""
+""").substitute(
+    {k: v for k, v in vars(theme).items()
+     if k.isupper() and isinstance(v, str)})
 
 def apply_dark_theme(app):
     app.setStyle("Fusion")

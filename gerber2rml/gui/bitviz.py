@@ -14,16 +14,17 @@ import math
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPolygonF
+from gerber2rml.gui import theme
 
-_BG = QColor("#1e1e1e")
+_BG = QColor(theme.CANVAS_BG)
 _STOCK = QColor(115, 78, 45, 120)       # FR substrate
-_COPPER = QColor("#b87333")             # copper band at the surface
+_COPPER = QColor(theme.COPPER)             # copper band at the surface
 _BIT_FILL = QColor(205, 205, 215, 100)
-_BIT_EDGE = QColor("#dcdcdc")
-_CUT = QColor("#00ffff")                # width annotation (matches the preview)
-_DEPTH = QColor("#ffb000")              # depth annotation (amber)
-_EXPLORE = QColor("#ff79c6")            # hover explore line
-_TEXT = QColor("#d4d4d4")
+_BIT_EDGE = QColor(theme.TEXT)
+_CUT = QColor(theme.CUT)                # width annotation (matches the preview)
+_DEPTH = QColor(theme.WARN)              # depth annotation (amber)
+_EXPLORE = QColor(theme.CUT_TOP)            # hover explore line
+_TEXT = QColor(theme.TICK)
 
 _COPPER_MM = 0.035                      # drawn (exaggerated to a minimum px) band
 
@@ -164,10 +165,10 @@ class BitProfileWidget(QWidget):
             p.drawText(QPointF(cx + max(he, 4) + 26, ye + 4),
                        f"@ {de:.2f} mm deep: W {we:.2f} mm")
         elif j.tool_type == "vbit":
-            p.setPen(QColor("#777777"))
+            p.setPen(QColor(theme.TEXT_MUTED))
             p.drawText(QPointF(8, self.height() - 8),
                        "hover to read the width at any depth")
         else:
-            p.setPen(QColor("#777777"))
+            p.setPen(QColor(theme.TEXT_MUTED))
             p.drawText(QPointF(8, self.height() - 8),
                        "flat endmill - width is constant with depth")

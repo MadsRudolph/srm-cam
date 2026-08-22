@@ -17,18 +17,19 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QVBoxLayout)
 from PySide6.QtCore import Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from gerber2rml.gui import theme
 
-_PICK = "#4dd0e1"       # placed anchor
-_DIM = "#8a9099"        # hover ring / map labels
+_PICK = theme.ACCENT       # placed anchor
+_DIM = theme.AXIS_LABEL        # hover ring / map labels
 
 
-def _draw_board(ax, holes, outline=None, hole_color="#ff5555"):
+def _draw_board(ax, holes, outline=None, hole_color=theme.HOLE):
     """Draw the design context (outline + drill holes) into ``ax``, machine
     frame, y-up. Returns nothing — the caller owns the axes."""
     if outline:
         xs = [p[0] for p in outline] + [outline[0][0]]
         ys = [p[1] for p in outline] + [outline[0][1]]
-        ax.plot(xs, ys, color="#c8c8c8", linewidth=1.0, zorder=2)
+        ax.plot(xs, ys, color=theme.TEXT_2, linewidth=1.0, zorder=2)
     if holes:
         from matplotlib.patches import Circle
         for (x, y, d) in holes:
@@ -37,7 +38,7 @@ def _draw_board(ax, holes, outline=None, hole_color="#ff5555"):
         ax.scatter([h[0] for h in holes], [h[1] for h in holes], s=12,
                    c=hole_color, marker="+", zorder=3)
     ax.set_aspect("equal")
-    ax.set_facecolor("#14171c")
+    ax.set_facecolor(theme.BG)
 
 
 class _PickDialog(QDialog):
@@ -63,7 +64,7 @@ class _PickDialog(QDialog):
         self._prompt.setWordWrap(True)
         lay.addWidget(self._prompt)
 
-        fig = Figure(facecolor="#14171c")
+        fig = Figure(facecolor=theme.BG)
         self._fig = fig
         self._canvas = FigureCanvasQTAgg(fig)
         if map_panel:
@@ -430,8 +431,8 @@ class PhotoAnchorDialog(_PickDialog):
         u, v = float(ev.xdata), float(ev.ydata)
         ang = self._seg_angle((u0, v0), (u, v))
         dev = (ang - self._guide_expected(n) + 180.0) % 360.0 - 180.0
-        col = ("#7bd88f" if abs(dev) <= 3.0 else
-               "#ffb454" if abs(dev) <= 10.0 else "#ff6666")
+        col = (theme.OK if abs(dev) <= 3.0 else
+               theme.STATUS_SPIN if abs(dev) <= 10.0 else theme.DANGER_TEXT)
         line, = self._ax.plot([u0, u], [v0, v], linestyle=":", color=col,
                               linewidth=1.4, zorder=4)
         note = (f"{ang:+.1f}\N{DEGREE SIGN}" if n == 1 else
@@ -454,7 +455,7 @@ class PhotoAnchorDialog(_PickDialog):
         self._map_marks = []
         n = len(self._points)
         for i, (_lbl, (mx, my)) in enumerate(self._anchors):
-            col = _PICK if i < n else ("#ffb454" if i == n else None)
+            col = _PICK if i < n else (theme.STATUS_SPIN if i == n else None)
             if col is None:
                 continue
             self._map_marks.append(self._map_ax.scatter(

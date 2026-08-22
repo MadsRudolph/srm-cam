@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from gerber2rml.engine import spi_probe
+from gerber2rml.gui import theme
 
 PASS, FAIL, UNKNOWN, SKIP = "PASS", "FAIL", "UNKNOWN", "SKIP"
 
@@ -540,10 +541,10 @@ def report_text(results, port=""):
 # --- Qt shell ---------------------------------------------------------------
 # Result colours, tuned to read on the app's dark table background.
 _RESULT_COLOURS = {
-    PASS: QColor("#7fd48a"),
-    FAIL: QColor("#e08585"),
-    UNKNOWN: QColor("#e0c185"),
-    SKIP: QColor("#8899aa"),
+    PASS: QColor(theme.OK),
+    FAIL: QColor(theme.STATUS_FAULT),
+    UNKNOWN: QColor(theme.STATUS_SPIN),
+    SKIP: QColor(theme.TEXT_4),
 }
 
 
@@ -686,7 +687,7 @@ class MachineTestDialog(QDialog):
         close_btn.clicked.connect(self.accept)
 
         self.log_lbl = QLabel("")
-        self.log_lbl.setStyleSheet("color:#aab; font-size:12px; padding:2px 10px;")
+        self.log_lbl.setStyleSheet(f"color:{theme.DRO_DIM}; font-size:12px; padding:2px 10px;")
 
         row = QHBoxLayout()
         row.addWidget(self.motion_chk)

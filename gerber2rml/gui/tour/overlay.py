@@ -14,8 +14,9 @@ without a running Qt app.
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QWidget
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainter, QColor, QPen
+from gerber2rml.gui import theme
 
-_ACCENT = "#FF9800"
+_ACCENT = theme.WARN
 _PAD = 6            # px of breathing room the cut-out leaves around the target
 _GAP = 12           # px between the target and the callout
 
@@ -92,13 +93,13 @@ class Spotlight(QWidget):
 
 _CALLOUT_QSS = f"""
 QFrame#tourCallout {{
-    background: #242424;
+    background: theme.SURFACE_ALT;
     border: 2px solid {_ACCENT};
     border-radius: 10px;
 }}
-QFrame#tourCallout QLabel {{ color: #e4e4e6; background: transparent; }}
+QFrame#tourCallout QLabel {{ color: theme.TEXT; background: transparent; }}
 QLabel#tourTitle {{ color: {_ACCENT}; font-size: 15px; font-weight: 600; }}
-QLabel#tourCounter {{ color: #8a8a8a; font-size: 11px; }}
+QLabel#tourCounter {{ color: theme.TEXT_MUTED; font-size: 11px; }}
 """
 
 

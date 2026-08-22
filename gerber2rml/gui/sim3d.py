@@ -29,6 +29,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from gerber2rml.engine.simulate import (build_path, split_segments, position_at,
                                         index_at, advance_along)
+from gerber2rml.gui import theme
 
 _TICK_MS = 30                      # ~33 fps animation timer
 _CUT_COLOR = (0.0, 1.0, 1.0, 1.0)   # cyan
@@ -74,7 +75,7 @@ class Simulation3DWindow(QMainWindow):
         self._live_dist = 0.0
 
         self.view = gl.GLViewWidget()
-        self.view.setBackgroundColor('#1e1e1e')
+        self.view.setBackgroundColor(theme.CANVAS_BG)
 
         self._build_scene()
 
@@ -114,7 +115,7 @@ class Simulation3DWindow(QMainWindow):
             "to skip ahead and see what's coming — click LIVE to snap back "
             "to where the machine really is.")
         self.live_btn.setStyleSheet(
-            "QPushButton:checked { color: #ff5555; font-weight: bold; }")
+            f"QPushButton:checked { color: {theme.HOLE}; font-weight: bold; }")
         self.live_btn.toggled.connect(self._on_live_toggled)
 
         controls = QHBoxLayout()
