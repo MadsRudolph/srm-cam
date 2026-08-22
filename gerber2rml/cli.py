@@ -41,14 +41,15 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
     written = []
     est = {}                                     # fname -> estimated seconds
 
-    def _write(fname, paths, job):
+    def _write(fname, paths, job, header=None):
         p = out_dir / fname
         placed = offset_paths(paths, *offset)
         if level is not None:
             from gerber2rml.engine.leveling import apply_leveling
             placed = apply_leveling(placed, level)
         p.write_text(backend.render(placed,
-                                    xy_feed=job.xy_feed, plunge_feed=job.plunge_feed))
+                                    xy_feed=job.xy_feed, plunge_feed=job.plunge_feed,
+                                    header=header))
         est[fname] = estimate_toolpaths_seconds(placed, job.xy_feed, job.plunge_feed)
         written.append(p)
 
@@ -62,16 +63,30 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
     if air:
         ap_name = f"{name}_airpass{ext}"
         (out_dir / ap_name).write_text(backend.render(
-            air, xy_feed=DEFAULT_FEED, plunge_feed=DEFAULT_FEED, spindle=False))
+            air, xy_feed=DEFAULT_FEED, plunge_feed=DEFAULT_FEED, spindle=False,
+            header=[f"{name} - step 0 of 4: DRY RUN",
+                    "spindle OFF, bit held 5 mm up - this file cannot cut",
+                    "watch it trace the outline, then run the traces file"]))
         est[ap_name] = estimate_toolpaths_seconds(air, DEFAULT_FEED, DEFAULT_FEED)
         written.append(out_dir / ap_name)
 
     _write(f"{name}_traces{ext}",
-           _leadin(isolate(board.copper, trace, outline=board.outline)), trace)
+           _leadin(isolate(board.copper, trace, outline=board.outline)), trace,
+           header=[f"{name} - step 1 of 4: ISOLATION TRACES",
+                   f"bit {trace.bit_diameter} mm, {trace.offsets} offset(s), "
+                   f"{trace.cut_depth} mm per pass, feed {trace.xy_feed} mm/s",
+                   "re-zero Z after any bit change; do NOT move the XY origin"])
     drill_files = drill_jobs(board.holes, drill, f"{name}_drill", ext=ext)
     for fname, paths in drill_files:
-        _write(fname, paths, drill)               # drills stay vertical (no lead-in)
-    _write(f"{name}_cutout{ext}", _leadin(cut_outline(board.outline, cutout)), cutout)
+        _write(fname, paths, drill,               # drills stay vertical (no lead-in)
+               header=[f"{name} - step 2 of 4: DRILL",
+                       f"bit {drill.bit_diameter} mm, through {drill.total_depth} mm",
+                       "re-zero Z after the bit change; do NOT move the XY origin"])
+    _write(f"{name}_cutout{ext}", _leadin(cut_outline(board.outline, cutout)), cutout,
+           header=[f"{name} - step 3 of 4: CUT-OUT - RUN THIS LAST",
+                   f"bit {cutout.bit_diameter} mm, through {cutout.total_depth} mm, "
+                   f"{cutout.tabs} tabs x {cutout.tab_width} mm",
+                   "frees the board from the waste - everything else must be done"])
 
     # Drill run-plan line depends on the mode
     if drill.single_bit:

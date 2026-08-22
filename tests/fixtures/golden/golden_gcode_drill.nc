@@ -1,6 +1,9 @@
 %
 O0001
 ( gerber2rml - SRM-20 NC )
+( golden_gcode - step 2 of 4: DRILL )
+( bit 0.8 mm, through 1.7 mm )
+( re-zero Z after the bit change; do NOT move the XY origin )
 ( spindle 7000 rpm - set this in VPanel cut settings )
 G90 G17
 G21

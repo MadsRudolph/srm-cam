@@ -37,7 +37,8 @@ def cut_depths(trace, drill, cutout, dowel_depth=None):
 
 def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
               holes=None, bit_diameter=None, trace=None, leveled=False,
-              z_floor=SRM20_Z_FLOOR, shorts=None):
+              z_floor=SRM20_Z_FLOOR, shorts=None, thickness=None,
+              bed_bite=0.2):
     """Run the checks and return a list of :class:`Check`.
 
     ``depths``: {op: mm} from :func:`cut_depths`. ``design_bounds``: placed
@@ -103,6 +104,30 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
                 checks.append(Check("ok", "Holes fit the bit",
                                     f"smallest hole {dmin:.2f} mm >= {bit_diameter:.2f} "
                                     f"mm bit."))
+
+    # --- depth against the actual stock -------------------------------------
+    # Nothing compared these before, so a fat-fingered 17 mm on 1.6 mm stock
+    # exported happily: the XY was right, the preview was right, and the only
+    # complaint was about Z reach. Through-cuts are supposed to overshoot into
+    # the spoilboard a little - that is the bed bite - but not by millimetres.
+    if thickness:
+        for op in ("drill", "cutout"):
+            d = depths.get(op)
+            if d is None:
+                continue
+            if d > thickness + max(bed_bite, 0.0) + 1.0:
+                checks.append(Check(
+                    "fail", f"{op.capitalize()} depth far below the stock",
+                    f"{d:.2f} mm into {thickness:.2f} mm stock - {d - thickness:.2f} "
+                    f"mm past the bottom of the board. That is a cut into the "
+                    f"spoilboard, and on a screwed-down job it can reach the "
+                    f"threaded plate. Check the stock thickness and the total "
+                    f"depth for {op}."))
+            elif d < thickness:
+                checks.append(Check(
+                    "warn", f"{op.capitalize()} will not go through",
+                    f"{d:.2f} mm into {thickness:.2f} mm stock leaves "
+                    f"{thickness - d:.2f} mm uncut."))
 
     # --- guaranteed shorts --------------------------------------------------
     # This is the only check here that fails on the DESIGN rather than the

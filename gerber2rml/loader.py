@@ -392,6 +392,33 @@ def _find_layer(folder, *patterns):
     return None
 
 
+def gerber_stem(folder):
+    """The common filename prefix of a KiCad plot, or None.
+
+    KiCad names every plotted file after the project - buck-B_Cu.gbr,
+    buck-Edge_Cuts.gbr, buck.drl - so the project name is sitting right there
+    and does not have to be typed in. Without this every export in the app is
+    called "board", and two boards exported to one folder overwrite each other
+    in silence.
+    """
+    from pathlib import Path as _P
+    names = [p.stem for p in _P(folder).iterdir()
+             if p.suffix.lower() in (".gbr", ".drl", ".gm1", ".gko")]
+    if not names:
+        return None
+    # strip KiCad's layer suffix, then take the longest common prefix
+    import os
+    stems = []
+    for n in names:
+        for sep in ("-B_Cu", "-F_Cu", "-Edge_Cuts", "-PTH", "-NPTH"):
+            if sep in n:
+                n = n.split(sep)[0]
+                break
+        stems.append(n)
+    common = os.path.commonprefix(stems).strip(" -_.")
+    return common or None
+
+
 def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
     """Load a KiCad Gerber folder into a ``Board`` of shapely geometry.
 

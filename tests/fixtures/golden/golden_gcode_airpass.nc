@@ -1,6 +1,9 @@
 %
 O0001
 ( gerber2rml - SRM-20 NC )
+( golden_gcode - step 0 of 4: DRY RUN )
+( spindle OFF, bit held 5 mm up - this file cannot cut )
+( watch it trace the outline, then run the traces file )
 G90 G17
 G21
 G91

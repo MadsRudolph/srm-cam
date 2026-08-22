@@ -51,7 +51,8 @@ def _f(v: float) -> str:
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID, rpm: int = DEFAULT_RPM,
            travel_z: float = 2.0, spinup_s: float = DEFAULT_SPINUP_S,
-           xy_feeds: list[float] | None = None, spindle: bool = True) -> str:
+           xy_feeds: list[float] | None = None, spindle: bool = True,
+           header: list[str] | None = None) -> str:
     """``spindle=False`` emits the program with the spindle left OFF (no ``M3``,
     no spin-up dwell) — for the dry-run outline, which is watched from close
     up and must never have a turning bit in it.
@@ -64,11 +65,15 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
     xy_fpm = xy_feed * 60.0          # mm/s -> mm/min for G94
     plunge_fpm = plunge_feed * 60.0
 
+    # Every file the app wrote opened with these same three lines, so in a
+    # VPanel queue the filename was the ONLY thing telling align from cutout,
+    # or saying which bit to load, or that one of them has to run last.
+    # `header` carries those per-operation notes.
     out = [
         "%",
         "O0001",
         "( gerber2rml - SRM-20 NC )",
-    ] + ([
+    ] + [f"( {line} )" for line in (header or [])] + ([
         f"( spindle {int(round(rpm))} rpm - set this in VPanel cut settings )",
     ] if spindle else []) + [
         "G90 G17",                   # absolute, XY plane

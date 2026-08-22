@@ -58,8 +58,10 @@ def test_bed_leveling_grid_and_warped_export(tmp_path):
     plain = tmp_path / "plain"; warped = tmp_path / "warped"
     w.level_chk.setChecked(False); w.export_to(plain)
     w.level_chk.setChecked(True);  w.export_to(warped)
-    pt = (plain / "board_traces.nc").read_text()
-    wt = (warped / "board_traces.nc").read_text()
+    # the job is named after the KiCad project now, not "board"
+    stem = w.state.name
+    pt = (plain / f"{stem}_traces.nc").read_text()
+    wt = (warped / f"{stem}_traces.nc").read_text()
     assert pt != wt                                   # leveling changed the Z
 
 def test_probe_results_fill_table_as_deviations():
@@ -2251,3 +2253,59 @@ def test_status_chips_explain_themselves():
     assert w._chip_labels, "no chips built"
     missing = [n for n, l in w._chip_labels.items() if not l.toolTip().strip()]
     assert not missing, f"chips with no tooltip: {missing}"
+
+
+# ---- the job name, and what reaches the machine ---------------------------
+
+def test_job_is_named_after_the_kicad_project():
+    """Everything used to be called board_*, so two boards exported to one
+    folder overwrote each other without a word."""
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    assert w.state.name == "buck"
+    assert w.name_edit.text() == "buck"
+
+
+def test_a_hand_typed_name_is_never_clobbered():
+    w = MainWindow()
+    w.name_edit.setText("my-board")
+    w.load_folder(str(FIXT))
+    assert w.name_edit.text() == "my-board"
+
+
+def test_each_nc_file_says_what_it_is(tmp_path):
+    """Five files with identical headers means the filename is the only thing
+    telling the operator which bit to load or which one runs last."""
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.export_to(tmp_path)
+    stem = w.state.name
+    cut = (tmp_path / f"{stem}_cutout.nc").read_text()
+    assert "CUT-OUT" in cut and "RUN THIS LAST" in cut
+    assert "bit" in cut and "tabs" in cut
+    air = (tmp_path / f"{stem}_airpass.nc").read_text()
+    assert "DRY RUN" in air and "cannot cut" in air
+    tr = (tmp_path / f"{stem}_traces.nc").read_text()
+    assert "ISOLATION TRACES" in tr
+    assert cut.split("G90 G17")[0] != tr.split("G90 G17")[0]
+
+
+def test_actions_that_need_a_board_say_so_instead_of_dead_ending():
+    w = MainWindow()
+    w.state.board = None
+    w._update_enabled()
+    for btn in (w.export_btn, w.diag_btn, w.export_img_btn, w.sim3d_btn):
+        assert not btn.isEnabled(), btn.text()
+        assert "Load a Gerber folder" in btn.toolTip(), btn.text()
+    w.load_folder(str(FIXT))
+    w._update_enabled()
+    assert w.export_btn.isEnabled()
+    assert "Load a Gerber folder" not in w.export_btn.toolTip()
+
+
+def test_depth_far_past_the_stock_is_a_failure_not_a_shrug():
+    from gerber2rml.engine.diagnostics import preflight
+    checks = preflight(depths={"cutout": 17.0, "drill": 1.8}, thickness=1.6)
+    bad = [c for c in checks if c.level == "fail" and "cutout" in c.title.lower()]
+    assert bad, [(c.level, c.title) for c in checks]
+    assert "17" in bad[0].detail and "1.6" in bad[0].detail

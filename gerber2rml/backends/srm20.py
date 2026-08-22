@@ -20,9 +20,17 @@ def _u(mm: float) -> int:
 
 
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
-           rapid_feed: float = DEFAULT_RAPID, spindle: bool = True) -> str:
+           rapid_feed: float = DEFAULT_RAPID, spindle: bool = True,
+           header: list[str] | None = None) -> str:
     """``spindle=False`` keeps the spindle OFF for the whole program (the
-    dry-run outline, which is watched from close up)."""
+    dry-run outline, which is watched from close up).
+
+    ``header`` is accepted and IGNORED. The G-code backend writes the
+    per-operation notes there as ``( ... )`` comments; RML-1 has no comment
+    syntax, so there is nowhere to put them and anything emitted would be
+    parsed as a command. Accepting the argument keeps the two backends
+    interchangeable at the call site.
+    """
     out = ["^IN;!MC1;" if spindle else "^IN;!MC0;"]   # init + spindle on/off
     mode = None                  # "cut" | "rapid"
     for tp in toolpaths:

@@ -1853,6 +1853,7 @@ class MainWindow(QMainWindow):
         self._build_mode_menu()
         self._build_kicad_menu()
         self._uppercase_group_titles()
+        self._update_enabled()
         self._apply_mode()               # Novice on a fresh install
         self._autofit_panel()
         self.move_chk.setChecked(True)   # move-on-bed drag on by default
@@ -1937,6 +1938,19 @@ class MainWindow(QMainWindow):
     def load_folder(self, folder):
         self._sync_state()
         self.state.load(folder)
+        # Name the job after the KiCad project rather than leaving every
+        # export called "board" - two boards sent to one output folder used
+        # to overwrite each other without a word. Only when the field is
+        # still the default, so a name typed by hand is never clobbered.
+        if self.name_edit.text().strip() in ("", "board"):
+            try:
+                from gerber2rml.loader import gerber_stem
+                stem = gerber_stem(folder)
+            except Exception:
+                stem = None
+            if stem:
+                self.name_edit.setText(stem)
+                self.state.name = stem
         self.preview._view_limits = None        # new board -> fit (clear any zoom)
         self._top_fit = None                    # placement is per-physical-board
         # (a setup restore re-applies its saved fit after this call)
@@ -2607,6 +2621,42 @@ class MainWindow(QMainWindow):
             "settings export the same files in either mode. Switch to "
             "Professional from this menu whenever you need the rest.")
 
+    @staticmethod
+    def _gate(widget, ok, why):
+        """Enable/disable a control AND say why in the same breath.
+
+        mode.py already argues the case for hidden-over-disabled: "a greyed-out
+        control still invites clicking, and still has to be explained". That was
+        applied to the mode flag and never to application state, so the app
+        shipped eight actions that were enabled with nothing loaded and could
+        only dead-end in an error dialog, and a dozen more greyed out with no
+        stated reason. If a control must be disabled, it owes the user a reason.
+        """
+        widget.setEnabled(bool(ok))
+        if not ok:
+            widget.setToolTip(why)
+        elif widget.property("_liveTip"):
+            widget.setToolTip(widget.property("_liveTip"))
+
+    def _update_enabled(self):
+        """Re-gate everything that needs a board (or stock) to mean anything."""
+        board = self.state.board is not None
+        NEED_BOARD = "Load a Gerber folder first."
+        for w in (self.export_btn, self.diag_btn, self.export_img_btn,
+                  self.sim3d_btn, self.level_grid_btn):
+            if not w.property("_liveTip"):
+                w.setProperty("_liveTip", w.toolTip())
+            self._gate(w, board, NEED_BOARD)
+        if not self.screws_btn.property("_liveTip"):
+            self.screws_btn.setProperty("_liveTip", self.screws_btn.toolTip())
+        stock = self.stock_w_spin.value() > 0 and self.stock_h_spin.value() > 0
+        self._gate(self.screws_btn, board and stock,
+                   NEED_BOARD if not board else
+                   "Enter the copper width and height first - the screw "
+                   "positions are the grid holes your stock actually covers.")
+        # An idle progress bar reading 0% is not information; it is furniture.
+        self.run_bar.setVisible(self.run_bar.value() > 0)
+
     def _uppercase_group_titles(self):
         """Small-caps section headings, done in Python.
 
@@ -3081,6 +3131,7 @@ class MainWindow(QMainWindow):
             self.preview.set_frame("AS MILLED  ·  mirrored (bottom-up)", AMBER)
 
     def generate_preview(self):
+        self._update_enabled()
         if self.state.board is None:
             self.preview.set_estimate("")
             self.preview.show_empty()
@@ -5088,7 +5139,8 @@ class MainWindow(QMainWindow):
                            design_bounds=self._diag_bounds(), surface_z=self._z_zero,
                            holes=holes, bit_diameter=self.state.drill.bit_diameter,
                            trace=self.state.trace, leveled=leveled,
-                           shorts=self._isolation_shorts())
+                           shorts=self._isolation_shorts(),
+                           thickness=self.thickness_spin.value())
         checks += self._screw_checks()
         lvl = worst(checks)
         box = QMessageBox(self)

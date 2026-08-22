@@ -1,6 +1,9 @@
 %
 O0001
 ( gerber2rml - SRM-20 NC )
+( golden_gcode - step 3 of 4: CUT-OUT - RUN THIS LAST )
+( bit 0.8 mm, through 1.7 mm, 4 tabs x 1.5 mm )
+( frees the board from the waste - everything else must be done )
 ( spindle 7000 rpm - set this in VPanel cut settings )
 G90 G17
 G21
