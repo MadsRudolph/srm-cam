@@ -82,3 +82,112 @@ def test_v1_firmware_refused():
 
     with pytest.raises(StreamError):
         stream_toolpaths(V1Serial(), _job())
+
+
+# --- v3: spindle, pause and the cover watch -------------------------------
+# Everything below drives an SPI command proven on the machine in the 2026-08
+# audit. The spindle one matters most: a wet run now starts and stops the tool
+# itself, so getting the "stop it whatever happens" path wrong is the bug that
+# would leave a bit spinning.
+
+class V3Serial(StreamSerial):
+    """Fake board that also answers X (status) and S (spindle)."""
+
+    def __init__(self, cover=False, spindle_starts=True, **kw):
+        super().__init__(**kw)
+        self.cover = cover
+        self.spindle_starts = spindle_starts
+        self.spindle = False
+        self.spindle_cmds = []
+        self.jobctl = []
+
+    def write(self, data):
+        s = data.decode().strip()
+        if s == "X":
+            sys_word = (0x20000 if self.cover else 0) | (0x10000 if self.spindle else 0)
+            self._out.append(f"X {sys_word} 0 {8600 if self.spindle else 0}\n".encode())
+            return
+        if s.startswith("S"):
+            rpm = int(s[1:])
+            self.spindle_cmds.append(rpm)
+            if rpm and self.spindle_starts:
+                self.spindle = True
+            elif not rpm:
+                self.spindle = False
+            self._out.append(f"S {rpm}\n".encode())
+            return
+        if s in ("~", "^"):
+            self.jobctl.append(s)
+            self._out.append(f"{s} ok\n".encode())
+            return
+        if s == "%":
+            self._out.append(b"% ok\n")
+            return
+        super().write(data)
+
+    def reset_input_buffer(self):
+        self._out.clear()
+
+
+def test_wet_run_starts_and_stops_the_spindle():
+    s = V3Serial()
+    stream_toolpaths(s, _job(), dry_run=False, spindle_rpm=3000)
+    assert s.spindle_cmds[0] == 3000        # started before the first move
+    assert s.spindle_cmds[-1] == 0          # and stopped at the end
+    assert not s.spindle
+
+
+def test_dry_run_never_spins_the_tool():
+    s = V3Serial()
+    stream_toolpaths(s, _job(), dry_run=True, spindle_rpm=3000)
+    assert s.spindle_cmds == []             # a dry run cuts nothing, so no spindle
+
+
+def test_spindle_is_stopped_even_when_the_run_fails():
+    """The finally-path that keeps a bit from spinning after a crash."""
+    s = V3Serial(fail_at=2)
+    with pytest.raises(StreamError):
+        stream_toolpaths(s, _job(), dry_run=False, spindle_rpm=3000)
+    assert s.spindle_cmds[-1] == 0
+    assert not s.spindle
+
+
+def test_wet_run_refuses_to_start_with_the_lid_open():
+    s = V3Serial(cover=True)
+    with pytest.raises(StreamError, match="lid open"):
+        stream_toolpaths(s, _job(), dry_run=False, spindle_rpm=3000)
+    assert s.spindle_cmds == []             # never even asked
+
+
+def test_wet_run_stops_if_the_spindle_never_reports_running():
+    s = V3Serial(spindle_starts=False)
+    with pytest.raises(StreamError, match="never reported running"):
+        stream_toolpaths(s, _job(), dry_run=False, spindle_rpm=3000)
+    assert s.moves == []                    # nothing touched the work
+    assert s.spindle_cmds[-1] == 0          # and it was told to stop
+
+
+def test_pause_holds_the_run_then_resumes():
+    s = V3Serial()
+    state = {"n": 0}
+
+    def should_pause():
+        state["n"] += 1
+        return 3 <= state["n"] <= 5         # paused for a few polls, then not
+
+    n = stream_toolpaths(s, _job(), dry_run=True, should_pause=should_pause)
+    assert n == 6                           # the job still completed
+    assert s.jobctl == ["~", "^"]           # held once, released once
+
+
+def test_lid_opening_mid_run_stops_and_lifts():
+    long_job = [[Move(i, 0, 2.0) for i in range(40)]]
+    s = V3Serial()
+
+    def open_lid(i, _n):
+        if i >= 20:
+            s.cover = True
+
+    with pytest.raises(StreamError, match="lid opened"):
+        stream_toolpaths(s, long_job, dry_run=True, on_progress=open_lid)
+    assert s.aborted

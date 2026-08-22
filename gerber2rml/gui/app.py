@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QListWidget, QStackedWidget, QProgressBar, QDialog, QDialogButtonBox, QSlider
 )
 from PySide6.QtCore import Qt, QThread, Signal, QMutex
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QPalette, QColor, QAction
 from pathlib import Path
 import math
 import sys
@@ -81,27 +81,37 @@ class _StreamWorker(QThread):
     progress = Signal(int, int)
     done = Signal(str)            # "" on success, else an error message
 
-    def __init__(self, port, toolpaths, speed=-1, dry_run=True):
+    def __init__(self, port, toolpaths, speed=-1, dry_run=True, spindle_rpm=0):
         super().__init__()
         self._port, self._tps = port, toolpaths
         self._speed, self._dry = speed, dry_run
+        self._spindle_rpm = spindle_rpm
         self._abort = False
+        self._paused = False
 
     def abort(self):
         self._abort = True
 
+    def set_paused(self, on):
+        """Hold/release the run. The firmware honours pause mid-move, so this
+        is safe to hit at any point in a job."""
+        self._paused = bool(on)
+
     def run(self):
         from gerber2rml.engine import spi_probe, spi_stream
         try:
-            ser = spi_probe.open_link(self._port)
+            ser = spi_probe.open_link(
+                self._port, frame_us=spi_probe.DEFAULT_FRAME_US)
         except Exception as e:
             self.done.emit(str(e))
             return
         try:
             spi_stream.stream_toolpaths(
                 ser, self._tps, speed=self._speed, dry_run=self._dry,
+                spindle_rpm=self._spindle_rpm,
                 on_progress=lambda i, n: self.progress.emit(i, n),
-                should_abort=lambda: self._abort)
+                should_abort=lambda: self._abort,
+                should_pause=lambda: self._paused)
             self.done.emit("")
         except Exception as e:
             self.done.emit(str(e))
@@ -170,28 +180,75 @@ class _FidFindWorker(QThread):
 
 
 class _DROPoller(QThread):
-    """Holds the Arduino link open and polls live position (~4 Hz) for the DRO."""
+    """Holds the Arduino link open, polls live position (~4 Hz) for the DRO and
+    the machine's own status word (~1 Hz), and carries out machine commands.
+
+    The status half is what the 2026-08 SPI audit unlocked: cover open, spindle
+    running, error and fatal come straight from the machine (proven on hardware
+    — the cover bit follows the lid). Polled at a quarter of the position rate
+    because at the stock SPI framing delay a status read costs ~55 ms and the
+    DRO has to stay smooth while jogging.
+    """
     position = Signal(float, float, float, bool)   # x, y, z mm + probe touching
+    status = Signal(dict)                           # decoded machine status word
     touch_done = Signal(bool, float, float, float)  # ok, x, y, z (mm) of surface
     zero_done = Signal(bool, float)                 # ok, new origin z (mm)
+    spindle_done = Signal(bool, int)                # ok, rpm the firmware took
     failed = Signal(str)
 
-    def __init__(self, port):
+    def __init__(self, port, frame_us=None):
         super().__init__()
         self._port, self._run = port, True
+        self._frame_us = frame_us
         self._lock = QMutex()
         self._pending_move = None       # (x_um, y_um) queued jog target
         self._pending_touch = False     # queued touch-off request
         self._pending_zero = False      # queued machine-origin Z zero (W)
+        self._pending_spindle = None    # queued spindle rpm (0 = off)
+        self._pending_jobctl = None     # queued 'pause' / 'resume' / 'view'
+        self._pending_zjog = None       # accumulated relative Z jog (um)
         self._abort = False             # STOP: lift the tool and stop polling
+        self._status_tick = 0
+        self._spindle_ours = False      # did WE start the spindle? (see run())
 
     def request_abort(self):
-        """STOP: drop any queued motion; the loop sends ``!`` (lift) and exits."""
+        """STOP: drop any queued motion; the loop halts the machine and exits."""
         self._lock.lock()
         self._abort = True
         self._pending_move = None
         self._pending_touch = False
         self._pending_zero = False
+        self._pending_spindle = None
+        self._pending_jobctl = None
+        self._pending_zjog = None
+        self._lock.unlock()
+
+    def request_spindle(self, rpm):
+        """Start (rpm > 0) or stop (0) the spindle.
+
+        Speed is NOT settable this way: measured on the machine, turnSpindle's
+        argument is ignored and the actual speed comes from VPanel's slider.
+        This is an M3/M5 equivalent, nothing more.
+        """
+        self._lock.lock()
+        self._pending_spindle = int(rpm)
+        self._lock.unlock()
+
+    def request_jobctl(self, what):
+        """Queue 'pause', 'resume' or 'view'."""
+        self._lock.lock()
+        self._pending_jobctl = what
+        self._lock.unlock()
+
+    def request_jog_z(self, dz_um):
+        """Queue a relative Z move (microns; positive = up, away from the work).
+
+        Steps ACCUMULATE rather than last-one-wins: hitting the button four
+        times means four steps, and dropping three of them would leave the bit
+        somewhere the operator did not ask for.
+        """
+        self._lock.lock()
+        self._pending_zjog = (self._pending_zjog or 0) + int(dz_um)
         self._lock.unlock()
 
     def request_move(self, x_um, y_um):
@@ -216,7 +273,7 @@ class _DROPoller(QThread):
     def run(self):
         from gerber2rml.engine import spi_probe
         try:
-            ser = spi_probe.open_link(self._port)
+            ser = spi_probe.open_link(self._port, frame_us=self._frame_us)
         except Exception as e:
             self.failed.emit(str(e)); return
         try:
@@ -225,17 +282,44 @@ class _DROPoller(QThread):
                 mv = self._pending_move
                 to = self._pending_touch
                 zo = self._pending_zero
+                sp = self._pending_spindle
+                jc = self._pending_jobctl
+                zj = self._pending_zjog
                 ab = self._abort
                 self._pending_move = None
                 self._pending_touch = False
                 self._pending_zero = False
+                self._pending_spindle = None
+                self._pending_jobctl = None
+                self._pending_zjog = None
                 self._lock.unlock()
                 if ab:
+                    # Halt first, THEN lift. The move lives in the Roland
+                    # controller, so '!' alone would have to wait for a long
+                    # travel to finish before the lift could even be commanded.
+                    spi_probe.stop_moving_now(ser)
+                    spi_probe.spindle_off(ser)
                     spi_probe.send_abort(ser)                 # lift the tool, then stop
                     break
                 try:
-                    if mv is not None:
+                    if zj:
+                        # Relative Z only — X and Y are left exactly where they
+                        # are, so a nudge can never drag the bit sideways.
+                        spi_probe.timed_move(ser, 0, 0, zj, -1, timeout=30.0)
+                    elif mv is not None:
                         spi_probe.jog_to(ser, mv[0], mv[1])   # lifts then travels XY
+                    elif sp is not None:
+                        got = spi_probe.set_spindle(ser, sp)
+                        if got is not None:
+                            self._spindle_ours = sp > 0
+                        self.spindle_done.emit(got is not None, got or 0)
+                    elif jc is not None:
+                        if jc == "pause":
+                            spi_probe.suspend_job(ser)
+                        elif jc == "resume":
+                            spi_probe.resume_job(ser)
+                        elif jc == "view":
+                            spi_probe.jump_to_view(ser)
                     elif zo:
                         r = spi_probe.zero_z(ser, should_abort=lambda: self._abort)
                         if r is not None:
@@ -252,12 +336,26 @@ class _DROPoller(QThread):
                         p = spi_probe.query_position(ser)
                         if p is not None:
                             self.position.emit(*p)
+                        # Status costs ~55 ms at stock framing, so poll it at a
+                        # quarter of the DRO rate — often enough to catch a lid
+                        # opening, rare enough to keep jogging smooth.
+                        self._status_tick += 1
+                        if self._status_tick % 4 == 0:
+                            st = spi_probe.machine_status(ser)
+                            if st is not None:
+                                self.status.emit(st)
                 except Exception:
                     pass
                 self.msleep(60 if (self._pending_move or self._pending_touch
-                                   or self._pending_zero) else 250)
+                                   or self._pending_zero or self._pending_zjog)
+                            else 250)
         finally:
             try:
+                # Stop the spindle only if WE started it. The operator also
+                # drives it from VPanel by hand, and killing that on disconnect
+                # would stop a spindle that was never ours to control.
+                if self._spindle_ours:
+                    spi_probe.spindle_off(ser)
                 ser.close()
             except Exception:
                 pass
@@ -464,6 +562,15 @@ class MainWindow(QMainWindow):
         # together by _apply_mode(). Novice is the same UI with these put away
         # — never a second code path, so the two modes cannot drift apart.
         self._pro_items = []
+        # ...and the mirror image: widgets that exist ONLY in Novice, because
+        # a beginner needs a guided version of something the full UI exposes
+        # as a workbench.
+        self._novice_items = []
+
+        # Screw positions chosen by hand, or None for "let the app pick".
+        # Kept separate from the automatic result rather than seeding it, so
+        # "go back to automatic" is always available and always meaningful.
+        self._manual_screws = None
 
         # Ensure the per-user workspace (Documents/SRM-CAM/{sessions,exports,
         # photos}) exists; every file dialog starts in its matching folder.
@@ -643,14 +750,18 @@ class MainWindow(QMainWindow):
             "Draw the measured copper piece on the bed so you can line the design "
             "(and dowels) up inside it. Turns red if the job spills off the copper.")
         self.stock_show_chk.toggled.connect(self._update_stock_preview)
-        # Professional-only: it reads the live tool position over the machine
-        # link, and Novice hides that link entirely — offering it there is a
-        # button that cannot work. Novice places the design with 'Center
-        # design' and the drag controls, which need no hardware.
-        self.stock_here_btn = self._pro(QPushButton("Corner = tool"))
+        # This used to be Professional-only, on the reasoning that it reads the
+        # live tool position and Novice hid the machine link entirely. That
+        # stopped being true when the lab was allowed to fit the Arduino and
+        # Novice gained guided probing. Without this a beginner's only way to
+        # say where their copper is, is to TYPE machine coordinates they have
+        # no way of knowing — so the design lands somewhere arbitrary and the
+        # probe grid goes with it. Jogging to the corner and pressing a button
+        # is the whole point of having the link.
+        self.stock_here_btn = QPushButton("Corner = tool")
         self.stock_here_btn.setToolTip(
             "Set the copper's front-left corner to the live tool position — jog the "
-            "bit to the corner of the copper, then click. Needs the machine connected.")
+            "bit to the corner of the copper (here or in VPanel), then click.")
         self.stock_here_btn.clicked.connect(self._on_stock_corner_from_tool)
         # Professional-only on purpose: this cuts into the shared sacrificial
         # bed and is done ONCE by whoever owns the machine, not by each of
@@ -663,6 +774,32 @@ class MainWindow(QMainWindow):
             "work origin every time — no jogging to the corner by eye, and no "
             "machine link needed. Cut once per bed.")
         self.bedfix_btn.clicked.connect(self._on_export_bed_fixture)
+        # Screw fixture: bolt the copper through the spoilboard grid into the
+        # threaded plate. A checkbox rather than something inferred, because
+        # only a person can know whether the screws are actually IN — and the
+        # answer changes the safe travel height, so guessing is not an option.
+        self.screws_chk = QCheckBox("Copper screwed down (M4)")
+        self.screws_chk.setToolTip(
+            "Tick once the M4 screws are in. Raises the travel height on every "
+            "operation so a rapid clears the screw heads, and shows where they "
+            "sit so you can keep the design clear of them.")
+        self.screws_chk.toggled.connect(self._on_screws_toggled)
+        self.screws_pick_chk = QCheckBox("Pick holes")
+        self.screws_pick_chk.setToolTip(
+            "Click holes on the bed to add or remove them as fastening points. "
+            "Starts from the app's suggestion so you are editing it, not "
+            "starting from an empty board.")
+        self.screws_pick_chk.toggled.connect(self._on_screw_pick_toggled)
+        self.screws_auto_btn = QPushButton("Auto")
+        self.screws_auto_btn.setToolTip(
+            "Discard hand-picked holes and go back to the automatic choice.")
+        self.screws_auto_btn.clicked.connect(self._on_screws_auto)
+        self.screws_btn = QPushButton("Export screw fixture...")
+        self.screws_btn.setToolTip(
+            "Write a small program that drills M4 clearance holes through the "
+            "copper, on the spoilboard's hole grid. Run it FIRST, screw the "
+            "copper down, re-zero Z, then cut the job.")
+        self.screws_btn.clicked.connect(self._on_export_screw_fixture)
         self.stock_center_btn = QPushButton("Center design")
         self.stock_center_btn.setToolTip(
             "Move the design so it's centred on the copper stock — a starting point "
@@ -780,7 +917,13 @@ class MainWindow(QMainWindow):
             "Open the Arduino link and show live X/Y/Z + the tool position on the "
             "preview. Uses the same port as probing; Serial Monitor must be closed.")
         self.connect_btn.toggled.connect(self._on_connect_toggled)
-        self.jog_chk = QCheckBox("Click to jog")
+        # Controls that are not needed at arm's length while standing at the
+        # mill live in the Machine MENU instead of the dock — the strip had
+        # grown past the window edge, pushing Connect and STOP off screen.
+        # QAction is used rather than QCheckBox/QPushButton because it takes the
+        # same setEnabled/setChecked/isChecked calls the rest of the code makes.
+        self.jog_chk = QAction("Click to jog", self)
+        self.jog_chk.setCheckable(True)
         self.jog_chk.setEnabled(False)        # only meaningful while connected
         self.jog_chk.setToolTip(
             "Click a point on the preview to move the tool there (lifts ~5 mm "
@@ -788,16 +931,17 @@ class MainWindow(QMainWindow):
             "dowel/fiducial pin when one is close — Ctrl+click for the exact "
             "clicked position. Needs the machine connected.")
         self.jog_chk.toggled.connect(self._on_jog_mode_toggled)
-        self.trail_chk = QCheckBox("Trail")
+        self.trail_chk = QAction("Tool trail", self)
+        self.trail_chk.setCheckable(True)
         self.trail_chk.setChecked(True)
         self.trail_chk.setToolTip(
             "Leave a fading amber breadcrumb trail of where the bit has already "
             "travelled, so you can follow its tracks during a rework pass.")
         self.trail_chk.toggled.connect(
             lambda on: self.preview.set_tool_trail_visible(on))
-        self.trail_clear_btn = QPushButton("Clear trail")
+        self.trail_clear_btn = QAction("Clear trail", self)
         self.trail_clear_btn.setToolTip("Wipe the breadcrumb trail and start fresh.")
-        self.trail_clear_btn.clicked.connect(lambda: self.preview.clear_tool_trail())
+        self.trail_clear_btn.triggered.connect(lambda: self.preview.clear_tool_trail())
         self.zero_btn = QPushButton("Probe Z")
         self.zero_btn.setEnabled(False)
         self.zero_btn.setToolTip(
@@ -805,15 +949,15 @@ class MainWindow(QMainWindow):
             "surface, and set that Z as the work-surface zero. Needs the touch "
             "clips connected; start a few mm above the surface.")
         self.zero_btn.clicked.connect(self._on_probe_z)
-        self.machine_zero_btn = QPushButton("Zero Z on machine")
+        self.machine_zero_btn = QAction("Zero Z on machine", self)
         self.machine_zero_btn.setEnabled(False)
         self.machine_zero_btn.setToolTip(
             "Verified touch-off, then the FIRMWARE writes origin Z = the copper "
             "surface (v2 'W' command) and lifts 2 mm - no VPanel round-trip.\n"
             "NOTE: this sets the origin VPanel displays (User CS). Check "
             "VPanel's G54 Z once before trusting it for NC jobs.")
-        self.machine_zero_btn.clicked.connect(self._on_machine_zero)
-        self.stream_btn = QPushButton("Stream (exp.)")
+        self.machine_zero_btn.triggered.connect(self._on_machine_zero)
+        self.stream_btn = QAction("Stream job over the link (experimental)…", self)
         self.stream_btn.setEnabled(False)
         self.stream_btn.setToolTip(
             "EXPERIMENTAL: stream the picked op's toolpaths over the SPI link "
@@ -821,8 +965,84 @@ class MainWindow(QMainWindow):
             "with Z held 2 mm above the origin — nothing can cut. A wet run "
             "additionally needs the spindle started in VPanel by hand and the "
             "raw speed value calibrated on dry runs first.")
-        self.stream_btn.clicked.connect(self._on_stream_job)
-        self.align_btn = QPushButton("Align overlay")
+        self.stream_btn.triggered.connect(self._on_stream_job)
+        # ---- machine transport: VPanel's Pause / Resume / Stop / View / spindle,
+        # in the app. Every one drives an SPI command proven on the machine in
+        # the 2026-08 audit (docs/2026-08-21-spi-command-audit.md).
+        self.spindle_btn = QPushButton("Spindle")
+        self.spindle_btn.setCheckable(True)
+        self.spindle_btn.setEnabled(False)
+        self.spindle_btn.setToolTip(
+            "Start and stop the spindle over the machine link — no VPanel "
+            "round-trip.\n"
+            "SPEED IS NOT SET HERE: the machine ignores the RPM argument, so "
+            "the actual speed is still whatever VPanel's spindle slider says. "
+            "This is an M3/M5 equivalent.\n"
+            "Refused while the lid is open, and the firmware stops the spindle "
+            "by itself if the app stops talking to it.")
+        self.spindle_btn.toggled.connect(self._on_spindle_toggled)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setToolTip(
+            "Hold the machine where it is (VPanel's Pause). Works mid-move — "
+            "the bit stops in place and Resume carries on.")
+        self.pause_btn.clicked.connect(lambda: self._on_jobctl("pause"))
+        self.resume_btn = QPushButton("Resume")
+        self.resume_btn.setEnabled(False)
+        self.resume_btn.setToolTip("Carry on from a Pause (VPanel's Resume).")
+        self.resume_btn.clicked.connect(lambda: self._on_jobctl("resume"))
+        self.view_btn = QAction("Move head to view position", self)
+        self.view_btn.setEnabled(False)
+        self.view_btn.setToolTip(
+            "Send the head to the view position (VPanel's View button) so you "
+            "can change the bit or swap the board, then jog back.")
+        self.view_btn.triggered.connect(lambda: self._on_jobctl("view"))
+        # ---- Z jog: raise/lower the bit by a chosen step, from the dock.
+        # Z is the axis you nudge by hand constantly — setting up a touch-off,
+        # backing off after a probe, easing down to eyeball a depth — and until
+        # now the only way to move it was click-to-jog, which is XY only.
+        self.zjog_step = QComboBox()
+        for mm in (0.01, 0.05, 0.1, 0.5, 1.0, 5.0):
+            self.zjog_step.addItem(f"{mm:g} mm", mm)
+        self.zjog_step.setCurrentIndex(3)          # 0.5 mm: a useful default
+        self.zjog_step.setToolTip("How far each Z step moves the bit.")
+        self.zjog_up_btn = QPushButton("Z ▲")
+        self.zjog_up_btn.setToolTip(
+            "Raise the bit by one step (away from the work). Also PageUp.")
+        self.zjog_up_btn.clicked.connect(lambda: self._on_jog_z(+1))
+        self.zjog_down_btn = QPushButton("Z ▼")
+        self.zjog_down_btn.setToolTip(
+            "Lower the bit by one step (toward the work). Also PageDown.\n"
+            "Refused while the probe says the bit is already touching.")
+        self.zjog_down_btn.clicked.connect(lambda: self._on_jog_z(-1))
+        for b in (self.zjog_up_btn, self.zjog_down_btn):
+            b.setEnabled(False)                    # needs the machine link
+            b.setMaximumWidth(48)
+        self._zjog_row = QWidget()
+        _zj = QHBoxLayout(self._zjog_row)
+        _zj.setContentsMargins(0, 0, 0, 0)
+        _zj.setSpacing(2)
+        _zj.addWidget(self.zjog_up_btn)
+        _zj.addWidget(self.zjog_step)
+        _zj.addWidget(self.zjog_down_btn)
+
+        self.machine_label = QLabel("")
+        self.machine_label.setToolTip(
+            "What the machine itself reports: lid open, spindle running, error "
+            "or fault. Read straight off its status word.")
+        self.machine_label.setStyleSheet(
+            "color:#888; font-family:Consolas,monospace; font-size:13px; padding:4px 10px;")
+        self._machine_status = {}
+
+        self.machinetest_btn = QAction("Machine test…", self)
+        self.machinetest_btn.setToolTip(
+            "Find out which SPI commands this machine actually obeys — spindle "
+            "control, the full status word, pause/resume/stop, View, and the "
+            "speed-unit calibration. Read-only tests by default; motion and "
+            "spindle tests are separately armed.\n"
+            "Needs firmware v3 (reflash hardware/srm20_spi_probe).")
+        self.machinetest_btn.triggered.connect(self._on_machine_test)
+        self.align_btn = QAction("Align overlay to the bit", self)
         self.align_btn.setCheckable(True)
         self.align_btn.setEnabled(False)      # only meaningful while connected
         self.align_btn.setToolTip(
@@ -1238,15 +1458,22 @@ class MainWindow(QMainWindow):
         # it out, look at it in 3D before committing. Bed leveling, the flip
         # and rework are the steps that need a second bit of judgement, so they
         # are the ones Professional adds back.
-        self._PRO_STEPS = {1, 2, 6, 7, 8}
+        # Bed leveling used to be in here. It came out when the lab was allowed
+        # to fit the Arduino: probing is the single biggest thing the board buys
+        # a beginner, because it makes cut depth follow the real surface, and
+        # that is what decides whether isolation actually separates traces.
+        # Novice gets a guided one-button version (see novice_level_btn); the
+        # full probe workbench above it stays professional.
+        self._PRO_STEPS = {2, 6, 7, 8}
         # ...and with them gone the "1 2 3 4 ... 8" numbering would read
         # "1 4 5 6 10", so Novice gets its own labels for the steps it keeps.
         self._NOVICE_LABELS = {
             0: "1 · Set up board",
-            3: "2 · Drill",
-            4: "3 · Traces",
-            5: "4 · Cut out",
-            9: "5 · Check in 3D",
+            1: "2 · Level the bed",
+            3: "3 · Drill",
+            4: "4 · Traces",
+            5: "5 · Cut out",
+            9: "6 · Check in 3D",
         }
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
@@ -1382,6 +1609,9 @@ class MainWindow(QMainWindow):
         sg.addRow("Corner", self._stock_xy_row)
         sg.addRow("", _row(self.stock_here_btn, self.stock_center_btn))
         sg.addRow("", self._pro(self.bedfix_btn))
+        sg.addRow("", _row(self.screws_chk))
+        sg.addRow("", _row(self.screws_pick_chk, self.screws_auto_btn))
+        sg.addRow("", _row(self.screws_btn))
         sg.addRow("", self.stock_show_chk)
         l_proj.addWidget(stock_group)
         l_proj.addStretch(1)
@@ -1402,6 +1632,64 @@ class MainWindow(QMainWindow):
                            self.level_3d_btn, stretch_first=False))
         _ll.addWidget(self.level_table)
         _ll.addWidget(_row(self.level_top_btn))
+        # ===== BED LEVELING - the guided version ============================
+        # The group above is a workbench: grid size, retouch interval, export,
+        # save/load, 3D, the raw table. All of it earns its place for someone
+        # who knows what a height map is. For someone who does not, the useful
+        # question is just "make the depth follow the surface", and this is the
+        # one control that answers it.
+        nov_level = QGroupBox("Level the bed")
+        _nl = QVBoxLayout(nov_level)
+        _nl.setContentsMargins(14, 16, 14, 12)
+        _nl.setSpacing(10)
+        nov_hint = QLabel("""Measures the height of the copper across your board, so the
+cut depth follows the real surface instead of assuming it is flat.
+
+Set up before you press it:
+
+   1.  Paper or tape UNDER the board, isolating it from the bed.
+   2.  Clip the red lead to the copper.
+   3.  Bit in the spindle. Spindle OFF.
+   4.  Jog the bit 2-3 mm above the front-left corner of the board.
+
+The machine will move. You get a confirmation first.""")
+        nov_hint.setWordWrap(True)
+        nov_hint.setObjectName("helpText")
+        _nl.addWidget(nov_hint)
+
+        # How many points, in the units a person thinks in. The professional
+        # panel above exposes nx/ny separately; nobody new to this needs a
+        # non-square grid before they need a working one.
+        self.novice_grid_combo = QComboBox()
+        self.novice_grid_combo.addItems(
+            ["Quick - 9 points", "Normal - 16 points", "Fine - 25 points"])
+        self.novice_grid_combo.setCurrentIndex(1)
+        self.novice_grid_combo.setMaximumWidth(190)
+        self.novice_grid_combo.setToolTip(
+            "More points measure the surface more faithfully and take longer. "
+            "Fine is worth it for a V-bit, whose cut width changes with depth.")
+        self.novice_grid_combo.currentIndexChanged.connect(
+            self._on_novice_grid_changed)
+        _nl.addWidget(_row(QLabel("Detail"), self.novice_grid_combo,
+                           stretch_first=False))
+
+        # Answering "where will it measure?" BEFORE anything taps the board.
+        # The grid follows the design's placement on the copper, so a wrong
+        # placement produces visibly wrong probe points - which is the point.
+        self.novice_showprobe_btn = QPushButton("Show where it will probe")
+        self.novice_showprobe_btn.setToolTip(
+            "Draw the planned probe points on the preview. Moves nothing.")
+        self.novice_showprobe_btn.clicked.connect(self._on_novice_show_probes)
+        _nl.addWidget(self.novice_showprobe_btn)
+
+        self.novice_level_btn = QPushButton("Level the bed")
+        self.novice_level_btn.setToolTip(
+            "Find the Arduino, lay out a probe grid over the board, and measure "
+            "the surface height at each point.")
+        self.novice_level_btn.clicked.connect(self._on_novice_level)
+        _nl.addWidget(self.novice_level_btn)
+        l_level.addWidget(self._novice(nov_level))
+
         l_level.addWidget(self._pro(level_group))
         l_level.addStretch(1)
 
@@ -1481,6 +1769,7 @@ class MainWindow(QMainWindow):
         self.preview.on_move_delta = self._on_move_delta
         self.preview.on_jog_to = self._on_jog_to
         self.preview.on_align_pick = self._on_align_pick
+        self.preview.on_screw_pick = self._on_screw_pick
         self.preview.on_pin_moved = self._on_fid_pin_moved
         self.preview.on_jog_step = self._on_jog_step
         # The panel collapse toggle lives on the viewer's control bar.
@@ -1511,14 +1800,17 @@ class MainWindow(QMainWindow):
         _mb.addWidget(self.guide_btn)
         _mb.addWidget(self._pro(self.dro_label))
         _mb.addWidget(self._pro(self.touch_label))
+        _mb.addWidget(self._pro(self.machine_label))
         _mb.addStretch(1)
-        _mb.addWidget(self._pro(self.trail_chk))
-        _mb.addWidget(self._pro(self.trail_clear_btn))
+        # What is left here is what you reach for with a hand on the machine:
+        # move Z, find the surface, spindle, hold, and stop. Everything else
+        # moved to the Machine menu — the strip used to run past the window
+        # edge, which hid Connect and STOP.
+        _mb.addWidget(self._pro(self._zjog_row))
         _mb.addWidget(self._pro(self.zero_btn))
-        _mb.addWidget(self._pro(self.machine_zero_btn))
-        _mb.addWidget(self._pro(self.stream_btn))
-        _mb.addWidget(self._pro(self.align_btn))
-        _mb.addWidget(self._pro(self.jog_chk))
+        _mb.addWidget(self._pro(self.spindle_btn))
+        _mb.addWidget(self._pro(self.pause_btn))
+        _mb.addWidget(self._pro(self.resume_btn))
         _mb.addWidget(self._pro(QLabel("port")))
         _mb.addWidget(self._pro(self.level_port_combo))
         _mb.addWidget(self._pro(self.connect_btn))
@@ -1563,6 +1855,8 @@ class MainWindow(QMainWindow):
         self.guide_double_btn.clicked.connect(lambda: self.tour.start_branch("Double-sided"))
         self.guide_level_btn.clicked.connect(lambda: self.tour.start_branch("Bed leveling"))
         self.guide_rework_btn.clicked.connect(lambda: self.tour.start_branch("Rework"))
+        self._build_machine_menu()       # the dock's overflow lives here
+        self._build_zjog_shortcuts()     # PageUp / PageDown move Z
         self._build_help_menu()          # after the tour: it links to it
 
     _MIN_PREVIEW = 380          # px of preview to keep when a page is very wide
@@ -1601,6 +1895,28 @@ class MainWindow(QMainWindow):
         self.state.drill = self.forms["drill"].value()
         self.state.cutout = self.forms["cutout"].value()
         self.state.set_placement(self.place_x_spin.value(), self.place_y_spin.value())
+        self._apply_screw_travel_z()
+
+    def _apply_screw_travel_z(self):
+        """Raise every operation's travel height clear of the screw heads.
+
+        Done here, in _sync_state, because that is the single point every path
+        goes through — preview, estimate and export alike. Setting it on the
+        forms instead would let one path miss it, and the one that missed it
+        would be the one that drives the machine.
+
+        Only ever raises. Someone who has deliberately set a higher travel for
+        their own reasons keeps it.
+        """
+        if not self.screws_chk.isChecked():
+            return
+        from dataclasses import replace
+        from gerber2rml.engine.spoilboard import min_travel_z
+        z = min_travel_z()
+        for attr in ("trace", "drill", "cutout"):
+            job = getattr(self.state, attr)
+            if job.travel_z < z:
+                setattr(self.state, attr, replace(job, travel_z=z))
 
     def _on_mirror_toggled(self):
         if self.state.gerber_dir is not None:
@@ -1727,6 +2043,16 @@ class MainWindow(QMainWindow):
         self._pro_items.append((widget, form))
         return widget
 
+    def _novice(self, widget, form=None):
+        """Tag ``widget`` as Novice-only - the mirror of :meth:`_pro`.
+
+        Used for guided stand-ins: one button that wraps a professional
+        workflow, shown exactly when the workbench version is hidden.
+        """
+        widget.setProperty("noviceOnly", True)
+        self._novice_items.append((widget, form))
+        return widget
+
     def _build_mode_menu(self):
         """The Mode menu. Deliberately a plain menu item, not a password: this
         manages how much UI a beginner faces, it does not defend anything."""
@@ -1781,6 +2107,47 @@ class MainWindow(QMainWindow):
         for root in kicadplugin.config_roots():
             dirs.extend(kicadplugin.plugin_dirs(root))
         return dirs
+
+    def _build_zjog_shortcuts(self):
+        """PageUp/PageDown nudge Z by the selected step.
+
+        Window-level shortcuts rather than button focus: you are looking at the
+        bit, not at the screen, and having to click into the right widget first
+        is exactly the friction that makes people reach for VPanel instead.
+        """
+        from PySide6.QtGui import QKeySequence
+        for key, direction in ((Qt.Key_PageUp, +1), (Qt.Key_PageDown, -1)):
+            act = QAction(self)
+            act.setShortcut(QKeySequence(key))
+            act.setShortcutContext(Qt.ApplicationShortcut)
+            act.triggered.connect(lambda _c=False, d=direction: self._on_jog_z(d))
+            self.addAction(act)
+
+    def _build_machine_menu(self):
+        """The machine controls that do not need to be under your hand.
+
+        The dock strip had grown to sixteen widgets and ran off the right-hand
+        edge of the window — taking Connect and STOP with it, which is the worst
+        possible thing to lose. The dock now keeps only what you reach for while
+        standing at the mill (move Z, find the surface, spindle, hold, stop) and
+        everything else lives here. A menu, not the settings panel, because that
+        panel belongs to one page and the machine does not.
+        """
+        menu = self.menuBar().addMenu("&Machine")
+        self._machine_menu = menu
+        menu.addAction(self.jog_chk)
+        menu.addAction(self.align_btn)
+        menu.addSeparator()
+        menu.addAction(self.machine_zero_btn)
+        menu.addAction(self.view_btn)
+        menu.addSeparator()
+        menu.addAction(self.trail_chk)
+        menu.addAction(self.trail_clear_btn)
+        menu.addSeparator()
+        menu.addAction(self.stream_btn)
+        menu.addAction(self.machinetest_btn)
+        # Novice sends files from VPanel and never opens this.
+        menu.menuAction().setVisible(uimode.is_pro())
 
     def _build_help_menu(self):
         """A Help menu whose first item is the guide itself.
@@ -1845,6 +2212,223 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if ans == QMessageBox.Yes:
             QDesktopServices.openUrl(QUrl(result.url))
+
+    def _update_hole_grid_overlay(self, show):
+        """Draw the spoilboard's own hole grid, or clear it.
+
+        Shown with the bed because the holes ARE the bed - the point is to see
+        where the copper can be bolted down while positioning it, before any
+        screw hole is committed to. Every hole is drawn, including the outer
+        mounting ring: this is a picture of the plate, not of the subset a
+        screw may use.
+        """
+        from gerber2rml.engine import spoilboard as sb
+        if not show:
+            self.preview.set_hole_grid(None)
+            return
+        g = sb.measured_grid()
+        pts = [g.centre(i, j) for j in range(g.ny) for i in range(g.nx)]
+        self.preview.set_hole_grid(pts, g.hole_diameter)
+
+    # ---- screw fixture: bolt the copper to the plate ----------------------
+    def _stock_rect(self):
+        """The copper's footprint in machine mm: (x0, y0, w, h)."""
+        return (self.stock_x_spin.value(), self.stock_y_spin.value(),
+                self.stock_w_spin.value(), self.stock_h_spin.value())
+
+    def _screw_keepout(self):
+        """Everything a screw head has to stay clear of.
+
+        Not just the board outline. The CUT-OUT pass runs AROUND the outside of
+        it — the path centreline sits at ``outline.buffer(bit_r)`` and the
+        cutter sweeps a further ``bit_r`` beyond that — so a screw sitting just
+        past the outline is still in the cutter's way, and the outline alone
+        would happily offer it.
+
+        Built from the real cut-out toolpaths rather than an assumed offset, so
+        it cannot drift if the cut-out engine changes how far out it runs, how
+        it handles tabs, or how it leads in.
+        """
+        from shapely.geometry import LineString
+        from shapely.ops import unary_union
+        outline = self._display_outline()
+        if outline is None or outline.is_empty:
+            return None
+
+        job = self.forms["cutout"].value()      # read directly: no sync ordering
+        parts = [outline]
+        try:
+            from gerber2rml.engine.cutout import cut_outline
+            r = max(job.bit_diameter, 0.1) / 2.0
+            for tp in cut_outline(outline, job):
+                pts = [(m.x, m.y) for m in tp if not m.rapid]
+                if len(pts) >= 2:
+                    parts.append(LineString(pts).buffer(r))
+        except Exception:
+            # Geometric equivalent, if the engine refuses this outline: the
+            # swept band reaches one full bit diameter beyond the edge.
+            parts.append(outline.buffer(max(job.bit_diameter, 0.1)))
+        return unary_union(parts)
+
+    def _screw_points(self):
+        """Where the M4 screws should go for the current placement.
+
+        The design outline is the keep-out: screws live on the copper AROUND
+        the board, never under it. May legitimately return fewer than four,
+        or none at all.
+        """
+        from gerber2rml.engine import spoilboard as sb
+        from gerber2rml.backends import SRM20_BED
+        if self._manual_screws is not None:
+            return list(self._manual_screws)
+        return sb.pick_fasteners(sb.measured_grid(), self._stock_rect(),
+                                 SRM20_BED, keepout=self._screw_keepout())
+
+    def _on_screw_pick_toggled(self, on):
+        self.preview.set_screw_pick(on)
+        if on:
+            self.screws_chk.setChecked(True)      # you are choosing screw holes
+            self.statusBar().showMessage(
+                "Click a hole on the bed to use it as a fastening point; click "
+                "it again to drop it. Press Auto to go back to the suggestion.",
+                15000)
+
+    def _on_screws_auto(self):
+        """Throw away hand-picked holes and return to the automatic choice."""
+        self._manual_screws = None
+        self._update_screw_overlay()
+        self.generate_preview()
+        self.statusBar().showMessage(
+            f"Back to the automatic choice: {len(self._screw_points())} screws.",
+            8000)
+
+    def _on_screw_pick(self, x, y):
+        """Toggle the grid hole nearest the click as a fastening point.
+
+        Starts from whatever is currently shown, so the first click EDITS the
+        app's suggestion rather than clearing the board — otherwise wanting to
+        move one screw would mean placing all four by hand.
+
+        Any grid hole may be chosen, including one the automatic pass rejected.
+        The operator can see the bed and may have a reason; Diagnostics reports
+        a bad choice rather than refusing to make it.
+        """
+        from gerber2rml.engine import spoilboard as sb
+        g = sb.measured_grid()
+        best, best_d2 = None, (g.pitch / 2.0) ** 2
+        for j in range(g.ny):
+            for i in range(g.nx):
+                hx, hy = g.centre(i, j)
+                d2 = (hx - x) ** 2 + (hy - y) ** 2
+                if d2 <= best_d2:
+                    best, best_d2 = (hx, hy), d2
+        if best is None:
+            self.statusBar().showMessage(
+                "No spoilboard hole there — click closer to one.", 5000)
+            return
+
+        current = list(self._screw_points()) if self._manual_screws is None             else list(self._manual_screws)
+        key = (round(best[0], 3), round(best[1], 3))
+        kept = [p for p in current if (round(p[0], 3), round(p[1], 3)) != key]
+        if len(kept) == len(current):
+            kept.append(best)
+            verb = "added"
+        else:
+            verb = "removed"
+        self._manual_screws = kept
+        self._update_screw_overlay()
+        self.generate_preview()
+        self.statusBar().showMessage(
+            f"Screw {verb} at X {best[0]:.2f} Y {best[1]:.2f} — "
+            f"{len(kept)} hand-picked.", 8000)
+
+    def _update_screw_overlay(self):
+        """Draw the screw heads on the preview, or clear them."""
+        from gerber2rml.engine import spoilboard as sb
+        if not self.screws_chk.isChecked():
+            self.preview.set_screws(None)
+            return
+        self.preview.set_screws(self._screw_points(), sb.M4_HEAD_D)
+
+    def _on_screws_toggled(self, on):
+        """Ticking this changes the travel height, so say so rather than let it
+        happen silently — a quietly altered Z is exactly the kind of thing that
+        is impossible to debug at the machine."""
+        from gerber2rml.engine.spoilboard import min_travel_z, M4_HEAD_H
+        self._update_screw_overlay()
+        self.generate_preview()
+        if on and not self._screw_points():
+            # Silence here is confusing: the box is ticked, nothing appears,
+            # and the usual reason is that nobody has said how big the copper
+            # is yet (the size defaults to 0 x 0).
+            w, h = self.stock_w_spin.value(), self.stock_h_spin.value()
+            why = ("set the copper Size first" if w <= 0 or h <= 0
+                   else "no grid hole is clear of the design with the whole "
+                        "head on copper")
+            self.statusBar().showMessage(
+                f"Travel height raised, but no screw positions yet - {why}.",
+                12000)
+            return
+        if on:
+            self.statusBar().showMessage(
+                f"Screws in: travel height raised to {min_travel_z():g} mm on "
+                f"every operation, so rapids clear the {M4_HEAD_H:g} mm heads.",
+                12000)
+        else:
+            self.statusBar().showMessage("Screws off: travel height back to "
+                                         "the values in Job parameters.", 8000)
+
+    def _on_export_screw_fixture(self):
+        """Write the drilling program for the screw holes, plus its procedure."""
+        from gerber2rml.engine import spoilboard as sb
+        if self.state.board is None:
+            QMessageBox.information(
+                self, "Load a board first",
+                "The screw positions depend on where the design sits on the "
+                "copper, so load and place a board first.")
+            return
+
+        points = self._screw_points()
+        if not points:
+            QMessageBox.warning(
+                self, "Nowhere to put a screw",
+                "No grid hole is both clear of the design and far enough from "
+                "the edge for the whole screw head to land on copper. Use a "
+                "larger piece of copper, or move the design so it leaves a "
+                "margin over the spoilboard grid.")
+            return
+        spread = sb.spread_problem(points, self._stock_rect())
+        if spread and QMessageBox.question(
+                self, "Screws cannot hold it flat", spread
+                + "  Export anyway?") != QMessageBox.Yes:
+            return
+        if len(points) < 4:
+            if QMessageBox.question(
+                    self, "Only " + str(len(points)) + " screw positions",
+                    "Only " + str(len(points)) + " grid holes work for this "
+                    "placement. Fewer screws leave part of the copper free to "
+                    "lift and chatter. Export anyway?") != QMessageBox.Yes:
+                return
+
+        out = self._pick_out_dir()
+        if not out:
+            return
+        out = Path(out)
+        backend = BACKENDS[self.machine_combo.currentText()]
+        stem = f"{self.state.name}_screws"
+        paths = sb.fastener_toolpaths(
+            points, copper_thickness=self.thickness_spin.value())
+        nc = out / f"{stem}{backend.ext}"
+        nc.write_text(backend.render(paths, xy_feed=4.0, plunge_feed=1.0))
+        (out / f"{stem}.txt").write_text(
+            sb.procedure(points, sb.measured_grid()), encoding="utf-8")
+
+        self.screws_chk.setChecked(True)      # they are about to be in
+        QMessageBox.information(
+            self, "Screw fixture exported",
+            f"Wrote {nc.name} and {stem}.txt to: {out}   —   Run it FIRST, screw "
+            f"the copper down, re-zero Z, then run the job. Travel height is now "
+            f"{sb.min_travel_z():g} mm so rapids clear the heads.")
 
     def _on_export_bed_fixture(self):
         """Write the pin-hole program and the procedure that goes with it.
@@ -2033,14 +2617,18 @@ class MainWindow(QMainWindow):
         """
         pro = uimode.is_pro()
 
-        for widget, form in self._pro_items:
-            if form is not None:
-                try:
-                    form.setRowVisible(widget, pro)      # Qt 6.4+
-                except (AttributeError, TypeError):
-                    widget.setVisible(pro)               # older Qt: field only
-            else:
-                widget.setVisible(pro)
+        def _show(items, visible):
+            for widget, form in items:
+                if form is not None:
+                    try:
+                        form.setRowVisible(widget, visible)   # Qt 6.4+
+                    except (AttributeError, TypeError):
+                        widget.setVisible(visible)            # older Qt: field only
+                else:
+                    widget.setVisible(visible)
+
+        _show(self._pro_items, pro)
+        _show(self._novice_items, not pro)
 
         for row in range(self.sidebar.count()):
             hidden = (not pro) and row in self._PRO_STEPS
@@ -2447,6 +3035,7 @@ class MainWindow(QMainWindow):
         self.preview.set_pin_drag(False)      # only the DS X-ray view re-enables it
         bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
         self.preview.set_bed(bed)
+        self._update_hole_grid_overlay(bed is not None)
         oxy, holes = self._snap_geometry()
         self.preview.set_snap_geometry(oxy, holes)
         self.preview.set_board_outline(oxy)        # draw the board edge (single-sided)
@@ -2876,10 +3465,13 @@ class MainWindow(QMainWindow):
 
     def _start_dro(self):
         port = self.level_port_combo.currentText().strip() or "COM5"
-        self._dro = _DROPoller(port)
+        from gerber2rml.engine.spi_probe import DEFAULT_FRAME_US
+        self._dro = _DROPoller(port, frame_us=DEFAULT_FRAME_US)
         self._dro.position.connect(self._on_position)
+        self._dro.status.connect(self._on_machine_status)
         self._dro.touch_done.connect(self._on_touch_done)
         self._dro.zero_done.connect(self._on_zero_done)
+        self._dro.spindle_done.connect(self._on_spindle_done)
         self._dro.failed.connect(self._on_dro_failed)
         self._dro.start()
         self.connect_btn.setText("Disconnect")
@@ -2888,6 +3480,9 @@ class MainWindow(QMainWindow):
         self.machine_zero_btn.setEnabled(True)
         self.stream_btn.setEnabled(True)
         self.align_btn.setEnabled(True)
+        for w in (self.spindle_btn, self.pause_btn, self.resume_btn,
+                  self.view_btn, self.zjog_up_btn, self.zjog_down_btn):
+            w.setEnabled(True)
         if self._sim_window is not None:
             self._sim_window.set_live_enabled(True)
         self.dro_label.setText(f"●  connecting on {port}…")
@@ -2911,6 +3506,14 @@ class MainWindow(QMainWindow):
         self.zero_btn.setEnabled(False)
         self.machine_zero_btn.setEnabled(False)
         self.stream_btn.setEnabled(False)
+        for w in (self.spindle_btn, self.pause_btn, self.resume_btn,
+                  self.view_btn, self.zjog_up_btn, self.zjog_down_btn):
+            w.setEnabled(False)
+        self.spindle_btn.blockSignals(True)   # the link is gone; the button must
+        self.spindle_btn.setChecked(False)    # not keep claiming it is running
+        self.spindle_btn.blockSignals(False)
+        self.machine_label.setText("")
+        self._machine_status = {}
         self.align_btn.setChecked(False)      # keep the trim value; disarm the pick
         self.align_btn.setEnabled(False)
         self.preview.set_align_pick(False)
@@ -3262,9 +3865,11 @@ class MainWindow(QMainWindow):
         elif box.clickedButton() is wet:
             if QMessageBox.question(
                     self, "Wet run — really cut?",
-                    "Spindle running (VPanel)? Z zeroed on the copper? Dry run "
-                    "verified on THIS job?\n\nThe bit will plunge to cut depth "
-                    "on the first move.") != QMessageBox.Yes:
+                    "Z zeroed on the copper? Dry run verified on THIS job?\n\n"
+                    "SRM-CAM will START THE SPINDLE itself and stop it at the "
+                    "end. Its SPEED still comes from VPanel's spindle slider — "
+                    "set that before you continue.\n\nThe bit will plunge to "
+                    "cut depth on the first move.") != QMessageBox.Yes:
                 return
             dry_run = False
         else:
@@ -3275,7 +3880,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Streaming {n_moves} moves ({'DRY' if dry_run else 'WET'}) — "
             f"press STOP or close the lid to abort…")
-        self._stream_worker = _StreamWorker(port, toolpaths, dry_run=dry_run)
+        # A wet run starts and stops the spindle itself (proven over SPI); a dry
+        # run never spins the tool at all.
+        self._stream_worker = _StreamWorker(
+            port, toolpaths, dry_run=dry_run,
+            spindle_rpm=0 if dry_run else self._SPINDLE_RPM)
         self._stream_worker.progress.connect(
             lambda i, n: self.run_bar.setValue(int(round(100 * i / max(n, 1)))))
         self._stream_worker.done.connect(self._on_stream_done)
@@ -3291,6 +3900,125 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Stream stopped — tool lifted", 10000)
         else:
             self.statusBar().showMessage("Stream complete", 10000)
+
+    _SPINDLE_RPM = 3000        # any non-zero value starts it; the machine
+                               # ignores the number (speed comes from VPanel)
+
+    def _untick_spindle(self):
+        """Un-tick without re-entering the handler — otherwise every refused
+        start would turn round and send a spurious 'stop' to the machine."""
+        self.spindle_btn.blockSignals(True)
+        self.spindle_btn.setChecked(False)
+        self.spindle_btn.blockSignals(False)
+
+    def _on_spindle_toggled(self, on):
+        """Start/stop the spindle over the machine link."""
+        if self._dro is None:
+            self._untick_spindle()
+            return
+        if on:
+            if self._machine_status.get("cover"):
+                self._untick_spindle()
+                QMessageBox.warning(
+                    self, "Lid is open",
+                    "The machine reports its cover open. Close it before "
+                    "starting the spindle.")
+                return
+            if QMessageBox.question(
+                    self, "Start the spindle?",
+                    "The tool will start turning at whatever speed VPanel's "
+                    "spindle slider is set to.\n\nEveryone clear of the "
+                    "machine and the lid shut?") != QMessageBox.Yes:
+                self._untick_spindle()
+                return
+        self._dro.request_spindle(self._SPINDLE_RPM if on else 0)
+        self.statusBar().showMessage(
+            "Starting the spindle…" if on else "Stopping the spindle…", 5000)
+
+    def _on_spindle_done(self, ok, rpm):
+        if not ok:
+            self._untick_spindle()
+            QMessageBox.warning(
+                self, "Spindle refused",
+                "The machine would not start the spindle. The lid must be "
+                "shut, and the bit must not be resting on the probe-wired "
+                "plate.")
+
+    def _on_jog_z(self, direction):
+        """Move Z by one step. ``direction`` is +1 (up, away) or -1 (down)."""
+        if self._dro is None:
+            return
+        step_mm = self.zjog_step.currentData()
+        if direction < 0 and self._touching:
+            # The probe already says metal-to-metal. Going further down drives
+            # the bit into the work, so refuse rather than trust the operator
+            # to have noticed the indicator.
+            QMessageBox.warning(
+                self, "Bit is touching",
+                "The probe reports the bit already touching the plate. Raise "
+                "it before jogging further down.")
+            return
+        self._dro.request_jog_z(int(round(direction * step_mm * 1000)))
+        self.statusBar().showMessage(
+            f"Z {'up' if direction > 0 else 'down'} {step_mm:g} mm", 3000)
+
+    def _on_jobctl(self, what):
+        # During a stream the worker owns the serial port, not the DRO poller,
+        # so pause/resume has to go through it or it would go nowhere.
+        sw = getattr(self, "_stream_worker", None)
+        if sw is not None and sw.isRunning() and what in ("pause", "resume"):
+            sw.set_paused(what == "pause")
+            self.statusBar().showMessage(
+                "Run paused — press Resume to carry on" if what == "pause"
+                else "Resuming the run…", 8000)
+            return
+        if self._dro is None:
+            return
+        self._dro.request_jobctl(what)
+        self.statusBar().showMessage(
+            {"pause": "Pausing the machine…",
+             "resume": "Resuming…",
+             "view": "Moving the head to the view position…"}[what], 6000)
+
+    def _on_machine_status(self, st):
+        """Live machine status: lid, spindle, error, fault."""
+        self._machine_status = st
+        flags = []
+        if st.get("cover"):
+            flags.append("LID OPEN")
+        if st.get("spindle"):
+            flags.append(f"spindle {st.get('rpm', 0)}")
+        if st.get("paused"):
+            flags.append("paused")
+        if st.get("error"):
+            flags.append("ERROR")
+        if st.get("fatal"):
+            flags.append("FAULT")
+        self.machine_label.setText("  ".join(flags))
+        # Red for anything that stops work, amber for a turning tool.
+        bad = st.get("cover") or st.get("error") or st.get("fatal")
+        colour = "#e08585" if bad else ("#e0c185" if st.get("spindle") else "#888")
+        self.machine_label.setStyleSheet(
+            f"color:{colour}; font-family:Consolas,monospace; "
+            f"font-size:13px; padding:4px 10px;")
+        # Keep the spindle button honest about what the machine is doing, even
+        # when the spindle was started from VPanel rather than from here.
+        if self.spindle_btn.isChecked() != bool(st.get("spindle")):
+            self.spindle_btn.blockSignals(True)
+            self.spindle_btn.setChecked(bool(st.get("spindle")))
+            self.spindle_btn.blockSignals(False)
+
+    def _on_machine_test(self):
+        """Open the capability tester. It owns the serial link for its lifetime,
+        so the DRO poller has to let go of the port first and is restored after."""
+        from gerber2rml.gui.machinetest import MachineTestDialog
+        port = self.level_port_combo.currentText().strip() or "COM5"
+        was_on = self._pause_dro()
+        try:
+            MachineTestDialog(port, self).exec()
+        finally:
+            if was_on:
+                self._start_dro()
 
     def _on_machine_zero(self):
         """Verified touch-off, then the firmware writes origin Z on the surface."""
@@ -3375,6 +4103,92 @@ class MainWindow(QMainWindow):
         points = [(r, round((x - x0) * 1000), round((y - y0) * 1000))
                   for (r, x, y, _h) in sel]
         return points, x0, y0
+
+    def _autoselect_port(self):
+        """Point the port selector at whatever looks like the Arduino.
+
+        Returns True when a board was found. Only CHANGES the selection if the
+        current one does not look like a board, so a deliberate override in
+        Professional mode is never silently overwritten.
+        """
+        from gerber2rml.engine.spi_probe import best_port, rank_ports
+        try:
+            import serial.tools.list_ports
+            ports = [(pt.device, pt.hwid)
+                     for pt in serial.tools.list_ports.comports()]
+        except Exception:
+            ports = []
+
+        current = self.level_port_combo.currentText().strip()
+        if any(dev == current and why != "unknown device"
+               for dev, why in rank_ports(ports)):
+            return True
+
+        found = best_port(ports)
+        if found is None:
+            QMessageBox.warning(
+                self, "No Arduino found",
+                "Nothing plugged into this PC looks like the SRM-20 probe board. "
+                "Check the USB cable, and close the Arduino IDE Serial Monitor "
+                "if it is open - only one program can hold the port at a time.")
+            return False
+        self.level_port_combo.setCurrentText(found)
+        return True
+
+    def _on_novice_grid_changed(self, idx):
+        """Translate the plain-language detail choice into nx/ny."""
+        n = (3, 4, 5)[max(0, min(2, idx))]
+        self.level_nx_spin.setValue(n)
+        self.level_ny_spin.setValue(n)
+        if self.level_table.rowCount():
+            self._on_novice_show_probes()      # keep what is drawn honest
+
+    def _on_novice_show_probes(self):
+        """Lay out the probe grid and draw it on the preview. Moves nothing.
+
+        Without this a beginner has no way to check that the probe points land
+        on their copper before a bit starts tapping. The grid is laid over the
+        placed design, so this doubles as a check that the design is actually
+        where they think it is.
+        """
+        if self.state.board is None:
+            QMessageBox.information(
+                self, "Load a board first",
+                "The probe grid is laid out over your board, so load and place "
+                "one before checking where it will measure.")
+            return
+        self._on_build_level_grid()
+        self.level_gridshow_chk.setChecked(True)
+        self._update_grid_overlay()
+        self.statusBar().showMessage(
+            f"{self.level_table.rowCount()} probe points drawn on the preview - "
+            f"check they land on your copper, then Level the bed.", 12000)
+
+    def _on_novice_level(self):
+        """One action for "make the cut depth follow the surface".
+
+        Deliberately a thin wrapper over the professional path, not a second
+        probe implementation: find the port, lay out a grid, hand off to
+        :meth:`_on_probe_spi`. Same worker, same firmware protocol, same
+        confirmation before anything moves, same results. A beginner simply
+        never has to assemble those three steps - or know that the other COM
+        port on this PC is a motherboard feature that will never be a board.
+        """
+        if not self.state.gerber_dir:
+            QMessageBox.information(
+                self, "Load a board first",
+                "Bed leveling measures the surface under your board, so it "
+                "needs a board loaded and placed on the bed first.")
+            return
+        if not self._autoselect_port():
+            return
+        if not self.level_table.rowCount():
+            self._on_build_level_grid()
+        # Draw the points before the confirmation dialog, so "probe 16 points?"
+        # is a question about something visible rather than a number.
+        self.level_gridshow_chk.setChecked(True)
+        self._update_grid_overlay()
+        self._on_probe_spi()
 
     def _on_probe_spi(self):
         """Auto-probe the grid over the SPI link and fill the Z column."""
@@ -3858,6 +4672,15 @@ class MainWindow(QMainWindow):
             "stock": {"w": self.stock_w_spin.value(), "h": self.stock_h_spin.value(),
                       "x": self.stock_x_spin.value(), "y": self.stock_y_spin.value(),
                       "show": self.stock_show_chk.isChecked()},
+            # Screw positions are part of the SETUP, not something to re-derive:
+            # once the holes are drilled in a piece of copper they are a fact
+            # about it, and hand-picked ones cannot be recovered by re-running
+            # the automatic choice. `manual` stays null while the choice is
+            # automatic, so reloading an untouched setup still tracks the
+            # design if it moves.
+            "screws": {"on": self.screws_chk.isChecked(),
+                       "manual": ([list(p) for p in self._manual_screws]
+                                  if self._manual_screws is not None else None)},
             "level": {"nx": self.level_nx_spin.value(), "ny": self.level_ny_spin.value(),
                       "apply": self.level_chk.isChecked(), "rows": rows},
         }
@@ -3947,6 +4770,13 @@ class MainWindow(QMainWindow):
                       (self.stock_x_spin, "x"), (self.stock_y_spin, "y")):
             _spin(sp, st.get(k, 0.0))
         _chk(self.stock_show_chk, st.get("show", False))
+
+        sc = d.get("screws", {})
+        manual = sc.get("manual")
+        self._manual_screws = ([tuple(p) for p in manual]
+                               if manual is not None else None)
+        _chk(self.screws_chk, sc.get("on", False))
+        self._update_screw_overlay()
 
         lv = d.get("level", {})
         _spin(self.level_nx_spin, lv.get("nx", 3))
@@ -4147,6 +4977,7 @@ class MainWindow(QMainWindow):
                            design_bounds=self._diag_bounds(), surface_z=self._z_zero,
                            holes=holes, bit_diameter=self.state.drill.bit_diameter,
                            trace=self.state.trace, leveled=leveled)
+        checks += self._screw_checks()
         lvl = worst(checks)
         box = QMessageBox(self)
         box.setWindowTitle("Pre-flight diagnostics")
@@ -4158,6 +4989,127 @@ class MainWindow(QMainWindow):
         box.setInformativeText(format_report(checks))
         box.exec()
         self.statusBar().showMessage(f"Diagnostics: {lvl.upper()}", 8000)
+
+    def _pass_sweeps(self):
+        """What each pass actually removes, as ``{op: geometry}`` or None.
+
+        The live overlay judges screws against the outline plus the cut-out
+        band, which is cheap and right in practice. This is the exact version:
+        every pass's real toolpaths, each buffered by its own tool radius, so
+        nothing rests on "inside the outline" standing in for "where the traces
+        and drill go". It runs the toolpath engines, so it belongs in
+        pre-flight rather than in something that recomputes while the copper is
+        being dragged about.
+        """
+        from shapely.geometry import LineString, Point
+        from shapely.ops import unary_union
+        sweeps = {}
+        for op in _OPS:
+            job = self._job_for_op(op)
+            # a V-bit's cut width depends on depth, so ask the job, not the shank
+            width = (job.effective_diameter() if hasattr(job, "effective_diameter")
+                     else job.bit_diameter)
+            r = max(width, 0.1) / 2.0
+            parts = []
+            try:
+                paths = self._toolpaths_for(op)
+            except Exception:
+                sweeps[op] = None       # a pass that will not build cannot be checked
+                continue
+            for tp in paths:
+                pts = [(m.x, m.y) for m in tp if not m.rapid]
+                if len(pts) >= 2:
+                    parts.append(LineString(pts).buffer(r))
+                elif pts:
+                    parts.append(Point(pts[0]).buffer(r))
+            sweeps[op] = unary_union(parts) if parts else None
+        return sweeps
+
+    def _screw_toolpath_check(self, points):
+        """Every screw head against every pass. Exact, and the last word."""
+        from shapely.geometry import Point
+        from gerber2rml.engine.diagnostics import Check
+        from gerber2rml.engine import spoilboard as sb
+        if not points or self.state.board is None:
+            return []
+        try:
+            sweeps = self._pass_sweeps()
+        except Exception as e:
+            return [Check("warn", "Screw heads vs toolpaths",
+                          f"Could not build the toolpaths to check: {e}")]
+
+        hits = []
+        for (x, y) in points:
+            head = Point(x, y).buffer(sb.M4_HEAD_D / 2.0)
+            for op, geom in sweeps.items():
+                if geom is not None and geom.intersects(head):
+                    hits.append(f"X {x:.1f} Y {y:.1f} is in the {op} path")
+        if hits:
+            return [Check("fail", "Screw heads vs toolpaths",
+                          "; ".join(hits) + " — the cutter would hit the screw.")]
+        checked = ", ".join(op for op, g in sweeps.items() if g is not None)
+        return [Check("ok", "Screw heads vs toolpaths",
+                      f"No pass reaches a screw head (checked: {checked}).")]
+
+    def _screw_checks(self):
+        """Pre-flight checks that only apply when the copper is screwed down.
+
+        The travel-height one exists because that failure is invisible to every
+        other check: the XY is right, the depths are right, the preview is
+        right, and the spindle drives into a screw head on the first traverse.
+        The screws are not in the geometry, so no geometric check can find it.
+        """
+        from gerber2rml.engine.diagnostics import Check
+        from gerber2rml.engine import spoilboard as sb
+        if not self.screws_chk.isChecked():
+            return []
+
+        out = []
+        lowest = min(j.travel_z for j in (self.state.trace, self.state.drill,
+                                          self.state.cutout))
+        problem = sb.travel_z_problem(lowest)
+        if problem:
+            out.append(Check("fail", "Travel height vs screw heads", problem))
+        else:
+            out.append(Check(
+                "ok", "Travel height vs screw heads",
+                f"Rapids at {lowest:g} mm clear the {sb.M4_HEAD_H:g} mm heads."))
+
+        points = self._screw_points()
+        if not points:
+            out.append(Check(
+                "fail", "Screw positions",
+                "No grid hole is clear of the design with the whole head on "
+                "copper. The copper cannot be screwed down at this placement."))
+        elif len(points) < 4:
+            out.append(Check(
+                "warn", "Screw positions",
+                f"Only {len(points)} of 4 screw positions are usable — part of "
+                f"the copper is free to lift and chatter."))
+        else:
+            out.append(Check("ok", "Screw positions",
+                             "4 screw positions, spread across the copper."))
+
+        spread = sb.spread_problem(points, self._stock_rect())
+        if spread:
+            out.append(Check("warn", "Screw spread", spread))
+
+        out += self._screw_toolpath_check(points)
+
+        if self._manual_screws is not None:
+            # Hand-picked holes are allowed anywhere on the grid, so this is
+            # where a questionable choice gets reported instead of refused.
+            stock, keep = self._stock_rect(), self._screw_keepout()
+            bad = [(pt, sb.point_problem(pt, stock, keep)) for pt in points]
+            bad = [(pt, why) for pt, why in bad if why]
+            if bad:
+                out.append(Check(
+                    "warn", "Hand-picked screw positions",
+                    "; ".join(f"X {x:.1f} Y {y:.1f} {why}" for (x, y), why in bad)))
+            else:
+                out.append(Check("ok", "Hand-picked screw positions",
+                                 f"{len(points)} chosen by hand, all usable."))
+        return out
 
     def _on_export_image(self):
         if self.state.board is None:
@@ -4374,6 +5326,10 @@ class MainWindow(QMainWindow):
     # ---- copper stock alignment -----------------------------------------
     def _update_stock_preview(self, *_):
         """Push the measured copper rectangle to the preview (or hide it)."""
+        # Screws first, and unconditionally: they follow the copper's position
+        # but are not part of the stock OUTLINE, so hiding the outline must not
+        # hide where the machine is about to drill.
+        self._update_screw_overlay()
         if not self.stock_show_chk.isChecked():
             self.preview.set_stock(None)
             return
@@ -4381,10 +5337,26 @@ class MainWindow(QMainWindow):
                                 self.stock_w_spin.value(), self.stock_h_spin.value()))
 
     def _on_stock_corner_from_tool(self):
-        """Capture the live tool XY as the copper's front-left corner."""
+        """Capture the live tool XY as the copper's front-left corner.
+
+        Connects on demand. A beginner does not have the Connect button (it
+        lives in the professional machine dock), and telling them to press
+        something they cannot see would make this unusable in Novice — which
+        is the mode that needs it most, because the alternative is typing
+        machine coordinates by hand.
+        """
         if self._tool_xyz is None:
-            self.statusBar().showMessage(
-                "Connect the machine and jog the bit to the copper corner first", 6000)
+            if self._dro is None:
+                if not self._autoselect_port():
+                    return
+                self._start_dro()
+                self.statusBar().showMessage(
+                    "Connecting… jog the bit to the front-left corner of the "
+                    "copper, then press Corner = tool again.", 12000)
+            else:
+                self.statusBar().showMessage(
+                    "Waiting for a position from the machine — jog the bit, "
+                    "then press Corner = tool again.", 8000)
             return
         x, y, _z = self._tool_xyz
         self.stock_x_spin.setValue(max(0.0, x))     # valueChanged -> _update_stock_preview

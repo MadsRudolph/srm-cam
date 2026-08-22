@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSlider,
                                QPushButton, QLabel)
 from PySide6.QtCore import Qt
 from matplotlib.figure import Figure
-from matplotlib.collections import LineCollection
+from matplotlib.collections import LineCollection, PatchCollection
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
@@ -131,6 +131,17 @@ class PreviewCanvas(QWidget):
         # None = hidden.
         self._probe_grid = None
 
+        # Screw-fixture positions: where the copper gets bolted to the plate.
+        # Drawn at the HEAD diameter rather than as dots, because the head is
+        # what the cutter has to avoid - a 4 mm hole with an 8 mm head on top
+        # looks harmless as a dot and is not.
+        self._screws = None
+
+        # The spoilboard's own hole grid, drawn true-size with the bed. Seeing
+        # it is what lets someone position the copper against it by eye before
+        # any screw hole is committed to.
+        self._hole_grid = None
+
         # Live tool position (machine mm) for the DRO overlay — a crosshair+ring
         # showing where the spindle is over the bed. None = hidden.
         self._tool_pos = None
@@ -182,6 +193,8 @@ class PreviewCanvas(QWidget):
         # overlay onto the machine's actual work origin (display-only).
         self._align_pick = False
         self.on_align_pick = None         # callback(x, y, key) set by the app
+        self.on_screw_pick = None         # callback(x, y) - toggle a screw hole
+        self._screw_pick = False
 
         # Arrow-key carriage jog: while the mouse is over the preview, the arrow
         # keys nudge the machine in X/Y. on_jog_step(dx, dy) reports a signed
@@ -314,6 +327,25 @@ class PreviewCanvas(QWidget):
         preview frame; the numbers are the order the photo dialog asks for
         them, so the same hole is unambiguous in both views. Redraws."""
         self._photo_anchors = list(points) if points else None
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_hole_grid(self, points, hole_d=4.0):
+        """Show (or clear, with ``None``) the spoilboard's hole grid.
+
+        ``points`` is a list of (x, y) machine mm. Drawn at true diameter and
+        low in the z-order, so it reads as part of the bed rather than as
+        something the job is going to cut.
+        """
+        self._hole_grid = (list(points), hole_d) if points else None
+        self._draw_fraction(self.slider.value() / 1000.0)
+
+    def set_screws(self, points, head_d=8.0):
+        """Show (or clear, with ``None``) the screw-fixture positions.
+
+        Drawn as head-sized discs in machine mm, so you can see at a glance
+        whether a screw head lands on the design.
+        """
+        self._screws = (list(points), head_d) if points else None
         self._draw_fraction(self.slider.value() / 1000.0)
 
     def set_probe_grid(self, points):
@@ -575,6 +607,16 @@ class PreviewCanvas(QWidget):
                                         edgecolor=bed_color, linewidth=1.5, zorder=1))
             self.ax.scatter([0], [0], s=40, c=bed_color, marker="s", zorder=2)  # home
 
+        if self._hole_grid:
+            pts, hole_d = self._hole_grid
+            r = max(hole_d, 0.1) / 2.0
+            # One collection rather than 200-odd patches: the grid is redrawn
+            # on every pan, zoom and slider move.
+            self.ax.add_collection(PatchCollection(
+                [Circle((hx, hy), r) for (hx, hy) in pts],
+                facecolor="#2a2f36", edgecolor="#4a5158", linewidths=0.6,
+                zorder=2))
+
         self._stock_fits = True
         if self._stock:
             sx, sy, sw, sh = self._stock
@@ -606,6 +648,17 @@ class PreviewCanvas(QWidget):
 
         if self._level_overlay is not None:
             self._draw_level_overlay()
+
+        if self._screws:
+            pts, head_d = self._screws
+            for (sx, sy) in pts:
+                # the head footprint: what the cutter must stay out of
+                self.ax.add_patch(Circle((sx, sy), max(head_d, 0.1) / 2.0,
+                                         facecolor="#4da3ff", alpha=0.30,
+                                         edgecolor="#4da3ff", lw=1.4, zorder=14))
+            self.ax.scatter([p[0] for p in pts], [p[1] for p in pts],
+                            s=28, marker="x", color="#1e3a5f", linewidths=1.6,
+                            zorder=15)
 
         if self._probe_grid:
             gx = [p[0] for p in self._probe_grid]
@@ -786,6 +839,15 @@ class PreviewCanvas(QWidget):
                 bestd, best = d, (px, py)
         return best if best is not None else (x, y)
 
+    def set_screw_pick(self, on):
+        """Arm/disarm click-to-toggle on the spoilboard holes.
+
+        Unlike the align pick this is NOT one-shot: choosing fastening points
+        means clicking several, and changing your mind about them.
+        """
+        self._screw_pick = bool(on)
+        self.canvas.setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
+
     def set_align_pick(self, on):
         """Arm/disarm the one-shot overlay-align pick (see ``on_align_pick``)."""
         self._align_pick = bool(on)
@@ -858,6 +920,10 @@ class PreviewCanvas(QWidget):
             self.ax.start_pan(event.x, event.y, 1)   # button 1 => pan (not zoom)
             return
         if event.button != 1:
+            return
+        if self._screw_pick:
+            if self.on_screw_pick and event.xdata is not None:
+                self.on_screw_pick(event.xdata, event.ydata)
             return
         if self._align_pick:
             if self.on_align_pick and event.xdata is not None:

@@ -73,11 +73,19 @@ network folder instead.
 
 **Mode** menu. Novice is the default on a fresh install.
 
-**Novice** is the shortest path from Gerbers to three files you can send from
-VPanel: load → drill → traces → cut out → export. It puts away job parameters,
-double-sided, bed leveling, rework, machine control, and the output-format and
-mirroring options. Diagnostics and the Guide stay — a beginner needs the
-pre-flight check and the walkthrough more than anyone.
+**Novice** is the short path from Gerbers to files you can send from VPanel:
+load → level → drill → traces → cut out → export. It puts away job parameters,
+double-sided, rework, the bed-leveling workbench, live DRO / jog / streaming,
+and the output-format and mirroring options.
+
+What it deliberately keeps:
+
+| Kept in Novice | Why |
+|---|---|
+| Diagnostics, Guide | A beginner needs the pre-flight check and the walkthrough more than anyone. |
+| **Level the bed** (one guided button) | Probing is the biggest thing the Arduino buys a beginner: it makes cut depth follow the real surface, and that is what decides whether isolation actually separates traces. |
+| **Corner = tool** | Without it the only way to say where the copper is, is to type machine coordinates nobody can know — so the design, and the probe grid that follows it, land somewhere arbitrary. |
+| **Screw fixture** | A student who screws the copper down *without* the raised travel height crashes the spindle. The checkbox is what prevents that, so hiding it would make Novice the more dangerous mode. |
 
 **Professional** is every control, i.e. the UI as it has always been.
 
@@ -197,11 +205,160 @@ at all, and it is worth running before **every** job, fixture or not.
 > pin hole 1, set origin" — still far better than finding a sheared stock corner
 > by eye, because a drilled hole is a crisp feature you can drop a bit into.
 
+### 4 · Bolt it down — the spoilboard screw grid
+
+Tape and clamps let the stock creep, and a clamp is one more thing in the
+cutter's way. The bed's MDF spoilboard is drilled on a regular grid and every
+hole lines up with a thread in the metal plate underneath, so the copper can be
+held with M4 screws straight into the plate instead.
+
+**Copper stock → tick `Copper screwed down (M4)` → `Export screw fixture...`**
+
+It writes `<name>_screws.nc` plus a procedure. Run it **first**, drop the screws
+in, re-zero Z, then run the job — the stock is then fixed for every pass.
+
+Measured on our spoilboard (`gerber2rml/engine/spoilboard.py`):
+
+| | |
+|---|---|
+| board | 220 x 150 mm |
+| holes | 20 across, 13 deep, 4 mm |
+| pitch | 10.0 mm, both axes |
+| grid origin | machine X 6.42, Y 14.58 (hole 0,0) |
+| outer ring | not usable — spoilboard's own mounting screws |
+
+The pitch came from two spans (190 mm / 20 holes and 120 mm / 13) that both give
+exactly 10.0, and the anchor puts the 220 mm board 8.58 mm off the left of
+travel and 8.22 mm off the right — totalling 16.80 mm, which is exactly
+220 - 203.2. Three numbers agreeing is what made it safe to drill against.
+It has since been confirmed by drilling: screws went straight into the threads.
+
+**Re-measure if the spoilboard is ever unbolted, resurfaced or replaced.** A
+wrong pitch does not fail gracefully — the bit goes through the copper, through
+the MDF, and into solid steel.
+
+#### Travel height — the part that bites
+
+The heads stand **3 mm** above the copper. The default travel height is **2 mm**.
+A rapid would pass a millimetre *below* the top of every screw.
+
+Ticking the box **raises travel Z to 4 mm on all three operations automatically**,
+so you cannot forget. It only ever raises: a higher value you set yourself is
+kept. This failure is otherwise invisible — the XY is right, the depths are
+right, the preview is right, and the spindle drives into a screw on the first
+traverse, because the screws are not in the toolpath geometry.
+
+#### Choosing the holes
+
+The app picks four, spread as widely as the free copper allows — one toward each
+corner where it can. Four screws in a line clamp along that line and let the
+copper pivot about it, so the *spread* is checked separately from the count.
+
+To choose your own: **`Pick holes`**, then click holes on the bed. Clicking adds,
+clicking again removes, and the first click edits the app's suggestion rather
+than clearing the board. **`Auto`** goes back to automatic. Any grid hole may be
+picked, including ones the automatic pass rejected — you can see the bed and may
+have a reason; Diagnostics *reports* a questionable choice rather than refusing
+it.
+
+The whole grid is drawn on the work plate whenever the bed is shown, with the
+chosen holes marked at true head diameter (8 mm) so you can see whether a head
+would land on your traces.
+
+#### What Diagnostics checks
+
+- travel height against the head height;
+- four usable positions, and whether they can actually hold the copper flat;
+- every screw head against the real swept material of **all three passes** —
+  traces, drill and cut-out. The cut-out matters most: it runs *around* the
+  outline, so a screw just past the edge is still in the cutter's path.
+
+Screw positions are saved in the setup file. Hand-picked ones are stored
+literally, because once the holes are drilled in a piece of copper they are a
+fact about it; an untouched automatic choice is stored as "automatic" so it
+keeps tracking the design if you move it later.
+
+## Machine control (Professional)
+
+With the Arduino fitted and **Connect** on, the machine dock drives the mill
+directly. Every control here uses an SRM-20 SPI command verified on the machine
+([audit](2026-08-21-spi-command-audit.md)).
+
+The **dock** keeps what you reach for with a hand on the machine:
+
+| Control | What it does | VPanel equivalent |
+|---|---|---|
+| **Z ▲ / ▼** + step | Raises/lowers the bit by 0.01–5 mm. **PageUp / PageDown** do the same | its Z jog |
+| **Probe Z** | Touches off on the surface and zeroes Z there | — |
+| **Spindle** | Starts/stops the tool | its Spindle on/off |
+| **Pause** / **Resume** | Holds the machine mid-move and carries on | Pause / Resume |
+| **STOP** | Kills the move in flight, stops the spindle, lifts | Stop |
+| status strip | `LID OPEN`, `spindle 8600`, `paused`, `ERROR`, `FAULT` | its status display |
+
+Everything else is in the **Machine menu**: click-to-jog, align overlay, tool
+trail, zero Z on the machine, move to the view position, stream a job, and the
+machine test. They are one click away from every page rather than crowding the
+strip — which had grown long enough to push Connect and STOP off the screen.
+
+Z jogging down is refused while the probe says the bit is already touching;
+jogging up always works, since backing off contact is the point.
+
+**Spindle speed is still a VPanel setting.** The machine accepts start/stop over
+the link but *ignores* the RPM value — 500 and 3000 produce identical speed. Set
+the speed on VPanel's slider; use the button here to turn it on and off.
+
+Safety, all enforced in firmware so they survive the app crashing:
+
+- the spindle **will not start with the lid open**, or with the bit resting on
+  the probe-wired plate;
+- a **deadman** stops it if the app stops talking to the board for 10 s;
+- **STOP** halts the queued move rather than waiting for it to finish;
+- the status strip turns red for anything that stops work.
+
+The **Spindle** button follows the machine, so it shows a spindle you started
+from VPanel too — and disconnecting never stops a spindle SRM-CAM did not start.
+
+### Streaming a job without VPanel
+
+**Stream (exp.)** sends a job move-by-move over the link. A **wet run** now
+starts and stops the spindle itself, holds on **Pause**, and aborts if the lid
+opens mid-job. It still needs the speed set in VPanel first, and it is still
+experimental: always do the dry run on a new job.
+
+## Machine test — what this machine can actually do
+
+**Machine test…** in the machine dock (Professional) probes the SRM-20's SPI
+command set and reports PASS / FAIL / UNKNOWN per command, with a **Copy report**
+button. Needs firmware v3 (`hardware/srm20_spi_probe`).
+
+It exists because the app has only ever used 5 of the machine's 17 SPI commands,
+and the rest — spindle control, the full status word, pause/resume/stop, View —
+are what a VPanel-free workflow would be built on. Some Roland commands are
+already known not to work on this machine, so each one gets tested before
+anything relies on it. See
+[2026-08-21-spi-command-audit.md](2026-08-21-spi-command-audit.md).
+
+| Arming | What runs |
+|---|---|
+| (none) | Read-only: firmware + machine version, status word, framing delay, cover-bit check, idle job-control acks |
+| **Allow motion** | Move to View, interrupt a move, pause/resume, speed calibration. Each returns the head where it started — keep 20 mm of clear travel in Y |
+| **Allow spindle** | Runs the tool at 3000 RPM for a few seconds. **Remove the tool** and close the lid |
+
+**Run the cover test first.** Open and close the lid while it runs: if the
+`cover` flag follows in the live status strip, the machine's status bits are
+real and the firmware's safety guard works. If it never changes, disarm the
+guard before probing — a stuck bit would abort good probe runs.
+
+`scripts/srm20_bench.py` does the same from the command line and adds the long
+sweeps (SPI framing delay vs read corruption; speed units vs mm/s).
+
 ## Milling without the Arduino
 
-A bare, unmodified SRM-20 with nothing but VPanel is a fully supported setup, and
-it is what **Novice mode assumes** — the machine link is hidden there entirely.
-Everything below works with no board fitted to the machine:
+A bare, unmodified SRM-20 with nothing but VPanel is a fully supported setup.
+Novice mode hides the machine *dock* — live DRO, jog, streaming — but since the
+lab fitted the Arduino it does offer the two things the link makes possible for
+a beginner: one-button bed leveling and `Corner = tool`. On a machine with no
+board fitted those two are simply unavailable; everything else works unchanged:
 
 | Works unchanged | Needs the Arduino |
 |---|---|

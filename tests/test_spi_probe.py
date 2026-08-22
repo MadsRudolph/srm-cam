@@ -298,3 +298,46 @@ def test_zero_z_parses_new_origin():
 
     assert zero_z(WSerial(b"W 0 0 -56290\n")) == (0.0, 0.0, -56.29)
     assert zero_z(WSerial(b"E W NOTOUCH\n"), timeout=0.05) is None
+
+
+# ---- finding the board ----------------------------------------------------
+
+def test_rank_ports_puts_known_usb_serial_chips_first():
+    from gerber2rml.engine.spi_probe import rank_ports
+    ranked = rank_ports([
+        ("COM3", "PCI VEN_8086 DEV_7AEB"),               # Intel AMT, never a board
+        ("COM4", "USB VID:PID=1A86:7523 SER= LOCATION=1-6"),
+    ])
+    assert ranked[0] == ("COM4", "CH340 (Uno clone)")
+    assert ranked[1] == ("COM3", "unknown device")
+
+
+def test_rank_ports_keeps_unknown_ports_rather_than_dropping_them():
+    """A board behind an unrecognised chip must stay selectable - ordering is
+    a hint, not a filter."""
+    from gerber2rml.engine.spi_probe import rank_ports
+    ranked = rank_ports([("COM7", "something odd")])
+    assert [d for d, _why in ranked] == ["COM7"]
+
+
+def test_best_port_prefers_a_real_board():
+    from gerber2rml.engine.spi_probe import best_port
+    assert best_port([
+        ("COM3", "PCI VEN_8086"),
+        ("COM4", "USB VID:PID=2341:0043"),
+    ]) == "COM4"
+
+
+def test_best_port_returns_none_when_nothing_looks_like_a_board():
+    """None rather than a guess: probing the wrong port just times out
+    confusingly, and "no board found" is far more useful than that."""
+    from gerber2rml.engine.spi_probe import best_port
+    assert best_port([("COM3", "PCI VEN_8086")]) is None
+    assert best_port([]) is None
+
+
+def test_best_port_handles_a_missing_hwid():
+    from gerber2rml.engine.spi_probe import best_port, rank_ports
+    assert rank_ports([("COM1", None)]) == [("COM1", "unknown device")]
+    assert best_port([("COM1", None)]) is None
+
