@@ -30,3 +30,18 @@ def _professional_mode(monkeypatch):
     also keeps the test run from writing to the developer's real QSettings.
     """
     monkeypatch.setenv("SRM_CAM_MODE", "pro")
+
+
+@pytest.fixture(scope="session")
+def qt_app():
+    """One offscreen QApplication for the whole session.
+
+    Qt allows exactly one, and it must outlive every widget any test builds, so
+    it is session-scoped and never torn down. Added for the gui2 tests; the
+    older GUI tests make their own at module import and are unaffected.
+    """
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    return app
