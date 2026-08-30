@@ -115,7 +115,10 @@ class Simulation3DWindow(QMainWindow):
             "to skip ahead and see what's coming — click LIVE to snap back "
             "to where the machine really is.")
         self.live_btn.setStyleSheet(
-            f"QPushButton:checked { color: {theme.HOLE}; font-weight: bold; }")
+            # Braces doubled: in an f-string a bare "{" opens an expression,
+            # so this CSS block was parsed as the name `color` and the window
+            # raised NameError before it could ever be shown.
+            f"QPushButton:checked {{ color: {theme.HOLE}; font-weight: bold; }}")
         self.live_btn.toggled.connect(self._on_live_toggled)
 
         controls = QHBoxLayout()

@@ -457,6 +457,26 @@ class _FiducialAlignDialog(QDialog):
             return
         if self._auto_busy:
             return
+        # Say so BEFORE a minute of probing. The finder works by descending
+        # inside the hole and reading no copper; a bit that does not fit rests
+        # on the rim and reads copper at every point, centre included, so the
+        # run cannot succeed however carefully it is aimed.
+        bit = p.state.drill.bit_diameter
+        dia = p.fid_dia_spin.value()
+        if dia <= bit + 0.3:
+            QMessageBox.warning(
+                self, "The bit will not fit in that hole",
+                "The fiducial holes are %.2f mm and the bit is %.2f mm, so "
+                "the bit cannot get inside one." % (dia, bit) + chr(10)*2 +
+                "Auto finds the hole by descending into it and reading NO "
+                "copper. Resting on the rim it reads copper everywhere, "
+                "including dead centre, which is the error you would get "
+                "about a minute from now." + chr(10)*2 +
+                "Set the fiducial diameter to at least %.1f mm (the 'dia' "
+                "box beside the fiducial controls) and re-drill the align "
+                "file, or enter the measured positions by hand."
+                % (bit + 0.6))
+            return
         if QMessageBox.question(
                 self, "Auto-probe fiducial",
                 f"Tool ~2-3 mm ABOVE the '{self.table.verticalHeaderItem(row).text()}' "
@@ -696,6 +716,18 @@ class MainWindow(QMainWindow):
         self.show_bed_chk = QCheckBox("Show bed (fit check)")
         self.show_bed_chk.setChecked(True)
         self.show_bed_chk.toggled.connect(self.generate_preview)
+
+        # The spoilboard's tapped holes. Used to be drawn whenever the bed was,
+        # with no switch of its own, so the only way to clear 260 circles from
+        # under a board you were positioning was to give up the bed outline and
+        # the fit check with them. Two facts, two switches.
+        self.show_grid_chk = QCheckBox("Show hole grid")
+        self.show_grid_chk.setChecked(True)
+        self.show_grid_chk.setToolTip(
+            "The spoilboard's own tapped holes — where the copper can be "
+            "bolted down. Worth seeing while placing a board, and worth "
+            "turning off once it is placed.")
+        self.show_grid_chk.toggled.connect(self.generate_preview)
 
         # place the whole job on the bed (origin = front-left home corner)
         self.place_x_spin = QDoubleSpinBox()
@@ -1277,6 +1309,31 @@ class MainWindow(QMainWindow):
         self.fid_offset_spin.setSuffix(" mm")
         self.fid_offset_spin.setToolTip("Inset (on board) / outset (waste) from each corner.")
         self.fid_offset_spin.valueChanged.connect(self._on_reg_changed)
+        # The hole the AUTO-FINDER has to get inside. It was fixed at 0.8 mm —
+        # the same as the bit that drills it and the same as the bit that must
+        # then descend into it to probe. Zero clearance, before collet runout,
+        # so the bit sat on the copper rim and the hole test read COPPER at
+        # every point including dead centre: auto-find could never start.
+        # Anything larger than the bit is milled as a circle by
+        # drill_single_bit, and the bisection's midpoint is unaffected by the
+        # bit radius because both edges shift equally.
+        self.fid_dia_spin = QDoubleSpinBox()
+        self.fid_dia_spin.setRange(0.5, 6.0)
+        self.fid_dia_spin.setSingleStep(0.1)
+        self.fid_dia_spin.setDecimals(2)
+        self.fid_dia_spin.setValue(1.60)
+        self.fid_dia_spin.setSuffix(" mm")
+        self.fid_dia_spin.setToolTip(
+            "Diameter of each fiducial hole." + chr(10) + chr(10) +
+            "It must be comfortably BIGGER "
+            "than the bit, or Auto cannot work: the probe finds the hole by "
+            "descending inside it and reading no copper, and a bit that does "
+            "not fit rests on the rim and reads copper everywhere. Allow for "
+            "collet runout as well as the bit diameter — 1.6 mm against a "
+            "0.8 mm bit leaves 0.4 mm of clearance all round." + chr(10) +
+            chr(10) + "Holes wider "
+            "than the bit are milled as a circle, not plunged.")
+        self.fid_dia_spin.valueChanged.connect(self._on_reg_changed)
         self.fid_scale_chk = QCheckBox("scale")
         self.fid_scale_chk.setToolTip(
             "Also fit uniform scale (absorbs thermal/measurement scale). Off = "
@@ -1302,6 +1359,8 @@ class MainWindow(QMainWindow):
         _fid_row_l.addWidget(QLabel("n")); _fid_row_l.addWidget(self.fid_count_spin)
         _fid_row_l.addWidget(self.fid_place_combo)
         _fid_row_l.addWidget(self.fid_offset_spin)
+        _fid_row_l.addWidget(QLabel("dia"))
+        _fid_row_l.addWidget(self.fid_dia_spin)
         _fid_row_l.addWidget(self.fid_flip_combo)
         _fid_row_l.addWidget(self.fid_scale_chk)
         _fid_row_l.addWidget(self.fid_align_btn)
@@ -1668,8 +1727,16 @@ class MainWindow(QMainWindow):
         view_group, vl = _group("View / machine")
         vl.addRow("Machine", self.machine_combo)
         vl.addRow("Preview", self.frame_combo)
+        # Lives here, not on the Double-sided page it opens. The run-order
+        # spine has no Registration step until this is ticked, so while it sat
+        # on that page the only control that could reveal the page was itself
+        # on the page - a single-sided job could never become a double-sided
+        # one. Setup is where the job is described, which is where this
+        # belongs anyway.
+        vl.addRow("", self.double_sided_chk)
         vl.addRow("", self.mirror_chk)
         vl.addRow("", self.show_bed_chk)
+        vl.addRow("", self.show_grid_chk)
         vl.addRow(_row(self.sim3d_btn, self.sim_file_btn))
         vl.addRow(_row(self.export_img_btn))
         # Output format, mirroring and preview frame all default correctly for
@@ -1718,7 +1785,6 @@ class MainWindow(QMainWindow):
         # ===== DOUBLE-SIDED =====
         ds_group = QGroupBox("Double-sided")
         _dl = QVBoxLayout(ds_group); _dl.setContentsMargins(14, 16, 14, 12); _dl.setSpacing(8)
-        _dl.addWidget(self.double_sided_chk)
         self._ds_controls = QWidget()
         _dsf = QFormLayout(self._ds_controls)
         _dsf.setContentsMargins(0, 6, 0, 0); _dsf.setSpacing(8)
@@ -2909,6 +2975,7 @@ class MainWindow(QMainWindow):
             count=self.fid_count_spin.value(),
             placement=placement,
             edge_offset=self.fid_offset_spin.value(),
+            hole_diameter=self.fid_dia_spin.value(),
             allow_scale=self.fid_scale_chk.isChecked(),
             flip_axis=("horizontal" if self.fid_flip_combo.currentIndex() == 1
                        else "vertical"),
@@ -3193,7 +3260,8 @@ class MainWindow(QMainWindow):
         self.preview.set_pin_drag(False)      # only the DS X-ray view re-enables it
         bed = BACKENDS[self.state.machine].bed if self.show_bed_chk.isChecked() else None
         self.preview.set_bed(bed)
-        self._update_hole_grid_overlay(bed is not None)
+        self._update_hole_grid_overlay(bed is not None
+                                       and self.show_grid_chk.isChecked())
         oxy, holes = self._snap_geometry()
         self.preview.set_snap_geometry(oxy, holes)
         self.preview.set_board_outline(oxy)        # draw the board edge (single-sided)
@@ -4761,14 +4829,40 @@ class MainWindow(QMainWindow):
             self.state.gerber_dir, offset=(self.state.place_x, self.state.place_y),
             rotate=self.state.rotate, registration="fiducial", fiducials=fid)
         nominal = nominal_top_fiducials(lay)
+        # Modeless, on purpose. This dialog's whole workflow is "jog to a
+        # fiducial, read the DRO, capture it, repeat" — and while it ran as a
+        # modal exec() it blocked the jog controls, the preview and the DRO it
+        # is asking you to read. It also blocked STOP: a modal dialog stops
+        # Escape from reaching the machine bar, and this is a dialog you are
+        # meant to be MOVING THE MACHINE under.
+        existing = getattr(self, "_fid_dlg", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
         dlg = _FiducialAlignDialog(self, nominal,
                                    initial=getattr(self, "_fid_measured", None))
-        if dlg.exec() != QDialog.Accepted:
-            return
+        dlg.setModal(False)
+        # A tool window floats above its parent, so it cannot be lost behind
+        # the window you are jogging from.
+        dlg.setWindowFlag(Qt.Tool, True)
+        dlg.setAttribute(Qt.WA_DeleteOnClose, False)
+        self._fid_dlg = dlg
+        dlg.accepted.connect(lambda: self._on_fiducial_fit(dlg, fid, nominal))
+        dlg.show()
+        dlg.raise_()
+
+    def _on_fiducial_fit(self, dlg, fid, nominal):
+        """Everything that used to follow ``dlg.exec()``.
+
+        Split out when the dialog stopped being modal: the work is the same,
+        it just runs when the operator accepts rather than blocking the
+        application until they do.
+        """
+        from gerber2rml.doublesided import build_top_traces, build_top_cutout
+        from gerber2rml.engine.fiducial import fit_transform, rms
         measured = dlg.measured()
         self._fid_measured = measured        # pre-fill the next run of this dialog
-        from gerber2rml.doublesided import build_top_traces
-        from gerber2rml.engine.fiducial import fit_transform, rms
         # Fit FIRST and remember it: from here the Top views render AS PLACED
         # (jog/snap/probe grid/rework/tracking follow the physical board) even
         # if the export below is postponed.
@@ -4780,7 +4874,36 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Fit failed", str(e))
             return
         self._top_fit = t
+        # SHOW it before asking anything. The fit is only rendered in the Top
+        # view, so on "Both sides" or "Bottom" the board did not appear to move
+        # at all and the next thing on screen was a folder picker — which reads
+        # as "it ignored my measurements and jumped to exporting".
+        self.view_combo.setCurrentText("Top")
         self.generate_preview()
+        import math as _math
+        res = [((mx - px) ** 2 + (my - py) ** 2) ** 0.5 * 1000.0
+               for (px, py), (mx, my) in
+               zip([t.apply(x, y) for x, y in nominal[:len(measured)]], measured)]
+        detail = (chr(10)).join(
+            "  fiducial %d   %5.0f um" % (i + 1, r) for i, r in enumerate(res))
+        msg = ("The Top view now shows the board AS PLACED: the fiducials sit "
+               "on the positions you measured, and jog, snap, the probe grid "
+               "and rework all follow it." + chr(10)*2 +
+               "  RMS        %.0f um" % (err * 1000.0) + chr(10) +
+               "  worst      %.0f um" % (max(res) if res else 0.0) + chr(10) +
+               "  rotation   %.3f deg" % _math.degrees(t.theta) + chr(10) +
+               "  scale      %.5f" % t.scale + chr(10)*2 + detail + chr(10)*2 +
+               "Look at the preview first if you want. Export the warped top "
+               "traces now?")
+        if QMessageBox.question(
+                self, "Fit stored - the board is drawn where you measured it",
+                msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+                ) != QMessageBox.Yes:
+            self.statusBar().showMessage(
+                "Fit stored (AS PLACED) - the Top view follows your measured "
+                "fiducials. Run Fit && export again when you want the files; "
+                "your measurements are kept.", 12000)
+            return
         # Intelligence: immediately verify the AS PLACED top job still fits the
         # machine's travel — BEFORE any probing time is invested.
         warn = self._travel_check(self._ds_side_toolpaths("traces", "Top"))
@@ -4822,8 +4945,27 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Export failed", str(e))
             return
+        # The cut-out runs last, on the SAME flipped board this fit describes,
+        # so it needs the same warp. Without this it still holds the geometry
+        # written before the fit existed and misses by the whole placement
+        # error - on the pass with the most invested in it.
+        try:
+            cut_path = build_top_cutout(
+                self.state.gerber_dir, out, self.state.name,
+                cutout=self.state.cutout, machine=self.state.machine,
+                offset=(self.state.place_x, self.state.place_y),
+                rotate=self.state.rotate, registration="fiducial",
+                fiducials=fid, measured_fiducials=measured,
+                allow_scale=fid.allow_scale, level=level)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "The cut-out could not be re-written",
+                "The top traces were written, but the cut-out still holds "
+                "the unwarped geometry and would cut in the wrong place."
+                + chr(10)*2 + "%s" % e)
+            return
         self.statusBar().showMessage(
-            f"Wrote {path.name} — fit RMS {err * 1000:.0f} um, "
+            f"Wrote {path.name} and {cut_path.name} — fit RMS {err * 1000:.0f} um, "
             f"rot {math.degrees(t.theta):.3f} deg, scale {t.scale:.5f}"
             + (", leveled to the top probe" if level is not None
                else ", UNLEVELED")
@@ -4847,6 +4989,7 @@ class MainWindow(QMainWindow):
             "mirror": self.mirror_chk.isChecked(),
             "frame": self.frame_combo.currentIndex(),
             "show_bed": self.show_bed_chk.isChecked(),
+            "show_grid": self.show_grid_chk.isChecked(),
             "place_x": self.place_x_spin.value(),
             "place_y": self.place_y_spin.value(),
             "rotation": self._rotation,
@@ -4878,6 +5021,7 @@ class MainWindow(QMainWindow):
                         "follow": r.get("follow", True)}
                        for r in self._rework_regions],
             "fid": {"count": self.fid_count_spin.value(),
+                    "diameter": self.fid_dia_spin.value(),
                     "place": self.fid_place_combo.currentIndex(),
                     "offset": self.fid_offset_spin.value(),
                     "scale": self.fid_scale_chk.isChecked(),
@@ -4948,6 +5092,9 @@ class MainWindow(QMainWindow):
         _spin(self.breakthrough_spin, d.get("breakthrough", 0.1))
         _combo(self.frame_combo, d.get("frame", 0))
         _chk(self.show_bed_chk, d.get("show_bed", True))
+        # Defaults to on, so setups written before this switch existed come
+        # back looking exactly as they were saved.
+        _chk(self.show_grid_chk, d.get("show_grid", True))
 
         _combo(self.reg_combo, d.get("reg", 0))
         _combo(self.place_combo, d.get("dowel_edge", 0))
@@ -4970,12 +5117,16 @@ class MainWindow(QMainWindow):
         _spin(self.fid_count_spin, fd.get("count", 4))
         _combo(self.fid_place_combo, fd.get("place", 0))
         _spin(self.fid_offset_spin, fd.get("offset", 4.0))
+        # 0.8 for setups written before the hole was settable, so an old job
+        # reproduces exactly what it produced then.
+        _spin(self.fid_dia_spin, fd.get("diameter", 0.8))
         _chk(self.fid_scale_chk, fd.get("scale", False))
         _combo(self.fid_flip_combo, fd.get("flip", 0))
         self._fid_points = [list(p) for p in fd.get("points", [])]
         self.fid_offset_spin.setEnabled(self.fid_place_combo.currentIndex() != 2)
         _combo(self.view_combo, d.get("view", 0))
         _chk(self.double_sided_chk, d.get("double_sided", False))
+        self._rebuild_spine()
         self._update_ds_controls()
         self.level_top_btn.setEnabled(self.double_sided_chk.isChecked())
 

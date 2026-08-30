@@ -901,9 +901,13 @@ def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
     w.double_sided_chk.setChecked(True)
     w.regmethod_combo.setCurrentIndex(1)            # fiducial registration
 
-    class _StubDlg:                                  # auto-accept with a small shift
-        def __init__(self, parent, nominal, initial=None): self._n = nominal
-        def exec(self): return QDialog.Accepted
+    # The dialog is modeless now - the operator has to be able to jog to each
+    # fiducial while it is open - so the work runs on `accepted` rather than
+    # after a blocking exec(). Same work, same moment they press OK.
+    class _StubDlg(QDialog):                         # accept with a small shift
+        def __init__(self, parent, nominal, initial=None):
+            super().__init__(parent)
+            self._n = nominal
         def measured(self): return [(x + 0.1, y - 0.05) for (x, y) in self._n]
 
     monkeypatch.setattr(appmod, "_FiducialAlignDialog", _StubDlg)
@@ -916,17 +920,33 @@ def test_fiducial_align_export_includes_top_leveling(monkeypatch, tmp_path):
         return tmp_path / "x_top_traces.nc"
 
     monkeypatch.setattr(ds, "build_top_traces", _fake_build)
+    monkeypatch.setattr(ds, "build_top_cutout",
+                        lambda *a, **k: tmp_path / "x_cutout.nc")
+
+    # Two prompts can appear: the fit report ("export now?"), and the
+    # unleveled warning. Answer them by title so each case tests what it says
+    # it tests rather than whichever dialog happens to come first.
+    def _answer(no_titles=()):
+        def q(parent, title, *a, **k):
+            return (QMessageBox.No if any(t in title for t in no_titles)
+                    else QMessageBox.Yes)
+        return staticmethod(q)
+
+    monkeypatch.setattr(QMessageBox, "question", _answer())
     sentinel = object()
     monkeypatch.setattr(w, "_level_heightmap_preview", lambda: sentinel)
     w._on_fiducial_align()
+    w._fid_dlg.accept()                              # what pressing OK does
     assert captured.get("level") is sentinel        # map passed to the export
     assert w._top_fit is not None                   # placement remembered
     # without a probed map, declining the explicit unleveled prompt aborts
     captured.clear()
+    w._fid_dlg.close()
     monkeypatch.setattr(w, "_level_heightmap_preview", lambda: None)
     monkeypatch.setattr(QMessageBox, "question",
-                        staticmethod(lambda *a, **k: QMessageBox.No))
+                        _answer(no_titles=("height map",)))
     w._on_fiducial_align()
+    w._fid_dlg.accept()
     assert not captured
 
 
