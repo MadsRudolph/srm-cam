@@ -4,9 +4,15 @@
 Written 2026-08-22.*
 
 Two complete interfaces are now installed side by side over the same engine.
-Nothing in `gerber2rml/gui/`, `engine/`, `app/`, `backends/`, `cli.py`,
-`doublesided.py` or `config.py` was changed — `git diff` against those paths is
-empty, and their tests still pass unmodified.
+
+*As first written, nothing outside `gerber2rml/gui2/` was touched and `git diff`
+against `gui/`, `engine/`, `app/`, `backends/`, `cli.py`, `doublesided.py` and
+`config.py` was empty. That is no longer true, and §11 says exactly what
+changed and why: a day of running real boards through both interfaces turned up
+defects in the shared engine and in the first interface that are bugs rather
+than design, and leaving them in place to protect a diff would have meant
+knowingly shipping a cut-out that machines in the wrong place. The two
+interfaces still drive the same engine and produce the same files.*
 
 ```bash
 python -m gerber2rml          # the first interface
@@ -412,15 +418,20 @@ smaller.
 **Not ported:**
 
 - the **guided tour** (`gui/tour/`) — the first-launch walkthrough;
-- the **3D viewer** and the G-code simulation window;
-- the **photo overlay** and the phone-photo QR hand-off;
-- the **machine test panel** — the PASS/FAIL/UNKNOWN SPI command probe. §6 of
-  the brief is right that it is well designed; it is a diagnostic for the
-  people who develop the link, and it did not fit the scope agreed for this
-  build. `scripts/srm20_bench.py` does the same from a terminal;
 - the **feed test card**;
 - **snap-to-feature jogging** (click-to-jog is here; the snap is not);
-- the **KiCad plugin** menu and the update check.
+- the **KiCad plugin** menu and the update check;
+- the **phone-photo QR hand-off**. The photo overlay itself is here; the
+  phone leg of it is not, though `engine/photorelay.py` and `photoshare.py`
+  are what it would be built on.
+
+**Ported since, and listed here because §8 is the honest half of this
+document:** the **machine test panel** (`gui2/machinetest.py` — the hardware
+half is a verbatim copy, for the same reason `workspace` is), the **3D viewer**
+(`gui2/sim3d.py`, drawing in this interface's palette rather than its own
+cyan), and the **photo overlay** (`gui2/photo.py`, written for `QPainter`
+rather than copied, because the first interface's picking dialogs are
+matplotlib canvases). See §11.
 
 **Deliberately different rather than missing:**
 
@@ -485,3 +496,233 @@ each needs** without opening a text editor.
 The screenshots in `docs/images/ab/` were captured from the real windows at
 both sizes; `scripts` for them are not committed — they are eleven lines of
 `w.resize(); w.grab().save()`.
+
+---
+
+## 10. On the machine
+
+*Run 2026-08-30 against the lab SRM-20, Arduino on the SPI header (CH340 Uno,
+COM4, firmware v3). Board: `tests/fixtures/mosfet_test` — "buck", 104 × 104 mm,
+27 holes, 13 guaranteed shorts. Both interfaces at v0.4.0 on
+`feat/setup-sheet-gui` @ `b621729`.*
+
+Everything in §2 of `docs/HANDOFF-gui-ab.md` had been written to the documented
+hardware behaviour and exercised offscreen only. This is the first time any of
+it ran against the mill.
+
+**Interpreter note.** The handoff's `C:\Users\Mads2\miniconda3\python.exe` does
+not exist on this PC. The `python` on PATH here is 3.12.10 and *does* carry
+PySide6 6.11.1, matplotlib 3.11.0, pyqtgraph 0.14.0, numpy 2.5.0 and shapely
+2.1.2, so `python -m gerber2rml.gui2` runs directly. Check the interpreter
+before believing the handoff's warning applies.
+
+Suite on this branch: **878 passed, 2 skipped** (283 s). `git diff` against
+`engine/`, `app/`, `backends/`, `cli.py`, `doublesided.py` and `config.py` is
+empty, and against `gerber2rml/gui/` is empty — both structural claims hold.
+
+### What passed
+
+| § | | evidence |
+|---|---|---|
+| 2.1 | **Connect** | `rank_ports` returns `COM4 → CH340 (Uno clone)` first and `COM3 → unknown device` second; COM3 is the Intel AMT serial-over-LAN the docstring predicts. The port dropdown shows the same ranking. Firmware v3, command set includes `probe`, `zeroz`, `touchbit`, `guard`, `timedmove`, `stream`. |
+| 2.2 | **The DRO** | Raw `Q` reads: 15/15 good, 11.2 reads/s — comfortably above the 3.3 Hz the bar polls at (`POLL_MS = 300`). Position stable across all reads with the machine idle. |
+| 2.2 | **No cache regression** | Stage repaint while the 3 Hz poll runs, board loaded, 1400 × 900: **median 0.0 ms, worst 16.0 ms** over 24 samples. §3.9's 193.8 ms → 4.1 ms fix is intact. |
+| 2.3 | **The lid** | The only proven status bit, and it behaves. Four open/close cycles, sub-second latency, bit and chip in step every time: `cover=True` → `"Lid open — spindle inhibited"`, `cover=False` → `"Linked · firmware v3"`. |
+| 2.4 | **STOP** | `stop_now()` returns True against a live port. Button message: *"STOP sent: move dropped, spindle off, tool lifting."* With no link it says to use the machine's own emergency stop or close the lid — never a dead grey button. |
+| 2.6 | **Jog** | Up always works: `+1.0 mm` → `dist_um 1000`, Z 0.00 → −1.00 → 0.00 at 2.65 mm/s. Refusal on contact confirmed with the bit held against copper: touch chip `Touching`, `z_down.isEnabled()` **False**, `z_up.isEnabled()` **True**, and `_jog(-1)` returns before submitting anything with *"The bit is already touching the copper, so jogging down is refused. Raise it first."* |
+| — | **Contact detection** | Manual bit-to-copper contact, 8 clean transitions of the touch bit in 30 s. The probe circuit and the 5th field of `Q` both work. |
+
+### What was found
+
+**1. Escape does not stop the machine while a modal dialog has focus.**
+
+The single most serious finding. Measured by counting real triggers of the stop
+action:
+
+| context | `_stop` called |
+|---|---|
+| no dialog | 1 |
+| non-modal dialog focused | 1 |
+| **modal dialog focused** | **0** — the dialog's `reject()` consumes the key |
+
+The binding is genuinely `Qt.ApplicationShortcut`, so
+`test_escape_is_bound_to_stop_application_wide` passes — it asserts the binding,
+and the binding is correct. But Qt blocks a shortcut owned by the main window
+while a modal dialog is up, so the property the test stands for is false.
+Every dialog in `gui2/dialogs.py` is `Sheet(QDialog)` with `setModal(True)`
+and blocking `.exec()`.
+
+The exposure is `zero_z` / `touch_off`: they descend the tool on the worker
+thread for up to 60 s while the UI stays live, so a modal dialog opened during
+a descent leaves Escape dead. Levelling itself is **not** exposed — `ProbeRun`
+uses an inline progress widget, not a dialog, and says so on screen.
+
+Worth fixing before either interface is trusted at the mill. The test should
+assert the behaviour (Escape reaches the stop with a modal `Sheet` open), not
+the binding.
+
+**2. A refused move is indistinguishable from a completed one.**
+
+With the lid open, `timed_move` returns a successful-looking result —
+`dist_um: 0`, `mm_per_s: 0.0`, no board error, `cmderr` False — and the jog
+control reports nothing wrong. Three consecutive 1 mm jogs moved nothing and
+the app was silent about it. The machine bar's chip does read
+`Lid open — spindle inhibited`, so there is a clue on screen, but it is not
+attached to the control that failed.
+
+This is the gap `spi_probe.REMOTE_BITS` already documents: *"Nothing in the
+project has ever looked at it, so a rejected move has always been
+indistinguishable from a completed one."* A zero-distance move is the cheap
+signal — `timed_move` already returns `dist_um`, and nothing checks it.
+
+**3. The machine can sit in a state the app does not surface.**
+
+Mid-session the machine reported `fatal: True`, `cover: True`, `state: 4`
+(`0x01021084`) and refused all motion, with position reading
+(99.38, 149.08, 0.00) — a place nothing had commanded. Closing the lid cleared
+it and position returned to (0.00, 152.40, 0.00). Only the cover bit is proven,
+so `fatal` may not mean what Roland's label says; but the interface showed only
+"lid open" throughout, and moves silently did nothing. Whatever the bit means,
+the app had information it did not use.
+
+### What is still untested
+
+| § | | why |
+|---|---|---|
+| 2.5 | **Bed levelling, and STOP mid-run** | The one that matters most, and it did not run. The grid is laid over the loaded board's footprint, but the board is 104 × 104 mm against a declared 100 × 80 mm sheet, and the operator confirmed the copper is **not** at the machine origin. A grid point off the copper is a bit descending on the runaway guard alone, so no descent was commanded without knowing where the copper actually is. Resumable in minutes: park the tool over the copper, touch off once to find the surface, build a 3 × 3 grid around it, start *Probe over the link*, press STOP part-way, confirm the tool lifts and the measured points are kept. |
+| 2.7 | **Spindle** | Not reached. Needs confirming that the button follows a spindle started from VPanel, and that disconnecting does not stop a spindle the app did not start. |
+
+Both guards behind 2.5 were read and look right rather than merely present:
+`probe_grid`'s host-side `outlier_mm=1.5` aborts and lifts if a touch comes back
+deeper than the reference, the firmware enforces the same limit in real time,
+and `stop_now` is deliberately unqueued so it does not sit behind a descent
+already in flight. None of that is a substitute for running it.
+
+### The comparison itself
+
+Not answered here. Both interfaces launched, loaded the fixture and drew it,
+and gui2's shorts banner is unmissable and does not expire — *"13 spots will be
+shorted · Worst gap 0.45 mm against a 0.80 mm cutter. Milling it more carefully
+will not fix it."* But no board was run end to end through either, so §3 of the
+handoff — which one tells you what to run next, with which bit, standing at the
+machine — remains open.
+
+---
+
+## 11. What running a real board turned up
+
+*2026-08-30, on the lab SRM-20. A double-sided board was set up, milled and
+fiducial-aligned in the first interface while the second was worked on, so
+both got used the way they are meant to be used rather than demonstrated.*
+
+Everything below was found by doing the job, not by reading the code. Several
+of them had been in the tree for weeks behind a control nobody could reach.
+
+### Defects, worst first
+
+**The cut-out was never warped to the measured flip.** `build_top_traces`
+rewrites `<name>_top_traces` with the fiducial fit applied. Nothing rewrote
+`<name>_cutout`, so it kept the geometry written at export time — before the
+fit existed — and it runs at step 6, on the flipped board. On the board that
+found this, the placement error was 4.05 mm, so the outline would have been cut
+4 mm out, through the traces, on the last operation of a job with everything
+already invested in it. `doublesided.build_top_cutout` now re-exports it warped,
+and both interfaces call it from the same place they call `build_top_traces`.
+
+(The frame half of that bug is real but harmless so far: the cut-out was
+generated from `lay.outline`, the bottom frame, while the board is flipped.
+Reflecting a symmetric outline about its own centre line gives the same curve,
+so on every board tried the two frames are identical. `build_top_cutout` uses
+`top_outline` anyway.)
+
+**Escape did not stop the machine when a dialog was open.** `Qt.ApplicationShortcut`
+is not enough: Qt refuses to deliver a shortcut owned by the main window while
+a modal dialog is up, so the key reached the dialog's `reject()` and the
+machine kept moving. Measured, with a modal dialog focused, the stop handler
+was called **zero** times against once in every other context.
+`test_escape_is_bound_to_stop_application_wide` passed throughout, because it
+asserts the binding and the binding was correct. The property the test stands
+for was false. Now an application-wide event filter sees the key first
+whatever is focused, fires once per press, and does not consume it — so
+Escape still closes the dialog as well.
+
+This one had teeth because `zero_z` and `touch_off` drive the tool for up to a
+minute on a worker thread while the UI stays live, and the first interface's
+fiducial dialog — a dialog you are *meant* to be jogging under — was modal.
+
+**The auto fiducial finder could not work, twice over.** The reference hole is
+drilled at `hole_diameter`, which was fixed at 0.8 mm: the same as the bit that
+drills it and the same as the bit that must descend inside it to probe it. Zero
+clearance before collet runout (~0.25 mm TIR on this machine), so the bit rests
+on the rim and the hole test reads copper at every point including dead centre.
+Separately, the worker latched the datum over the hole with `D` and then passed
+the tool's *machine* coordinates as the start point — but `H` and `P` probe at
+*datum + (x, y)*, so it aimed about a hundred millimetres off the board.
+Levelling gets away with machine coordinates only because the work origin is
+always the machine origin; that assumption does not hold here.
+
+The hole is now settable in both interfaces and defaults to 1.6 mm, which
+`drill_single_bit` mills as a circle rather than plunging. The bisection's
+midpoint is unaffected by bit radius — both edges shift equally — so a wider
+hole costs nothing in accuracy.
+
+**The double-sided toggle had nowhere to live.** `1d1d789` replaced the
+category sidebar with two run-order spines. The single-sided spine has no entry
+for the Registration page, and the Double-sided checkbox is on that page — so
+from the default state there was no way to reach the control that would reveal
+its own page. Loading a `double_sided: true` setup did not help either: the
+loader sets the checkbox with signals blocked, so the spine never rebuilt. Two
+dead routes, and double-sided is the flagship workflow.
+
+**The 3D viewer raised on construction.** `f"QPushButton:checked { color: ... }"`
+— a bare `{` opens an f-string expression, so the CSS block parsed as the name
+`color` and every attempt to open the viewer or the G-code simulation window
+died with `NameError`. Both interfaces had the line; both are fixed.
+
+**Reading the first interface's setups produced a wrong job, silently.** The
+second interface's loader read `place`, `rotate`, `trace` and a four-number
+`stock`; the first interface writes `place_x`/`place_y`, `rotation`, a `jobs`
+mapping and a `stock` **dict**. `tuple()` on that dict yields its *keys*, so
+the sheet rectangle became `('w','h','x','y','show')` and `_paint_stock` threw
+`ValueError` on every repaint — into a log, because `pythonw` has no console.
+Placement fell back to the origin, rotation to zero, cutting parameters to
+defaults. The message was "Setup loaded." A translator now maps the older
+schema, and anything unreadable is named in a warning instead.
+
+### Things that were true but not reachable
+
+- **The copper's position existed only in the model.** `stock` was already
+  `(x, y, w, h)`, but the inspector exposed width and height only, and
+  `action_stock` hardcoded `(0.0, 0.0, w, h)` — so editing the sheet size
+  teleported a hand-clamped sheet back under the fixture's assumption. Corner
+  fields, a *Set the corner from the tool* button that reads the DRO without
+  commanding motion, and a draw toggle that is not tied to the screw checkbox.
+- **The spoilboard grid was welded to two different switches.** In the first
+  interface the holes drew only when the bed did; in the second, only when the
+  copper was screwed down. Both now have their own toggle, and the second
+  interface draws the full 260-hole plate rather than the 198 a screw may use —
+  `grid.holes()` skips the outer ring, which put the picture a full 10 mm pitch
+  in from the real plate in both axes.
+- **Nothing checked the job against the copper.** `preflight` checks it against
+  the *bed*, which is the machine's travel, and the two stop being the same
+  thing the moment the sheet is not on the fixture. Two checks now: the job
+  running off the sheet, and the sheet running off the travel. Both fired on
+  real saved setups — one job overhanging by 4.8 mm, one sheet 11.8 mm past the
+  X travel.
+
+### Still not done
+
+- **§2.5 and §2.7 of the handoff** — the grid probe with STOP fired part-way,
+  and the spindle. The machine was in use for real work for most of the day and
+  a probe descent is not something to run beside someone else's job. The guards
+  behind them were read and the geometry checked; the probing itself has still
+  never run.
+- **The machine test panel and the fiducial auto-finder have never touched the
+  mill.** Their refusals are verified — unarmed motion tests skip with a
+  reason, a bit that cannot fit the hole is turned away before a minute of
+  probing — and the search geometry is checked arithmetically. The probing
+  paths are not.
+
+That is the honest state: a lot of things that could not have worked now can,
+and the two of them that most need a machine to prove are the two still
+unproven.
