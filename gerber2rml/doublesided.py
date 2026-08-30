@@ -609,6 +609,53 @@ def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None
     return out
 
 
+def build_top_cutout(folder, out_dir, name, cutout=None, dowels: DowelSpec = None,
+                     machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0,
+                     level=None, registration="dowel",
+                     fiducials: FiducialSpec = None, measured_fiducials=None,
+                     allow_scale=False, lead_in=True):
+    """Re-export the cut-out warped by a fiducial fit. Returns the Path written.
+
+    The cut-out is the LAST operation on a double-sided job, and it runs with
+    the board still flipped - the same placement the fiducial fit measured. But
+    the full export writes it once, before any fit exists, so on a fiducial job
+    the file on disk describes where the board was SUPPOSED to land. Cut it
+    unwarped and the outline is out by the whole placement error, which is the
+    error the fiducials exist to measure: on a board 4 mm from nominal, the
+    cut-out misses by 4 mm and takes the traces with it.
+
+    ``build_top_traces`` has always done this for the traces. This does it for
+    the outline, which needs it just as much and is the pass with the most
+    invested in it by the time it runs.
+    """
+    dowels = dowels or DowelSpec()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cutout = cutout or CutoutJob()
+    backend = BACKENDS[machine]
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate,
+                              registration=registration, fiducials=fiducials)
+    # The top frame, because the board is flipped when this runs. On a board
+    # whose outline is symmetric about the flip axis the two frames coincide,
+    # which is why cutting the bottom-frame outline has worked until now.
+    paths = cut_outline(lay.top_outline, cutout)
+    if lead_in:
+        from gerber2rml.engine.leadin import apply_lead_in
+        paths = apply_lead_in(paths)
+    if measured_fiducials:
+        from gerber2rml.engine.fiducial import fit_transform, apply_to_toolpaths
+        nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
+        t = fit_transform(nom, measured_fiducials, allow_scale=allow_scale)
+        paths = apply_to_toolpaths(paths, t)
+    if level is not None:
+        from gerber2rml.engine.leveling import apply_leveling
+        paths = apply_leveling(paths, level)
+    out = out_dir / f"{name}_cutout{backend.ext}"
+    out.write_text(backend.render(paths, xy_feed=cutout.xy_feed,
+                                  plunge_feed=cutout.plunge_feed))
+    return out
+
+
 def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness):
     (bx, by, bd), (tx, ty, td) = lay.align_holes
     horiz = lay.axis == "horizontal"
