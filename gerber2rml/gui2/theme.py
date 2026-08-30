@@ -243,6 +243,20 @@ def font(role="body", *, weight=None, mono=False, caps=False):
     return f
 
 
+def gl_rgba(hex_colour, a=1.0):
+    """``#rrggbb`` as the ``(r, g, b, a)`` floats OpenGL wants.
+
+    The 3D view is the one place that cannot take a CSS string, and hand-typed
+    tuples there would be colours with no name — exactly what this module
+    exists to prevent.
+    """
+    h = hex_colour.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0,
+            int(h[4:6], 16) / 255.0, float(a))
+
+
 def alpha(hex_colour, a):
     """``#rrggbb`` at alpha ``a`` (0..1) as a :class:`QColor`.
 

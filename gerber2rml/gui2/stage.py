@@ -138,6 +138,8 @@ class Stage(QWidget):
         self._screw_grid = []
         self._regions = []
         self._stock = None                # (x, y, w, h) mm
+        self._photo = None                # (QImage, (x0, y0, x1, y1)) in mm
+        self._photo_dim = 0.0             # how far the work is faded over it
         self._tool = None                 # (x, y) mm
         self._cut_width = 0.8
         self._show_travel = True
@@ -265,6 +267,34 @@ class Stage(QWidget):
         self._regions = regions
         self._invalidate()
         self.update()
+
+    def set_photo(self, image, extent):
+        """A photo of the real board, already warped into machine millimetres.
+
+        ``extent`` is ``(x0, y0, x1, y1)`` in mm — where the warped image sits
+        on the bed. Drawn under everything, because it is the thing the job is
+        being checked AGAINST; anything drawn under the toolpath instead would
+        be answering a different question.
+        """
+        self._photo = (image, extent) if image is not None else None
+        self._invalidate()
+        self.update()
+
+    def set_photo_dim(self, amount):
+        """Fade the drawn work back so the photo reads at full strength.
+
+        A trace at full contrast over a photo of the same trace is two edges a
+        millimetre apart, and the eye picks the wrong one.
+        """
+        amount = max(0.0, min(1.0, float(amount)))
+        if amount == self._photo_dim:
+            return
+        self._photo_dim = amount
+        self._invalidate()
+        self.update()
+
+    def has_photo(self):
+        return self._photo is not None
 
     def set_stock(self, rect):
         if rect == self._stock:
@@ -546,17 +576,35 @@ class Stage(QWidget):
     def _paint_static(self, p):
         """What belongs to the machine, and stays put when the job is moved."""
         self._paint_bed(p)
+        self._paint_photo(p)
         self._paint_stock(p)
         self._paint_screw_grid(p)
         self._paint_regions(p)
 
+    def _paint_photo(self, p):
+        if not self._photo:
+            return
+        img, (x0, y0, x1, y1) = self._photo
+        # The world transform has Y running up the bed; an image drawn into it
+        # would land upside down, so flip inside the target rect rather than
+        # pre-flipping the pixels every repaint.
+        p.save()
+        p.translate(0.0, y0 + y1)
+        p.scale(1.0, -1.0)
+        p.drawImage(QRectF(x0, y0, x1 - x0, y1 - y0), img)
+        p.restore()
+
     def _paint_work(self, p):
         """What belongs to the job, and follows the cursor when it is dragged."""
+        if self._photo_dim:
+            p.setOpacity(1.0 - self._photo_dim)
         self._paint_copper(p)
         self._paint_paths(p)
         self._paint_holes(p)
         self._paint_fixtures(p)
         self._paint_probe(p)
+        if self._photo_dim:
+            p.setOpacity(1.0)
 
     def _raster(self, what):
         """Render ``what(painter)`` under the world transform into a pixmap.
