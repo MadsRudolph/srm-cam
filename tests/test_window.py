@@ -2340,3 +2340,87 @@ def test_escape_is_the_emergency_stop(monkeypatch):
     w._esc_shortcut.activated.emit()
     assert fired
     w.close()
+
+
+# --- the travel layer, and centring the job on the bed ---------------------
+
+def test_the_preview_actually_draws_travel_moves():
+    """It never did. Each contour is its own path beginning with a rapid to its
+    own start, so every rapid RUN is a plunge or a retract at a single XY and
+    the travel layer rendered as nothing at all - 50 empty polylines on the
+    demo board."""
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.generate_preview()
+    rapids = w.preview._full_rapids
+    drawable = [r for r in rapids
+                if len(r) >= 2
+                and len({(round(x, 5), round(y, 5)) for x, y in r}) > 1]
+    assert drawable, "the travel layer is still empty"
+
+
+def test_centre_on_bed_leaves_equal_margins(tmp_path):
+    from gerber2rml.backends import BACKENDS
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.place_x_spin.setValue(4.0)
+    w.place_y_spin.setValue(88.0)
+    w._on_centre_on_bed()
+    x0, y0, x1, y1 = w._diag_bounds()
+    bx, by = BACKENDS[w.state.machine].bed
+    assert abs(x0 - (bx - x1)) < 0.05, (x0, bx - x1)
+    assert abs(y0 - (by - y1)) < 0.05, (y0, by - y1)
+    assert x0 > 0 and y0 > 0
+
+
+def test_centre_on_bed_fixes_an_off_the_bed_placement():
+    from gerber2rml.engine.diagnostics import preflight, cut_depths
+    from gerber2rml.backends import BACKENDS
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.place_x_spin.setValue(-45.0)
+    w.place_y_spin.setValue(130.0)
+    depths = cut_depths(w.state.trace, w.state.drill, w.state.cutout)
+    before = preflight(depths=depths, bed=BACKENDS[w.state.machine].bed,
+                       design_bounds=w._diag_bounds())
+    assert any(c.title == "Off the bed" for c in before)
+    w._on_centre_on_bed()
+    after = preflight(depths=depths, bed=BACKENDS[w.state.machine].bed,
+                      design_bounds=w._diag_bounds())
+    assert not any(c.title == "Off the bed" for c in after)
+
+
+def test_centre_on_bed_counts_the_dowels_on_a_double_sided_job():
+    """The pins sit outside the board, in the waste the cut-out removes. A
+    placement that puts the board on the bed but a dowel off it cannot run."""
+    from gerber2rml.backends import BACKENDS
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.double_sided_chk.setChecked(True)
+    w._on_centre_on_bed()
+    bx, by = BACKENDS[w.state.machine].bed
+    for (x, y, d) in w._machine_layout().align_holes:
+        r = d / 2.0
+        assert 0 <= x - r and x + r <= bx, (x, d)
+        assert 0 <= y - r and y + r <= by, (y, d)
+
+
+def test_centre_on_bed_says_how_much_room_it_left():
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w._on_centre_on_bed()
+    msg = w.statusBar().currentMessage()
+    assert "centred on the bed" in msg
+    assert "spare each side" in msg
+
+
+def test_centre_on_bed_needs_no_board_to_be_safe(monkeypatch):
+    """With nothing loaded it says so and stops, the same way building a probe
+    grid does. (Patched here because a real modal would hang the run.)"""
+    from PySide6.QtWidgets import QMessageBox
+    seen = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        lambda *a, **k: seen.append(a[1:3]))
+    w = MainWindow()
+    w._on_centre_on_bed()
+    assert seen and "No board" in seen[0][0]

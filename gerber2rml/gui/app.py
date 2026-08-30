@@ -14,7 +14,7 @@ import sys
 import time
 
 from gerber2rml.app.state import ProjectState
-from gerber2rml.app.preview import toolpath_segments
+from gerber2rml.app.preview import toolpath_segments, preview_segments
 from gerber2rml import __version__
 from gerber2rml.backends import BACKENDS
 from gerber2rml.gui.form import DataclassForm
@@ -708,10 +708,22 @@ class MainWindow(QMainWindow):
             sp.setToolTip(f"Move the whole job {ax} on the bed from the front-left "
                           f"home (negative = toward/past home; off-bed shows red)")
             sp.valueChanged.connect(self.generate_preview)
+        # A board that nearly fills the bed does not want nudging into place a
+        # millimetre at a time, and typing coordinates for it means working out
+        # the margins by hand.
+        self.centre_btn = QPushButton("Centre on bed")
+        self.centre_btn.setToolTip(
+            "Put the whole job in the middle of the machine's travel, with the "
+            "spare room shared equally on all four sides.\n\n"
+            "Counts the dowel pins on a double-sided board: they sit OUTSIDE "
+            "the board, in the waste the cut-out removes, so a placement that "
+            "puts the board on the bed but a dowel off it cannot be run.")
+        self.centre_btn.clicked.connect(self._on_centre_on_bed)
         self._place_row = QWidget()
         _pl = QHBoxLayout(self._place_row); _pl.setContentsMargins(0, 0, 0, 0)
         _pl.addWidget(QLabel("X")); _pl.addWidget(self.place_x_spin)
         _pl.addWidget(QLabel("Y")); _pl.addWidget(self.place_y_spin)
+        _pl.addWidget(self.centre_btn)
 
         # drag the design around the bed with the mouse
         self.move_chk = QCheckBox("Move on bed (drag)")
@@ -3052,7 +3064,7 @@ class MainWindow(QMainWindow):
                 holes = mlay.holes
                 outline, copper = mlay.outline, (mlay.bottom_copper, theme.CUT)
                 pins = mlay.align_holes
-            cuts, rapids = toolpath_segments(self._drill_toolpaths(holes))
+            cuts, rapids = preview_segments(self._drill_toolpaths(holes))
             self.preview.set_board_outline(self._poly_xy(outline))
             self.preview.show_segments(cuts, rapids, holes=holes,
                                        pins=pins, copper=[copper])
@@ -3064,7 +3076,7 @@ class MainWindow(QMainWindow):
             # additionally warped by the measured fiducial fit when one exists
             # (the toolpaths come pre-warped from _ds_side_toolpaths).
             mlay = self._machine_layout()
-            cuts, rapids = toolpath_segments(self._ds_side_toolpaths(op, side))
+            cuts, rapids = preview_segments(self._ds_side_toolpaths(op, side))
             # The board's own drill holes ride along as reference data (not
             # drawn): 2 dowels are too few features to anchor a rework photo,
             # and this is the view rework is drawn on.
@@ -3099,11 +3111,11 @@ class MainWindow(QMainWindow):
             # The edge cut is one job around the outline (run from the bottom
             # side), not a per-layer isolation — show it instead of the traces.
             from gerber2rml.engine.cutout import cut_outline
-            bottom_cuts, bottom_rapids = toolpath_segments(
+            bottom_cuts, bottom_rapids = preview_segments(
                 cut_outline(lay.outline, self.state.cutout))
         else:
             if view in ("Both sides", "Bottom"):
-                bottom_cuts, bottom_rapids = toolpath_segments(
+                bottom_cuts, bottom_rapids = preview_segments(
                     isolate(lay.bottom_copper, self.state.trace, outline=lay.outline))
             if view in ("Both sides", "Top"):
                 top_cuts, _ = toolpath_segments(
@@ -3209,7 +3221,7 @@ class MainWindow(QMainWindow):
                 self.preview.set_estimate("—")   # both-sides registration view
             return
         if op == "drill":
-            cuts, rapids = toolpath_segments(self.state.toolpaths("traces"))
+            cuts, rapids = preview_segments(self.state.toolpaths("traces"))
             self.preview.show_segments(cuts, rapids, holes=self.state.board.holes,
                                        copper=[(self.state.board.copper, theme.CUT)])
             drill_tps = self._drill_toolpaths(self.state.board.holes)
@@ -3218,7 +3230,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self._drill_status() + est, 8000)
             return
         tps = self.state.toolpaths(op)
-        cuts, rapids = toolpath_segments(tps)
+        cuts, rapids = preview_segments(tps)
         # The drill holes ride along as reference data (not drawn): they are
         # the only photo-overlay anchors a single-sided board has, and rework
         # is registered from this view, not the drill one.
@@ -5518,6 +5530,44 @@ class MainWindow(QMainWindow):
             self.align_btn.setChecked(False)
             self.statusBar().showMessage(
                 "Move: drag the design to reposition it on the bed", 8000)
+
+    def _on_centre_on_bed(self):
+        """Drop the whole job into the middle of the machine's travel.
+
+        Uses the same extent the pre-flight bed-fit check uses, so what this
+        centres is exactly what that check measures - board plus dowels, in the
+        machine frame. The margin it reports is the honest answer to "how much
+        room is there to be wrong by".
+        """
+        if self.state.board is None:
+            QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
+            return
+        try:
+            x0, y0, x1, y1 = self._diag_bounds()
+        except Exception:
+            return
+        bed = BACKENDS[self.state.machine].bed
+        if not bed:
+            return
+        bx, by = bed
+        w, h = x1 - x0, y1 - y0
+        mx, my = (bx - w) / 2.0, (by - h) / 2.0
+        self.place_x_spin.blockSignals(True)
+        self.place_x_spin.setValue(self.place_x_spin.value() + mx - x0)
+        self.place_x_spin.blockSignals(False)
+        # setting Y last triggers a single regenerate at the new placement
+        self.place_y_spin.setValue(self.place_y_spin.value() + my - y0)
+        if mx < 0 or my < 0:
+            self.statusBar().showMessage(
+                f"This job is bigger than the machine can reach - by "
+                f"{max(0.0, -mx * 2):.1f} mm across and {max(0.0, -my * 2):.1f} "
+                f"mm up. Centred so the overhang is shared, but it cannot be "
+                f"cut as it is; rotating it 90 deg may help.", 15000)
+        else:
+            what = "job, dowels included," if self.double_sided_chk.isChecked()                 else "job"
+            self.statusBar().showMessage(
+                f"{w:.1f} x {h:.1f} mm {what} centred on the bed - {mx:.1f} mm "
+                f"spare each side, {my:.1f} mm front and back.", 12000)
 
     def _on_move_delta(self, dx, dy):
         """Drag committed in the preview -> fold the shift into the placement."""
