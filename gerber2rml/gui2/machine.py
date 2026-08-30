@@ -94,6 +94,7 @@ class MachineLink(QObject):
         self._external = False        # something else owns the port (a probe run)
         self.firmware = None
         self.last_status = {}
+        self.last_position = None     # (x, y, z, touch) mm, last good read
         self.spindle_on = False
         self._spindle_ours = False
 
@@ -221,6 +222,7 @@ class MachineLink(QObject):
     def _do_poll(self, ser):
         pos = spi_probe.query_position(ser)
         if pos:
+            self.last_position = pos
             self.position.emit(pos[0], pos[1], pos[2], pos[3])
         st = spi_probe.machine_status(ser)
         if st:

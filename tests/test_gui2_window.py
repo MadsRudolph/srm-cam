@@ -127,11 +127,50 @@ def test_stop_lives_outside_every_hideable_container(win):
         assert container not in parents
 
 
-def test_escape_is_bound_to_stop_application_wide(win):
-    acts = [a for a in win.actions()
-            if a.shortcut().toString().lower() == "esc"]
-    assert acts, "Escape is not bound"
-    assert acts[0].shortcutContext() == Qt.ApplicationShortcut
+def test_escape_stops_the_machine_even_under_a_modal_dialog(win):
+    """The behaviour, not the binding.
+
+    This used to assert that Escape was a ``Qt.ApplicationShortcut``, and it
+    passed while the property it stood for was false: Qt refuses to deliver a
+    shortcut owned by a window while a modal dialog is up, so with a dialog
+    focused the key reached the dialog's ``reject()`` and the machine kept
+    moving. Measured at the time: the stop handler was called zero times.
+
+    That gap is exactly where it matters, because ``zero_z`` and ``touch_off``
+    drive the tool for up to a minute on a worker thread while the UI stays
+    live. So the test now presses the key in the three contexts that exist and
+    counts real calls.
+    """
+    from PySide6.QtWidgets import QLineEdit
+    from PySide6.QtTest import QTest
+    from gerber2rml.gui2 import dialogs
+
+    calls = []
+    original = win.bar._stop
+    win.bar._stop = lambda: (calls.append(1), original())
+    # Something must be stoppable, or the no-link guidance path is taken.
+    win.link.mark_external(True)
+    try:
+        for label, modal in (("no dialog", None), ("non-modal", False),
+                             ("modal", True)):
+            calls.clear()
+            target, dlg = win, None
+            if modal is not None:
+                dlg = dialogs.Sheet(win, "Test")
+                dlg.setModal(modal)
+                dlg.show()
+                target = QLineEdit(dlg)
+                target.show()
+                target.setFocus()
+            QTest.keyClick(target, Qt.Key_Escape)
+            assert len(calls) == 1, (
+                f"Escape fired the stop {len(calls)} times with {label} - "
+                f"it must fire exactly once, from anywhere")
+            if dlg is not None:
+                dlg.close()
+    finally:
+        win.bar._stop = original
+        win.link.mark_external(False)
 
 
 def test_stop_says_something_useful_with_no_link(win):

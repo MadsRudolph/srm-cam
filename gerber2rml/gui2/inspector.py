@@ -190,12 +190,46 @@ class SetupPage(Page):
                            suffix=" mm")
         self.stock_h = num(80.0, 10.0, 300.0, 5.0, 1, self._on_stock,
                            suffix=" mm")
+        # Where the sheet's front-left corner actually is. The bed fixture puts
+        # it on the machine origin, but a sheet clamped by hand is wherever it
+        # landed, and a probe grid laid over a sheet the app has in the wrong
+        # place is a bit descending onto bare spoilboard.
+        # Two decimals, to match the machine readout the corner is usually
+        # taken from — at one, capturing the corner and then touching any
+        # other field wrote a rounded value back over it.
+        self.stock_x = num(0.0, -50.0, 400.0, 1.0, 2, self._on_stock,
+                           suffix=" mm")
+        self.stock_y = num(0.0, -50.0, 400.0, 1.0, 2, self._on_stock,
+                           suffix=" mm")
         stock.add(widgets.Field(
             "Sheet width", self.stock_w,
-            help="The piece of copper, not the board. Its front-left corner "
-                 "sits on the machine origin — which is exactly what the bed "
-                 "fixture guarantees."))
+            help="The piece of copper, not the board. With the bed fixture its "
+                 "front-left corner sits on the machine origin; if you clamped "
+                 "it by hand, set the corner below."))
         stock.add(widgets.Field("Sheet height", self.stock_h))
+        stock.add(widgets.Field(
+            "Corner across (X)", self.stock_x,
+            help="The front-left corner of the copper, in machine "
+                 "coordinates. Leave both at zero when the bed fixture is "
+                 "holding it."))
+        stock.add(widgets.Field("Corner up (Y)", self.stock_y))
+        self.corner_btn = widgets.button(
+            "Set the corner from the tool",
+            on=ctl.action_stock_corner_here,
+            tip="Jog the tool over the front-left corner of the copper, then "
+                "press this: the machine's own X and Y become the corner "
+                "above." + chr(10) + chr(10) + "Nothing moves — it reads the position, it does "
+                "not drive to it. Z is not touched, and neither is the work "
+                "origin.")
+        stock.add(self.corner_btn)
+        self.show_stock = QCheckBox("Draw the copper on the bed")
+        self.show_stock.setChecked(True)
+        self.show_stock.setToolTip(
+            "Outline the sheet on the stage. Worth leaving on whenever the "
+            "copper is not on the fixture, because it is the only thing that "
+            "shows the job actually falls on metal.")
+        self.show_stock.toggled.connect(self._on_stock)
+        stock.add(self.show_stock)
         self.screwed = QCheckBox("Held down with M4 screws")
         self.screwed.setToolTip(
             "Tick this if the copper is screwed to the spoilboard grid.\n\n"
@@ -279,8 +313,23 @@ class SetupPage(Page):
             "freely, probe where they landed, and the top traces are warped to "
             "fit. No waste needed; the fit is only as good as your probing.")
         self.registration.currentIndexChanged.connect(
-            lambda _i: ctl.action_registration(self.registration.currentData()))
+            lambda _i: (ctl.action_registration(self.registration.currentData()),
+                        self.sync()))
         self.ds_section.add(widgets.Field("Registration", self.registration))
+        self.fid_dia = num(1.60, 0.5, 6.0, 0.1, 2, self._on_fid_dia,
+                           suffix=" mm")
+        self.fid_dia_field = widgets.Field(
+            "Reference hole", self.fid_dia,
+            help="How wide each fiducial hole is milled." + chr(10) + chr(10) +
+                 "It has to be comfortably wider than the bit. The hole is "
+                 "found by lowering the bit INSIDE it and reading no copper, "
+                 "so a bit that does not fit rests on the rim and reads "
+                 "copper everywhere — including dead centre. Leave room for "
+                 "collet runout as well: 1.6 mm against a 0.8 mm bit gives "
+                 "0.4 mm all round." + chr(10) + chr(10) +
+                 "Anything wider than the bit is milled as a circle, not "
+                 "plunged.")
+        self.ds_section.add(self.fid_dia_field)
         self.add(self.ds_section)
 
         self.finish()
@@ -301,8 +350,13 @@ class SetupPage(Page):
     def _on_place(self, *_a):
         self.ctl.action_place(self.place_x.value(), self.place_y.value())
 
+    def _on_fid_dia(self, *_a):
+        self.ctl.action_fiducial_diameter(self.fid_dia.value())
+
     def _on_stock(self, *_a):
-        self.ctl.action_stock(self.stock_w.value(), self.stock_h.value())
+        self.ctl.action_stock(self.stock_w.value(), self.stock_h.value(),
+                              self.stock_x.value(), self.stock_y.value(),
+                              self.show_stock.isChecked())
 
     def _on_machine(self, text):
         self.ctl.action_machine(text)
@@ -332,6 +386,18 @@ class SetupPage(Page):
             spin.blockSignals(True)
             spin.setValue(val)
             spin.blockSignals(False)
+        sx, sy, sw, sh = ctl.stock
+        for spin, val in ((self.stock_x, sx), (self.stock_y, sy),
+                          (self.stock_w, sw), (self.stock_h, sh)):
+            spin.blockSignals(True)
+            spin.setValue(val)
+            spin.blockSignals(False)
+        self.show_stock.blockSignals(True)
+        self.show_stock.setChecked(bool(getattr(ctl, "show_stock", True)))
+        self.show_stock.blockSignals(False)
+        self.fid_dia.blockSignals(True)
+        self.fid_dia.setValue(float(getattr(ctl, "_fid_diameter", 1.6)))
+        self.fid_dia.blockSignals(False)
         self.rotate.set_current(str(st.rotate % 360))
         plan = getattr(ctl, "plan", None)
         spec = (f"Traces {st.trace.effective_diameter():.2f} mm wide at "
@@ -347,6 +413,9 @@ class SetupPage(Page):
         self.ds_section.setVisible(full)
         self.save_preset_btn.setVisible(full)
         self.registration.setVisible(full and self.double.isChecked())
+        self.fid_dia_field.setVisible(
+            full and self.double.isChecked()
+            and self.registration.currentData() == "fiducial")
 
 
 # ---------------------------------------------------------------------------

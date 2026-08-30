@@ -28,7 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, QEvent
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QStackedWidget, QFileDialog, QApplication,
@@ -56,6 +56,63 @@ from gerber2rml.gui2.sheet import RunSheet
 
 DEMO = Path(__file__).resolve().parents[2] / "examples" / "calibration"
 FIXTURE = Path(__file__).resolve().parents[1] / "examples"
+
+
+
+def _and_list(items):
+    """``"a"`` / ``"a and b"`` / ``"a, b and c"`` — for a sentence, not a log."""
+    items = list(items)
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _as_gui2_setup(data):
+    """Return ``(setup, unreadable)`` for a setup written by either interface.
+
+    The first interface saves the same job under different names — ``place_x``
+    /``place_y`` for one ``place`` pair, ``rotation`` for ``rotate``, a ``jobs``
+    mapping for the three operation blocks, and a ``stock`` *dict* carrying the
+    sheet's corner as well as its size. Read straight into this interface those
+    all miss, and because every read has a default, the job came up placed at
+    the origin, unrotated, with default cutting parameters and no copper — and
+    said "Setup loaded.".
+
+    Translating rather than refusing, because these files are the lab's real
+    setups and the two interfaces deliberately share one workspace.
+    """
+    if "place" in data or "trace" in data:
+        return data, []                  # already ours
+    out = dict(data)
+    unreadable = []
+    if "place_x" in data or "place_y" in data:
+        out["place"] = [data.get("place_x", 0.0), data.get("place_y", 0.0)]
+    if "rotation" in data:
+        out["rotate"] = data["rotation"]
+    jobs = data.get("jobs")
+    if isinstance(jobs, dict):
+        # "traces" there, "trace" here; drill and cutout keep their names.
+        for theirs, ours in (("traces", "trace"), ("drill", "drill"),
+                             ("cutout", "cutout")):
+            block = jobs.get(theirs)
+            if isinstance(block, dict):
+                out[ours] = block
+    elif jobs is not None:
+        unreadable.append("the cutting parameters")
+    stock = data.get("stock")
+    if isinstance(stock, dict):
+        try:
+            out["stock"] = [float(stock.get("x", 0.0)), float(stock.get("y", 0.0)),
+                            float(stock["w"]), float(stock["h"])]
+        except (KeyError, TypeError, ValueError):
+            unreadable.append("the copper sheet")
+            out.pop("stock", None)
+        else:
+            out["show_stock"] = bool(stock.get("show", True))
+    if "reg" in data and "registration" not in data:
+        # 0 is the dowel path in the first interface's combo.
+        out["registration"] = "dowel" if data["reg"] == 0 else "fiducial"
+    return out, unreadable
 
 
 class Toast(QLabel):
@@ -107,13 +164,25 @@ class MainWindow(QMainWindow):
         self._export_dir = None
         self._double = False
         self._registration = "dowel"
+        # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
+        # the same as the bit that drills it and the same as the bit that must
+        # descend INSIDE it to probe it, which is a hole no bit can enter.
+        self._fid_diameter = 1.6
+        # Where the flipped board REALLY landed, from the measured fiducials.
+        # Everything drawn for the top side goes through it, so the picture is
+        # of the board in front of you and not the one you meant to put down.
+        self._top_fit = None
+        self._fid_measured = []
         self._layout_base = None       # the layout at offset (0, 0)
         self._layout_key = None        # what that base was built from
         self._layout_placed = None     # ...translated to the placement
         self._layout_placed_key = None
         self._paths_cache = {}         # step key -> (paths, far, cut width)
+        self._current_step = None
         self._last_pos = None
         self.stock = (0.0, 0.0, 100.0, 80.0)
+        self.show_stock = True
+        self.show_bed = True     # the spoilboard grid; see _draw_screws
         self.screwed = False
 
         self._build_ui()
@@ -187,11 +256,43 @@ class MainWindow(QMainWindow):
         # Escape stops the machine from anywhere, including with a dialog's
         # child widget focused. It is the one shortcut that must never be
         # context-dependent.
-        stop = QAction(self)
-        stop.setShortcut(QKeySequence(Qt.Key_Escape))
-        stop.setShortcutContext(Qt.ApplicationShortcut)
-        stop.triggered.connect(self.bar._stop)
-        self.addAction(stop)
+        # An ApplicationShortcut is NOT enough. Qt refuses to deliver a
+        # shortcut owned by this window while a modal dialog is up, so Escape
+        # reached the dialog's own reject() and the machine kept moving --
+        # measured, with a modal dialog focused: the stop handler was not
+        # called at all. Every dialog in this interface is modal, and zero_z /
+        # touch_off drive the tool for up to a minute on the worker thread
+        # while the UI stays live, so that gap is exactly where it matters.
+        #
+        # An application-wide event filter sees the key first, whatever is
+        # focused. It never consumes the event, so Escape still closes a
+        # dialog as anyone would expect -- it stops the machine as well.
+        self._esc_down = False
+        # Taken off again in closeEvent: the filter lives on the shared
+        # application rather than on this window, so a window that goes away
+        # without removing it leaves the application dispatching every key to
+        # it. (Not hooked to `destroyed` - that fires after the C++ object is
+        # gone, and passing it back to Qt raises.)
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        # One press, one stop. A filter on the application sees the same key
+        # at the focused widget and again as it propagates to its window, and
+        # holding the key repeats it; without this the operator gets a row of
+        # identical toasts for a single press.
+        if ev.type() == QEvent.KeyRelease and ev.key() == Qt.Key_Escape:
+            self._esc_down = False
+        elif (ev.type() == QEvent.KeyPress and ev.key() == Qt.Key_Escape
+                and not self._esc_down):
+            self._esc_down = True
+            if self.link.can_stop_something():
+                self.bar._stop()
+            elif QApplication.activeModalWidget() is None:
+                # Nothing to stop and no dialog in the way: say what does stop
+                # this machine. Suppressed under a dialog, where Escape means
+                # "close this" and the guidance would just be noise.
+                self.bar._stop()
+        return super().eventFilter(obj, ev)
 
     def _build_header(self):
         head = QWidget()
@@ -275,6 +376,16 @@ class MainWindow(QMainWindow):
                                   checkable=True)
         self.travel_act = self._act(v, "Travel moves", self._toggle_travel_menu,
                                     checkable=True, checked=True)
+        self.bed_act = self._act(v, "Spoilboard screw grid", self._toggle_bed,
+                                 "Ctrl+G", checkable=True, checked=True)
+        v.addSeparator()
+        self._act(v, "Watch this step in 3D…", self.action_sim3d, "Ctrl+3")
+        v.addSeparator()
+        self._act(v, "Lay a photo of the board on the bed…",
+                  self.action_load_photo)
+        self.photo_clear_act = self._act(v, "Take the photo off",
+                                         self.action_clear_photo)
+        self.photo_clear_act.setEnabled(False)
 
         m = mb.addMenu("&Machine")
         self._act(m, "Rescan the serial ports", self.bar.refresh_ports)
@@ -288,6 +399,8 @@ class MainWindow(QMainWindow):
         self.fixture_act = self._act(m, "Export the bed fixture (pin holes)…",
                                      self.action_export_fixture)
         m.addSeparator()
+        m.addSeparator()
+        self.mtest_act = self._act(m, "Machine test…", self.action_machine_test)
         self.stream_act = self._act(m, "Stream this step over the link "
                                        "(experimental)…", self.action_stream)
 
@@ -341,7 +454,7 @@ class MainWindow(QMainWindow):
         pinned = tier.pinned_tier() is not None
         self.essential_act.setEnabled(not pinned)
         self.full_act.setEnabled(not pinned)
-        for a in (self.stream_act, self.fixture_act):
+        for a in (self.stream_act, self.fixture_act, self.mtest_act):
             a.setVisible(full)
 
     # ------------------------------------------------------- the ctl protocol
@@ -533,6 +646,7 @@ class MainWindow(QMainWindow):
         step = self.plan.by_key(key)
         if step is None:
             return
+        self._current_step = step        # what the 3D view and Stream act on
         self.traveller.select(key)
         self.inspector.show_step(step, self.plan)
         self.centre.setCurrentWidget(self.stage)
@@ -654,7 +768,9 @@ class MainWindow(QMainWindow):
         if step.op == "cutout":
             return cut_outline(lay.outline, st.cutout), None, st.cutout.bit_diameter
         if step.op == "top_traces":
-            return (isolate(lay.top_copper, st.trace, outline=lay.top_outline),
+            return (self._fit_paths(
+                        isolate(lay.top_copper, st.trace,
+                                outline=lay.top_outline)),
                     None, width)
         return (isolate(lay.bottom_copper, st.trace, outline=lay.outline),
                 None, width)
@@ -679,12 +795,13 @@ class MainWindow(QMainWindow):
         if self.state.gerber_dir is None:
             return None
         key = (str(self.state.gerber_dir), self.state.rotate,
-               self._registration)
+               self._registration, self._fid_diameter)
         if self._layout_base is None or self._layout_key != key:
             try:
                 self._layout_base = layout_double_sided(
                     self.state.gerber_dir, offset=(0.0, 0.0),
-                    rotate=self.state.rotate, registration=self._registration)
+                    rotate=self.state.rotate, registration=self._registration,
+                    fiducials=self.fiducial_spec())
                 self._layout_key = key
             except Exception as e:
                 self.report_error(
@@ -731,7 +848,8 @@ class MainWindow(QMainWindow):
                 try:
                     prev = preview_layout_double_sided(
                         st.gerber_dir, offset=(st.place_x, st.place_y),
-                        rotate=st.rotate, registration=self._registration)
+                        rotate=st.rotate, registration=self._registration,
+                        fiducials=self.fiducial_spec())
                     self.stage.set_board(prev.bottom_copper, prev.outline,
                                          prev.holes, copper_far=prev.top_copper,
                                          align_holes=prev.align_holes)
@@ -739,31 +857,55 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             if step is not None and step.side == "top":
+                # AS PLACED once the fiducials have been measured: the flip is
+                # where the board actually is, not where a perfect flip would
+                # have put it. Jog, snap and rework all read this picture, so
+                # they have to agree with the metal.
                 self.stage.set_board(
-                    lay.top_copper, lay.top_outline,
-                    reflect_holes(lay.holes, lay.axis, lay.flip_pos),
-                    align_holes=lay.align_holes)
+                    self._fit_geom(lay.top_copper),
+                    self._fit_geom(lay.top_outline),
+                    self._fit_holes(
+                        reflect_holes(lay.holes, lay.axis, lay.flip_pos)),
+                    align_holes=self._fit_holes(lay.align_holes))
             else:
                 self.stage.set_board(lay.bottom_copper, lay.outline, lay.holes,
                                      align_holes=lay.align_holes)
         else:
             self.stage.set_board(st.board.copper, st.board.outline,
                                  st.board.holes)
-        self.stage.set_stock(self.stock if self.screwed else None)
+        self._sync_stock()
         self._draw_screws()
 
     def _draw_screws(self):
-        if not self.screwed or self.state.board is None:
-            self.stage.set_screws([], [])
-            return
+        """The spoilboard's tapped holes, and the screws chosen out of them.
+
+        These are two different facts and used to share one switch. The grid is
+        a property of the bed — it is worth seeing while deciding where to put
+        the copper, with no board loaded and nothing screwed down — whereas the
+        picked fasteners only mean anything once there is a job to clear.
+        """
         grid = spoilboard.measured_grid()
         bed = BACKENDS[self.state.machine].bed
-        try:
-            reach = [(x, y) for (_i, _j, x, y) in spoilboard.reachable(grid, bed)]
-            picks = spoilboard.pick_fasteners(
-                grid, self.stock, bed, keepout=self.state.board.copper)
-        except Exception:
-            reach, picks = [], []
+        reach, picks = [], []
+        if self.show_bed or self.screwed:
+            try:
+                # Every hole in the plate, including the outer mounting ring.
+                # `grid.holes()` skips that ring because a screw may not use
+                # it, and drawing that subset put the picture a full 10 mm
+                # pitch in from the real plate in both axes — it read as a
+                # grid that would not line up with the holes in front of you.
+                # This is a picture of the spoilboard; which holes are usable
+                # is what `picks` is for.
+                reach = [grid.centre(i, j)
+                         for j in range(grid.ny) for i in range(grid.nx)]
+            except Exception:
+                reach = []
+        if self.screwed and self.state.board is not None:
+            try:
+                picks = spoilboard.pick_fasteners(
+                    grid, self.stock, bed, keepout=self.state.board.copper)
+            except Exception:
+                picks = []
         self.stage.set_screws(picks, reach)
 
     def _draw_shorts(self, step):
@@ -833,10 +975,63 @@ class MainWindow(QMainWindow):
                               "Reload the board and try again. Nothing has "
                               "been written.")
             return
+        checks += self._stock_checks()
         checks += self._screw_checks()
         self._checks = checks
         self.inspector.checks.set_checks(checks)
         self._sync_banner()
+
+    def _stock_checks(self):
+        """Is the job on the copper, and is the copper on the machine?
+
+        `preflight` checks the job against the BED, which is the machine's
+        travel. Neither it nor anything else checked it against the SHEET, and
+        the two are not the same once the copper is not on the fixture: a job
+        can sit perfectly inside the travel and still hang off the edge of the
+        metal. That is a pass cutting air, and if the bed levelling grid is
+        laid over the same footprint it is also a probe point descending onto
+        bare spoilboard with nothing to touch off against.
+        """
+        out = []
+        sx, sy, sw, sh = self.stock
+        bx, by = BACKENDS[self.state.machine].bed
+        over = max(0.0, (sx + sw) - bx), max(0.0, (sy + sh) - by)
+        under = max(0.0, -sx), max(0.0, -sy)
+        if any(over) or any(under):
+            bits = []
+            if over[0]: bits.append(f"{over[0]:.1f} mm past the right of the travel")
+            if over[1]: bits.append(f"{over[1]:.1f} mm past the back of the travel")
+            if under[0]: bits.append(f"{under[0]:.1f} mm left of X0")
+            if under[1]: bits.append(f"{under[1]:.1f} mm in front of Y0")
+            out.append(diag.Check(
+                "warn", "Part of the copper is out of reach",
+                "the sheet sits " + " and ".join(bits) + ". The spindle cannot "
+                "get there, so nothing may be placed on that part of it."))
+        wb = self.work_bounds()
+        if wb is None:
+            return out
+        x0, y0, x1, y1 = wb
+        out_l, out_b = max(0.0, sx - x0), max(0.0, sy - y0)
+        out_r, out_t = max(0.0, x1 - (sx + sw)), max(0.0, y1 - (sy + sh))
+        worst = max(out_l, out_r, out_b, out_t)
+        if worst > 0.0:
+            edges = []
+            if out_l: edges.append(f"{out_l:.2f} mm off the left edge")
+            if out_r: edges.append(f"{out_r:.2f} mm off the right edge")
+            if out_b: edges.append(f"{out_b:.2f} mm off the front edge")
+            if out_t: edges.append(f"{out_t:.2f} mm off the back edge")
+            out.append(diag.Check(
+                "fail", "The job runs off the copper",
+                "the work hangs " + " and ".join(edges) + " of the sheet. "
+                "Move the job, or set the sheet's real size and corner under "
+                "The copper."))
+        else:
+            out.append(diag.Check(
+                "ok", "The job is on the copper",
+                f"nearest edge has "
+                f"{min(x0 - sx, sx + sw - x1, y0 - sy, sy + sh - y1):.1f} mm "
+                f"to spare."))
+        return out
 
     def _screw_checks(self):
         if not self.screwed:
@@ -930,6 +1125,11 @@ class MainWindow(QMainWindow):
                 "Drill Files produce. If the folder holds a zip, unpack it "
                 "first.")
             return
+        # A measured flip belongs to one physical board on the bed. Carrying it
+        # onto the next one would draw the new board where the old one landed.
+        # A setup restore re-applies its own saved fit after this call.
+        self._top_fit = None
+        self._fid_measured = []
         from gerber2rml.loader import gerber_stem
         try:
             stem = gerber_stem(Path(folder))
@@ -1001,11 +1201,212 @@ class MainWindow(QMainWindow):
         self._paths_cache = {}
         self._after_params()
 
-    def action_stock(self, w, h):
-        self.stock = (0.0, 0.0, w, h)
+    def action_stock(self, w, h, x=None, y=None, show=None):
+        # The corner is kept unless a caller passes a new one: editing the
+        # sheet size used to reset the sheet to the machine origin, which
+        # silently moved a hand-clamped sheet back under the fixture's
+        # assumption.
+        cx, cy, _w, _h = self.stock
+        self.stock = (cx if x is None else x, cy if y is None else y, w, h)
+        if show is not None:
+            self.show_stock = bool(show)
         self._draw_screws()
-        self.stage.set_stock(self.stock if self.screwed else None)
+        self._sync_stock()
         self.refresh_checks()
+
+    def _sync_stock(self):
+        """Draw the sheet when asked to, not only when it is screwed down.
+
+        Tying the outline to the screw checkbox meant the one case that most
+        needs it — a sheet clamped by hand, away from the fixture — was the
+        case that never drew it.
+        """
+        self.stage.set_stock(self.stock
+                             if (self.show_stock or self.screwed) else None)
+
+    def action_load_photo(self):
+        """Warp a photo of the real board into machine coordinates.
+
+        Answers a question the design cannot: where the board ACTUALLY is, and
+        what state it is actually in. A rework box drawn over the photo lands
+        on the damage rather than on where the Gerbers say the damage should
+        be.
+        """
+        from PySide6.QtWidgets import QDialog as _QDialog
+        if self.state.board is None:
+            self.say("warn", "Load a board first — the photo is lined up "
+                             "against its drilled holes.")
+            return
+        holes = list(self.state.board.holes or [])
+        if len(holes) < 4:
+            self.say("warn", "This board has fewer than four drilled holes, "
+                             "so there is nothing to line a photo up on.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "A photo of the board on the bed",
+            workspace.remembered_dir("photo", "photos"),
+            "Images (*.jpg *.jpeg *.png *.bmp)")
+        if not path:
+            return
+        workspace.remember_dir("photo", path)
+        try:
+            import numpy as np
+            from PySide6.QtGui import QImage
+            img_q = QImage(path)
+            if img_q.isNull():
+                raise ValueError("the file is not an image this app can read")
+            conv = img_q.convertToFormat(QImage.Format_RGBA8888)
+            ptr = conv.constBits()
+            arr = np.frombuffer(ptr, dtype=np.uint8).reshape(
+                conv.height(), conv.bytesPerLine() // 4, 4)[:, :conv.width(), :]
+            img = np.ascontiguousarray(arr)
+        except Exception as e:
+            self.report_error("That photo could not be opened", e,
+                              "Try a JPEG or PNG straight off the camera.")
+            return
+
+        from gerber2rml.gui2 import photo as photo_mod
+        anchors = photo_mod.pick_anchor_holes(holes)
+        dlg = photo_mod.PhotoAnchorDialog(
+            self, photo_mod.to_qimage(img), anchors, holes=holes,
+            outline=self.state.board.outline)
+        if dlg.exec() != _QDialog.Accepted:
+            return
+        try:
+            worst = self._apply_photo(img, dlg.photo_points(),
+                                      dlg.machine_points())
+        except Exception as e:
+            self.report_error(
+                "The photo could not be lined up", e,
+                "Four clicks that are nearly in a line cannot define the fit. "
+                "Try again picking holes nearer the corners of the board.")
+            return
+        level = "ok" if worst < 0.5 else "warn"
+        self.say(level, "Photo laid on the bed — worst anchor is "
+                        "%.2f mm out. Anything over about half a millimetre "
+                        "means a click was off, or the board moved." % worst)
+
+    def _apply_photo(self, img, photo_pts, machine_pts):
+        """Fit, warp, and hand the result to the stage. Returns the worst
+        residual in mm, which is the only honest measure of whether to trust
+        what is now on screen."""
+        from gerber2rml.engine.photofit import (fit_homography, residuals,
+                                                warp_photo)
+        from gerber2rml.gui2 import photo as photo_mod
+        H = fit_homography(photo_pts, machine_pts)
+        res = residuals(H, photo_pts, machine_pts)
+        wb = self.work_bounds()
+        if wb is None:
+            bx, by = BACKENDS[self.state.machine].bed or (203.2, 152.4)
+            wb = (0.0, 0.0, bx, by)
+        m = 5.0
+        rgba, extent = warp_photo(img, H, (wb[0] - m, wb[1] - m,
+                                           wb[2] + m, wb[3] + m))
+        self.stage.set_photo(photo_mod.to_qimage(rgba), extent)
+        self.stage.set_photo_dim(0.55)
+        self.photo_clear_act.setEnabled(True)
+        return float(res.max())
+
+    def action_clear_photo(self):
+        self.stage.set_photo(None, None)
+        self.stage.set_photo_dim(0.0)
+        self.photo_clear_act.setEnabled(False)
+        self.say("ok", "Photo taken off — back to the design.")
+
+    def action_sim3d(self):
+        """Orbit the selected step's toolpath and play the tool along it.
+
+        The stage answers "where does this cut?"; this answers "how deep, and
+        in what order?", which is the question a plunge or a missed retract
+        actually shows up in. Reads the same cached toolpath the stage drew,
+        so selecting a step and opening this cannot disagree.
+        """
+        step = self._current_step
+        op = getattr(step, "op", None)
+        if self.state.board is None:
+            self.say("warn", "Load a board first — there is no toolpath to "
+                             "watch yet.")
+            return
+        # The dry run belongs here too: it is the step people most want to
+        # watch before committing, and it has a real toolpath.
+        if op not in ("airpass", "traces", "top_traces", "drill", "cutout"):
+            self.say("warn", "Pick a step that cuts — the dry run, traces, "
+                             "drill or the cut-out. The hands-on steps have "
+                             "no toolpath of their own.")
+            return
+        try:
+            paths, _far, _w = self._toolpaths_for(step)
+        except Exception as e:
+            self.report_error("That step's toolpath could not be worked out", e,
+                              "Try selecting the step on the rail first.")
+            return
+        if not paths:
+            self.say("warn", "That step's toolpath is empty — nothing to "
+                             "watch.")
+            return
+        try:
+            from gerber2rml.gui2.sim3d import Simulation3DWindow
+        except Exception as e:
+            self.report_error(
+                "The 3D view could not start", e,
+                "It needs pyqtgraph and PyOpenGL. Run "
+                "'python -m gerber2rml.doctor' to install the interface "
+                "dependencies, then try again.")
+            return
+        bounds = self.work_bounds()
+        self._sim_window = Simulation3DWindow(
+            paths, title=f"{self.state.name or 'board'} — {step.title}",
+            parent=self, board=bounds, bed=BACKENDS[self.state.machine].bed,
+            thickness=self.inspector.setup.thickness.value())
+        self._sim_window.show()
+        self._sim_window.raise_()
+        self._sim_window.activateWindow()
+
+    def action_machine_test(self):
+        """Which SPI commands this machine obeys — a diagnostic, not a step.
+
+        The panel opens the port itself, so the live link has to let go of it
+        first, exactly as the grid prober does. Handed back on close, so the
+        readout and STOP come straight back.
+        """
+        from gerber2rml.gui2.machinetest import MachineTestDialog
+        port = self.bar.current_port()
+        if not port:
+            self.say("warn", "No serial port to test. Plug the Arduino in and "
+                             "use Machine ▸ Rescan the serial ports.")
+            return
+        was_linked = self.link.is_connected()
+        if was_linked:
+            self.link.disconnect_from("handing the port to the machine test")
+        dlg = MachineTestDialog(port, self)
+        dlg.exec()
+        if was_linked:
+            self.link.connect_to(port)
+
+    def action_stock_corner_here(self):
+        """Take the tool's current X and Y as the copper's front-left corner.
+
+        The bed fixture puts that corner on the machine origin, but a sheet
+        clamped by hand is wherever it landed, and typing a corner measured
+        with a rule is the step people get wrong. Reading it off the machine
+        is the same gesture as zeroing Z, and it is a pure read — no motion is
+        commanded and the work origin is not touched.
+        """
+        if not self.link.is_connected():
+            self.say("warn", "Connect to the machine first — the button is on "
+                             "the bar at the bottom.")
+            return
+        pos = self.link.last_position
+        if pos is None:
+            self.say("warn", "No position from the machine yet. Give the "
+                             "readout a moment and try again.")
+            return
+        x, y = round(pos[0], 2), round(pos[1], 2)
+        _cx, _cy, w, h = self.stock
+        self.action_stock(w, h, x, y, self.show_stock)
+        self.inspector.setup.sync()
+        self.say("ok", f"Copper corner set to X {x:.2f}, Y {y:.2f} — the "
+                       f"sheet now sits {w:.0f} x {h:.0f} mm from there.")
 
     def action_rotate(self, deg):
         self.state.set_rotation(deg)
@@ -1043,6 +1444,53 @@ class MainWindow(QMainWindow):
         if on:
             self.say("info", "The cut-out has moved to after the flip — it is "
                              "what frees the board from its registration.")
+
+    def set_top_fit(self, transform, measured=None):
+        """Adopt (or clear) the measured flip, and redraw with it."""
+        self._top_fit = transform
+        if measured is not None:
+            self._fid_measured = [tuple(p) for p in measured]
+        self._paths_cache = {}
+        self.refresh_preview()
+
+    def _fit_paths(self, paths):
+        if self._top_fit is None or not paths:
+            return paths
+        from gerber2rml.engine.fiducial import apply_to_toolpaths
+        return apply_to_toolpaths(paths, self._top_fit)
+
+    def _fit_holes(self, holes):
+        if self._top_fit is None or not holes:
+            return holes
+        return [(*self._top_fit.apply(x, y), d) for (x, y, d) in holes]
+
+    def _fit_geom(self, g):
+        if self._top_fit is None or g is None:
+            return g
+        from shapely import affinity
+        t = self._top_fit
+        import math
+        c, s_ = math.cos(t.theta) * t.scale, math.sin(t.theta) * t.scale
+        return affinity.affine_transform(g, [c, -s_, s_, c, t.tx, t.ty])
+
+    def fiducial_spec(self):
+        """The fiducial geometry this job uses, as the engine wants it.
+
+        One home for it: the layout, the X-ray preview, the export and the
+        flip-fit page all have to agree about how big the holes are, and
+        defaulting the spec separately in four places is how they stop
+        agreeing.
+        """
+        from gerber2rml.doublesided import FiducialSpec
+        return FiducialSpec(hole_diameter=self._fid_diameter)
+
+    def action_fiducial_diameter(self, mm):
+        self._fid_diameter = float(mm)
+        self._layout_base = None          # geometry changed; drop the cache
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
 
     def action_registration(self, kind):
         self._registration = kind or "dowel"
@@ -1159,6 +1607,7 @@ class MainWindow(QMainWindow):
                     drill=st.drill, cutout=st.cutout, machine=st.machine,
                     offset=(st.place_x, st.place_y), rotate=st.rotate,
                     level=level, registration=self._registration,
+                    fiducials=self.fiducial_spec(),
                     board_thickness=self.inspector.setup.thickness.value())
             else:
                 written = st.export(out_dir, level=level)
@@ -1310,6 +1759,12 @@ class MainWindow(QMainWindow):
             "cutout": asdict(self.state.cutout),
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
+            "fid_diameter": self._fid_diameter,
+            "top_fit": ([self._top_fit.theta, self._top_fit.scale,
+                         self._top_fit.tx, self._top_fit.ty]
+                        if self._top_fit is not None else None),
+            "fid_measured": [list(p) for p in (self._fid_measured or [])],
+            "show_stock": self.show_stock, "show_bed": self.show_bed,
             "thickness": self.inspector.setup.thickness.value(),
         }
         try:
@@ -1336,6 +1791,7 @@ class MainWindow(QMainWindow):
                 "Setup files end in .srmcam and are written by File ▸ Save the "
                 "setup.")
             return
+        data, foreign = _as_gui2_setup(data)
         from dataclasses import replace
         st = self.state
         st.name = data.get("name", st.name)
@@ -1350,11 +1806,40 @@ class MainWindow(QMainWindow):
                     pass                 # a field this version does not have
         self._double = bool(data.get("double_sided", False))
         self._registration = data.get("registration", "dowel")
+        # 0.8 for setups written before it was settable, so an old job
+        # reproduces exactly what it produced then.
+        self._fid_diameter = float(data.get("fid_diameter", 0.8))
         self.screwed = bool(data.get("screwed", False))
-        self.stock = tuple(data.get("stock", self.stock))
+        stock = data.get("stock", self.stock)
+        try:
+            x, y, w, h = (float(v) for v in stock)
+            self.stock = (x, y, w, h)
+        except (TypeError, ValueError):
+            # Not four numbers. Keep the sheet we had rather than storing
+            # something the stage cannot unpack — a dict's keys, say.
+            foreign.append("the copper sheet")
+        self.show_stock = bool(data.get("show_stock", True))
+        self.show_bed = bool(data.get("show_bed", self.show_bed))
+        self.bed_act.setChecked(self.show_bed)
         folder = data.get("gerber_dir")
         if folder and Path(folder).is_dir():
             self.load_folder(folder)
+        # After load_folder, which names the job from the folder it read: the
+        # name saved with the setup is the one the operator chose.
+        if data.get("name"):
+            st.name = data["name"]
+        # ...and which also cleared the measured flip, so re-apply the saved
+        # one here. The AS PLACED views, jog and rework all follow it, so a
+        # restored job comes back describing the same physical board.
+        tf = data.get("top_fit")
+        if tf:
+            try:
+                from gerber2rml.engine.fiducial import Transform
+                self._top_fit = Transform(*[float(v) for v in tf])
+            except (TypeError, ValueError):
+                foreign.append("the measured flip")
+        self._fid_measured = [(float(x), float(y))
+                              for x, y in (data.get("fid_measured") or [])]
         px, py = data.get("place", [0, 0])
         st.set_rotation(data.get("rotate", 0))
         st.set_placement(px, py)
@@ -1364,8 +1849,18 @@ class MainWindow(QMainWindow):
         self.inspector.setup.screwed.setChecked(self.screwed)
         self.inspector.setup.sync()
         self._after_params()
+        self._sync_stock()
+        self._draw_screws()
         workspace.remember_dir("session", path)
-        self.say("ok", "Setup loaded.")
+        if foreign:
+            # Never "Setup loaded." over a job that is not the saved one. A
+            # placement silently reset to the origin is a job that cuts in the
+            # wrong place.
+            self.say("warn", "Setup loaded, but " + _and_list(foreign)
+                     + " could not be read from this file — check the job "
+                       "before you cut.")
+        else:
+            self.say("ok", "Setup loaded.")
 
     # ----------------------------------------------------------------- misc
     def _after_params(self):
@@ -1387,6 +1882,11 @@ class MainWindow(QMainWindow):
     def _toggle_travel(self):
         self.stage.set_travel_visible(self.travel_btn.isChecked())
         self.travel_act.setChecked(self.travel_btn.isChecked())
+        self._refresh_preview_now()
+
+    def _toggle_bed(self):
+        self.show_bed = self.bed_act.isChecked()
+        self._draw_screws()
         self._refresh_preview_now()
 
     def _toggle_travel_menu(self):
@@ -1471,6 +1971,12 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         try:
             self.link.disconnect_from("closing")
+        except Exception:
+            pass
+        try:
+            # The stop-key filter lives on the shared application, not on this
+            # window, so it has to be taken off by hand or it outlives us.
+            QApplication.instance().removeEventFilter(self)
         except Exception:
             pass
         super().closeEvent(e)
