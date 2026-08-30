@@ -88,33 +88,6 @@ def geom_to_path(geom):
     return path
 
 
-def traverse_segments(toolpaths):
-    """The moves BETWEEN toolpaths: the end of one to the start of the next.
-
-    The engine's toolpath model does not contain these. Each contour is its own
-    path that begins with a rapid to its start point, so the actual flight
-    across the board is implied by where the previous path left the tool — and
-    ``app.preview.toolpath_segments`` therefore reports every "rapid" run as a
-    pure Z retract at a single XY, which draws as nothing at all. The travel
-    display was switching an empty layer on and off.
-
-    The run-time estimator already treats the gap this way (it carries the tool
-    position across paths), so this draws exactly the motion it is charging
-    for: the bit in the air, crossing the board.
-    """
-    out = []
-    last = None
-    for tp in toolpaths:
-        if not tp:
-            continue
-        first = (tp[0].x, tp[0].y)
-        if last is not None and (abs(last[0] - first[0]) > 1e-9
-                                 or abs(last[1] - first[1]) > 1e-9):
-            out.append([last, first])
-        last = (tp[-1].x, tp[-1].y)
-    return out
-
-
 def polylines_to_path(polylines):
     """One path for a list of ``[(x, y), ...]`` polylines."""
     path = QPainterPath()

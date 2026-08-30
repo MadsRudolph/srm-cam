@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QInputDialog, QSizePolicy)
 
 from gerber2rml.app.state import ProjectState
-from gerber2rml.app.preview import toolpath_segments
+from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
@@ -45,7 +45,7 @@ from gerber2rml.engine.estimate import estimate_file_seconds, format_duration
 
 from gerber2rml.gui2 import (theme, widgets, style, runplan, tier, workspace,
                              dialogs)
-from gerber2rml.gui2.stage import Stage, traverse_segments
+from gerber2rml.gui2.stage import Stage
 from gerber2rml.gui2.traveller import Traveller
 from gerber2rml.gui2.inspector import Inspector
 from gerber2rml.gui2.machine import MachineLink, MachineBar
