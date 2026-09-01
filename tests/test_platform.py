@@ -144,3 +144,40 @@ def test_arduino_library_dir_differs_by_platform(tmp_path):
         tmp_path / "Documents" / "Arduino" / "libraries"
     assert plat.arduino_library_dir("linux", home=tmp_path) == \
         tmp_path / "Arduino" / "libraries"
+
+
+PKG = Path(__file__).parent.parent / "gerber2rml"
+
+# kicadplugin.config_roots predates platform.py, already takes an injectable
+# platform argument, and already has the Linux branch. It is the pattern this
+# module copied rather than a violation of it.
+_ALLOWED = {"platform.py", "kicadplugin.py"}
+
+
+def test_no_bare_platform_checks_outside_the_platform_module():
+    """Same discipline as test_gui2_theme's no-hex-literals rule, for the same
+    reason: a difference spelled out at the call site is one nobody can find."""
+    offenders = []
+    for f in sorted(PKG.rglob("*.py")):
+        if f.name in _ALLOWED:
+            continue
+        for i, line in enumerate(f.read_text(encoding="utf-8").split("\n"), 1):
+            if "sys.platform" in line or "platform.system()" in line:
+                offenders.append(f"{f.relative_to(PKG)}:{i}  {line.strip()[:70]}")
+    assert not offenders, (
+        "platform checks outside gerber2rml/platform.py - add a named "
+        "function there instead:\n  " + "\n  ".join(offenders))
+
+
+def test_platform_module_imports_no_qt_and_no_third_party():
+    """gui2/app.py imports this before PySide6, because surviving that import
+    is what it is for. A Qt import here would defeat the whole arrangement.
+
+    Checked against import lines only, not the whole file: platform.py's own
+    docstrings explain, in prose, exactly why PySide6 must stay out - a bare
+    substring scan would fail on that explanation as if it were the offence."""
+    lines = (PKG / "platform.py").read_text(encoding="utf-8").split("\n")
+    imports = [line.strip() for line in lines
+               if line.strip().startswith(("import ", "from "))]
+    for banned in ("PySide6", "serial", "shapely", "gerbonara", "numpy"):
+        assert not any(banned in line for line in imports), banned
