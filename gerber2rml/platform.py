@@ -76,3 +76,46 @@ def reveal_command(path, platform=None):
     if _is_windows(platform):
         return ["explorer", "/select,", str(Path(path))]
     return None
+
+
+def serial_permission_hint(device, platform=None, stat_fn=None, group_fn=None):
+    """What to tell someone whose serial port refused to open, or None.
+
+    On a fresh Fedora or Ubuntu account, opening ``/dev/ttyACM0`` fails with
+    PermissionError because the node is root-owned with group access and the
+    user is not in that group. It is invisible on Windows, and it is the most
+    likely "the Linux version doesn't work" report this project will get.
+
+    The group is read off the DEVICE rather than hardcoded. Fedora and Ubuntu
+    both use ``dialout`` today, but Arch uses ``uucp``, and telling someone to
+    join a group that is not the one guarding the node is advice that fails
+    silently.
+
+    ``stat_fn`` and ``group_fn`` are injectable so the test does not need a
+    real device with a real group.
+
+    ``grp`` is POSIX-only stdlib - importing it at module scope would break the
+    Windows build, so it is imported inside the branch.
+    """
+    if _is_windows(platform):
+        return None
+    import os
+    stat_fn = os.stat if stat_fn is None else stat_fn
+    if group_fn is None:
+        try:
+            import grp
+            def group_fn(gid):
+                return grp.getgrgid(gid).gr_name
+        except ModuleNotFoundError:
+            # grp is POSIX-only; on Windows this can't happen in production
+            # but tests run on both platforms with injected platform strings
+            return None
+    try:
+        group = group_fn(stat_fn(device).st_gid)
+    except Exception:
+        # Unplugged between the failure and the hint, or a group with no name.
+        # No hint is better than a wrong one.
+        return None
+    return (f"{device} is owned by the '{group}' group and you are not in it. "
+            f"Run  sudo usermod -aG {group} $USER  then log out and back in "
+            f"for the change to take effect.")

@@ -42,3 +42,38 @@ def test_reveal_has_no_command_off_windows():
 def test_capabilities_defaults_to_the_running_host():
     import sys
     assert plat.capabilities().machine_link == sys.platform.startswith("win")
+
+
+def test_permission_hint_names_the_group_the_device_actually_has():
+    """Fedora and Ubuntu use dialout; Arch uses uucp. Advice naming the wrong
+    group is advice that silently does not work, which is worse than none - so
+    the group is read off the device rather than assumed."""
+    hint = plat.serial_permission_hint(
+        "/dev/ttyACM0", "linux",
+        stat_fn=lambda p: type("st", (), {"st_gid": 986})(),
+        group_fn=lambda gid: "uucp")
+    assert "uucp" in hint
+    assert "dialout" not in hint
+    assert "sudo usermod -aG uucp" in hint
+    assert "log out" in hint.lower()
+
+
+def test_permission_hint_says_dialout_when_that_is_the_group():
+    hint = plat.serial_permission_hint(
+        "/dev/ttyACM0", "linux",
+        stat_fn=lambda p: type("st", (), {"st_gid": 20})(),
+        group_fn=lambda gid: "dialout")
+    assert "sudo usermod -aG dialout $USER" in hint
+
+
+def test_permission_hint_is_silent_on_windows():
+    """Windows has no group to join; a hint here would be noise."""
+    assert plat.serial_permission_hint("COM5", "win32") is None
+
+
+def test_permission_hint_survives_a_device_that_is_not_there():
+    """The device may have been unplugged between the failure and the hint."""
+    def boom(_p):
+        raise FileNotFoundError
+    hint = plat.serial_permission_hint("/dev/ttyACM0", "linux", stat_fn=boom)
+    assert hint is None
