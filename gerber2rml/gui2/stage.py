@@ -108,6 +108,7 @@ class Stage(QWidget):
     placement_changed = Signal(float, float)     # drag finished: total (dx, dy) mm
     placement_dragging = Signal(float, float)    # live during a drag, cheap
     jog_requested = Signal(float, float)         # clicked a target while armed
+    screw_picked = Signal(float, float)          # clicked a spoilboard hole
     hovered = Signal(object)                     # (x, y) mm, or None on leave
     frame_changed = Signal(str)
     region_added = Signal(float, float, float, float)   # a box dragged in mm
@@ -121,7 +122,7 @@ class Stage(QWidget):
 
         self.bed = (203.2, 152.4)
         self.frame = "bed"                # "bed" | "xray"
-        self.mode = "place"               # "place" | "jog"
+        self.mode = "place"               # "place" | "jog" | "box" | "screws"
 
         # content
         self._copper = None
@@ -337,7 +338,7 @@ class Stage(QWidget):
 
     def set_mode(self, mode):
         self.mode = mode
-        self.setCursor(QCursor(Qt.CrossCursor if mode == "jog"
+        self.setCursor(QCursor(Qt.CrossCursor if mode in ("jog", "screws")
                                else Qt.ArrowCursor))
         self.update()
 
@@ -438,6 +439,9 @@ class Stage(QWidget):
         p = self.to_mm(e.position())
         if self.mode == "jog":
             self.jog_requested.emit(p.x(), p.y())
+            return
+        if self.mode == "screws":
+            self.screw_picked.emit(p.x(), p.y())
             return
         if self.mode == "box":
             self._box_from = p

@@ -586,15 +586,36 @@ def test_a_two_tool_job_gets_its_bit_change_step_back(loaded):
 
 
 # ----------------------------------------------------------- auto-placing
-def _margins(win):
-    x0, y0, x1, y1 = win.job_extent()
+def _sheet_covering_the_bed(win):
+    """Put the copper over the whole travel, for tests about CENTRING.
+
+    Centring targets the copper, so a test about equal margins needs a sheet
+    the job fits on - otherwise it is a test about a board too big for its
+    stock, which is a different thing and has its own test. A sheet the size
+    of the bed makes the two targets the same, which is what these assertions
+    were written against.
+    """
     bx, by = 203.2, 152.4
-    return x0, bx - x1, y0, by - y1        # left, right, front, back
+    win.action_stock(bx, by, 0.0, 0.0)
+
+
+def _margins(win):
+    """Room around the job, measured against what centring actually targets.
+
+    Which is the COPPER, not the bed: centring on the machine's travel puts
+    the job in the middle of the machine, and on a sheet clamped off to one
+    side that is the middle of bare spoilboard. The sheet is clipped to the
+    travel first, because metal the spindle cannot reach is no use either.
+    """
+    x0, y0, x1, y1 = win.job_extent()
+    (tx0, ty0, tx1, ty1), _what = win._centring_target()
+    return x0 - tx0, tx1 - x1, y0 - ty0, ty1 - y1   # left, right, front, back
 
 
 def test_centring_puts_equal_margins_on_all_four_sides(loaded):
     """A board that nearly fills the bed does not want nudging into place a
     millimetre at a time — it wants centring, once."""
+    _sheet_covering_the_bed(loaded)
     loaded.state.set_placement(3.0, 91.0)          # somewhere unhelpful
     loaded.action_autoplace()
     left, right, front, back = _margins(loaded)
@@ -607,6 +628,7 @@ def test_centring_counts_the_registration_pins(loaded):
     """The dowels sit outside the board, in the waste the cut-out removes. A
     placement that puts the board on the bed but a dowel off it is a job that
     cannot be run."""
+    _sheet_covering_the_bed(loaded)
     loaded.action_double_sided(True)
     loaded.action_autoplace()
     lay = loaded._ds_layout()
@@ -621,6 +643,7 @@ def test_centring_counts_the_registration_pins(loaded):
 
 
 def test_centring_leaves_the_pre_flight_check_happy(loaded):
+    _sheet_covering_the_bed(loaded)
     loaded.state.set_placement(-40.0, 120.0)       # hanging off the bed
     loaded.action_autoplace()
     loaded.refresh_checks()
@@ -638,16 +661,20 @@ def test_centring_an_oversized_job_says_so_rather_than_pretending(loaded,
     monkeypatch.setattr(loaded, "job_extent", lambda: (0.0, 0.0, 260.0, 300.0))
     loaded.action_autoplace()
     assert said and said[-1][0] == "fail"
-    assert "bigger than the machine can reach" in said[-1][1]
+    assert "does not fit on" in said[-1][1]
     assert "rotating" in said[-1][1].lower()
 
 
 def test_centring_reports_the_room_it_left(loaded):
+    _sheet_covering_the_bed(loaded)
     said = []
     loaded.say = lambda level, text: said.append((level, text))
     loaded.action_autoplace()
     assert said[-1][0] == "ok"
-    assert "centred on the bed" in said[-1][1]
+    # It names what it centred ON, because the copper and the bed are
+    # different targets and which one it used decides whether the job
+    # landed on metal.
+    assert "centred on the copper" in said[-1][1]
     assert "spare each side" in said[-1][1]
 
 

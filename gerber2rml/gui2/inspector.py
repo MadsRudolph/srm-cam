@@ -240,6 +240,23 @@ class SetupPage(Page):
             "set yourself is kept.")
         self.screwed.toggled.connect(ctl.action_screws_toggled)
         stock.add(self.screwed)
+        self.pick_screws = QCheckBox("Choose the screw holes myself")
+        self.pick_screws.setToolTip(
+            "Click the spoilboard holes on the bed to screw through, and "
+            "click one again to drop it." + chr(10) + chr(10) +
+            "Any hole can be chosen, including one the app would have "
+            "rejected — you can see the bed and may have a reason it does "
+            "not know about. A doubtful pick is reported, not refused.")
+        self.pick_screws.toggled.connect(ctl.action_pick_screws)
+        self.screw_row = QWidget()
+        sh = QHBoxLayout(self.screw_row)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(theme.GAP_S)
+        sh.addWidget(self.pick_screws)
+        sh.addWidget(widgets.button("Let the app choose",
+                                    on=ctl.action_reset_screws))
+        sh.addStretch(1)
+        stock.add(self.screw_row)
         self.add(stock)
 
         # -- placement ---------------------------------------------------
@@ -330,6 +347,33 @@ class SetupPage(Page):
                  "Anything wider than the bit is milled as a circle, not "
                  "plunged.")
         self.ds_section.add(self.fid_dia_field)
+        self.fid_place = QComboBox()
+        self.fid_place.addItem("In the waste, outside the board", "waste")
+        self.fid_place.addItem("On the board, inside its corners", "onboard")
+        self.fid_place.setToolTip(
+            "Where the four reference holes go." + chr(10) + chr(10) +
+            "In the waste: the finished board is clean, but the stock has to "
+            "be bigger than the board by the offset all round." + chr(10) +
+            "On the board: the holes stay in the finished board, which is what "
+            "you want when the stock is barely bigger than the design - a "
+            "full-bed board has no waste to put them in.")
+        self.fid_place.currentIndexChanged.connect(self._on_fid_layout)
+        self.fid_offset = num(4.0, 0.5, 30.0, 0.5, 1, self._on_fid_layout,
+                              suffix=" mm")
+        self.fid_count = num(4, 2, 4, 1, 0, self._on_fid_layout)
+        self.fid_place_field = widgets.Field("Reference holes", self.fid_place)
+        self.fid_offset_field = widgets.Field(
+            "Offset from the corner", self.fid_offset,
+            help="How far in from each board corner (on the board), or out "
+                 "beyond it (in the waste).")
+        self.fid_count_field = widgets.Field(
+            "How many", self.fid_count,
+            help="Two is the minimum a rigid fit needs. Four is better, and "
+                 "lets one bad measurement show up as a residual instead of "
+                 "quietly tilting the result.")
+        for f in (self.fid_place_field, self.fid_offset_field,
+                  self.fid_count_field):
+            self.ds_section.add(f)
         self.add(self.ds_section)
 
         self.finish()
@@ -349,6 +393,11 @@ class SetupPage(Page):
 
     def _on_place(self, *_a):
         self.ctl.action_place(self.place_x.value(), self.place_y.value())
+
+    def _on_fid_layout(self, *_a):
+        self.ctl.action_fiducial_layout(int(self.fid_count.value()),
+                                        self.fid_place.currentData(),
+                                        self.fid_offset.value())
 
     def _on_fid_dia(self, *_a):
         self.ctl.action_fiducial_diameter(self.fid_dia.value())
@@ -398,6 +447,18 @@ class SetupPage(Page):
         self.fid_dia.blockSignals(True)
         self.fid_dia.setValue(float(getattr(ctl, "_fid_diameter", 1.6)))
         self.fid_dia.blockSignals(False)
+        self.fid_offset.blockSignals(True)
+        self.fid_offset.setValue(float(getattr(ctl, "_fid_offset", 4.0)))
+        self.fid_offset.blockSignals(False)
+        self.fid_count.blockSignals(True)
+        self.fid_count.setValue(int(getattr(ctl, "_fid_count", 4)))
+        self.fid_count.blockSignals(False)
+        self.fid_place.blockSignals(True)
+        want = getattr(ctl, "_fid_placement", "onboard")
+        i = self.fid_place.findData(want)
+        if i >= 0:
+            self.fid_place.setCurrentIndex(i)
+        self.fid_place.blockSignals(False)
         self.rotate.set_current(str(st.rotate % 360))
         plan = getattr(ctl, "plan", None)
         spec = (f"Traces {st.trace.effective_diameter():.2f} mm wide at "
@@ -413,9 +474,12 @@ class SetupPage(Page):
         self.ds_section.setVisible(full)
         self.save_preset_btn.setVisible(full)
         self.registration.setVisible(full and self.double.isChecked())
-        self.fid_dia_field.setVisible(
-            full and self.double.isChecked()
-            and self.registration.currentData() == "fiducial")
+        fiducial = (full and self.double.isChecked()
+                    and self.registration.currentData() == "fiducial")
+        for f in (self.fid_dia_field, self.fid_place_field,
+                  self.fid_offset_field, self.fid_count_field):
+            f.setVisible(fiducial)
+        self.screw_row.setVisible(self.screwed.isChecked())
 
 
 # ---------------------------------------------------------------------------

@@ -109,9 +109,36 @@ def _as_gui2_setup(data):
             out.pop("stock", None)
         else:
             out["show_stock"] = bool(stock.get("show", True))
-    if "reg" in data and "registration" not in data:
-        # 0 is the dowel path in the first interface's combo.
-        out["registration"] = "dowel" if data["reg"] == 0 else "fiducial"
+    # `reg_method` is the one that chooses dowels or fiducials. `reg` is the
+    # dowel SUB-mode (fresh-milled versus the pin grid) and says nothing about
+    # which scheme is in use - reading it turned a saved fiducial job into a
+    # dowel job, silently, which is a different board.
+    if "reg_method" in data and "registration" not in data:
+        out["registration"] = "fiducial" if data["reg_method"] == 1 else "dowel"
+    fid = data.get("fid")
+    if isinstance(fid, dict):
+        if "fid_diameter" not in data:
+            try:
+                out["fid_diameter"] = float(fid["diameter"])
+            except (KeyError, TypeError, ValueError):
+                pass                   # older setups predate a settable hole
+        try:
+            out["fid_count"] = int(fid["count"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        try:
+            out["fid_offset"] = float(fid["offset"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        # 0 on board, 1 in the waste, 2 the manual placement this interface
+        # has no equivalent for - which falls back to the corner scheme rather
+        # than silently drilling somewhere the operator did not pick.
+        place = fid.get("place")
+        if place in (0, 1):
+            out["fid_placement"] = "waste" if place == 1 else "onboard"
+        elif place == 2:
+            out["fid_placement"] = "onboard"
+            unreadable.append("the hand-placed reference holes")
     return out, unreadable
 
 
@@ -168,6 +195,9 @@ class MainWindow(QMainWindow):
         # the same as the bit that drills it and the same as the bit that must
         # descend INSIDE it to probe it, which is a hole no bit can enter.
         self._fid_diameter = 1.6
+        self._fid_count = 4
+        self._fid_placement = "onboard"    # "onboard" | "waste"
+        self._fid_offset = 4.0
         # Where the flipped board REALLY landed, from the measured fiducials.
         # Everything drawn for the top side goes through it, so the picture is
         # of the board in front of you and not the one you meant to put down.
@@ -183,6 +213,7 @@ class MainWindow(QMainWindow):
         self.stock = (0.0, 0.0, 100.0, 80.0)
         self.show_stock = True
         self.show_bed = True     # the spoilboard grid; see _draw_screws
+        self._manual_screws = None   # None = let the app choose them
         self.screwed = False
 
         self._build_ui()
@@ -219,6 +250,7 @@ class MainWindow(QMainWindow):
         self.stage.placement_changed.connect(self._on_drag)
         self.stage.placement_dragging.connect(self._on_dragging)
         self.stage.jog_requested.connect(self._on_jog_click)
+        self.stage.screw_picked.connect(self._on_screw_click)
         self.stage.hovered.connect(self._on_hover)
         self.stage.region_added.connect(self._on_region)
         self.stage.set_empty(
@@ -506,10 +538,35 @@ class MainWindow(QMainWindow):
         return (min(b[0] for b in boxes), min(b[1] for b in boxes),
                 max(b[2] for b in boxes), max(b[3] for b in boxes))
 
-    def action_autoplace(self):
-        """Drop the whole job into the middle of the machine's travel.
+    def _centring_target(self):
+        """What "centre it" should centre the job ON, and what to call it.
 
-        A board that nearly fills the bed does not want nudging into place a
+        The bed is the wrong answer whenever the copper is a particular sheet
+        in a particular place: centring on the travel puts the job in the
+        middle of the MACHINE, which on a sheet clamped off to one side is a
+        job centred on bare spoilboard. What the job has to land on is metal.
+
+        Metal the spindle can also reach, so the sheet is clipped to the
+        travel — the far corner of a sheet that overhangs the bed is not
+        somewhere a board can be put.
+        """
+        bx, by = BACKENDS[self.state.machine].bed
+        sx, sy, sw, sh = self.stock
+        if sw <= 0 or sh <= 0:
+            return (0.0, 0.0, bx, by), "the bed"
+        cx0, cy0 = max(0.0, sx), max(0.0, sy)
+        cx1, cy1 = min(bx, sx + sw), min(by, sy + sh)
+        if cx1 - cx0 <= 0 or cy1 - cy0 <= 0:
+            # The sheet is entirely out of reach; centring on it is meaningless.
+            return (0.0, 0.0, bx, by), "the bed"
+        clipped = (cx0 > sx or cy0 > sy or cx1 < sx + sw or cy1 < sy + sh)
+        return ((cx0, cy0, cx1, cy1),
+                "the reachable part of the copper" if clipped else "the copper")
+
+    def action_autoplace(self):
+        """Drop the whole job into the middle of the copper it has to be cut from.
+
+        A board that nearly fills the sheet does not want nudging into place a
         millimetre at a time — it wants centring, once, with whatever margin is
         left shared equally on both sides. That margin is the honest measure of
         how much room there is to be wrong by, so it is what the confirmation
@@ -522,11 +579,13 @@ class MainWindow(QMainWindow):
         if extent is None:
             return
         x0, y0, x1, y1 = extent
-        bx, by = BACKENDS[self.state.machine].bed
+        (tx0, ty0, tx1, ty1), what_on = self._centring_target()
+        bx, by = tx1 - tx0, ty1 - ty0
         w, h = x1 - x0, y1 - y0
-        # Move so the extent is centred: the gap either side is (bed - span)/2.
-        self.state.set_placement(self.state.place_x + (bx - w) / 2.0 - x0,
-                                 self.state.place_y + (by - h) / 2.0 - y0)
+        # Move so the extent is centred: the gap either side is (target - span)/2.
+        self.state.set_placement(
+            self.state.place_x + tx0 + (bx - w) / 2.0 - x0,
+            self.state.place_y + ty0 + (by - h) / 2.0 - y0)
         self._paths_cache = {}
         self.inspector.setup.sync()
         self.refresh_checks()
@@ -536,13 +595,14 @@ class MainWindow(QMainWindow):
         if mx < 0 or my < 0:
             over_x, over_y = max(0.0, -mx * 2), max(0.0, -my * 2)
             self.say("fail",
-                     f"This job is bigger than the machine can reach — by "
+                     f"This job does not fit on {what_on} — it is over by "
                      f"{over_x:.1f} mm across and {over_y:.1f} mm up. It is "
                      f"centred, so the overhang is shared, but it cannot be "
-                     f"cut as it is. Rotating it 90° may help.")
+                     f"cut as it is. Rotating it 90°, or a bigger piece of "
+                     f"copper, may help.")
         else:
             what = "job" if not self._double else "job, dowels included,"
-            self.say("ok", f"{w:.1f} × {h:.1f} mm {what} centred on the bed — "
+            self.say("ok", f"{w:.1f} × {h:.1f} mm {what} centred on {what_on} — "
                            f"{mx:.1f} mm spare each side, {my:.1f} mm front "
                            f"and back.")
 
@@ -795,7 +855,8 @@ class MainWindow(QMainWindow):
         if self.state.gerber_dir is None:
             return None
         key = (str(self.state.gerber_dir), self.state.rotate,
-               self._registration, self._fid_diameter)
+               self._registration, self._fid_diameter,
+               self._fid_count, self._fid_placement, self._fid_offset)
         if self._layout_base is None or self._layout_key != key:
             try:
                 self._layout_base = layout_double_sided(
@@ -900,12 +961,15 @@ class MainWindow(QMainWindow):
                          for j in range(grid.ny) for i in range(grid.nx)]
             except Exception:
                 reach = []
-        if self.screwed and self.state.board is not None:
-            try:
-                picks = spoilboard.pick_fasteners(
-                    grid, self.stock, bed, keepout=self.state.board.copper)
-            except Exception:
-                picks = []
+        if self.screwed:
+            if self._manual_screws is not None:
+                picks = list(self._manual_screws)
+            elif self.state.board is not None:
+                try:
+                    picks = spoilboard.pick_fasteners(
+                        grid, self.stock, bed, keepout=self.state.board.copper)
+                except Exception:
+                    picks = []
         self.stage.set_screws(picks, reach)
 
     def _draw_shorts(self, step):
@@ -1477,12 +1541,29 @@ class MainWindow(QMainWindow):
         """The fiducial geometry this job uses, as the engine wants it.
 
         One home for it: the layout, the X-ray preview, the export and the
-        flip-fit page all have to agree about how big the holes are, and
-        defaulting the spec separately in four places is how they stop
+        flip-fit page all have to agree about where the holes are and how big,
+        and defaulting the spec separately in four places is how they stop
         agreeing.
+
+        Everything here used to be the engine's default, which meant a job
+        saved with holes in the waste came back with them drilled through the
+        board — the same four reference holes, in a different place.
         """
         from gerber2rml.doublesided import FiducialSpec
-        return FiducialSpec(hole_diameter=self._fid_diameter)
+        return FiducialSpec(count=self._fid_count,
+                            placement=self._fid_placement,
+                            edge_offset=self._fid_offset,
+                            hole_diameter=self._fid_diameter)
+
+    def action_fiducial_layout(self, count, placement, offset):
+        self._fid_count = int(count)
+        self._fid_placement = placement
+        self._fid_offset = float(offset)
+        self._layout_base = None
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
 
     def action_fiducial_diameter(self, mm):
         self._fid_diameter = float(mm)
@@ -1637,17 +1718,28 @@ class MainWindow(QMainWindow):
         if st.board is None:
             self.say("warn", "Load a board first.")
             return
-        grid = spoilboard.measured_grid()
-        bed = BACKENDS[st.machine].bed
-        try:
-            picks = spoilboard.pick_fasteners(grid, self.stock, bed,
-                                              keepout=st.board.copper)
-        except Exception as e:
-            self.report_error("The screw positions could not be worked out", e)
-            return
+        # Hand-picked holes win. The automatic pass will not offer a hole it
+        # considers bad, and on a sheet where it can find none at all its
+        # refusal is the only answer the operator gets - so the file has to
+        # come from the same set that is drawn on the bed, not a second
+        # opinion computed here.
+        grid = spoilboard.measured_grid()      # also names the holes in the
+                                              # procedure text, either way
+        if self._manual_screws is not None:
+            picks = list(self._manual_screws)
+        else:
+            bed = BACKENDS[st.machine].bed
+            try:
+                picks = spoilboard.pick_fasteners(grid, self.stock, bed,
+                                                  keepout=st.board.copper)
+            except Exception as e:
+                self.report_error("The screw positions could not be worked out", e)
+                return
         if not picks:
-            self.say("warn", "No grid hole takes a screw head that lands on "
-                             "this piece of copper clear of the design.")
+            self.say("warn", "No screw holes chosen, and no grid hole takes a "
+                             "screw head that lands on this piece of copper "
+                             "clear of the design. Tick 'Held down with M4 "
+                             "screws' and choose them yourself on the bed.")
             return
         default = (workspace.remembered_dir("out", "exports")
                    + f"/{st.name}_screws{BACKENDS[st.machine].ext}")
@@ -1665,10 +1757,24 @@ class MainWindow(QMainWindow):
                 plunge_feed=st.drill.plunge_feed,
                 header=[f"{st.name} - hold-down screw clearance holes",
                         "run this FIRST, drop the screws in, then re-zero Z"]))
+        except Exception as e:
+            self.report_error(
+                "The screw program could not be written", e,
+                "Nothing has been written. If the folder is on a network "
+                "drive or inside Program Files, try somewhere under your "
+                "Documents instead.")
+            return
+        try:
             Path(path).with_suffix(".txt").write_text(
                 spoilboard.procedure(picks, grid), encoding="utf-8")
         except Exception as e:
-            self.report_error("The screw program could not be written", e)
+            # The program itself is on disk and is the part that matters, so
+            # say what IS there rather than reporting a failure over a file
+            # that was written.
+            self.report_error(
+                "The screw program is written, but not its procedure", e,
+                f"{Path(path).name} is on disk and can be run. Only the "
+                f"instructions beside it are missing.")
             return
         workspace.remember_dir("out", path)
         self.say("ok", f"{len(picks)} screw holes written, with the procedure "
@@ -1760,6 +1866,11 @@ class MainWindow(QMainWindow):
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
             "fid_diameter": self._fid_diameter,
+            "fid_count": self._fid_count,
+            "fid_placement": self._fid_placement,
+            "fid_offset": self._fid_offset,
+            "manual_screws": (None if self._manual_screws is None
+                              else [list(p) for p in self._manual_screws]),
             "top_fit": ([self._top_fit.theta, self._top_fit.scale,
                          self._top_fit.tx, self._top_fit.ty]
                         if self._top_fit is not None else None),
@@ -1809,6 +1920,9 @@ class MainWindow(QMainWindow):
         # 0.8 for setups written before it was settable, so an old job
         # reproduces exactly what it produced then.
         self._fid_diameter = float(data.get("fid_diameter", 0.8))
+        self._fid_count = int(data.get("fid_count", 4))
+        self._fid_placement = data.get("fid_placement", "onboard")
+        self._fid_offset = float(data.get("fid_offset", 4.0))
         self.screwed = bool(data.get("screwed", False))
         stock = data.get("stock", self.stock)
         try:
@@ -1820,6 +1934,9 @@ class MainWindow(QMainWindow):
             foreign.append("the copper sheet")
         self.show_stock = bool(data.get("show_stock", True))
         self.show_bed = bool(data.get("show_bed", self.show_bed))
+        ms = data.get("manual_screws")
+        self._manual_screws = (None if ms is None
+                               else [(float(x), float(y)) for x, y in ms])
         self.bed_act.setChecked(self.show_bed)
         folder = data.get("gerber_dir")
         if folder and Path(folder).is_dir():
@@ -1918,6 +2035,71 @@ class MainWindow(QMainWindow):
         self.inspector.setup.sync()
         self.refresh_checks()
         self._refresh_preview_now()
+
+    def _on_screw_click(self, x, y):
+        """Toggle the spoilboard hole nearest the click.
+
+        Any hole may be chosen, including one the automatic pass rejected. The
+        operator can see the bed and may have a reason the app does not know
+        about, so a doubtful pick is reported and kept rather than refused —
+        the same call the first interface makes.
+        """
+        grid = spoilboard.measured_grid()
+        best, best_d2 = None, (grid.pitch / 2.0) ** 2
+        for j in range(grid.ny):
+            for i in range(grid.nx):
+                hx, hy = grid.centre(i, j)
+                d2 = (hx - x) ** 2 + (hy - y) ** 2
+                if d2 <= best_d2:
+                    best, best_d2 = (hx, hy), d2
+        if best is None:
+            self.say("warn", "No spoilboard hole there — click closer to one.")
+            return
+        current = list(self._manual_screws if self._manual_screws is not None
+                       else self._auto_screws())
+        key = (round(best[0], 3), round(best[1], 3))
+        kept = [p for p in current if (round(p[0], 3), round(p[1], 3)) != key]
+        if len(kept) == len(current):
+            kept.append(best)
+            problem = spoilboard.point_problem(
+                best, self.stock,
+                keepout=(self.state.board.copper
+                         if self.state.board is not None else None))
+            if problem:
+                self.say("warn", "Screw at X%.1f Y%.1f %s. Kept — you can see "
+                                 "the bed, but check it." % (best[0], best[1],
+                                                             problem))
+            else:
+                self.say("ok", "Screw at X%.1f Y%.1f. %d chosen."
+                         % (best[0], best[1], len(kept)))
+        else:
+            self.say("info", "Screw at X%.1f Y%.1f removed. %d left."
+                     % (best[0], best[1], len(kept)))
+        self._manual_screws = kept
+        self._draw_screws()
+        self.refresh_checks()
+
+    def _auto_screws(self):
+        try:
+            return spoilboard.pick_fasteners(
+                spoilboard.measured_grid(), self.stock,
+                BACKENDS[self.state.machine].bed,
+                keepout=(self.state.board.copper
+                         if self.state.board is not None else None))
+        except Exception:
+            return []
+
+    def action_pick_screws(self, on):
+        self.set_stage_mode("screws" if on else "place")
+        if on:
+            self.say("info", "Click the spoilboard holes to screw through. "
+                             "Click one again to drop it.")
+
+    def action_reset_screws(self):
+        self._manual_screws = None
+        self._draw_screws()
+        self.refresh_checks()
+        self.say("ok", "Back to the holes the app would choose.")
 
     def _on_jog_click(self, x, y):
         if not self.link.is_connected():
