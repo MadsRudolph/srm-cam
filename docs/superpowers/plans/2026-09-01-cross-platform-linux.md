@@ -1188,14 +1188,19 @@ Prepend the same explanatory header the Windows lock carries, adapted:
 # To regenerate:
 #   1. python3 -m venv .build-venv && .build-venv/bin/pip install -r packaging/requirements-build.txt
 #   2. .build-venv/bin/pip freeze > packaging/requirements-lock-linux.txt
-#   3. re-add this header, strip the dev-only lines (pytest, pluggy, iniconfig)
+#   3. re-add this header, strip the dev-only lines (pytest, pluggy,
+#      iniconfig, Pygments) plus the editable self-reference pip freeze
+#      writes for this checkout ("-e ..." or a "# Editable install" line)
 #   4. run pytest and cut a test board before committing.
 #
 # Python: CPython 3.12 - matched to the Windows lock so both artifacts are
 # built by the same interpreter series.
 ```
 
-Then delete any `pytest`, `pluggy`, `iniconfig`, `Pygments` lines.
+Then delete any `pytest`, `pluggy`, `iniconfig`, `Pygments` lines, plus the
+editable self-reference line `pip freeze` writes for this checkout — a
+`-e git+...#egg=gerber2rml` (or `-e .`) line, or a `# Editable install`
+comment on pip versions that can't detect the VCS.
 
 - [ ] **Step 4: Verify the suite runs against it**
 

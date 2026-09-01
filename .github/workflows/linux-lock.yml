@@ -80,7 +80,10 @@ jobs:
         #      .build-venv/bin/python -m pytest -q      (must pass)
         #   4. .build-venv/bin/pip freeze > packaging/requirements-lock-linux.txt
         #   5. re-add this header, strip the dev-only lines (pytest, pluggy,
-        #      iniconfig, Pygments)
+        #      iniconfig, Pygments) and the editable self-reference pip
+        #      freeze writes for step 2's install (a "-e git+...#egg=..."
+        #      or "-e ." line, or a "# Editable install" comment on pip
+        #      versions that cannot detect version control)
         #
         # Python: CPython 3.12 - matched to the Windows lock so both artifacts
         # are built by the same interpreter series.
@@ -112,7 +115,7 @@ jobs:
         run: |
           printf '%s\n' "$LOCK_HEADER" > packaging/requirements-lock-linux.txt
           .build-venv/bin/python -m pip freeze \
-            | grep -Ev '^(pytest|pluggy|iniconfig|Pygments)==' \
+            | grep -Ev '^(pytest|pluggy|iniconfig|Pygments)==|^-e |^# Editable install|^gerber2rml[ =@]' \
             >> packaging/requirements-lock-linux.txt
           cat packaging/requirements-lock-linux.txt
 
