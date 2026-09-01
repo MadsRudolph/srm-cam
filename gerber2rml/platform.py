@@ -15,7 +15,7 @@ PySide6 is imported - that import is precisely what it exists to survive.
 """
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 WINDOWS = "win32"
 LINUX = "linux"
@@ -158,3 +158,57 @@ def documents_dir(home=None, platform=None):
             pass
     docs = home / "Documents"
     return docs if docs.is_dir() else home
+
+
+_IDE_TAIL = ("resources", "app", "lib", "backend", "resources")
+
+
+def arduino_cli_candidates(platform=None, env=None, home=None):
+    """Where a bundled ``arduino-cli`` might live, most likely first.
+
+    The Arduino IDE ships one inside its own resources; using it means no
+    separate toolchain install and the same core versions the IDE would have
+    used. Callers fall back to ``shutil.which`` when none of these exist.
+
+    The Linux and macOS branches build with ``PurePosixPath`` rather than the
+    bare ``Path`` this module uses everywhere else. ``Path`` always resolves
+    to the class of the REAL host, so injecting ``"linux"`` while actually
+    running on the Windows dev machine would silently render backslashes
+    instead of the forward slashes a Linux path needs - a test simulating a
+    different OS is not asking for a usable path, only a correctly-shaped
+    one. Only when the requested platform actually matches ``sys.platform``
+    - a real lookup, not a simulated one - is the result upgraded to a real
+    ``Path`` so ``.is_file()`` works.
+    """
+    import os
+    env = os.environ if env is None else env
+    home = Path.home() if home is None else Path(home)
+    if _is_windows(platform):
+        local = env.get("LOCALAPPDATA")
+        base = Path(local) if local else home / "AppData" / "Local"
+        return [base.joinpath("Programs", "Arduino IDE", *_IDE_TAIL,
+                               "arduino-cli.exe")]
+    if _plat(platform) == MACOS:
+        found = [PurePosixPath("/Applications/Arduino IDE.app/Contents",
+                                *_IDE_TAIL, "arduino-cli")]
+    else:
+        found = [
+            PurePosixPath("/opt/arduino-ide", *_IDE_TAIL, "arduino-cli"),
+            PurePosixPath("/usr/lib/arduino-ide", *_IDE_TAIL, "arduino-cli"),
+            home.joinpath(".local", "share", "arduino-ide", *_IDE_TAIL,
+                           "arduino-cli"),
+        ]
+    live = _plat(platform) == sys.platform
+    return [Path(p) for p in found] if live else found
+
+
+def arduino_library_dir(platform=None, home=None):
+    """Where the Arduino IDE looks for user libraries.
+
+    ``Documents/Arduino/libraries`` on Windows; plain ``~/Arduino/libraries``
+    on Linux, where the IDE does not put its sketchbook under Documents.
+    """
+    home = Path.home() if home is None else Path(home)
+    if _is_windows(platform):
+        return home / "Documents" / "Arduino" / "libraries"
+    return home / "Arduino" / "libraries"

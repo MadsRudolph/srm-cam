@@ -22,7 +22,6 @@ falling back to one on PATH.
 """
 import argparse
 import filecmp
-import os
 import shutil
 import subprocess
 import sys
@@ -31,23 +30,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gerber2rml.engine import spi_probe  # noqa: E402
+from gerber2rml import platform as plat  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SKETCH = ROOT / "hardware" / "srm20_spi_probe"
 LIBRARY = ROOT / "hardware" / "SRM20SPIRemote"
 FQBN = "arduino:avr:uno"
 
-# The IDE ships arduino-cli inside its resources; using it means no separate
-# toolchain install and the same core versions the IDE would have used.
-_BUNDLED = Path(os.environ.get("LOCALAPPDATA", "")) / (
-    r"Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe")
-
 
 def find_cli(explicit=None):
     if explicit:
         return Path(explicit)
-    if _BUNDLED.is_file():
-        return _BUNDLED
+    for candidate in plat.arduino_cli_candidates():
+        if candidate.is_file():
+            return candidate
     found = shutil.which("arduino-cli")
     if found:
         return Path(found)
@@ -57,8 +53,8 @@ def find_cli(explicit=None):
 
 
 def user_library_dir():
-    """Where the IDE looks for libraries: Documents/Arduino/libraries."""
-    return Path.home() / "Documents" / "Arduino" / "libraries"
+    """Where the IDE looks for libraries."""
+    return plat.arduino_library_dir()
 
 
 def sync_library(dry_run=False):

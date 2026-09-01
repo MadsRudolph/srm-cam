@@ -122,3 +122,25 @@ def test_documents_dir_does_not_read_xdg_on_windows(tmp_path):
     (tmp_path / "Documents").mkdir()
     assert plat.documents_dir(home=tmp_path, platform="win32") == \
         tmp_path / "Documents"
+
+
+def test_arduino_cli_candidates_point_into_the_ide_on_windows(tmp_path):
+    got = plat.arduino_cli_candidates(
+        "win32", env={"LOCALAPPDATA": r"C:\Users\x\AppData\Local"},
+        home=tmp_path)
+    assert any("arduino-cli.exe" in str(p) for p in got)
+
+
+def test_arduino_cli_candidates_cover_the_linux_ide_layouts(tmp_path):
+    got = [str(p) for p in plat.arduino_cli_candidates("linux", env={},
+                                                       home=tmp_path)]
+    assert any(p.startswith("/opt/") for p in got)
+    assert any(str(tmp_path) in p for p in got)
+    assert not any(p.endswith(".exe") for p in got)
+
+
+def test_arduino_library_dir_differs_by_platform(tmp_path):
+    assert plat.arduino_library_dir("win32", home=tmp_path) == \
+        tmp_path / "Documents" / "Arduino" / "libraries"
+    assert plat.arduino_library_dir("linux", home=tmp_path) == \
+        tmp_path / "Arduino" / "libraries"
