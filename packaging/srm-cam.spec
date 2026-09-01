@@ -10,6 +10,7 @@ The Inno Setup script (packaging/installer.iss) wraps that folder into Setup.exe
 One-folder (not one-file) is deliberate: faster cold start (no temp unpack of a
 ~400 MB archive every launch) and the installer bundles the folder anyway.
 """
+import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
@@ -77,7 +78,12 @@ exe = EXE(
     upx=False,
     console=False,                 # windowed GUI; flip to True to see tracebacks
     disable_windowed_traceback=False,
-    icon=str(ROOT / "packaging" / "srm-cam.ico"),   # regen: packaging/gen_icon.py
+    # PyInstaller only consumes an icon on Windows and macOS; on Linux the
+    # AppImage takes its icon from the .desktop entry instead. Passing a .ico
+    # there is ignored with a warning, and a spec should not ask for something
+    # it knows is meaningless.
+    icon=(str(ROOT / "packaging" / "srm-cam.ico")
+          if sys.platform.startswith("win") else None),
 )
 
 coll = COLLECT(
