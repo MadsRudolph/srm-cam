@@ -78,3 +78,17 @@ def test_permission_hint_survives_a_device_that_is_not_there():
     hint = plat.serial_permission_hint("/dev/ttyACM0", "linux", stat_fn=boom,
                                         group_fn=lambda gid: "dialout")
     assert hint is None
+
+
+def test_no_com5_literals_left_in_the_first_interface():
+    """Eight of these was the reason platform.py exists. The literal belongs in
+    one place now, and this fails if one grows back."""
+    import re
+    app = (Path(__file__).parent.parent / "gerber2rml" / "gui" / "app.py")
+    offenders = [f"{i}: {line.strip()[:70]}"
+                 for i, line in enumerate(
+                     app.read_text(encoding="utf-8").split("\n"), 1)
+                 if re.search(r'"COM\d+"', line)]
+    assert not offenders, (
+        "hardcoded COM port(s) - use platform.default_serial_port():\n  "
+        + "\n  ".join(offenders))

@@ -16,6 +16,7 @@ import time
 from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments, preview_segments
 from gerber2rml import __version__
+from gerber2rml import platform as plat
 from gerber2rml.backends import BACKENDS
 from gerber2rml.gui.form import DataclassForm
 from gerber2rml.gui.canvas import PreviewCanvas
@@ -486,7 +487,7 @@ class _FiducialAlignDialog(QDialog):
             return
         self._auto_busy = True
         self._dro_was_on = p._pause_dro()
-        port = p.level_port_combo.currentText().strip() or "COM5"
+        port = p.level_port_combo.currentText().strip() or plat.default_serial_port()
         self._fid_worker = _FidFindWorker(port, row, xyz[0], xyz[1])
         self._fid_worker.found.connect(self._on_auto_found)
         self._fid_worker.failed.connect(self._on_auto_failed)
@@ -910,8 +911,10 @@ class MainWindow(QMainWindow):
         self.level_port_combo = QComboBox()
         self.level_port_combo.setMaximumWidth(90)
         self.level_port_combo.setToolTip(
-            "Serial port of the Arduino (Device Manager > Ports). Used by both "
-            "Connect (live DRO) and the SPI bed probe.")
+            "Serial port of the Arduino. Used by both Connect (live DRO) and "
+            "the SPI bed probe."
+            + (" Device Manager > Ports lists them."
+               if plat.capabilities().machine_link else ""))
         self.level_port_combo.setEditable(True)
         try:
             import serial.tools.list_ports
@@ -919,9 +922,13 @@ class MainWindow(QMainWindow):
             if ports:
                 self.level_port_combo.addItems(ports)
             else:
-                self.level_port_combo.addItem("COM5")
+                fallback = plat.default_serial_port()
+                if fallback:
+                    self.level_port_combo.addItem(fallback)
         except Exception:
-            self.level_port_combo.addItem("COM5")
+            fallback = plat.default_serial_port()
+            if fallback:
+                self.level_port_combo.addItem(fallback)
         self.level_probe_btn = QPushButton("Probe over SPI")
         self.level_probe_btn.setToolTip(
             "Auto-probe the grid via the Arduino over SPI and fill the Z column. "
@@ -3690,7 +3697,7 @@ class MainWindow(QMainWindow):
             self._stop_dro()
 
     def _start_dro(self):
-        port = self.level_port_combo.currentText().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
         from gerber2rml.engine.spi_probe import DEFAULT_FRAME_US
         self._dro = _DROPoller(port, frame_us=DEFAULT_FRAME_US)
         self._dro.position.connect(self._on_position)
@@ -4119,7 +4126,7 @@ class MainWindow(QMainWindow):
             dry_run = False
         else:
             return
-        port = self.level_port_combo.currentText().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
         self._dro_was_on = self._pause_dro()   # free the port for the stream
         self.stream_btn.setEnabled(False)
         self.statusBar().showMessage(
@@ -4257,7 +4264,7 @@ class MainWindow(QMainWindow):
         """Open the capability tester. It owns the serial link for its lifetime,
         so the DRO poller has to let go of the port first and is restored after."""
         from gerber2rml.gui.machinetest import MachineTestDialog
-        port = self.level_port_combo.currentText().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
         was_on = self._pause_dro()
         try:
             MachineTestDialog(port, self).exec()
@@ -4412,7 +4419,7 @@ class MainWindow(QMainWindow):
                 return
             resume = _box.clickedButton() is _resume
         points, x0, y0 = self._probe_points(resume)
-        port = self.level_port_combo.currentText().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
         if QMessageBox.question(
                 self, "Probe over SPI",
                 f"Jog the tool ~2-3 mm above grid point 1 "
@@ -6172,7 +6179,7 @@ class MainWindow(QMainWindow):
             cx, cy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
             points.append((i + 1, round((cx - x0) * 1000),
                            round((cy - y0) * 1000)))
-        port = self.level_port_combo.currentText().strip() or "COM5"
+        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
         if QMessageBox.question(
                 self, "Probe rework boxes",
                 f"Jog the tool ~2-3 mm above the MESH REFERENCE point "
