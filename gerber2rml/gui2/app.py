@@ -25,8 +25,8 @@ def _log_path():
     if env:
         root = Path(env)
     else:
-        docs = Path.home() / "Documents"
-        root = (docs if docs.is_dir() else Path.home()) / "SRM-CAM"
+        from gerber2rml import platform as plat
+        root = plat.documents_dir() / "SRM-CAM"
     try:
         root.mkdir(parents=True, exist_ok=True)
     except OSError:

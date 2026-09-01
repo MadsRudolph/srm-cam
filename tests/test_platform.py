@@ -92,3 +92,33 @@ def test_no_com5_literals_left_in_the_first_interface():
     assert not offenders, (
         "hardcoded COM port(s) - use platform.default_serial_port():\n  "
         + "\n  ".join(offenders))
+
+
+def test_documents_dir_reads_the_xdg_user_dirs_file(tmp_path):
+    """A Danish desktop calls it Dokumenter. Qt knows that because it reads
+    user-dirs.dirs; _log_path cannot ask Qt, so it reads the same file."""
+    cfg = tmp_path / ".config"
+    cfg.mkdir()
+    (cfg / "user-dirs.dirs").write_text(
+        '# generated\nXDG_DESKTOP_DIR="$HOME/Skrivebord"\n'
+        'XDG_DOCUMENTS_DIR="$HOME/Dokumenter"\n', encoding="utf-8")
+    (tmp_path / "Dokumenter").mkdir()
+    assert plat.documents_dir(home=tmp_path, platform="linux") == \
+        tmp_path / "Dokumenter"
+
+
+def test_documents_dir_falls_back_when_there_is_no_xdg_config(tmp_path):
+    (tmp_path / "Documents").mkdir()
+    assert plat.documents_dir(home=tmp_path, platform="linux") == \
+        tmp_path / "Documents"
+
+
+def test_documents_dir_falls_back_to_home_when_nothing_exists(tmp_path):
+    assert plat.documents_dir(home=tmp_path, platform="linux") == tmp_path
+
+
+def test_documents_dir_does_not_read_xdg_on_windows(tmp_path):
+    """Windows has no user-dirs.dirs; Documents is Documents."""
+    (tmp_path / "Documents").mkdir()
+    assert plat.documents_dir(home=tmp_path, platform="win32") == \
+        tmp_path / "Documents"

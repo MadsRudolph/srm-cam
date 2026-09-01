@@ -119,3 +119,42 @@ def serial_permission_hint(device, platform=None, stat_fn=None, group_fn=None):
     return (f"{device} is owned by the '{group}' group and you are not in it. "
             f"Run  sudo usermod -aG {group} $USER  then log out and back in "
             f"for the change to take effect.")
+
+
+def documents_dir(home=None, platform=None):
+    """The user's documents folder, without asking Qt.
+
+    ``gui2/app.py`` needs this before PySide6 is imported - catching a
+    traceback from that very import is why it opens a log first - so it cannot
+    use ``QStandardPaths``. But ``workspace_root()`` DOES use QStandardPaths,
+    which on Linux reads ``XDG_DOCUMENTS_DIR`` from
+    ``~/.config/user-dirs.dirs``. On a Danish desktop that is ``~/Dokumenter``,
+    and the two would otherwise disagree: the workspace under Dokumenter and
+    the startup log under ~/SRM-CAM. The log is exactly what someone goes
+    looking for when the app will not start, so it has to be where they expect.
+
+    Reads the same file Qt reads. Falls back to ``~/Documents``, then to the
+    home directory itself, which is the behaviour this replaces.
+    """
+    home = Path.home() if home is None else Path(home)
+    if not _is_windows(platform):
+        cfg = home / ".config" / "user-dirs.dirs"
+        try:
+            for line in cfg.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line.startswith("XDG_DOCUMENTS_DIR"):
+                    continue
+                _, _, value = line.partition("=")
+                value = value.strip().strip('"')
+                if value.startswith("$HOME/"):
+                    found = home / value[len("$HOME/"):]
+                elif value.startswith("/"):
+                    found = Path(value)
+                else:
+                    continue
+                if found.is_dir():
+                    return found
+        except OSError:
+            pass
+    docs = home / "Documents"
+    return docs if docs.is_dir() else home
