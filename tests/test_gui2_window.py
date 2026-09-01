@@ -748,3 +748,70 @@ def test_machine_bar_is_unchanged_where_the_link_does_run(qt_app, monkeypatch):
     bar = machine.MachineBar(machine.MachineLink())
     assert hasattr(bar, "connect_btn")
     assert hasattr(bar, "port_combo")
+
+
+def test_machine_bar_note_does_not_set_the_window_minimum_width(qt_app,
+                                                                monkeypatch):
+    """A QLabel that may not wrap reports its whole line as its minimum size,
+    and a layout's minimum is the sum of its children's. Unwrapped, the
+    205-character sentence made MainWindow.minimumSizeHint() 2488 px wide
+    against a 1400 px default - wider than a 1920 px display, so the window
+    could not be narrowed at all on Linux."""
+    from gerber2rml.gui2 import machine, theme
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    note = [w for w in bar.findChildren(QLabel) if w.text()][0]
+    assert note.wordWrap() is True
+    assert bar.minimumSizeHint().width() < 400
+    # and it still fits the bar it lives in, at a normal window width
+    assert note.heightForWidth(1400 - 30) <= theme.BAR_H
+
+
+def test_machine_bar_note_uses_a_selector_that_exists(qt_app, monkeypatch):
+    """setObjectName only does something if the stylesheet has a rule for it.
+    The name this used before - "muted" - was the only occurrence repo-wide,
+    so the sentence rendered as full-strength body text."""
+    from gerber2rml.gui2 import machine, style
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    note = [w for w in bar.findChildren(QLabel) if w.text()][0]
+    assert note.objectName()
+    assert f"QLabel#{note.objectName()}" in style.STYLESHEET
+
+
+def test_the_machine_menu_does_not_raise_on_a_gated_bar(qt_app, monkeypatch):
+    """The three reach-throughs past the bar's early return. Each raised
+    AttributeError - 'MachineBar' object has no attribute 'port_combo' - the
+    moment the Machine menu was used on Linux."""
+    from gerber2rml.gui2 import machine
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    said = []
+    bar.message.connect(lambda level, text: said.append((level, text)))
+
+    bar.refresh_ports()                      # Machine > Rescan the serial ports
+    bar._toggle_connect()                    # Machine > Connect / disconnect
+    assert bar.current_port() is None        # read by the machine test
+    bar._stop()                              # Escape, from anywhere
+
+    # Not silent: a menu item that does nothing is the dead control this
+    # interface refuses to ship, so each no-op says why in the window's log.
+    assert len(said) >= 2
+    for _level, text in said[:2]:
+        assert "Windows" in text
+
+
+def test_the_machine_menu_actions_work_where_the_link_does_run(win):
+    """The Windows path is untouched: the same three calls reach the real
+    implementations and the bar still has the widgets they drive."""
+    if not win.bar.gated:
+        assert hasattr(win.bar, "port_combo")
+        win.bar.refresh_ports()
+        assert win.bar.current_port() == win.bar.port_combo.currentData()
+

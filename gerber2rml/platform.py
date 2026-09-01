@@ -53,6 +53,21 @@ def capabilities(platform=None):
     return Capabilities(machine_link=_is_windows(platform))
 
 
+# What to put on screen where the machine controls would have been.
+#
+# One string, in this module, because BOTH interfaces have to say it and two
+# copies of a safety explanation drift apart - one gets a correction the other
+# never sees, and the student who reads the wrong one is standing at a mill.
+# It names the platform, says which control is missing, and points at the path
+# that still works, because "probe once on the CNC PC and carry the CSV" is the
+# whole Linux levelling workflow and nobody would guess it.
+NO_MACHINE_LINK_NOTE = (
+    "The machine link runs on Windows only, so there is no "
+    "Connect here. Prepare the job, export, and send the files "
+    "from VPanel on the CNC PC — or load a height map "
+    "measured there to export levelled toolpaths.")
+
+
 def default_serial_port(platform=None):
     """The port to fall back to when nothing is selected, or None.
 
