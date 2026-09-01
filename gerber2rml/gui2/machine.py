@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 
 from gerber2rml.gui2 import theme, widgets
 from gerber2rml.engine import spi_probe
+from gerber2rml import platform as plat
 
 POLL_MS = 300           # also the deadman feed: the firmware stops the spindle
                         # if the host goes quiet for 10 s, so this keeps a
@@ -298,6 +299,26 @@ class MachineBar(QWidget):
         h.setContentsMargins(theme.GAP_M + 2, theme.GAP_S, theme.GAP_M + 2,
                              theme.GAP_S)
         h.setSpacing(theme.GAP_M)
+
+        # Where the link does not run, the bar says so and stops. Not a row of
+        # greyed-out controls: a dead control with no reason is exactly what
+        # this interface refuses to ship, and the honest sentence is short.
+        #
+        # Levelling is not lost with it. A height map is a file - the Level
+        # page loads a probe grid from CSV and exports through it identically -
+        # so the flow is "probe once on the CNC PC, carry the CSV", which is
+        # worth saying here because nobody would guess it.
+        if not plat.capabilities().machine_link:
+            note = QLabel(
+                "The machine link runs on Windows only, so there is no "
+                "Connect here. Prepare the job, export, and send the files "
+                "from VPanel on the CNC PC — or load a height map "
+                "measured there to export levelled toolpaths.")
+            note.setWordWrap(False)
+            note.setObjectName("muted")
+            h.addWidget(note)
+            h.addStretch(1)
+            return
 
         # -- link state --------------------------------------------------
         self.chip = widgets.Chip("Machine offline", "idle")

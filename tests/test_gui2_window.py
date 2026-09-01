@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QWidget, QLabel
 
 from gerber2rml.gui2 import dialogs, style, tier
 from gerber2rml.gui2.window import MainWindow
@@ -723,3 +723,28 @@ def test_reveal_selects_the_file_where_the_file_manager_can(win, tmp_path,
 
     assert len(spawned) == 1
     assert spawned[0][0] == "explorer"
+
+
+# -------------------------------------------------------------- MachineBar
+def test_machine_bar_explains_itself_where_the_link_does_not_run(qt_app, monkeypatch):
+    """Not greyed out with no reason - that is the thing this interface refuses
+    to ship. It names the platform and points at the path that still works."""
+    from gerber2rml.gui2 import machine
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    text = " ".join(w.text() for w in bar.findChildren(QLabel))
+    assert "Windows" in text
+    assert "height map" in text.lower()
+    assert not hasattr(bar, "connect_btn")
+
+
+def test_machine_bar_is_unchanged_where_the_link_does_run(qt_app, monkeypatch):
+    from gerber2rml.gui2 import machine
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=True))
+    bar = machine.MachineBar(machine.MachineLink())
+    assert hasattr(bar, "connect_btn")
+    assert hasattr(bar, "port_combo")
