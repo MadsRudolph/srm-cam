@@ -25,7 +25,7 @@ A height map is a file, so you do not lose levelling — only measuring.
 1. On the CNC PC, probe the bed as usual and use **Save CSV** to write the
    grid to a file.
 2. Keep that CSV with the board's session files.
-3. On Linux, open the Level page and use **Load CSV**. Export as normal: the
+3. On Linux, open the Bed leveling page and use **Load CSV**. Export as normal: the
    toolpaths are warped through the loaded grid exactly as if you had probed
    them on this machine.
 
