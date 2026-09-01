@@ -110,6 +110,14 @@ jobs:
   appimage:
     needs: installer          # the Windows job creates the release; this adds to it
     runs-on: ubuntu-latest
+    env:
+      # ubuntu-latest is 24.04: it ships libfuse3, not libfuse2, so
+      # linuxdeploy-x86_64.AppImage (and the linuxdeploy-plugin-appimage that
+      # --output appimage invokes underneath it) would fail to dlopen
+      # libfuse.so.2. This makes both self-extract and run instead of trying
+      # to FUSE-mount, so no apt-get is needed - and there's nothing to
+      # install anyway: on noble the package is libfuse2t64, not libfuse2.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
     steps:
       - uses: actions/checkout@v4
 

@@ -95,8 +95,16 @@ mkdir -p "$ROOT/dist_installer"
 # --icon-filename to rename it on deploy, nothing matches that key and
 # appimagetool aborts. Don't rename srm-cam-256.png itself: srm-cam.spec
 # also bundles it, as the window/taskbar icon.
+#
+# APPIMAGE_EXTRACT_AND_RUN covers linuxdeploy-x86_64.AppImage itself and the
+# linuxdeploy-plugin-appimage that --output appimage invokes underneath it -
+# both are AppImages that would otherwise need FUSE2 to mount. Set here
+# unconditionally rather than left to whatever's on the developer's machine:
+# there's no downside to self-extracting, and FUSE2 isn't a safe assumption
+# on every distro (ubuntu-latest in CI ships FUSE3 only - see build.yml).
 OUTPUT="SRM-CAM-$VERSION-x86_64.AppImage" \
 VERSION="$VERSION" \
+APPIMAGE_EXTRACT_AND_RUN=1 \
 linuxdeploy-x86_64.AppImage \
   --appdir "$APPDIR" \
   --executable "$APPDIR/usr/bin/SRM-CAM" \
