@@ -685,3 +685,41 @@ def test_centring_is_reachable_without_the_mouse(loaded):
     shortcut = [a.shortcut().toString() for a in loaded.findChildren(QAction)
                 if "centre" in a.text().lower() and a.shortcut().toString()]
     assert shortcut, "centring has no keyboard shortcut"
+
+
+# ------------------------------------------------------------------ _reveal
+def test_reveal_spawns_no_file_manager_where_none_can_select(win, tmp_path,
+                                                             monkeypatch):
+    """On Linux there is no command that selects a file, so _reveal must not
+    spawn anything - it falls through to Qt, which opens the parent folder.
+    Spawning 'explorer' there is the bug this guards."""
+    from gerber2rml.gui2 import window as window_mod
+    from gerber2rml import platform as plat
+    spawned = []
+    monkeypatch.setattr(window_mod.subprocess, "Popen",
+                        lambda cmd, *a, **k: spawned.append(cmd))
+    monkeypatch.setattr(plat, "reveal_command", lambda p, platform=None: None)
+    opened = []
+    monkeypatch.setattr(window_mod.QDesktopServices, "openUrl",
+                        staticmethod(lambda url: opened.append(url)))
+
+    win._reveal(tmp_path / "board_traces.nc")
+
+    assert spawned == []
+    assert len(opened) == 1
+
+
+def test_reveal_selects_the_file_where_the_file_manager_can(win, tmp_path,
+                                                            monkeypatch):
+    from gerber2rml.gui2 import window as window_mod
+    from gerber2rml import platform as plat
+    spawned = []
+    monkeypatch.setattr(window_mod.subprocess, "Popen",
+                        lambda cmd, *a, **k: spawned.append(cmd))
+    monkeypatch.setattr(plat, "reveal_command",
+                        lambda p, platform=None: ["explorer", "/select,", str(p)])
+
+    win._reveal(tmp_path / "board_traces.nc")
+
+    assert len(spawned) == 1
+    assert spawned[0][0] == "explorer"
