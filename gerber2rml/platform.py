@@ -195,8 +195,8 @@ def arduino_cli_candidates(platform=None, env=None, home=None):
         found = [
             PurePosixPath("/opt/arduino-ide", *_IDE_TAIL, "arduino-cli"),
             PurePosixPath("/usr/lib/arduino-ide", *_IDE_TAIL, "arduino-cli"),
-            home.joinpath(".local", "share", "arduino-ide", *_IDE_TAIL,
-                           "arduino-cli"),
+            PurePosixPath(home.as_posix(), ".local", "share", "arduino-ide",
+                           *_IDE_TAIL, "arduino-cli"),
         ]
     live = _plat(platform) == sys.platform
     return [Path(p) for p in found] if live else found

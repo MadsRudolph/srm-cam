@@ -135,8 +135,25 @@ def test_arduino_cli_candidates_cover_the_linux_ide_layouts(tmp_path):
     got = [str(p) for p in plat.arduino_cli_candidates("linux", env={},
                                                        home=tmp_path)]
     assert any(p.startswith("/opt/") for p in got)
-    assert any(str(tmp_path) in p for p in got)
+    # .as_posix(), not str(): the home-relative candidate is normalised to
+    # forward slashes like the other two, so it never contains tmp_path's own
+    # native (backslash, on Windows) string form.
+    assert any(tmp_path.as_posix() in p for p in got)
     assert not any(p.endswith(".exe") for p in got)
+
+
+def test_arduino_cli_candidates_use_forward_slashes_even_for_the_home_entry(tmp_path):
+    """The home-relative candidate is built from ``home`` - already coerced to
+    the real host's Path flavour at the top of the function - so it is the one
+    entry that can smuggle backslashes back in if it does not also get
+    PurePosixPath treatment. The other two entries are bare literals and can't
+    fail this way, which is exactly how this slipped past them once already."""
+    got = [str(p) for p in plat.arduino_cli_candidates("linux", env={},
+                                                       home=tmp_path)]
+    assert got, "no candidates returned"
+    for p in got:
+        assert "\\" not in p, p
+        assert "/" in p, p
 
 
 def test_arduino_library_dir_differs_by_platform(tmp_path):
