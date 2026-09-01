@@ -75,5 +75,6 @@ def test_permission_hint_survives_a_device_that_is_not_there():
     """The device may have been unplugged between the failure and the hint."""
     def boom(_p):
         raise FileNotFoundError
-    hint = plat.serial_permission_hint("/dev/ttyACM0", "linux", stat_fn=boom)
+    hint = plat.serial_permission_hint("/dev/ttyACM0", "linux", stat_fn=boom,
+                                        group_fn=lambda gid: "dialout")
     assert hint is None
