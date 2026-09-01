@@ -90,6 +90,11 @@ mkdir -p "$APPDIR/usr/bin"
 cp -r "$ROOT/dist/SRM-CAM/." "$APPDIR/usr/bin/"
 
 mkdir -p "$ROOT/dist_installer"
+# linuxdeploy names a deployed icon after --icon-file's basename
+# (srm-cam-256), but srm-cam.desktop declares Icon=srm-cam - without
+# --icon-filename to rename it on deploy, nothing matches that key and
+# appimagetool aborts. Don't rename srm-cam-256.png itself: srm-cam.spec
+# also bundles it, as the window/taskbar icon.
 OUTPUT="SRM-CAM-$VERSION-x86_64.AppImage" \
 VERSION="$VERSION" \
 linuxdeploy-x86_64.AppImage \
@@ -97,6 +102,7 @@ linuxdeploy-x86_64.AppImage \
   --executable "$APPDIR/usr/bin/SRM-CAM" \
   --desktop-file "$ROOT/packaging/srm-cam.desktop" \
   --icon-file "$ROOT/packaging/srm-cam-256.png" \
+  --icon-filename srm-cam \
   --output appimage
 mv "$ROOT/SRM-CAM-$VERSION-x86_64.AppImage" "$ROOT/dist_installer/"
 
