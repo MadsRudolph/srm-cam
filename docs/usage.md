@@ -3,6 +3,35 @@
 Detailed reference moved out of the README. The in-app **Guide** (first-launch
 tour, replayable per section) covers most of this interactively.
 
+## Running on Linux
+
+The Linux build is an AppImage — one file, `chmod +x`, run. See the README for
+the download link. It carries its own Qt, so the distribution's version does
+not matter, and it needs no root.
+
+Everything that turns Gerbers into toolpaths works exactly as it does on
+Windows: load, check, place, level, export. The run plan, the shorts check and
+the double-sided flow are all the same code and produce the same files.
+
+**The machine link is Windows-only.** No Connect, no DRO, no jogging, no
+probing the bed over the Arduino. This is deliberate: the CNC PC is Windows,
+that link has only ever been run there, and an unverified motion path is not
+something to hand someone standing next to a spinning tool.
+
+### Levelling a board you prepared on Linux
+
+A height map is a file, so you do not lose levelling — only measuring.
+
+1. On the CNC PC, probe the bed as usual and use **Save CSV** to write the
+   grid to a file.
+2. Keep that CSV with the board's session files.
+3. On Linux, open the Level page and use **Load CSV**. Export as normal: the
+   toolpaths are warped through the loaded grid exactly as if you had probed
+   them on this machine.
+
+A bed does not move between sessions, so one probe run serves every job on that
+sheet.
+
 ## Operations
 
 Three operations, each exported as its own job:

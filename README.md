@@ -29,6 +29,27 @@ python -m gerber2rml.cli <gerber-folder> -o out -n <board>   # headless CLI
 
 After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 
+### Linux (Fedora, Ubuntu)
+
+Download `SRM-CAM-x86_64.AppImage` from the
+[latest release](https://github.com/MadsRudolph/srm-cam/releases/latest), then:
+
+```bash
+chmod +x SRM-CAM-x86_64.AppImage
+./SRM-CAM-x86_64.AppImage
+```
+
+No install step and no root. It carries its own Qt, so it does not care which
+version your distribution ships.
+
+**What Linux does not do:** the machine link — Connect, the DRO, jogging and
+bed probing over the Arduino — is Windows-only. Prepare the job on Linux,
+export, and send the files from VPanel on the CNC PC.
+
+That costs less than it sounds, because a height map is a file. Probe the bed
+once on the CNC PC, export the grid as CSV, and load it on Linux to export
+levelled toolpaths exactly as if you had measured them there.
+
 ## What it does
 
 - **Traces / drill / cut-out** from Gerber + Excellon, exported per operation.
