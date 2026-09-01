@@ -1338,7 +1338,25 @@ Expected: an AppImage in `dist_installer/`, >50 MB.
 ./dist_installer/SRM-CAM-x86_64.AppImage
 ```
 
-Confirm the window appears, load `examples/preload_example`, and check the machine bar shows the Windows-only sentence from Task 6. **Check the 3D view specifically** — pyqtgraph over PyOpenGL is where a Wayland/XWayland difference would show up first, and nobody has looked. If it fails, try `QT_QPA_PLATFORM=xcb ./dist_installer/SRM-CAM-x86_64.AppImage` and record which worked.
+Confirm the window appears and load `examples/preload_example`.
+
+**The AppImage runs interface 1, not gui2.** `packaging/launcher.py` imports
+`gerber2rml.gui.app`, so what you are looking at is the FIRST interface — an
+earlier draft of this plan said to check "the machine bar from Task 6", which
+lives in gui2 and the AppImage never launches. Both interfaces are gated now.
+What to check on the running AppImage:
+
+- the machine strip is replaced by the explanatory sentence, in both Novice and
+  Professional mode;
+- there is no **Machine** menu at all;
+- Bed leveling still offers **Load CSV**, and a levelled export works from a
+  grid measured on the CNC PC — that is the whole Linux workflow;
+- clicking anything that survived does not open a serial port.
+
+**Check the 3D view specifically** — pyqtgraph over PyOpenGL is where a
+Wayland/XWayland difference would show up first, and nobody has looked. If it
+fails, try `QT_QPA_PLATFORM=xcb ./dist_installer/SRM-CAM-x86_64.AppImage` and
+record which worked.
 
 - [ ] **Step 4: Commit**
 

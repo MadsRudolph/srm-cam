@@ -198,12 +198,26 @@ That makes the supported workflow a real workflow rather than a workaround:
 3. On Linux, load it and export levelled toolpaths as normal.
 
 The machine page on Linux says exactly that — a sentence naming the platform
-limitation and pointing at *Load height map…* — rather than showing controls
-that cannot work. It is not greyed out with no explanation; per §2.4 of the A/B
-doc, a dead control with no reason is the thing this project refuses to ship.
+limitation and pointing at *Load CSV* — rather than showing controls that
+cannot work. It is not greyed out with no explanation; per §2.4 of the A/B doc,
+a dead control with no reason is the thing this project refuses to ship.
 
 `capabilities().machine_link` gates it, so the Windows behaviour is
-byte-identical to today and the Linux behaviour is one branch in one place.
+byte-identical to today.
+
+> **Corrected during implementation.** As first written this section described
+> the gate only in `gui2/`, and said it would be "one branch in one place".
+> Both halves were wrong. `packaging/launcher.py` imports
+> `gerber2rml.gui.app`, so the AppImage ships the **first** interface — gating
+> only gui2 would have put Connect, Probe over SPI, Machine test, Stream job
+> and a wet-run dialog that starts the spindle in front of a Linux student,
+> with nothing explaining any of it. Both interfaces are gated now. In
+> interface 1 that is more than one branch: the machine strip, the whole
+> Machine menu, the bed-levelling probe row, the rework probe, the
+> *Set the corner from the tool* button — which is visible in Novice mode and
+> opens the link itself — the run-progress row, the PageUp/PageDown jog
+> actions, and the click-to-jog canvas callbacks, each with a refusal on the
+> handler rather than only on the widget.
 
 ---
 
