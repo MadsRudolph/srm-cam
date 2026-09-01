@@ -2702,6 +2702,29 @@ def test_the_tour_skips_the_steps_that_need_the_link(monkeypatch):
     w.close()
 
 
+def test_whats_hidden_in_novice_does_not_promise_the_machine_back(monkeypatch):
+    """That list is the app's answer to "where did it go?", and Professional
+    is its answer to "how do I get it back". Naming machine control there on a
+    platform that has none sends someone round the Mode menu for nothing."""
+    from PySide6.QtWidgets import QMessageBox
+    said = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: said.append(a[2]))
+    _no_link(monkeypatch)
+    w = MainWindow()
+    w._show_mode_help()
+    assert said and "Machine control" not in said[0]
+    assert "Bed leveling" in said[0]          # still hidden, still restorable
+    w.close()
+
+    said.clear()
+    _with_link(monkeypatch)
+    w = MainWindow()
+    w._show_mode_help()
+    assert "Machine control" in said[0]
+    w.close()
+
+
 def test_both_interfaces_say_the_same_thing_about_the_missing_link():
     """Two copies of a safety explanation drift apart, and the student who
     reads the stale one is standing at a mill. One string, one module."""

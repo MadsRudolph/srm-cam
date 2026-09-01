@@ -2883,7 +2883,15 @@ class MainWindow(QMainWindow):
         """List what Novice puts away. A beginner should never have to wonder
         whether the thing they half-remember is gone or just tucked out of the
         way, and a teacher should be able to answer that without a manual."""
-        hidden = "".join(f"\u2022  {line}\n" for line in uimode.HIDDEN_IN_NOVICE)
+        lines = list(uimode.HIDDEN_IN_NOVICE)
+        if not self._machine_link:
+            # The "Machine control" bullet (live DRO, jog, streaming, the
+            # machine test panel) would send a Linux user hunting through the
+            # Mode menu for something no mode can bring back. The bar at the
+            # bottom already says where it went, and this list only answers
+            # "where did it go?" for things Professional restores.
+            lines = [x for x in lines if not x.startswith("Machine control")]
+        hidden = "".join(f"\u2022  {line}\n" for line in lines)
         QMessageBox.information(
             self, "Novice mode",
             "Novice mode shows the shortest path from Gerbers to three files "
