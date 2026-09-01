@@ -31,6 +31,10 @@ USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/index.html"
 
 _OPS = ["traces", "drill", "cutout"]
 
+# Paragraph break inside a QMessageBox body. Named because _no_link() builds
+# its text by concatenation and "\n\n" buried mid-expression reads as noise.
+_PARA = "\n\n"
+
 
 class _ProbeWorker(QThread):
     """Runs the SPI grid probe off the GUI thread; emits one result per point."""
@@ -439,6 +443,10 @@ class _FiducialAlignDialog(QDialog):
         v.addWidget(bb)
 
     def _capture(self, row):
+        if not self._parent._machine_link:
+            return self._parent._no_link(
+                "Measure each fiducial on the CNC PC and type the numbers in, "
+                "or do the whole flip there.")
         xyz = getattr(self._parent, "_tool_xyz", None)
         if xyz is None:
             QMessageBox.warning(self, "Not connected",
@@ -450,6 +458,10 @@ class _FiducialAlignDialog(QDialog):
 
     def _auto_probe(self, row):
         p = self._parent
+        if not p._machine_link:
+            return p._no_link(
+                "Finding a hole centre electrically walks the tool round its "
+                "edges under software control.")
         xyz = getattr(p, "_tool_xyz", None)
         if p._dro is None or xyz is None:
             QMessageBox.warning(self, "Not connected",
@@ -486,8 +498,11 @@ class _FiducialAlignDialog(QDialog):
                 f"walk the hole edges (~1 min).") != QMessageBox.Yes:
             return
         self._auto_busy = True
+        port = p._link_port()
+        if port is None:
+            self._auto_busy = False
+            return p._no_link()
         self._dro_was_on = p._pause_dro()
-        port = p.level_port_combo.currentText().strip() or plat.default_serial_port()
         self._fid_worker = _FidFindWorker(port, row, xyz[0], xyz[1])
         self._fid_worker.found.connect(self._on_auto_found)
         self._fid_worker.failed.connect(self._on_auto_failed)
@@ -589,6 +604,24 @@ class MainWindow(QMainWindow):
         # together by _apply_mode(). Novice is the same UI with these put away
         # — never a second code path, so the two modes cannot drift apart.
         self._pro_items = []
+
+        # Whether this OS has the Arduino machine link at all. Windows only,
+        # and the reason is in platform.capabilities(): the CNC PC is Windows,
+        # the link has only ever been run there, and shipping an unverified
+        # motion path to someone standing next to a spinning tool is not a
+        # trade worth making. Read once, here, so every site downstream asks
+        # the same question the same way.
+        self._machine_link = plat.capabilities().machine_link
+        # Where the machine controls go on a platform without the link.
+        # Hidden, never in a layout, and never shown - but the widgets keep
+        # existing, so every setEnabled/isChecked/setText call in the link code
+        # still finds them and no call site needs a hasattr dance. It carries
+        # the same `proOnly` marker the Novice-mode hiding uses, which is what
+        # TourController._is_put_away walks for: a tour step whose target is in
+        # here is skipped exactly as a Novice-hidden one is.
+        self._gated_away = QWidget(self)
+        self._gated_away.setProperty("proOnly", True)
+        self._gated_away.hide()
         # ...and the mirror image: widgets that exist ONLY in Novice, because
         # a beginner needs a guided version of something the full UI exposes
         # as a workbench.
@@ -1761,7 +1794,14 @@ class MainWindow(QMainWindow):
         stock_group, sg = _group("Copper stock")
         sg.addRow("Size", self._stock_wh_row)
         sg.addRow("Corner", self._stock_xy_row)
-        sg.addRow("", _row(self.stock_here_btn, self.stock_center_btn))
+        # "Corner = tool" reads the live tool position and CONNECTS THE LINK
+        # ITSELF when nothing is connected (it is the one machine control a
+        # Novice has), so it goes with the rest of them. Typing the measured
+        # corner into the two spin boxes above is the same job by hand.
+        sg.addRow("", _row(self.stock_here_btn, self.stock_center_btn)
+                  if self._machine_link else _row(self.stock_center_btn))
+        if not self._machine_link:
+            self._put_away(self.stock_here_btn)
         sg.addRow("", self._pro(self.bedfix_btn))
         sg.addRow("", _row(self.screws_chk))
         sg.addRow("", _row(self.screws_pick_chk, self.screws_auto_btn))
@@ -1780,10 +1820,30 @@ class MainWindow(QMainWindow):
                            self.level_clear_btn))
         # the serial port selector lives in the machine dock (shared with the
         # DRO connect); probing reads it from there
-        _ll.addWidget(_row(self.level_probe_btn, self.level_retouch_spin,
-                           self.level_check_btn,
-                           self.level_gridshow_chk, self.level_show_chk,
-                           self.level_3d_btn, stretch_first=False))
+        if self._machine_link:
+            _ll.addWidget(_row(self.level_probe_btn, self.level_retouch_spin,
+                               self.level_check_btn,
+                               self.level_gridshow_chk, self.level_show_chk,
+                               self.level_3d_btn, stretch_first=False))
+        else:
+            # Probing needs the link; everything else on this page does not.
+            # Build grid, Load CSV, Save CSV, Mesh check, the height-map
+            # overlay and the 3D view all still work, and levelled export
+            # works off a loaded map exactly as off a probed one — which is
+            # the documented flow here, so the row says so instead of just
+            # losing a button.
+            _ll.addWidget(_row(self.level_check_btn, self.level_gridshow_chk,
+                               self.level_show_chk, self.level_3d_btn,
+                               stretch_first=False))
+            _lvl_note = QLabel(
+                "Probing needs the machine link, which runs on Windows only. "
+                "Probe the bed on the CNC PC, save the grid as CSV, and load "
+                "it here with Load CSV — levelled export works the same off a "
+                "loaded map as off a probed one.")
+            _lvl_note.setWordWrap(True)
+            _lvl_note.setStyleSheet(f"color:{theme.TEXT_MUTED};")
+            _ll.addWidget(_lvl_note)
+            self._put_away(self.level_probe_btn, self.level_retouch_spin)
         _ll.addWidget(self.level_table)
         _ll.addWidget(_row(self.level_top_btn))
         l_level.addWidget(self._pro(level_group))
@@ -1823,8 +1883,12 @@ class MainWindow(QMainWindow):
         _rl.addWidget(_row(QLabel("Traces"), self.trace_dim_slider,
                            self.detect_rework_btn, stretch_first=True))
         _rl.addWidget(self.rework_table)
-        _rl.addWidget(_row(self.export_sel_btn, self.probe_boxes_btn,
-                           stretch_first=True))
+        if self._machine_link:
+            _rl.addWidget(_row(self.export_sel_btn, self.probe_boxes_btn,
+                               stretch_first=True))
+        else:
+            _rl.addWidget(_row(self.export_sel_btn, stretch_first=True))
+            self._put_away(self.probe_boxes_btn)   # it probes; it needs a link
         l_rework.addWidget(self._pro(rework_group))
         l_rework.addStretch(1)
 
@@ -1862,11 +1926,17 @@ class MainWindow(QMainWindow):
         self.preview = PreviewCanvas()
         self.preview.on_region_added = self._on_region_added
         self.preview.on_move_delta = self._on_move_delta
-        self.preview.on_jog_to = self._on_jog_to
+        # Two of the canvas callbacks MOVE THE TOOL — clicking the bed in jog
+        # mode, and the arrow keys while hovering it. They are the only machine
+        # controls in this application that are not a button, so they are also
+        # the only ones a sweep of the layout would miss. Not wired at all
+        # where the link does not run.
+        if self._machine_link:
+            self.preview.on_jog_to = self._on_jog_to
+            self.preview.on_jog_step = self._on_jog_step
         self.preview.on_align_pick = self._on_align_pick
         self.preview.on_screw_pick = self._on_screw_pick
         self.preview.on_pin_moved = self._on_fid_pin_moved
-        self.preview.on_jog_step = self._on_jog_step
         # The panel collapse toggle lives on the viewer's control bar.
         self.preview.on_toggle_panel = self._on_toggle_panel
         self.panel_toggle = self.preview.panel_btn   # alias for autofit/state checks
@@ -1893,23 +1963,44 @@ class MainWindow(QMainWindow):
         # a Novice sends the exported files from VPanel and never touches it,
         # so the whole row of machine controls goes away with the mode.
         _mb.addWidget(self.guide_btn)
-        _mb.addWidget(self._pro(self.dro_label))
-        _mb.addWidget(self._pro(self.touch_label))
-        _mb.addWidget(self._pro(self.machine_label))
-        _mb.addStretch(1)
-        # What is left here is what you reach for with a hand on the machine:
-        # move Z, find the surface, spindle, hold, and stop. Everything else
-        # moved to the Machine menu — the strip used to run past the window
-        # edge, which hid Connect and STOP.
-        _mb.addWidget(self._pro(self._zjog_row))
-        _mb.addWidget(self._pro(self.zero_btn))
-        _mb.addWidget(self._pro(self.spindle_btn))
-        _mb.addWidget(self._pro(self.pause_btn))
-        _mb.addWidget(self._pro(self.resume_btn))
-        _mb.addWidget(self._pro(QLabel("port")))
-        _mb.addWidget(self._pro(self.level_port_combo))
-        _mb.addWidget(self._pro(self.connect_btn))
-        _mb.addWidget(self._pro(self.stop_btn))
+        if not self._machine_link:
+            # Not a strip of greyed-out buttons, and not an empty bar either:
+            # the one sentence, in the place the controls would have been, on
+            # every page. It names the platform, says which control is gone,
+            # and points at the path that still works — a height map is a file,
+            # so "probe once on the CNC PC and carry the CSV" is the whole
+            # levelling flow here, and nobody would guess it. Same wording as
+            # the second interface, from platform.py, so the two cannot drift.
+            self.no_link_note = QLabel(plat.NO_MACHINE_LINK_NOTE)
+            self.no_link_note.setWordWrap(True)
+            self.no_link_note.setStyleSheet(
+                f"color:{theme.TEXT_MUTED}; padding:2px 10px;")
+            _mb.addWidget(self.no_link_note, 1)
+            # Everything the strip would have carried, out of the window. They
+            # stay as attributes: the link code that reads them cannot run.
+            self._put_away(self.dro_label, self.touch_label, self.machine_label,
+                           self._zjog_row, self.zero_btn, self.spindle_btn,
+                           self.pause_btn, self.resume_btn,
+                           self.level_port_combo, self.connect_btn,
+                           self.stop_btn)
+        else:
+            _mb.addWidget(self._pro(self.dro_label))
+            _mb.addWidget(self._pro(self.touch_label))
+            _mb.addWidget(self._pro(self.machine_label))
+            _mb.addStretch(1)
+            # What is left here is what you reach for with a hand on the
+            # machine: move Z, find the surface, spindle, hold, and stop.
+            # Everything else moved to the Machine menu — the strip used to run
+            # past the window edge, which hid Connect and STOP.
+            _mb.addWidget(self._pro(self._zjog_row))
+            _mb.addWidget(self._pro(self.zero_btn))
+            _mb.addWidget(self._pro(self.spindle_btn))
+            _mb.addWidget(self._pro(self.pause_btn))
+            _mb.addWidget(self._pro(self.resume_btn))
+            _mb.addWidget(self._pro(QLabel("port")))
+            _mb.addWidget(self._pro(self.level_port_combo))
+            _mb.addWidget(self._pro(self.connect_btn))
+            _mb.addWidget(self._pro(self.stop_btn))
 
         # Run-progress row: the dock's second line.
         progress_bar_row = QWidget()
@@ -1930,7 +2021,13 @@ class MainWindow(QMainWindow):
         _cv.setSpacing(0)
         _cv.addWidget(splitter, 1)
         _cv.addWidget(machine_bar)
-        _cv.addWidget(self._pro(progress_bar_row))
+        if self._machine_link:
+            _cv.addWidget(self._pro(progress_bar_row))
+        else:
+            # Every value on this row comes from the live DRO position. With no
+            # link there is nothing to track, and "Track run" would arm a bar
+            # that can never move — a control that lies about what it does.
+            self._put_away(progress_bar_row)
         self.setCentralWidget(central)
         self.statusBar().showMessage("Ready", 5000)
 
@@ -2138,6 +2235,45 @@ class MainWindow(QMainWindow):
         return isolate(mlay.bottom_copper, self.state.trace, outline=mlay.outline)
 
     # ---- Novice / Professional mode ---------------------------------------
+    def _put_away(self, *widgets):
+        """Take machine controls out of the UI where the link does not run.
+
+        Reparenting rather than deleting: Qt removes a reparented widget from
+        its old layout, so the control is genuinely gone from the window, but
+        it is still there as an attribute for the (now unreachable) link code
+        that reads it. Nothing can show one as a stray top-level window either,
+        because the holder they land in is hidden and stays hidden.
+        """
+        for w in widgets:
+            w.setParent(self._gated_away)
+        return widgets
+
+    def _no_link(self, extra=""):
+        """Say why a machine control did nothing, and stop.
+
+        Always returns None so a handler can ``return self._no_link()``.
+        """
+        QMessageBox.information(
+            self, "No machine link on this system",
+            plat.NO_MACHINE_LINK_NOTE + (_PARA + extra if extra else ""))
+
+    def _link_port(self):
+        """The serial port to open, or None if there is not one.
+
+        Six call sites used to write ``combo.currentText().strip() or
+        plat.default_serial_port()`` and assume a string came back. That held
+        while the fallback was the lab's documented Windows port; off Windows
+        the fallback is None on purpose, and None went straight into
+        _DROPoller, _StreamWorker, _FidFindWorker and MachineTestDialog - and
+        into a dialog reading "Probe 48 points on None?". The machine link is
+        gated off those platforms now, so this is the belt to that braces: one
+        place that resolves the port, and None means "start nothing".
+        """
+        if not self._machine_link:
+            return None
+        text = self.level_port_combo.currentText().strip()
+        return text or plat.default_serial_port()
+
     def _pro(self, widget, form=None):
         """Tag ``widget`` as Professional-only and hand it straight back, so it
         can be wrapped inline at the point it is laid out.
@@ -2253,6 +2389,8 @@ class MainWindow(QMainWindow):
         is exactly the friction that makes people reach for VPanel instead.
         """
         from PySide6.QtGui import QKeySequence
+        if not self._machine_link:
+            return              # these move the tool; there is nothing to move
         for key, direction in ((Qt.Key_PageUp, +1), (Qt.Key_PageDown, -1)):
             act = QAction(self)
             act.setShortcut(QKeySequence(key))
@@ -2270,6 +2408,17 @@ class MainWindow(QMainWindow):
         everything else lives here. A menu, not the settings panel, because that
         panel belongs to one page and the machine does not.
         """
+        if not self._machine_link:
+            # No menu at all rather than a menu of items that refuse. Every
+            # entry on it drives the mill: click-to-jog, align-to-bit, zero Z
+            # on the machine, move to view, stream the job, machine test. The
+            # bar at the bottom carries the sentence that says why, on every
+            # page, which is where someone looks for Connect anyway.
+            self._machine_menu = None
+            self._put_away(self.jog_chk, self.align_btn, self.machine_zero_btn,
+                           self.view_btn, self.trail_chk, self.trail_clear_btn,
+                           self.stream_btn, self.machinetest_btn)
+            return
         menu = self.menuBar().addMenu("&Machine")
         self._machine_menu = menu
         menu.addAction(self.jog_chk)
@@ -3697,7 +3846,13 @@ class MainWindow(QMainWindow):
             self._stop_dro()
 
     def _start_dro(self):
-        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
+        # Every other entry point below refuses too, but this is the one that
+        # opens the port, so it refuses first and hardest: nothing downstream
+        # of here has ever been run against a mill on a platform without the
+        # link, and the person it would surprise is standing at the machine.
+        port = self._link_port()
+        if port is None:
+            return self._no_link()
         from gerber2rml.engine.spi_probe import DEFAULT_FRAME_US
         self._dro = _DROPoller(port, frame_us=DEFAULT_FRAME_US)
         self._dro.position.connect(self._on_position)
@@ -3988,7 +4143,10 @@ class MainWindow(QMainWindow):
                 "link": "The machine link. Filled when SRM-CAM is connected "
                         "to the Arduino on the SRM-20.",
             }
-            for name in ("board", "mesh", "fit", "photo", "boxes", "link"):
+            names = ["board", "mesh", "fit", "photo", "boxes"]
+            if self._machine_link:
+                names.append("link")          # nothing to report without one
+            for name in names:
                 lbl = QLabel("")
                 lbl.setToolTip(_CHIP_TIPS[name])
                 self._chip_labels[name] = lbl
@@ -4017,8 +4175,9 @@ class MainWindow(QMainWindow):
             bool(self._photo_overlay))
         n_boxes = len(self._rework_regions)
         put("boxes", f"boxes {n_boxes}" if n_boxes else "boxes —", n_boxes > 0)
-        put("link", "link ●" if self._dro is not None else "link ○",
-            self._dro is not None)
+        if self._machine_link:
+            put("link", "link ●" if self._dro is not None else "link ○",
+                self._dro is not None)
 
     def _update_run_progress(self, x, y, z):
         self._maybe_autostart_run(x, y, z)
@@ -4069,6 +4228,11 @@ class MainWindow(QMainWindow):
 
     def _on_probe_z(self):
         """Probe down from the current XY until the bit touches, then zero Z there."""
+        if not self._machine_link:
+            # Reachable only from a button that is not there any more, but
+            # "Connect the machine first" would be a lie on a platform with no
+            # Connect to press.
+            return self._no_link()
         if self._dro is None:
             QMessageBox.warning(self, "Not connected", "Connect the machine first.")
             return
@@ -4083,6 +4247,10 @@ class MainWindow(QMainWindow):
     def _on_stream_job(self):
         """EXPERIMENTAL SPI streaming — dry run by default, wet run behind a
         second explicit confirmation."""
+        if not self._machine_link:
+            return self._no_link(
+                "Streaming drives the machine move-by-move over the link, and "
+                "a wet run starts the spindle itself.")
         if self.state.board is None:
             QMessageBox.warning(self, "No board", "Load a Gerber folder first.")
             return
@@ -4126,7 +4294,9 @@ class MainWindow(QMainWindow):
             dry_run = False
         else:
             return
-        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
+        port = self._link_port()
+        if port is None:
+            return self._no_link()
         self._dro_was_on = self._pause_dro()   # free the port for the stream
         self.stream_btn.setEnabled(False)
         self.statusBar().showMessage(
@@ -4263,8 +4433,14 @@ class MainWindow(QMainWindow):
     def _on_machine_test(self):
         """Open the capability tester. It owns the serial link for its lifetime,
         so the DRO poller has to let go of the port first and is restored after."""
+        if not self._machine_link:
+            return self._no_link(
+                "The test drives the head and the spindle to find out which "
+                "SPI commands this machine obeys.")
         from gerber2rml.gui.machinetest import MachineTestDialog
-        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
+        port = self._link_port()
+        if port is None:
+            return self._no_link()
         was_on = self._pause_dro()
         try:
             MachineTestDialog(port, self).exec()
@@ -4274,6 +4450,8 @@ class MainWindow(QMainWindow):
 
     def _on_machine_zero(self):
         """Verified touch-off, then the firmware writes origin Z on the surface."""
+        if not self._machine_link:
+            return self._no_link()
         if self._dro is None:
             QMessageBox.warning(self, "Not connected", "Connect the machine first.")
             return
@@ -4363,6 +4541,9 @@ class MainWindow(QMainWindow):
         current one does not look like a board, so a deliberate override in
         Professional mode is never silently overwritten.
         """
+        if not self._machine_link:
+            self._no_link()
+            return False
         from gerber2rml.engine.spi_probe import best_port, rank_ports
         try:
             import serial.tools.list_ports
@@ -4389,6 +4570,11 @@ class MainWindow(QMainWindow):
 
     def _on_probe_spi(self):
         """Auto-probe the grid over the SPI link and fill the Z column."""
+        if not self._machine_link:
+            return self._no_link(
+                "Probe the bed on the CNC PC, save the grid with Save CSV, "
+                "and load it here with Load CSV — levelled export works the "
+                "same off a loaded map as off a probed one.")
         if not self.level_table.rowCount():
             self._on_build_level_grid()
         filled, unfilled = self._grid_fill_state()
@@ -4419,7 +4605,9 @@ class MainWindow(QMainWindow):
                 return
             resume = _box.clickedButton() is _resume
         points, x0, y0 = self._probe_points(resume)
-        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
+        port = self._link_port()
+        if port is None:
+            return self._no_link()
         if QMessageBox.question(
                 self, "Probe over SPI",
                 f"Jog the tool ~2-3 mm above grid point 1 "
@@ -5757,6 +5945,11 @@ class MainWindow(QMainWindow):
         is the mode that needs it most, because the alternative is typing
         machine coordinates by hand.
         """
+        if not self._machine_link:
+            return self._no_link(
+                "Measure the copper's front-left corner and type it into the "
+                "Corner X/Y boxes above — that is the same number this would "
+                "have read off the machine.")
         if self._tool_xyz is None:
             if self._dro is None:
                 if not self._autoselect_port():
@@ -6157,6 +6350,10 @@ class MainWindow(QMainWindow):
         """Probe each rework box center over SPI and deepen boxes where the
         real surface sits higher than the mesh believed (the exact failure
         that caused the rework in the first place)."""
+        if not self._machine_link:
+            return self._no_link(
+                "This taps the tool down in the middle of each box, so it "
+                "needs the link. Re-probe the mesh on the CNC PC instead.")
         if not self._rework_regions:
             QMessageBox.information(self, "No boxes", "Draw rework boxes first.")
             return
@@ -6179,7 +6376,9 @@ class MainWindow(QMainWindow):
             cx, cy = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
             points.append((i + 1, round((cx - x0) * 1000),
                            round((cy - y0) * 1000)))
-        port = self.level_port_combo.currentText().strip() or plat.default_serial_port()
+        port = self._link_port()
+        if port is None:
+            return self._no_link()
         if QMessageBox.question(
                 self, "Probe rework boxes",
                 f"Jog the tool ~2-3 mm above the MESH REFERENCE point "
