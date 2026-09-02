@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=SRM-CAM (Setup Sheet)
+Name=SRM-CAM (original interface)
 GenericName=PCB CAM for the Roland SRM-20
-Comment=The alternative interface over the same engine - one page per setup step
-Exec=SRM-CAM --setup-sheet
+Comment=The interface SRM-CAM used before the setup sheet - same engine, same files
+Exec=SRM-CAM --original
 Icon=srm-cam
 Terminal=false
 Categories=Development;Engineering;Electronics;
