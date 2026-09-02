@@ -355,21 +355,39 @@ being written to.
 
 Stated plainly, in the spirit of §8 and §11 of `docs/AB-setup-sheet.md`.
 
-- **The AppImage has never been run.** CI can build one and check it is
-  produced and non-empty; it cannot confirm it launches on a real Fedora
-  desktop with a real GPU. First launch on the Fedora machine is the
-  acceptance test, and until that has happened this is unproven.
+> **Answered 2026-09-02, on Arch + Hyprland + NVIDIA.** The first three
+> bullets below were written before any of this had been run on Linux. Two of
+> them are now settled; the marked one still stands.
+
+- ~~**The AppImage has never been run.**~~ **Settled.** Built with
+  `packaging/build.sh` and launched on Arch (Hyprland, NVIDIA 610.57.04): both
+  interfaces open, the demo board loads and draws, and the machine bar
+  explains itself. The build is reproducible from
+  `packaging/requirements-lock-linux.txt`, which now exists — it was frozen on
+  this machine after the suite passed against it.
 - **Nothing here is tested against a mill on Linux**, by design — the machine
   link is off on that platform. If it is ever turned on, everything in §2.5 and
-  §2.7 of `docs/HANDOFF-gui-ab.md` applies again from scratch.
-- **The Wayland question is open.** Fedora 44 with Hyprland means Qt will pick
-  the Wayland backend if it is available and fall back to XWayland otherwise.
-  Qt 6.11 handles both, but the 3D views (`pyqtgraph` over PyOpenGL) are the
-  place where a compositor difference would show up first, and no one has
-  looked. Worth a deliberate check on first launch rather than an assumption.
+  §2.7 of `docs/HANDOFF-gui-ab.md` applies again from scratch. *Still true.*
+- ~~**The Wayland question is open.**~~ **Settled, and it was a real bug — but
+  not a compositor one.** The 3D views were indeed where it showed up first,
+  and they failed on every Linux machine, Wayland or not. `pyqtgraph` 0.14
+  refuses a context below OpenGL 2.1 and checks `QSurfaceFormat.version()`,
+  which reports what was *requested*, not what the driver can do. Qt's default
+  request on Linux is (2, 0), so an NVIDIA card advertising 4.6 was rejected.
+  It does not fail where you would look either: the refusal is raised inside
+  `initializeGL`, so it surfaces as a `SystemError` from whatever event filter
+  happens to be running — and under `QT_QPA_PLATFORM=offscreen` the test simply
+  hangs, forever, with no output.
+
+  The first interface had never hit it because `main()` already asked for 2.1;
+  the second interface had no equivalent, and neither does any test that builds
+  a 3D window directly. That work now lives in `gerber2rml/glconfig.py` and
+  both interfaces call it — same argument as `platform.py`: one module, so the
+  two cannot drift. Qt's own `QT_OPENGL=software` is a **Windows-only** knob;
+  `GERBER2RML_GL=software` is the portable one and is what CI sets.
 - **`serial_permission_hint` is written against documented behaviour** and
   tested against a fake stat. It has not been run against a real
-  permission-denied device.
+  permission-denied device. *Still true.*
 
 ---
 
@@ -377,12 +395,15 @@ Stated plainly, in the spirit of §8 and §11 of `docs/AB-setup-sheet.md`.
 
 **New:** `gerber2rml/platform.py`, `tests/test_platform.py`,
 `packaging/build.sh`, `packaging/srm-cam.desktop`,
-`packaging/requirements-lock-linux.txt`.
+`packaging/requirements-lock-linux.txt`, `gerber2rml/glconfig.py`,
+`tests/test_glconfig.py`, `tests/test_launcher.py`,
+`packaging/srm-cam-setup-sheet.desktop`.
 
 **Changed:** `gui/app.py` (8 sites), `gui2/window.py`, `gui2/app.py`,
 `gui2/machine.py`, `scripts/flash_firmware.py`, `packaging/srm-cam.spec`,
 `.github/workflows/tests.yml`, `.github/workflows/build.yml`, `README.md`,
-`docs/usage.md`.
+`docs/usage.md`, `packaging/launcher.py` (ships both interfaces),
+`gui/bedviz.py`, `gui/sim3d.py`, `gui2/sim3d.py`, `tests/conftest.py`.
 
 **Untouched, deliberately:** `packaging/build.ps1`, `packaging/installer.iss`,
 `packaging/requirements-lock.txt`, and everything under `engine/`, `app/`,
