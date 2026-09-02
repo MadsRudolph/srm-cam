@@ -1,0 +1,80 @@
+# PINNED build environment for the SRM-CAM AppImage - the exact package set
+# verified against the full test suite on Linux. packaging/build.sh and the
+# Linux half of the build workflow both install from THIS file.
+#
+# Produced on a real Linux machine (Arch, 2026-09-02), not by freezing on
+# Windows. pip freeze resolves for the platform it runs on: a freeze taken on
+# Windows against a Linux platform tag evaluates environment markers against
+# the Windows host, and in practice pulled in pywin32-ctypes and a PySide6
+# version that does not match this project's Windows lock at all. Nothing
+# built from a freeze taken that way would be trustworthy, so this file only
+# ever comes from a Linux machine that has just run the test suite against it
+# - the same way packaging/requirements-lock.txt was produced on a real
+# Windows machine. 918 passed.
+#
+# Two locks, not one file with environment markers: the Windows lock's header
+# promises that a rebuild in five years produces the same app, and a
+# marker-based file is only ever resolved on one platform at a time. Two files
+# keep that promise on both. The cost is that upgrading a dependency means
+# regenerating both.
+#
+# To regenerate, on a Linux box:
+#   1. python3.12 -m venv .build-venv
+#      .build-venv/bin/pip install -r packaging/requirements-build.txt
+#   2. .build-venv/bin/pip install -e . --no-deps
+#      .build-venv/bin/pip install pytest
+#   3. QT_QPA_PLATFORM=offscreen GERBER2RML_GL=software \
+#      .build-venv/bin/python -m pytest -q      (must pass)
+#   4. .build-venv/bin/pip freeze > packaging/requirements-lock-linux.txt
+#   5. re-add this header, strip the dev-only lines (pytest, pluggy,
+#      iniconfig, Pygments) and the editable self-reference pip freeze writes
+#      for step 2's install
+#
+# .github/workflows/linux-lock.yml automates the same steps on a runner, for
+# whoever does not have a Linux machine to hand.
+#
+# Python: CPython 3.12 - matched to the Windows lock so both artifacts are
+# built by the same interpreter series.
+aiofiles==25.1.0
+altgraph==0.17.5
+blinker==1.9.0
+click==8.5.0
+colorama==0.4.6
+contourpy==1.3.3
+cycler==0.12.1
+Flask==3.1.3
+fonttools==4.64.0
+gerbonara==1.6.3
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+Hypercorn==0.18.0
+hyperframe==6.1.0
+itsdangerous==2.2.0
+Jinja2==3.1.6
+kiwisolver==1.5.1
+MarkupSafe==3.0.3
+matplotlib==3.11.1
+numpy==2.5.2
+packaging==26.3
+pillow==12.3.0
+priority==2.0.0
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7
+PyOpenGL==3.1.10
+pyparsing==3.3.2
+pyqtgraph==0.14.0
+pyserial==3.5
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+python-dateutil==2.9.0.post0
+qrcode==8.2
+Quart==0.22.0
+rtree==1.4.1
+setuptools==84.0.0
+shapely==2.1.2
+shiboken6==6.11.2
+six==1.17.0
+Werkzeug==3.1.8
+wsproto==1.3.2
