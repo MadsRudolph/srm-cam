@@ -25,6 +25,13 @@ def test_sim3d_window_draws_board_and_bed():
         bare = Simulation3DWindow(tp)
         full = Simulation3DWindow(tp, board=(2, 2, 30, 20), bed=(203.2, 152.4))
     except Exception as e:                       # no pyqtgraph / no GL context
+        # Not every failure here is "no GL". pyqtgraph refusing the surface
+        # format reads identically from the outside, and skipping it is how
+        # the 3D views stayed broken on Linux through a whole cross-platform
+        # branch. See tests/test_gui2_sim3d.py and gerber2rml/glconfig.py.
+        if "Requires >= OpenGL" in str(e):
+            raise AssertionError(
+                f"pyqtgraph refused the surface format, not the machine: {e}") from e
         pytest.skip(f"3D view unavailable: {e}")
     # board slab + bed outline + home marker + board top outline add 4 items
     assert len(full.view.items) == len(bare.view.items) + 4
