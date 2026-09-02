@@ -38,8 +38,12 @@ permissions:
 
 env:
   # Same reason tests.yml sets these: no display and no GPU on a runner.
+  # QT_OPENGL is Windows-only and does nothing here; GERBER2RML_GL is the
+  # portable one. Kept in step with tests.yml rather than trimmed, so the
+  # environment this freeze is verified in matches the one that gates pushes.
   QT_QPA_PLATFORM: offscreen
   QT_OPENGL: software
+  GERBER2RML_GL: software
 
 jobs:
   lock:
@@ -93,6 +97,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Without libEGL.so.1 every GUI test module fails at import, so the
+      # suite below cannot vouch for the freeze. It is a build-host package,
+      # not a pin: it does not belong in the lock, only in the environment
+      # that verifies it.
+      - name: Install the one system library PySide6 needs here
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1
 
       - name: Create the build venv and install the loose set
         run: |

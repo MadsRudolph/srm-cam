@@ -31,10 +31,15 @@ permissions:
 
 env:
   # The GUI tests build real widgets; there is no display and no GPU on a
-  # runner. offscreen gives Qt a windowless platform plugin, and software
-  # forces the bundled Mesa (opengl32sw.dll) for the pyqtgraph 3D views.
+  # runner. offscreen gives Qt a windowless platform plugin.
   QT_QPA_PLATFORM: offscreen
+  # QT_OPENGL is a WINDOWS-ONLY Qt variable - it selects the bundled Mesa
+  # (opengl32sw.dll) there and is ignored everywhere else, so it was doing
+  # nothing on the ubuntu leg. GERBER2RML_GL is this project's own knob and
+  # maps to AA_UseSoftwareOpenGL on every platform (gerber2rml/glconfig.py).
+  # Both are set: neither is redundant, they cover different halves.
   QT_OPENGL: software
+  GERBER2RML_GL: software
 
 jobs:
   locked:
@@ -68,12 +73,21 @@ jobs:
           cache: pip
           cache-dependency-path: ${{ matrix.lock }}
 
-      # No apt-get here on purpose. QT_QPA_PLATFORM=offscreen (below) avoids
-      # the X11 platform plugin and most of what it would need, and PySide6
-      # ships its own bundled Qt libs. If ubuntu-latest is still missing a
-      # system library, the failure names it specifically - add only that
-      # package then, instead of guessing a list of libxcb-*/libEGL* names up
-      # front and finding out later most of it was never needed.
+      # ubuntu-latest was missing exactly one thing, and it named it:
+      # "ImportError: libEGL.so.1: cannot open shared object file", raised at
+      # `from PySide6.QtWidgets import QApplication` - so every GUI test
+      # module failed at COLLECTION, before offscreen could spare them
+      # anything. QT_QPA_PLATFORM=offscreen avoids the X11 platform plugin,
+      # but PySide6's QtGui links libEGL regardless of which platform plugin
+      # is chosen, and the runner image does not ship it.
+      #
+      # One package, because the failure named one package. Do not pre-empt
+      # the next one with a list of libxcb-* guesses: the next failure will
+      # name that one too.
+      - name: Install the one system library PySide6 needs here
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1
+
       - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
@@ -106,6 +120,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"    # whatever the newest stable Python is
+
+      # Same one library as the locked leg above, for the same reason.
+      - name: Install the one system library PySide6 needs here
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1
 
       - name: Install newest everything
         run: |
