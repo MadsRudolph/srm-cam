@@ -140,6 +140,7 @@ class Stage(QWidget):
         self._regions = []
         self._stock = None                # (x, y, w, h) mm
         self._photo = None                # (QImage, (x0, y0, x1, y1)) in mm
+        self._mesh = None                 # (QImage, rect, span) height map
         self._photo_dim = 0.0             # how far the work is faded over it
         self._tool = None                 # (x, y) mm
         self._cut_width = 0.8
@@ -268,6 +269,20 @@ class Stage(QWidget):
         self._regions = regions
         self._invalidate()
         self.update()
+
+    def set_level_mesh(self, image, rect, span):
+        """The measured surface, as a heatmap over the board's footprint.
+
+        Drawn with the work rather than with the bed: it is a property of the
+        board that was probed, so when the job is dragged the measurement has
+        to go with it or it would claim the surface belongs to the bed.
+        """
+        self._mesh = (image, rect, span) if image is not None else None
+        self._invalidate()
+        self.update()
+
+    def has_level_mesh(self):
+        return self._mesh is not None
 
     def set_photo(self, image, extent):
         """A photo of the real board, already warped into machine millimetres.
@@ -585,6 +600,17 @@ class Stage(QWidget):
         self._paint_screw_grid(p)
         self._paint_regions(p)
 
+    def _paint_level_mesh(self, p):
+        if not self._mesh:
+            return
+        img, (x0, y0, x1, y1), _span = self._mesh
+        p.save()
+        p.setOpacity(0.55)          # the traces have to stay legible through it
+        p.translate(0.0, y0 + y1)
+        p.scale(1.0, -1.0)          # world Y runs up; image row 0 is the top
+        p.drawImage(QRectF(x0, y0, x1 - x0, y1 - y0), img)
+        p.restore()
+
     def _paint_photo(self, p):
         if not self._photo:
             return
@@ -603,6 +629,7 @@ class Stage(QWidget):
         if self._photo_dim:
             p.setOpacity(1.0 - self._photo_dim)
         self._paint_copper(p)
+        self._paint_level_mesh(p)
         self._paint_paths(p)
         self._paint_holes(p)
         self._paint_fixtures(p)

@@ -1875,6 +1875,10 @@ class MainWindow(QMainWindow):
                          self._top_fit.tx, self._top_fit.ty]
                         if self._top_fit is not None else None),
             "fid_measured": [list(p) for p in (self._fid_measured or [])],
+            # The probed surface. Nine points is nine physical touches and a
+            # couple of minutes of machine time; a measurement that does not
+            # survive closing the app is one nobody relies on.
+            "level": self.level_page.state(),
             "show_stock": self.show_stock, "show_bed": self.show_bed,
             "thickness": self.inspector.setup.thickness.value(),
         }
@@ -1957,6 +1961,10 @@ class MainWindow(QMainWindow):
                 foreign.append("the measured flip")
         self._fid_measured = [(float(x), float(y))
                               for x, y in (data.get("fid_measured") or [])]
+        try:
+            self.level_page.restore(data.get("level"))
+        except Exception:
+            foreign.append("the height map")
         px, py = data.get("place", [0, 0])
         st.set_rotation(data.get("rotate", 0))
         st.set_placement(px, py)

@@ -24,6 +24,7 @@ import csv
 import threading
 
 from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QTableWidget, QTableWidgetItem, QCheckBox,
                                QHeaderView, QFileDialog, QProgressBar,
@@ -89,6 +90,7 @@ class LevelPage(inspector.Page):
         self.ctl = ctl
         self.set_head("When you need it", "Level the bed")
         self._points = []              # [(x, y)] in machine mm
+        self._failed = []              # [(row, why)] from the last probe run
         self._run = None
 
         self.add(widgets.body(
@@ -105,6 +107,10 @@ class LevelPage(inspector.Page):
             "alone. Put paper or tape under the board so it is isolated from "
             "the bed, and clip the probe wire to the copper — the tool is "
             "already earthed through the spindle."))
+        first.box.addWidget(widgets.body(
+            "Leave the tool a couple of millimetres above the copper when you "
+            "start. That height is the one it lifts back to between points, "
+            "so starting low makes it drag and starting high makes it slow."))
         self.add(first)
 
         grid = widgets.Section("The grid")
@@ -166,6 +172,15 @@ class LevelPage(inspector.Page):
         self.table.setMinimumHeight(190)
         self.table.itemChanged.connect(self._on_edit)
         table.add(self.table)
+        self.show_mesh = QCheckBox("Draw the measured surface on the board")
+        self.show_mesh.setToolTip(
+            "Shade the board by how far the surface sits above or below the "
+            "plane you set Z on — amber high, blue low, and the bed's own "
+            "grey where it is flat." + chr(10) + chr(10) +
+            "It is the quickest way to see whether the number in the corner "
+            "is a real tilt or one bad point.")
+        self.show_mesh.toggled.connect(lambda _v: self._draw_mesh())
+        table.add(self.show_mesh)
         table.add(widgets.hint(
             "Height is relative to the first point, not an absolute machine Z. "
             "Positive means that spot sits higher than the reference."))
@@ -251,6 +266,92 @@ class LevelPage(inspector.Page):
         except Exception:
             return None
 
+    def _draw_mesh(self):
+        """Sample the measured surface over the board and hand it to the stage.
+
+        Sampled over the footprint the GRID was laid on, not the board's own
+        outline: on a mirrored bottom side or a placed board those frames
+        differ, and the heatmap would sit offset from the points that made it.
+        """
+        stage = self.ctl.stage
+        if not self.show_mesh.isChecked():
+            stage.set_level_mesh(None, None, 0.0)
+            return
+        hmap = self.height_map()
+        bounds = self.ctl.work_bounds()
+        pts = self.points()
+        if hmap is None or bounds is None or len(pts) < 3:
+            stage.set_level_mesh(None, None, 0.0)
+            if self.show_mesh.isChecked():
+                self.ctl.say("warn", "Nothing measured yet — probe the grid "
+                                     "first, or tick 'apply' if you have.")
+            return
+        from PySide6.QtGui import QImage
+        x0, y0, x1, y1 = bounds
+        n = 64
+        zs = [[float(hmap(x0 + (x1 - x0) * i / (n - 1.0),
+                          y0 + (y1 - y0) * j / (n - 1.0)))
+               for i in range(n)] for j in range(n)]
+        flat = [z for row in zs for z in row]
+        span = max(1e-4, max(abs(min(flat)), abs(max(flat))))
+        img = QImage(n, n, QImage.Format_RGB32)
+        for j in range(n):
+            # Row 0 of the image is the TOP; the stage flips it back.
+            row = zs[n - 1 - j]
+            for i in range(n):
+                img.setPixelColor(i, j, theme.height_ink(row[i], span))
+        stage.set_level_mesh(img, (x0, y0, x1, y1), span)
+        self.ctl.say("ok", "Surface drawn — %.3f mm from the lowest point to "
+                           "the highest." % (max(flat) - min(flat)))
+
+    def state(self):
+        """Everything worth saving about the measurement, as plain data.
+
+        The probed heights especially. Nine points is nine physical touches
+        and a couple of minutes of machine time, and a measurement that does
+        not survive closing the app is one nobody relies on.
+        """
+        rows = []
+        for r in range(self.table.rowCount()):
+            cells = []
+            for c in range(3):
+                it = self.table.item(r, c)
+                cells.append(it.text() if it else "")
+            rows.append(cells)
+        return {"nx": int(self.nx.value()), "ny": int(self.ny.value()),
+                "apply": bool(self.use_chk.isChecked()),
+                "show": bool(self.show_mesh.isChecked()),
+                "rows": rows}
+
+    def restore(self, data):
+        """Put a saved measurement back, points and heights together."""
+        if not isinstance(data, dict):
+            return
+        self.nx.setValue(int(data.get("nx", 3)))
+        self.ny.setValue(int(data.get("ny", 3)))
+        rows = data.get("rows") or []
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(rows))
+        pts = []
+        for r, cells in enumerate(rows):
+            for c, txt in enumerate(list(cells)[:3]):
+                it = QTableWidgetItem(str(txt))
+                if c < 2:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(r, c, it)
+            try:
+                pts.append((float(cells[0]), float(cells[1])))
+            except (TypeError, ValueError, IndexError):
+                pass               # a row without coordinates is not a point
+        self.table.blockSignals(False)
+        self._points = pts
+        self.use_chk.setChecked(bool(data.get("apply", False)))
+        self.show_mesh.setChecked(bool(data.get("show", False)))
+        self.ctl.stage.set_probe_points(self._points)
+        self._sync_enabled()
+        self._advise()
+        self._draw_mesh()
+
     def is_active(self):
         return self.height_map() is not None
 
@@ -264,38 +365,102 @@ class LevelPage(inspector.Page):
         if not self._points:
             self.ctl.say("warn", "Build a grid first.")
             return
+        # WHERE THE TOOL IS STANDING IS THE ORIGIN OF EVERY POINT BELOW.
+        #
+        # probe_grid opens the port and latches the datum with 'D', which the
+        # firmware defines as "the current X,Y" - and every 'P' after it probes
+        # at datum + (x, y). The grid, though, is in MACHINE coordinates. Send
+        # it raw and the two only agree when the tool happens to be standing on
+        # the machine origin: park it over the first probe point at (100, 50)
+        # instead and the first point is probed at (200, 100), which is a
+        # different part of the bed and possibly not over the board at all.
+        #
+        # Nothing said so. Rather than add an instruction to remember, the
+        # points are sent relative to where the tool actually is, so probing
+        # lands where the grid is drawn no matter where you started.
+        pos = self.ctl.last_position()
+        if pos is None:
+            self.ctl.say("warn", "No live position yet — the grid is measured "
+                                 "from where the tool is standing, so the "
+                                 "readout has to be alive first. Give it a "
+                                 "moment and try again.")
+            return
+        dx, dy = pos[0], pos[1]
         port = (link.firmware or {}).get("port")
         # probe_grid opens the port itself, so the live link has to release it.
         link.mark_external(True)
         link.disconnect_from("handing the port to the probe run")
         link.clear_abort()
-        pts = [(i, int(round(x * 1000)), int(round(y * 1000)))
+        pts = [(i, int(round((x - dx) * 1000)), int(round((y - dy) * 1000)))
                for i, (x, y) in enumerate(self._points)]
         self.progress.setRange(0, len(pts))
         self.progress.setValue(0)
         self.progress.show()
         self.probe_btn.setEnabled(False)
         self.probe_state.setText(
-            "Probing. STOP stops it at the next point and lifts the tool.")
+            "Probing from X%.2f Y%.2f. STOP stops it at the next point and "
+            "lifts the tool." % (dx, dy))
         self._z0 = None
+        self._failed = []
         self._run = ProbeRun(port, pts, link.should_abort, self)
         self._run.point.connect(self._on_point)
         self._run.finished.connect(lambda msg, p=port: self._on_done(msg, p))
         self._run.start()
 
     def _on_point(self, d):
+        row = d["id"]
         z = d.get("z")
         if z is None:
+            # A point the machine could not measure. The firmware probes every
+            # point TWICE - a coarse touch, then a lift and a fine re-descend -
+            # and reports UNSTABLE when the two disagree, which is what a noisy
+            # or dirty contact looks like. Skipping it silently left a blank
+            # cell and a height map quietly built from fewer points than were
+            # probed.
+            why = str(d.get("error") or "no contact")
+            short = ("unstable" if "UNSTABLE" in why.upper() else
+                     "no touch" if "timeout" in why.lower() else "failed")
+            self._failed.append((row, why))
+            if row < self.table.rowCount():
+                self.table.blockSignals(True)
+                it = QTableWidgetItem(short)
+                it.setToolTip(why)
+                it.setForeground(QColor(theme.CAUTION))
+                self.table.setItem(row, 2, it)
+                self.table.blockSignals(False)
+            self.progress.setValue(row + 1)
             return
         if self._z0 is None:
             self._z0 = z
-        row = d["id"]
         if row < self.table.rowCount():
             self.table.blockSignals(True)
             self.table.setItem(row, 2,
                                QTableWidgetItem(f"{(z - self._z0) / 1000.0:.4f}"))
             self.table.blockSignals(False)
         self.progress.setValue(row + 1)
+        self._draw_mesh()
+
+    def _report_failures(self):
+        """Say which points the machine refused to stand behind, and why."""
+        if not self._failed:
+            return
+        unstable = sum(1 for _r, w in self._failed if "UNSTABLE" in w.upper())
+        rows = ", ".join(str(r + 1) for r, _w in self._failed[:6])
+        plural = "" if len(self._failed) == 1 else "s"
+        if unstable:
+            self.ctl.say(
+                "warn",
+                "%d of %d points would not settle (row%s %s). Every point is "
+                "probed twice and these two touches disagreed - usually a "
+                "dirty contact or electrical noise. Clean the copper there, "
+                "check the clip, and probe again."
+                % (len(self._failed), self.table.rowCount(), plural, rows))
+        else:
+            self.ctl.say(
+                "warn",
+                "%d point%s never touched (row%s %s). The bit may be starting "
+                "too high, or those points are not over copper."
+                % (len(self._failed), plural, plural, rows))
 
     def _on_done(self, msg, port):
         self.progress.hide()
@@ -304,6 +469,7 @@ class LevelPage(inspector.Page):
         self.ctl.link.mark_external(False)
         self.ctl.say("warn" if msg else "ok",
                      msg or "Bed probed — the height map is ready.")
+        self._report_failures()
         self._advise()
         # Take the port back so the readout and STOP are live again.
         if port:
