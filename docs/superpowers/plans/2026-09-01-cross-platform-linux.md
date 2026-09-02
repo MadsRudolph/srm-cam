@@ -1529,9 +1529,49 @@ Expected: passes unchanged.
 
 ## Done when
 
-- [ ] `python -m pytest -q` ≥880 passed on Windows
-- [ ] `python -m pytest -q` ≥880 passed on Fedora
-- [ ] Both CI jobs green
-- [ ] `SRM-CAM-x86_64.AppImage` launches on Fedora, loads the demo board, draws it, and the machine bar explains itself
-- [ ] The Windows installer still builds and is unchanged in behaviour
-- [ ] The Wayland/3D-view question in §10 of the spec has an answer recorded in the doc
+- [x] `python -m pytest -q` ≥880 passed on Windows
+- [x] `python -m pytest -q` ≥880 passed on Linux — **918 passed**, on CPython
+      3.12 (the pinned set) and again on 3.14 (the distro's). The host is Arch,
+      not Fedora; the point of `platform.py` is that the distribution does not
+      enter into it.
+- [ ] Both CI jobs green — the Linux leg could not run at all until now: it
+      installs `packaging/requirements-lock-linux.txt`, and that file did not
+      exist. It does now, frozen on a Linux machine after the suite passed
+      against it, so this is the first push where the leg has something to do.
+- [x] `SRM-CAM-x86_64.AppImage` launches, loads the demo board, draws it, and the machine bar explains itself
+- [x] The Windows installer still builds and is unchanged in behaviour — nothing
+      under `packaging/build.ps1`, `installer.iss` or `requirements-lock.txt`
+      moved, and `test_golden.py` still compares RML byte-for-byte.
+- [x] The Wayland/3D-view question in §10 of the spec has an answer recorded in the doc
+
+## What the first Linux run turned up
+
+The plan assumed the suite would pass on Linux once the platform differences
+had a home. It did not, and none of the three reasons were platform *paths* —
+they were things only a real run could find.
+
+1. **Every 3D view was broken on Linux, and the failure hung the suite.**
+   Qt requests OpenGL 2.0 by default there; pyqtgraph 0.14 refuses below 2.1
+   and reads the *requested* version, so a 4.6-capable NVIDIA card was
+   rejected. The first interface set the format in `main()` and was fine, the
+   second never did, and no test goes through either. Fixed in
+   `gerber2rml/glconfig.py`, which both interfaces now call — the drift this
+   plan's own §Architecture argues against had already happened once.
+   `QT_OPENGL=software`, which CI sets, is a Windows-only Qt variable and does
+   nothing here; `GERBER2RML_GL=software` is the portable one.
+
+2. **The machine-link gate turned ~20 tests into 90-second hangs.** Off
+   Windows the handlers stop at `_no_link()`, which puts up a modal
+   QMessageBox — and a modal with nobody to click it does not fail, it waits.
+   `tests/conftest.py` now pins the capability on by default, on the same
+   argument as the `_professional_mode` fixture beside it; an explicitly
+   injected platform still resolves honestly, and `test_platform.py`'s
+   host-default test opts out with a marker.
+
+3. **The installer and the AppImage shipped one interface.**
+   `packaging/launcher.py` imported `gerber2rml.gui.app` unconditionally,
+   while `pyproject.toml` declared two gui-scripts and the A/B handoff asked
+   for the two to be run side by side on a real job. Anyone who installed
+   rather than cloned could not open the second one at all. One bundle now
+   answers both, `--setup-sheet` selects the second, and there is a desktop
+   entry for each.
