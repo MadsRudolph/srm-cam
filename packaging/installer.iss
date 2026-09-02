@@ -57,6 +57,11 @@ Source: "..\examples\presets.example.json"; DestDir: "{app}"; Flags: ignoreversi
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; The second interface - the same exe, which now answers both (see
+; packaging\launcher.py). Without this shortcut an installed copy can only
+; reach the first one, and the A/B comparison the two exist for cannot be
+; asked of anyone who installed rather than cloned.
+Name: "{group}\{#MyAppName} (Setup Sheet)"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-sheet"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
