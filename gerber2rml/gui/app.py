@@ -6838,33 +6838,11 @@ def apply_dark_theme(app):
 def _configure_opengl():
     """Pick the OpenGL backend *before* the QApplication exists.
 
-    On Windows Qt often defaults to an ANGLE (OpenGL-ES-over-Direct3D) context,
-    under which pyqtgraph 0.14's desktop GLSL shaders fail to link --
-    ``GL_INVALID_VALUE`` on ``glUseProgram`` -- and the 3D viewer renders
-    nothing. Requesting the native desktop driver fixes it. Override with
-    ``GERBER2RML_GL=software`` (Mesa llvmpipe) on machines without a usable GPU
-    driver (headless/RDP/VM), or ``=angle`` to restore the old behaviour."""
-    import os
-    from PySide6.QtCore import QCoreApplication
-    from PySide6.QtGui import QSurfaceFormat
-    mode = os.environ.get("GERBER2RML_GL", "desktop").lower()
-    attr = {
-        "desktop": Qt.ApplicationAttribute.AA_UseDesktopOpenGL,
-        "software": Qt.ApplicationAttribute.AA_UseSoftwareOpenGL,
-        "angle": Qt.ApplicationAttribute.AA_UseOpenGLES,
-    }.get(mode, Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
-    QCoreApplication.setAttribute(attr, True)
-    # Share GL resources across contexts. Without this, closing the 3D viewer
-    # destroys its GL context and invalidates pyqtgraph's cached shader programs;
-    # the next viewer gets a fresh, non-sharing context and glUseProgram fails
-    # (GL_INVALID_VALUE) -> blank. Sharing keeps the programs valid across windows.
-    QCoreApplication.setAttribute(
-        Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-    fmt = QSurfaceFormat()
-    fmt.setVersion(2, 1)
-    fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
-    fmt.setDepthBufferSize(24)
-    QSurfaceFormat.setDefaultFormat(fmt)
+    The work moved to :mod:`gerber2rml.glconfig` when the second interface
+    turned out to need exactly the same thing; this stays as the name the
+    handoff notes and the docs point at."""
+    from gerber2rml import glconfig
+    glconfig.configure()
 
 
 # Demo board loaded on launch so the GUI isn't empty. Resolves both from a source
