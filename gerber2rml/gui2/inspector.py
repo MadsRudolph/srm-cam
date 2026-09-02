@@ -240,6 +240,26 @@ class SetupPage(Page):
             "set yourself is kept.")
         self.screwed.toggled.connect(ctl.action_screws_toggled)
         stock.add(self.screwed)
+        self.hold = QComboBox()
+        self.hold.addItem("Screwed or clamped at points", "points")
+        self.hold.addItem("Bonded across the whole back (tape)", "bonded")
+        self.hold.setToolTip(
+            "How the copper is held to the bed, which decides whether the "
+            "probed surface is the surface that gets cut." + chr(10)*2 +
+            "Held at points, the board can arch over air between the "
+            "fixings. The probe measures it with a static tool at almost no "
+            "force; the cutter pushes down and the unsupported part deflects "
+            "instead of being cut, so the trace is missed exactly where the "
+            "height map is highest. The cut depth is deepened to reach "
+            "through anyway." + chr(10)*2 +
+            "Bonded across the whole back, there is nowhere for it to go, "
+            "the probed surface IS the cut surface, and nothing is added. "
+            "It is the better fixture.")
+        self.hold.currentIndexChanged.connect(
+            lambda _i: ctl.action_hold(self.hold.currentData()))
+        stock.add(widgets.Field("Held down by", self.hold))
+        self.hold_note = widgets.hint("")
+        stock.add(self.hold_note)
         self.pick_screws = QCheckBox("Choose the screw holes myself")
         self.pick_screws.setToolTip(
             "Click the spoilboard holes on the bed to screw through, and "
@@ -468,7 +488,36 @@ class SetupPage(Page):
         if plan is not None and plan.single_tool:
             spec = (f"One {plan.tool_label} for all three operations — no bit "
                     f"changes in this job.\n" + spec)
+        margin = 0.0
+        try:
+            margin = ctl._flex_margin()
+        except Exception:
+            pass
+        if margin:
+            spec += (chr(10) + "Cut deepened by %.2f mm: the board is "
+                     "held at points "
+                     "and arches %.2f mm between them, so the cut has to "
+                     "reach through where it springs back."
+                     % (margin, margin - 0.035))
         self.tool_summary.setText(spec)
+        self.hold.blockSignals(True)
+        i = self.hold.findData(getattr(ctl, "_hold", "points"))
+        if i >= 0:
+            self.hold.setCurrentIndex(i)
+        self.hold.blockSignals(False)
+        if margin:
+            self.hold_note.setText(
+                "Adding %.2f mm to the trace depth — %.2f mm of arch plus the "
+                "foil. Bond the back instead and this goes to nothing."
+                % (margin, margin - 0.035))
+        elif getattr(ctl, "_hold", "points") == "points":
+            self.hold_note.setText(
+                "Probe the bed and any arch between the fixings is measured, "
+                "and added to the cut depth so it still reaches through.")
+        else:
+            self.hold_note.setText(
+                "Nothing added: bonded flat, the probed surface is the "
+                "surface that gets cut.")
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.ds_section.setVisible(full)

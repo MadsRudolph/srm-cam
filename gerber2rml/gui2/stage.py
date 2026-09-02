@@ -580,6 +580,17 @@ class Stage(QWidget):
                     self._scene_raster = self._raster(self._paint_work)
                 p.drawPixmap(QPointF(0, 0), self._scene_raster)
 
+            # The measured surface goes on last, in the MACHINE frame. It has
+            # to be over the copper to be visible at all, but it must not
+            # follow the job the way the copper does: it was measured at fixed
+            # machine coordinates, so dragging the board across the bed does
+            # not move the measurement. If the two come apart on screen, the
+            # map no longer covers the job, which is worth seeing.
+            p.save()
+            p.setTransform(w, True)
+            self._paint_level_mesh(p)
+            p.restore()
+
         self._paint_box(p)
         self._paint_shorts(p)
         self._paint_tool(p)
@@ -629,7 +640,6 @@ class Stage(QWidget):
         if self._photo_dim:
             p.setOpacity(1.0 - self._photo_dim)
         self._paint_copper(p)
-        self._paint_level_mesh(p)
         self._paint_paths(p)
         self._paint_holes(p)
         self._paint_fixtures(p)

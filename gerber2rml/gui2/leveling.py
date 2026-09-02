@@ -278,8 +278,18 @@ class LevelPage(inspector.Page):
             stage.set_level_mesh(None, None, 0.0)
             return
         hmap = self.height_map()
-        bounds = self.ctl.work_bounds()
         pts = self.points()
+        # The extent of the PROBE POINTS, not the board's current footprint.
+        # Those are two different things the moment the job is moved after
+        # probing - and a setup restore sets the placement AFTER the map, so
+        # sampling the footprint drew the surface against the previous job's
+        # position. Outside the probed area the map is extrapolating anyway,
+        # so this also stops it claiming to know more than it measured.
+        bounds = None
+        if len(pts) >= 3:
+            xs = [x for x, _y, _z in pts]
+            ys = [y for _x, y, _z in pts]
+            bounds = (min(xs), min(ys), max(xs), max(ys))
         if hmap is None or bounds is None or len(pts) < 3:
             stage.set_level_mesh(None, None, 0.0)
             if self.show_mesh.isChecked():

@@ -40,6 +40,8 @@ from gerber2rml.app import presets as presets_mod
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
 from gerber2rml.engine import spoilboard
+
+FOIL_MM = 0.035        # copper foil on 1.6 mm FR-4; what a cut must break
 from gerber2rml.engine.drc import isolation_bridges
 from gerber2rml.engine.estimate import estimate_file_seconds, format_duration
 
@@ -214,6 +216,9 @@ class MainWindow(QMainWindow):
         self.show_stock = True
         self.show_bed = True     # the spoilboard grid; see _draw_screws
         self._manual_screws = None   # None = let the app choose them
+        # How the copper is held down, which decides whether the probed
+        # surface is the surface that gets CUT. See _flex_margin.
+        self._hold = "points"        # "bonded" | "points"
         self.screwed = False
 
         self._build_ui()
@@ -812,7 +817,8 @@ class MainWindow(QMainWindow):
                 return st.toolpaths("drill"), None, st.drill.bit_diameter
             if step.op == "cutout":
                 return st.toolpaths("cutout"), None, st.cutout.bit_diameter
-            return st.toolpaths("traces"), None, width
+            return (isolate(st.board.copper, self.cutting_trace(),
+                            outline=st.board.outline), None, width)
         lay = self._ds_layout()
         if lay is None:
             return [], None, width
@@ -827,12 +833,12 @@ class MainWindow(QMainWindow):
             return paths, None, st.drill.bit_diameter
         if step.op == "cutout":
             return cut_outline(lay.outline, st.cutout), None, st.cutout.bit_diameter
+        tj = self.cutting_trace()
         if step.op == "top_traces":
             return (self._fit_paths(
-                        isolate(lay.top_copper, st.trace,
-                                outline=lay.top_outline)),
+                        isolate(lay.top_copper, tj, outline=lay.top_outline)),
                     None, width)
-        return (isolate(lay.bottom_copper, st.trace, outline=lay.outline),
+        return (isolate(lay.bottom_copper, tj, outline=lay.outline),
                 None, width)
 
     def _ds_layout(self):
@@ -1044,6 +1050,49 @@ class MainWindow(QMainWindow):
         self._checks = checks
         self.inspector.checks.set_checks(checks)
         self._sync_banner()
+
+    def _flex_margin(self):
+        """Extra depth to cut through a board that will move under the cutter.
+
+        The probe measures the surface with a static tool at almost no force.
+        The cutter arrives spinning and pushing down. Where the board is held
+        against the bed that makes no difference; where it is arched over air
+        between two screws it does - the unsupported part deflects instead of
+        being cut, and the trace is missed exactly where the height map is
+        highest. That is not a fault in the map: the map is right about where
+        the surface WAS.
+
+        So the margin is the arch itself. Worst case the board flattens under
+        the tool, which puts the surface back at the plane of its supports,
+        and the cut still has to break the foil there.
+
+        Bonded across the whole back - tape, not screws - there is nowhere for
+        it to go, the probed surface IS the cut surface, and the margin is
+        zero. Which is the better fixture, and why this is a setting rather
+        than a constant.
+        """
+        if self._hold != "points":
+            return 0.0
+        pts = self.level_page.points()
+        if len(pts) < 3:
+            return 0.0
+        zs = [z for _x, _y, z in pts]
+        return max(0.0, (max(zs) - min(zs)) + FOIL_MM)
+
+    def action_hold(self, how):
+        self._hold = how or "points"
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
+
+    def cutting_trace(self):
+        """The trace job as it will actually be cut, margin included."""
+        from dataclasses import replace
+        m = self._flex_margin()
+        if not m:
+            return self.state.trace
+        t = self.state.trace
+        return replace(t, cut_depth=t.cut_depth + m)
 
     def _stock_checks(self):
         """Is the job on the copper, and is the copper on the machine?
@@ -1684,14 +1733,23 @@ class MainWindow(QMainWindow):
             if self._double:
                 from gerber2rml.doublesided import build_double_sided
                 written = build_double_sided(
-                    st.gerber_dir, out_dir, st.name, trace=st.trace,
+                    st.gerber_dir, out_dir, st.name, trace=self.cutting_trace(),
                     drill=st.drill, cutout=st.cutout, machine=st.machine,
                     offset=(st.place_x, st.place_y), rotate=st.rotate,
                     level=level, registration=self._registration,
                     fiducials=self.fiducial_spec(),
                     board_thickness=self.inspector.setup.thickness.value())
             else:
-                written = st.export(out_dir, level=level)
+                # The margin has to reach the FILE, not just the preview. The
+                # state's own export uses its own trace job, so swap in the
+                # one that carries it for the duration.
+                from dataclasses import replace as _replace
+                keep = st.trace
+                st.trace = self.cutting_trace()
+                try:
+                    written = st.export(out_dir, level=level)
+                finally:
+                    st.trace = keep
         except Exception as e:
             self.report_error(
                 "The job could not be exported", e,
@@ -1865,7 +1923,7 @@ class MainWindow(QMainWindow):
             "cutout": asdict(self.state.cutout),
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
-            "fid_diameter": self._fid_diameter,
+            "fid_diameter": self._fid_diameter, "hold": self._hold,
             "fid_count": self._fid_count,
             "fid_placement": self._fid_placement,
             "fid_offset": self._fid_offset,
@@ -1924,6 +1982,7 @@ class MainWindow(QMainWindow):
         # 0.8 for setups written before it was settable, so an old job
         # reproduces exactly what it produced then.
         self._fid_diameter = float(data.get("fid_diameter", 0.8))
+        self._hold = data.get("hold", "points")
         self._fid_count = int(data.get("fid_count", 4))
         self._fid_placement = data.get("fid_placement", "onboard")
         self._fid_offset = float(data.get("fid_offset", 4.0))
