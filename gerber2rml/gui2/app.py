@@ -56,6 +56,7 @@ def main(argv=None):
         from PySide6.QtGui import QFont
         from PySide6.QtCore import Qt
 
+        from gerber2rml import glconfig
         from gerber2rml.gui2 import theme, style
         from gerber2rml.gui2.window import MainWindow
     except Exception:
@@ -63,6 +64,11 @@ def main(argv=None):
         _panic("SRM-CAM could not start because a dependency failed to "
                "import.", log)
         return 1
+
+    # Before the QApplication, not after: Qt reads these while it starts up.
+    # Without it the 3D simulator opens blank on Windows and raises on Linux.
+    if QApplication.instance() is None:
+        glconfig.configure()
 
     app = QApplication.instance() or QApplication(list(argv or sys.argv))
     app.setApplicationName("SRM-CAM")
