@@ -1574,4 +1574,7 @@ they were things only a real run could find.
    for the two to be run side by side on a real job. Anyone who installed
    rather than cloned could not open the second one at all. One bundle now
    answers both, `--setup-sheet` selects the second, and there is a desktop
-   entry for each.
+   entry for each. (Superseded days later: the A/B was decided for the second
+   interface, so the default flipped and the flag is now `--original` for the
+   first. `--setup-sheet` is still accepted, since it is spelled into
+   shortcuts already out there.)

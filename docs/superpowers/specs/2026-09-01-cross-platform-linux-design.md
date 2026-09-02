@@ -397,7 +397,7 @@ Stated plainly, in the spirit of §8 and §11 of `docs/AB-setup-sheet.md`.
 `packaging/build.sh`, `packaging/srm-cam.desktop`,
 `packaging/requirements-lock-linux.txt`, `gerber2rml/glconfig.py`,
 `tests/test_glconfig.py`, `tests/test_launcher.py`,
-`packaging/srm-cam-setup-sheet.desktop`.
+`packaging/srm-cam-original.desktop` (added as `srm-cam-setup-sheet.desktop`; renamed when the setup sheet became the default and the *other* interface became the one you ask for).
 
 **Changed:** `gui/app.py` (8 sites), `gui2/window.py`, `gui2/app.py`,
 `gui2/machine.py`, `scripts/flash_firmware.py`, `packaging/srm-cam.spec`,
