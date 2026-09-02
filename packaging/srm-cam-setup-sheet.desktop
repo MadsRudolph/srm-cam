@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SRM-CAM (Setup Sheet)
+GenericName=PCB CAM for the Roland SRM-20
+Comment=The alternative interface over the same engine - one page per setup step
+Exec=SRM-CAM --setup-sheet
+Icon=srm-cam
+Terminal=false
+Categories=Development;Engineering;Electronics;
+Keywords=PCB;CAM;Gerber;CNC;milling;KiCad;
+StartupWMClass=SRM-CAM

@@ -1,14 +1,17 @@
-"""3D G-code simulation window: orbit the toolpath and play a tool head along
-it, like ncviewer.com.
+"""3D G-code simulation: orbit the toolpath and play a tool head along it.
 
-Renders the flattened toolpath (cyan cuts, dim rapids) in an OpenGL scene the
-operator can orbit/zoom/pan, with a moving endmill cone driven by a play/pause
-timer, a speed control, and a scrub timeline. Rapids ride up at travel height
-and cuts dip to depth, so the Z motion shows the tool lifting and plunging just
-as the machine will run it.
+Renders the flattened toolpath in an OpenGL scene the operator can orbit, zoom
+and pan, with a moving endmill driven by a play/pause timer, a speed control
+and a scrub timeline. Rapids ride at travel height and cuts dip to depth, so
+the Z motion shows the tool lifting and plunging as the machine will run it.
 
-The heavy lifting (path flattening, arc-length interpolation) lives in
-:mod:`gerber2rml.engine.simulate`; this module is the Qt/OpenGL shell.
+The heavy lifting - path flattening, arc-length interpolation - lives in
+``gerber2rml.engine.simulate``; this module is the Qt/OpenGL shell.
+
+A copy of the first interface's window, because this package does not import
+from ``gerber2rml.gui``. The colours are this interface's own: the palette has
+roles for the cutting move, the travel move and the tool already, and the 3D
+view has no business inventing a second cyan.
 """
 import os
 
@@ -37,13 +40,13 @@ from PySide6.QtCore import Qt, QTimer
 
 from gerber2rml.engine.simulate import (build_path, split_segments, position_at,
                                         index_at, advance_along)
-from gerber2rml.gui import theme
+from gerber2rml.gui2 import theme
 
 _TICK_MS = 30                      # ~33 fps animation timer
-_CUT_COLOR = (0.0, 1.0, 1.0, 1.0)   # cyan
-_RAPID_COLOR = (0.4, 0.4, 0.4, 1.0)  # dim grey
-_TRAIL_COLOR = (1.0, 0.85, 0.1, 1.0)  # bright amber "already cut"
-_TOOL_COLOR = (1.0, 0.3, 0.3, 1.0)
+_CUT_COLOR = theme.gl_rgba(theme.PATH)
+_RAPID_COLOR = theme.gl_rgba(theme.TRAVEL)
+_TRAIL_COLOR = theme.gl_rgba(theme.CAUTION)   # already cut
+_TOOL_COLOR = theme.gl_rgba(theme.TOOL)
 
 
 def _pairs(segments):
@@ -83,7 +86,7 @@ class Simulation3DWindow(QMainWindow):
         self._live_dist = 0.0
 
         self.view = gl.GLViewWidget()
-        self.view.setBackgroundColor(theme.CANVAS_BG)
+        self.view.setBackgroundColor(theme.INK)
 
         self._build_scene()
 
@@ -124,8 +127,8 @@ class Simulation3DWindow(QMainWindow):
             "to where the machine really is.")
         self.live_btn.setStyleSheet(
             # Braces doubled: in an f-string a bare "{" opens an expression,
-            # so this CSS block was parsed as the name `color` and the window
-            # raised NameError before it could ever be shown.
+            # so the CSS block was being parsed as the name `color` and the
+            # window raised NameError before it could ever be shown.
             f"QPushButton:checked {{ color: {theme.HOLE}; font-weight: bold; }}")
         self.live_btn.toggled.connect(self._on_live_toggled)
 
