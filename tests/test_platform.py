@@ -4,6 +4,7 @@ Every assertion injects a platform string rather than reading the host's, so
 the Linux behaviour is tested on Windows and vice versa. A test that only
 passes on the machine it was written on proves nothing about the other one.
 """
+import pytest
 from pathlib import Path
 
 from gerber2rml import platform as plat
@@ -39,6 +40,7 @@ def test_reveal_has_no_command_off_windows():
     assert plat.reveal_command(Path("/home/mads/board.nc"), "linux") is None
 
 
+@pytest.mark.host_capabilities
 def test_capabilities_defaults_to_the_running_host():
     import sys
     assert plat.capabilities().machine_link == sys.platform.startswith("win")

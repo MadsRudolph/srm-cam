@@ -45,3 +45,33 @@ def qt_app():
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     return app
+
+
+@pytest.fixture(autouse=True)
+def _machine_link_present(request, monkeypatch):
+    """Run the suite as if the host had the machine link.
+
+    Same argument as ``_professional_mode`` above: the link is the default on
+    the platform this program was written for, and hundreds of these tests
+    call a machine-control handler directly and assert on what it did. Off
+    Windows those handlers now stop at ``_no_link()``, which puts up a modal
+    QMessageBox - and a modal with nobody to click it does not fail, it hangs.
+    A whole afternoon of the suite timing out on Linux, one test at a time,
+    is what this fixture is for.
+
+    Pinning it here rather than skipping keeps every one of those tests
+    meaning exactly what it says on any host, which is the same reason
+    platform.py takes an injected platform instead of branching on
+    sys.platform. An EXPLICIT platform still resolves honestly, so the tests
+    that pass "linux" or "win32" are unaffected, and the ones that gate the UI
+    monkeypatch capabilities themselves - after this fixture, so they win.
+    """
+    if "host_capabilities" in request.keywords:
+        yield                      # this test is ABOUT the honest default
+        return
+    from gerber2rml import platform as plat
+    real = plat.capabilities
+    monkeypatch.setattr(
+        plat, "capabilities",
+        lambda platform=None: real(plat.WINDOWS if platform is None else platform))
+    yield
