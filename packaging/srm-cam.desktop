@@ -8,3 +8,4 @@ Icon=srm-cam
 Terminal=false
 Categories=Development;Engineering;Electronics;
 Keywords=PCB;CAM;Gerber;CNC;milling;KiCad;
+StartupWMClass=SRM-CAM

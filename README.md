@@ -29,7 +29,7 @@ python -m gerber2rml.cli <gerber-folder> -o out -n <board>   # headless CLI
 
 After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
 
-### Linux (Fedora, Ubuntu)
+### Linux (Fedora, Ubuntu, Arch)
 
 Download `SRM-CAM-x86_64.AppImage` from the
 [latest release](https://github.com/MadsRudolph/srm-cam/releases/latest), then:
@@ -41,6 +41,27 @@ chmod +x SRM-CAM-x86_64.AppImage
 
 No install step and no root. It carries its own Qt, so it does not care which
 version your distribution ships.
+
+The AppImage holds **both interfaces**. Without arguments it opens the
+original one; `--setup-sheet` opens the alternative (see
+[HANDOFF-gui-ab.md](docs/HANDOFF-gui-ab.md)), which is what the second desktop
+entry runs:
+
+```bash
+./SRM-CAM-x86_64.AppImage --setup-sheet
+```
+
+To get both into your application launcher, put the AppImage somewhere stable
+and install the two entries from `packaging/`:
+
+```bash
+install -Dm755 SRM-CAM-x86_64.AppImage ~/.local/bin/SRM-CAM
+install -Dm644 packaging/srm-cam-256.png ~/.local/share/icons/hicolor/256x256/apps/srm-cam.png
+install -Dm644 packaging/srm-cam.desktop packaging/srm-cam-setup-sheet.desktop ~/.local/share/applications/
+```
+
+If the 3D views come up blank or the app will not start on a machine with no
+usable GPU driver — a VM, a remote session — run it with `GERBER2RML_GL=software`.
 
 **What Linux does not do:** the machine link — Connect, the DRO, jogging and
 bed probing over the Arduino — is Windows-only. Prepare the job on Linux,
