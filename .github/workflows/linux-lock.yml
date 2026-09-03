@@ -1,0 +1,137 @@
+# Produce packaging/requirements-lock-linux.txt honestly.
+#
+# pip freeze resolves for the platform it runs on. A freeze taken on Windows
+# by asking pip to resolve for a Linux platform tag does not actually install
+# anything - it evaluates each dependency's environment markers against the
+# HOST (Windows), not the target. Tried it: pywin32-ctypes, which the real
+# Windows lock pins under a "pyinstaller / windows" heading, leaked straight
+# into the Linux result, and it picked a PySide6 build that does not match
+# what the Windows lock uses at all. Nothing built from that freeze would be
+# trustworthy, so it is not how packaging/requirements-lock-linux.txt is made.
+#
+# Instead, this workflow builds a real venv on a real ubuntu-latest runner,
+# runs the full test suite against it, and only freezes once that suite is
+# green - the same way packaging/requirements-lock.txt was produced on a real
+# Windows machine. If the suite fails, this job fails and no lock is written
+# or uploaded, so a downloaded artifact always ships with proof the set it
+# names actually runs the app.
+#
+# workflow_dispatch only - this never runs on its own. It produces a file for
+# a human to review and commit, not a pass/fail signal, so there is nothing
+# here for a push or a schedule to gate.
+#
+# To use: Actions -> lock linux deps -> Run workflow. When it finishes, open
+# the run, download the `requirements-lock-linux` artifact, and commit the
+# file inside it as packaging/requirements-lock-linux.txt (the file itself
+# carries a header with the same instructions).
+#
+# Delete this workflow once a Linux machine is available to regenerate the
+# lock by hand - packaging/requirements-lock-linux.txt's own header spells
+# out the manual equivalent of the steps below.
+name: lock linux deps
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read      # checkout only; nothing is written back to the repo
+
+env:
+  # Same reason tests.yml sets these: no display and no GPU on a runner.
+  # QT_OPENGL is Windows-only and does nothing here; GERBER2RML_GL is the
+  # portable one. Kept in step with tests.yml rather than trimmed, so the
+  # environment this freeze is verified in matches the one that gates pushes.
+  QT_QPA_PLATFORM: offscreen
+  QT_OPENGL: software
+  GERBER2RML_GL: software
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    env:
+      LOCK_HEADER: |
+        # PINNED build environment for the SRM-CAM AppImage - the exact package
+        # set verified against the full test suite on a real ubuntu-latest
+        # runner. packaging/build.sh and the Linux half of the build workflow
+        # both install from THIS file.
+        #
+        # Produced by .github/workflows/linux-lock.yml, not by hand and not by
+        # freezing on Windows. pip freeze resolves for the platform it runs on:
+        # a freeze taken on Windows against a Linux platform tag evaluates
+        # environment markers against the Windows host, and in practice pulled
+        # in pywin32-ctypes and a PySide6 version that does not match this
+        # project's Windows lock at all. Nothing built from a freeze taken that
+        # way would be trustworthy, so this file only ever comes from a real
+        # Linux runner that has just run the test suite against it - the same
+        # way packaging/requirements-lock.txt was produced on a real Windows
+        # machine.
+        #
+        # Two locks, not one file with environment markers: the Windows lock's
+        # header promises that a rebuild in five years produces the same app,
+        # and a marker-based file is only ever resolved on one platform at a
+        # time. Two files keep that promise on both. The cost is that
+        # upgrading a dependency means regenerating both.
+        #
+        # To regenerate: Actions -> lock linux deps -> Run workflow, download
+        # the `requirements-lock-linux` artifact, and commit it over this file.
+        # That workflow can be deleted once someone has a Linux box to hand;
+        # the manual equivalent it automates is:
+        #   1. python3 -m venv .build-venv
+        #      .build-venv/bin/pip install -r packaging/requirements-build.txt
+        #   2. .build-venv/bin/pip install -e . --no-deps
+        #      .build-venv/bin/pip install pytest
+        #   3. QT_QPA_PLATFORM=offscreen QT_OPENGL=software \
+        #      .build-venv/bin/python -m pytest -q      (must pass)
+        #   4. .build-venv/bin/pip freeze > packaging/requirements-lock-linux.txt
+        #   5. re-add this header, strip the dev-only lines (pytest, pluggy,
+        #      iniconfig, Pygments) and the editable self-reference pip
+        #      freeze writes for step 2's install (a "-e git+...#egg=..."
+        #      or "-e ." line, or a "# Editable install" comment on pip
+        #      versions that cannot detect version control)
+        #
+        # Python: CPython 3.12 - matched to the Windows lock so both artifacts
+        # are built by the same interpreter series.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Without libEGL.so.1 every GUI test module fails at import, so the
+      # suite below cannot vouch for the freeze. It is a build-host package,
+      # not a pin: it does not belong in the lock, only in the environment
+      # that verifies it.
+      - name: Install the one system library PySide6 needs here
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1
+
+      - name: Create the build venv and install the loose set
+        run: |
+          python -m venv .build-venv
+          .build-venv/bin/python -m pip install --upgrade pip
+          .build-venv/bin/python -m pip install -r packaging/requirements-build.txt
+
+      - name: Install the app itself and pytest
+        run: |
+          .build-venv/bin/python -m pip install -e . --no-deps
+          .build-venv/bin/python -m pip install pytest
+
+      - name: Run the full test suite against this environment
+        # This is what makes the freeze below trustworthy: it ships with
+        # evidence that the exact set it names actually runs the app. If this
+        # step fails, the job fails here and nothing is frozen or uploaded.
+        run: .build-venv/bin/python -m pytest -q
+
+      - name: Freeze
+        run: |
+          printf '%s\n' "$LOCK_HEADER" > packaging/requirements-lock-linux.txt
+          .build-venv/bin/python -m pip freeze \
+            | grep -Ev '^(pytest|pluggy|iniconfig|Pygments)==|^-e |^# Editable install|^gerber2rml[ =@]' \
+            >> packaging/requirements-lock-linux.txt
+          cat packaging/requirements-lock-linux.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: requirements-lock-linux
+          path: packaging/requirements-lock-linux.txt
+          retention-days: 90

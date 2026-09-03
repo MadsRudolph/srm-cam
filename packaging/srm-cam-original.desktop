@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SRM-CAM (original interface)
+GenericName=PCB CAM for the Roland SRM-20
+Comment=The interface SRM-CAM used before the setup sheet - same engine, same files
+Exec=SRM-CAM --original
+Icon=srm-cam
+Terminal=false
+Categories=Development;Engineering;Electronics;
+Keywords=PCB;CAM;Gerber;CNC;milling;KiCad;
+StartupWMClass=SRM-CAM

@@ -42,3 +42,7 @@ srm-cam-classic = "gerber2rml.gui.app:main"
 [tool.setuptools.packages.find]
 include = ["gerber2rml*"]
 
+[tool.pytest.ini_options]
+markers = [
+    "host_capabilities: read gerber2rml.platform.capabilities() as the HOST reports it, opting out of the conftest fixture that pins the machine link on for every other test",
+]

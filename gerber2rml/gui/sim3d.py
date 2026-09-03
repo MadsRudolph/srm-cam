@@ -18,6 +18,14 @@ import os
 # pyqtgraph is imported.
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
 
+# A 3D window can be opened by code that never ran main() - the test suite
+# does exactly that - and pyqtgraph rejects the surface format Qt hands out by
+# default on Linux. Raising the version here costs nothing when main() has
+# already set it, and is the difference between a window and a traceback when
+# it has not.
+from gerber2rml import glconfig
+glconfig.ensure_default_format()
+
 import numpy as np
 import pyqtgraph.opengl as gl
 from pyqtgraph import Vector

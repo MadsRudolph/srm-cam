@@ -57,6 +57,11 @@ Source: "..\examples\presets.example.json"; DestDir: "{app}"; Flags: ignoreversi
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; The interface SRM-CAM used before the setup sheet - the same exe, which
+; answers both (see packaging\launcher.py). A migration is not a deletion:
+; this stays on the Start menu while anyone is still working in it, and the
+; unadorned shortcut above now opens the one we are moving to.
+Name: "{group}\{#MyAppName} (original interface)"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--original"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 

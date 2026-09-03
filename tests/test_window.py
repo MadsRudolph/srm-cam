@@ -2444,3 +2444,293 @@ def test_centre_on_bed_needs_no_board_to_be_safe(monkeypatch):
     w = MainWindow()
     w._on_centre_on_bed()
     assert seen and "No board" in seen[0][0]
+
+
+# ------------------------------------- the machine link, where it does not run
+#
+# The Linux build ships THIS interface (packaging/launcher.py imports
+# gerber2rml.gui.app), so the gating that went into gui2 buys it nothing. On a
+# platform without the link every one of these controls used to be live, with
+# nothing on screen explaining anything - including a wet-run dialog announcing
+# that SRM-CAM would start the spindle itself.
+#
+# Every test here injects the capability rather than reading the host's, so the
+# Linux behaviour is tested on Windows and vice versa.
+
+# Widgets that command machine motion, open the serial link, or only ever show
+# something the link reports.
+_LINK_WIDGETS = (
+    "connect_btn", "stop_btn", "level_port_combo", "level_probe_btn",
+    "level_retouch_spin", "zero_btn", "spindle_btn", "pause_btn", "resume_btn",
+    "zjog_up_btn", "zjog_down_btn", "zjog_step", "probe_boxes_btn",
+    "stock_here_btn", "dro_label", "touch_label", "machine_label",
+    "run_track_btn", "run_op_combo", "run_auto_chk", "run_rework_chk",
+    "run_bar", "run_eta_lbl",
+)
+# ...and the same thing as menu entries.
+_LINK_ACTIONS = ("jog_chk", "align_btn", "machine_zero_btn", "view_btn",
+                 "trail_chk", "trail_clear_btn", "stream_btn",
+                 "machinetest_btn")
+
+
+def _no_link(monkeypatch):
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    monkeypatch.setattr(plat, "default_serial_port", lambda p=None: None)
+
+
+def _with_link(monkeypatch):
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=True))
+    monkeypatch.setattr(plat, "default_serial_port", lambda p=None: "COM9")
+
+
+def _put_away(win, widget):
+    """True if ``widget`` is not reachable in the window any more."""
+    node = widget
+    while node is not None:
+        if node is win._gated_away:
+            return True
+        node = node.parentWidget()
+    return False
+
+
+def _pgkeys():
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtCore import Qt
+    return {QKeySequence(Qt.Key_PageUp).toString(),
+            QKeySequence(Qt.Key_PageDown).toString()}
+
+
+def test_the_first_interface_offers_no_machine_controls_without_the_link(monkeypatch):
+    """Connect, Probe over SPI, Machine test, Stream job, jog, zero, spindle -
+    every one of them was reachable on Fedora, and the stream's wet run says
+    "SRM-CAM will START THE SPINDLE itself"."""
+    _no_link(monkeypatch)
+    w = MainWindow()
+    w.show()
+    for name in _LINK_WIDGETS:
+        widget = getattr(w, name)
+        assert _put_away(w, widget), name
+        assert not widget.isVisible(), name
+    # the whole Machine menu, which is where jog / zero / stream / test live
+    assert w._machine_menu is None
+    assert not [a for a in w.menuBar().actions() if "Machine" in a.text()]
+    for name in _LINK_ACTIONS:
+        act = getattr(w, name)
+        assert not [o for o in act.associatedObjects()
+                    if hasattr(o, "menuAction")], name
+    # and the two Z-jog keyboard shortcuts, which move the tool with no button
+    keys = _pgkeys()
+    assert not [a for a in w.actions() if a.shortcut().toString() in keys]
+    # ...and the two canvas callbacks that move the tool without a button:
+    # click-to-jog, and the arrow keys while hovering the bed.
+    assert w.preview.on_jog_to is None
+    assert w.preview.on_jog_step is None
+    w.close()
+
+
+def test_the_first_interface_says_why_where_the_controls_would_have_been(monkeypatch):
+    """Not an empty bar and not a row of greyed-out buttons. The same sentence
+    the second interface uses, so the two cannot tell different stories."""
+    from PySide6.QtWidgets import QLabel, QWidget
+    from gerber2rml import platform as plat
+    _no_link(monkeypatch)
+    w = MainWindow()
+    w.show()
+    notes = [lbl for lbl in w.findChildren(QLabel)
+             if lbl.text() == plat.NO_MACHINE_LINK_NOTE]
+    assert len(notes) == 1
+    note = notes[0]
+    assert not _put_away(w, note)                 # it is in the window
+    # ...and specifically on the machine strip, where Connect used to be
+    bar = [c for c in w.findChildren(QWidget)
+           if c.objectName() == "machineBar"][0]
+    assert note.parentWidget() is bar
+    assert note.wordWrap()                        # 205 chars across the window
+    assert "Windows" in note.text()
+    assert "height map" in note.text().lower()    # the path that still works
+    # the same is said again on the Bed leveling page, where probing was
+    lvl = [lbl.text() for lbl in w.findChildren(QLabel)
+           if "Load CSV" in lbl.text()]
+    assert lvl and "Windows only" in lvl[0]
+    w.close()
+
+
+def test_the_first_interface_is_unchanged_where_the_link_does_run(monkeypatch):
+    """The hard constraint: a Windows user sees exactly what they saw before."""
+    _with_link(monkeypatch)
+    w = MainWindow()
+    w.show()
+    for name in _LINK_WIDGETS:
+        assert not _put_away(w, getattr(w, name)), name
+    assert w._machine_menu is not None
+    assert [a for a in w.menuBar().actions() if "Machine" in a.text()]
+    assert w.connect_btn.isVisible() and w.stop_btn.isVisible()
+    keys = _pgkeys()
+    assert len([a for a in w.actions() if a.shortcut().toString() in keys]) == 2
+    assert w.preview.on_jog_to is not None
+    assert w.preview.on_jog_step is not None
+    w.close()
+
+
+def _explode(name, log):
+    def boom(*a, **k):
+        log.append((name, a))
+        raise AssertionError("%s started with %r" % (name, a))
+    return boom
+
+
+def test_no_entry_point_can_start_a_worker_without_the_link(monkeypatch):
+    """Belt to the gating's braces. None used to reach _DROPoller(None),
+    _StreamWorker(None, ...), _FidFindWorker(None, ...) and
+    MachineTestDialog(None, ...) - and a dialog reading "Probe 48 points on
+    None?". Nothing here may construct one, whatever the route in."""
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.gui import app as appmod
+    _no_link(monkeypatch)
+
+    started = []
+    for name in ("_DROPoller", "_StreamWorker", "_ProbeWorker",
+                 "_FidFindWorker"):
+        monkeypatch.setattr(appmod, name, _explode(name, started))
+    said = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: said.append(a[2] if len(a) > 2 else ""))
+    monkeypatch.setattr(QMessageBox, "warning",
+                        lambda *a, **k: said.append(a[2] if len(a) > 2 else ""))
+
+    def _never_ask(*a, **k):
+        raise AssertionError("asked to confirm a machine action")
+    monkeypatch.setattr(QMessageBox, "question", _never_ask)
+
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    assert w._link_port() is None
+    w._start_dro()                       # Connect
+    w._on_probe_spi()                    # Probe over SPI
+    w._on_stream_job()                   # Stream job (the wet-run dialog)
+    w._on_machine_test()                 # Machine test
+    w._on_probe_rework_boxes()           # Probe boxes
+    w._on_stock_corner_from_tool()       # Corner = tool (connects on demand)
+    assert w._autoselect_port() is False
+    w._on_jog_z(+1)                      # PageUp, had it still been bound
+    w._on_probe_z()
+    w._on_machine_zero()
+
+    assert started == []
+    assert w._dro is None
+    # and every refusal explained itself rather than doing nothing
+    assert len(said) >= 7
+    assert all("Windows" in s for s in said if s)
+    w.close()
+
+
+def test_the_fiducial_dialog_cannot_probe_without_the_link(monkeypatch):
+    """Its Auto button walks the tool round a hole's edges."""
+    from PySide6.QtWidgets import QMessageBox
+    from gerber2rml.gui import app as appmod
+    _no_link(monkeypatch)
+    started = []
+    monkeypatch.setattr(appmod, "_FidFindWorker", _explode("fid", started))
+    said = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: said.append(a[2] if len(a) > 2 else ""))
+    w = MainWindow()
+    dlg = appmod._FiducialAlignDialog(w, [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)])
+    dlg._auto_probe(0)
+    dlg._capture(0)
+    assert started == []
+    assert len(said) == 2
+    assert all("Windows" in s for s in said)
+    dlg.close()
+    w.close()
+
+
+def test_a_saved_height_map_still_levels_the_export_without_the_link(monkeypatch,
+                                                                    tmp_path):
+    """The documented Linux flow: probe the bed on the CNC PC, carry the CSV.
+    If loading and applying one broke, the gating would have taken levelling
+    with it - which is the one thing the note on screen promises still works."""
+    from PySide6.QtWidgets import QTableWidgetItem, QFileDialog
+    _no_link(monkeypatch)
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    w.level_nx_spin.setValue(3)
+    w.level_ny_spin.setValue(3)
+    w._on_build_level_grid()
+    for r in range(w.level_table.rowCount()):
+        x = float(w.level_table.item(r, 0).text())
+        w.level_table.setItem(r, 2, QTableWidgetItem("%.4f" % (0.01 * x)))
+
+    csv = tmp_path / "bed.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(csv), "")))
+    w._on_save_level_grid()
+    assert csv.exists()
+
+    w._on_clear_level()                       # as if this were a fresh session
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(csv), "")))
+    w._on_load_level_grid()
+    w.level_chk.setChecked(True)
+    hmap = w._height_map()
+    assert hmap is not None and abs(hmap(100, 0) - 1.0) < 1e-6
+
+    plain = tmp_path / "plain"
+    warped = tmp_path / "warped"
+    w.level_chk.setChecked(False)
+    w.export_to(plain)
+    w.level_chk.setChecked(True)
+    w.export_to(warped)
+    a = (plain / "buck_traces.nc").read_text()
+    b = (warped / "buck_traces.nc").read_text()
+    assert a != b, "a loaded height map did not change the exported toolpath"
+    w.close()
+
+
+def test_the_tour_skips_the_steps_that_need_the_link(monkeypatch):
+    """Two Bed-leveling steps are gated on connect_btn.clicked and
+    level_probe_btn.clicked. A tour that stops on a control that is not there
+    cannot be advanced at all."""
+    _no_link(monkeypatch)
+    w = MainWindow()
+    assert w.tour._is_put_away(w.connect_btn)
+    assert w.tour._is_put_away(w.level_probe_btn)
+    w.close()
+
+
+def test_whats_hidden_in_novice_does_not_promise_the_machine_back(monkeypatch):
+    """That list is the app's answer to "where did it go?", and Professional
+    is its answer to "how do I get it back". Naming machine control there on a
+    platform that has none sends someone round the Mode menu for nothing."""
+    from PySide6.QtWidgets import QMessageBox
+    said = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: said.append(a[2]))
+    _no_link(monkeypatch)
+    w = MainWindow()
+    w._show_mode_help()
+    assert said and "Machine control" not in said[0]
+    assert "Bed leveling" in said[0]          # still hidden, still restorable
+    w.close()
+
+    said.clear()
+    _with_link(monkeypatch)
+    w = MainWindow()
+    w._show_mode_help()
+    assert "Machine control" in said[0]
+    w.close()
+
+
+def test_both_interfaces_say_the_same_thing_about_the_missing_link():
+    """Two copies of a safety explanation drift apart, and the student who
+    reads the stale one is standing at a mill. One string, one module."""
+    from gerber2rml import platform as plat
+    pkg = Path(__file__).parent.parent / "gerber2rml"
+    for f in ("gui/app.py", "gui2/machine.py"):
+        assert "NO_MACHINE_LINK_NOTE" in (pkg / f).read_text(encoding="utf-8"), f
+    assert "Windows" in plat.NO_MACHINE_LINK_NOTE
+    assert "height map" in plat.NO_MACHINE_LINK_NOTE.lower()

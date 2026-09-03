@@ -2,17 +2,20 @@
 #
 # Two jobs, deliberately:
 #
-#   locked  - runs the suite against packaging/requirements-lock.txt, the exact
-#             versions the shipped installer is built from. This one gates
-#             pushes and PRs: if it is red, the app we ship is broken.
+#   locked  - runs the suite against the exact versions each shipped artifact
+#             is built from: packaging/requirements-lock.txt on windows-latest
+#             for the installer, packaging/requirements-lock-linux.txt on
+#             ubuntu-latest for the AppImage. This one gates pushes and PRs:
+#             if it is red, the app we ship on that platform is broken.
 #
 #   canary  - runs the same suite against the NEWEST Python and the NEWEST
-#             releases of every dependency, once a month. Nothing gates on it.
-#             Its job is to answer the question "will this still build in a few
-#             years?" before the answer matters: when a new PySide6, numpy or
-#             Python release breaks us, this turns red on the 1st of the month
-#             and emails whoever owns the repo, instead of the breakage being
-#             discovered by a student the week before a deadline.
+#             releases of every dependency, on both platforms, once a month.
+#             Nothing gates on it. Its job is to answer the question "will
+#             this still build in a few years?" before the answer matters:
+#             when a new PySide6, numpy or Python release breaks us, this
+#             turns red on the 1st of the month and emails whoever owns the
+#             repo, instead of the breakage being discovered by a student the
+#             week before a deadline.
 name: tests
 
 on:
@@ -28,16 +31,39 @@ permissions:
 
 env:
   # The GUI tests build real widgets; there is no display and no GPU on a
-  # runner. offscreen gives Qt a windowless platform plugin, and software
-  # forces the bundled Mesa (opengl32sw.dll) for the pyqtgraph 3D views.
+  # runner. offscreen gives Qt a windowless platform plugin.
   QT_QPA_PLATFORM: offscreen
+  # QT_OPENGL is a WINDOWS-ONLY Qt variable - it selects the bundled Mesa
+  # (opengl32sw.dll) there and is ignored everywhere else, so it was doing
+  # nothing on the ubuntu leg. GERBER2RML_GL is this project's own knob and
+  # maps to AA_UseSoftwareOpenGL on every platform (gerber2rml/glconfig.py).
+  # Both are set: neither is redundant, they cover different halves.
   QT_OPENGL: software
+  GERBER2RML_GL: software
 
 jobs:
   locked:
-    # The gating job: exactly what we ship.
+    # The gating job: exactly what we ship, on both platforms we ship to.
+    #
+    # The ubuntu leg installs from packaging/requirements-lock-linux.txt,
+    # which does not exist until someone runs
+    # .github/workflows/linux-lock.yml (workflow_dispatch only - it freezes a
+    # real venv on a real ubuntu-latest runner, since pip freeze resolves for
+    # the platform it runs on and cannot be produced from Windows) and
+    # commits the artifact it uploads. Until that file is committed, this leg
+    # fails - expected, and the correct order, not something to work around.
+    # Do not add a fallback to the loose requirements-build.txt here: that
+    # would silently stop testing the pinned set this job exists to gate.
     if: github.event_name != 'schedule'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            lock: packaging/requirements-lock.txt
+          - os: ubuntu-latest
+            lock: packaging/requirements-lock-linux.txt
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,12 +71,27 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: packaging/requirements-lock.txt
+          cache-dependency-path: ${{ matrix.lock }}
+
+      # ubuntu-latest was missing exactly one thing, and it named it:
+      # "ImportError: libEGL.so.1: cannot open shared object file", raised at
+      # `from PySide6.QtWidgets import QApplication` - so every GUI test
+      # module failed at COLLECTION, before offscreen could spare them
+      # anything. QT_QPA_PLATFORM=offscreen avoids the X11 platform plugin,
+      # but PySide6's QtGui links libEGL regardless of which platform plugin
+      # is chosen, and the runner image does not ship it.
+      #
+      # One package, because the failure named one package. Do not pre-empt
+      # the next one with a list of libxcb-* guesses: the next failure will
+      # name that one too.
+      - name: Install the one system library PySide6 needs here
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1
 
       - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r packaging/requirements-lock.txt
+          python -m pip install -r ${{ matrix.lock }}
           python -m pip install pytest==9.1.1     # pinned like everything else
           python -m pip install -e . --no-deps
 
@@ -61,9 +102,17 @@ jobs:
         run: python -m pytest -q
 
   canary:
-    # Early warning only — never gates a merge.
+    # Early warning only — never gates a merge. fail-fast: false because
+    # continue-on-error does not, by itself, stop a failure on one matrix leg
+    # from cancelling the other while it is still running - without it, a
+    # Windows-only breakage could cancel the Linux run (or the reverse)
+    # before it had a chance to report.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +120,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"    # whatever the newest stable Python is
+
+      # Same one library as the locked leg above, for the same reason.
+      - name: Install the one system library PySide6 needs here
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1
 
       - name: Install newest everything
         run: |

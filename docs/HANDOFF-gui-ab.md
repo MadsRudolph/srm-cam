@@ -1,5 +1,20 @@
 # HANDOFF — deciding between the two interfaces
 
+> ## DECIDED, 2026-09-02: the setup sheet.
+>
+> **SRM-CAM is `gui2` now.** An installed copy — AppImage, Windows installer —
+> opens the setup sheet with no arguments. The original interface is still
+> built and still shipped, behind `--original` and its own desktop entry and
+> Start-menu shortcut, because a migration is not a deletion and people are
+> mid-job in it.
+>
+> Everything below this box was written while the question was open. It is
+> kept because the *reasoning* is still the record of why — what each
+> interface does better, what the alternative had not proven, and §2.5 / §2.7
+> on the machine link, which any future work on that link still has to answer.
+> Read it as history, not as an open question. Where it says "nothing has been
+> decided", something has.
+
 **For:** a Claude Code session on the CNC PC, at the machine.
 **Branch:** `feat/setup-sheet-gui`. **Written:** 2026-08-23.
 
@@ -8,9 +23,9 @@ decide which one the lab keeps. Both are on this branch, both launch from the
 same install, both drive the same `ProjectState` and write the same files.
 
 ```bash
-# from the repo root, ON THIS BRANCH
-python -m gerber2rml          # the original interface
-python -m gerber2rml.gui2     # the alternative — "the setup sheet"
+# from the repo root
+python -m gerber2rml.gui2     # the setup sheet — what SRM-CAM now opens
+python -m gerber2rml.gui      # the original interface
 ```
 
 Nothing has been decided. The alternative is not a replacement until someone
