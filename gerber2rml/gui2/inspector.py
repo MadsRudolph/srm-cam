@@ -159,6 +159,12 @@ class SetupPage(Page):
         tools.add(prow)
         self.tool_summary = widgets.hint("")
         tools.add(self.tool_summary)
+        # Only for a V-bit: a flat endmill's width does not move with depth,
+        # so the picture would say nothing the line above does not.
+        from gerber2rml.gui2.bitviz import BitProfile
+        self.bit_profile = BitProfile()
+        self.bit_profile.setVisible(False)
+        tools.add(self.bit_profile)
         self.add(tools)
 
         # -- the stock ---------------------------------------------------
@@ -277,6 +283,18 @@ class SetupPage(Page):
                                     on=ctl.action_reset_screws))
         sh.addStretch(1)
         stock.add(self.screw_row)
+        # The screw file belongs HERE, not only in the Machine menu. The bed
+        # fixture really is cut once per spoilboard and can live in a menu;
+        # these holes are cut once per PIECE OF COPPER, which makes them part
+        # of setting the job up - three controls above decide where they go,
+        # and the one that writes them was two menus away.
+        self.screw_file_btn = widgets.button(
+            "Write the screw file…", on=ctl.action_export_screws,
+            tip="Drills the clearance holes for the hold-down screws, and "
+                "writes the procedure beside them." + chr(10)*2 +
+                "Run it FIRST, drop the screws in, then re-zero Z - the "
+                "board sits differently once it is bolted down.")
+        stock.add(self.screw_file_btn)
         self.add(stock)
 
         # -- placement ---------------------------------------------------
@@ -494,22 +512,32 @@ class SetupPage(Page):
         except Exception:
             pass
         if margin:
-            spec += (chr(10) + "Cut deepened by %.2f mm: the board is "
-                     "held at points "
-                     "and arches %.2f mm between them, so the cut has to "
-                     "reach through where it springs back."
-                     % (margin, margin - 0.035))
+            from gerber2rml.gui2.window import FOIL_MM
+            spec += (chr(10) + "Cut deepened by %.2f mm: the board is held at "
+                     "points and arches %.2f mm between them, so the cut has "
+                     "to reach through where it springs back. Any tilt in the "
+                     "map is not counted here - levelling already cancels it."
+                     % (margin, margin - FOIL_MM))
         self.tool_summary.setText(spec)
+        # The job as it will be CUT, margin included - a V-bit's width follows
+        # depth, so a margin that deepens the cut also widens every trace, and
+        # that is the number worth looking at.
+        try:
+            self.bit_profile.set_job(ctl.cutting_trace())
+        except Exception:
+            self.bit_profile.setVisible(False)
         self.hold.blockSignals(True)
         i = self.hold.findData(getattr(ctl, "_hold", "points"))
         if i >= 0:
             self.hold.setCurrentIndex(i)
         self.hold.blockSignals(False)
         if margin:
+            from gerber2rml.gui2.window import FOIL_MM
             self.hold_note.setText(
                 "Adding %.2f mm to the trace depth — %.2f mm of arch plus the "
-                "foil. Bond the back instead and this goes to nothing."
-                % (margin, margin - 0.035))
+                "foil. That is the curve only; a board sitting on a slope is "
+                "already handled by the warp. Bond the back instead and this "
+                "goes to nothing." % (margin, margin - FOIL_MM))
         elif getattr(ctl, "_hold", "points") == "points":
             self.hold_note.setText(
                 "Probe the bed and any arch between the fixings is measured, "
@@ -529,6 +557,7 @@ class SetupPage(Page):
                   self.fid_offset_field, self.fid_count_field):
             f.setVisible(fiducial)
         self.screw_row.setVisible(self.screwed.isChecked())
+        self.screw_file_btn.setVisible(self.screwed.isChecked())
 
 
 # ---------------------------------------------------------------------------
