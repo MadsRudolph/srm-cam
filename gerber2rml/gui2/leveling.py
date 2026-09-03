@@ -284,6 +284,26 @@ class LevelPage(inspector.Page):
             self.ctl.say("info", f"{len(self._points)} probe points laid over "
                                  f"the board.")
 
+    def _points_off_the_travel(self):
+        """A sentence naming the grid rows the machine cannot get to, or "".
+
+        The grid is built inside the travel now, but a grid can also come
+        from a CSV or a setup written before that. Whatever built it, a point
+        past the end of an axis is one the head cannot reach, and sending it
+        cost a whole column of failures with no clue why.
+        """
+        from gerber2rml.backends import BACKENDS
+        bx, by = BACKENDS[self.ctl.state.machine].bed
+        rows = [i + 1 for i, (x, y) in enumerate(self._points)
+                if not (0.0 <= x <= bx and 0.0 <= y <= by)]
+        if not rows:
+            return ""
+        shown = ", ".join(str(r) for r in rows[:6]) + ("…" if len(rows) > 6 else "")
+        return (f"{len(rows)} probe point{'s' if len(rows) != 1 else ''} "
+                f"(row{'s' if len(rows) != 1 else ''} {shown}) lie outside the "
+                f"machine's travel of {bx:g} × {by:g} mm. Move the job onto "
+                f"the bed and build the grid again.")
+
     def _reachable(self, b):
         """``b`` clipped to the travel and to the copper, and a sentence about
         what was cut off - or ``(None, ...)`` if nothing is left.
@@ -584,6 +604,10 @@ class LevelPage(inspector.Page):
             self.ctl.say("warn", "The machine is still doing something. Wait "
                                  "for it to finish before probing.")
             return
+        off = self._points_off_the_travel()
+        if off:
+            self.ctl.say("fail", off)
+            return
         # WHERE THE TOOL IS STANDING IS THE ORIGIN OF EVERY POINT BELOW.
         #
         # probe_grid opens the port and latches the datum with 'D', which the
@@ -739,6 +763,10 @@ class LevelPage(inspector.Page):
     def _export_probe_files(self):
         if not self._points:
             self.ctl.say("warn", "Build a grid first.")
+            return
+        off = self._points_off_the_travel()
+        if off:
+            self.ctl.say("fail", off)
             return
         from gerber2rml.gui2 import workspace
         d = QFileDialog.getExistingDirectory(
