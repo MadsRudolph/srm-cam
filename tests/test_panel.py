@@ -250,3 +250,78 @@ def test_a_single_board_still_takes_the_folder_path(tmp_path, monkeypatch):
     st.set_placement(3.0, 4.0)
     st.export(tmp_path)
     assert len(calls) == 1 and calls[0]["offset"] == (3.0, 4.0)
+
+
+# ------------------------------------------------------- shared-edge cuts
+def _runs_at_x(paths, x, tol=1e-3):
+    return [tp for tp in paths
+            if all(abs(m.x - x) <= tol for m in tp if not m.rapid)]
+
+
+def test_touching_boards_get_one_cut_between_them():
+    """Two rings would merge into one and leave the boards joined."""
+    two = MultiPolygon([box(0, 0, 100, 100), box(100, 0, 200, 100)])
+    job = CutoutJob(bit_diameter=0.8, tabs=4, tab_width=1.5,
+                    cut_depth=0.6, total_depth=1.2)
+    paths = cut_outline(two, job)
+    seps = _runs_at_x(paths, 100.0)
+    assert len(seps) == 2                          # one line, two passes
+    assert seps[0] is paths[0], "the separator is cut first"
+    ys = {round(m.y, 2) for tp in seps for m in tp if not m.rapid}
+    assert ys == {0.0, 100.0}
+    cut = [m for tp in paths for m in tp if not m.rapid]
+    assert min(m.x for m in cut) == pytest.approx(-0.4)
+    assert max(m.x for m in cut) == pytest.approx(200.4)
+    # one ring round the lot: nothing else runs down the middle
+    assert not [tp for tp in paths if tp not in seps
+                and any(99.0 < m.x < 101.0 and 1.0 < m.y < 99.0 for m in tp)]
+
+
+def test_the_shared_cut_is_centred_in_a_small_gap():
+    two = MultiPolygon([box(0, 0, 100, 100), box(100.5, 0, 200.5, 100)])
+    job = CutoutJob(bit_diameter=0.8, tabs=0, cut_depth=0.6, total_depth=0.6)
+    assert len(_runs_at_x(cut_outline(two, job), 100.25)) == 1
+
+
+def test_boards_further_apart_than_the_bit_get_their_own_rings():
+    two = MultiPolygon([box(0, 0, 100, 100), box(101.0, 0, 201.0, 100)])
+    job = CutoutJob(bit_diameter=0.8, tabs=0, cut_depth=0.6, total_depth=0.6)
+    paths = cut_outline(two, job)
+    assert len(paths) == 2
+    xs = {round(m.x, 2) for tp in paths for m in tp if not m.rapid}
+    assert {100.4, 100.6} <= xs                    # each ring on its own side
+
+
+def test_an_edge_on_the_sheet_edge_is_not_cut():
+    job = CutoutJob(bit_diameter=0.8, tabs=4, tab_width=1.5,
+                    cut_depth=0.6, total_depth=0.6)
+    board = box(5.0, 20.0, 105.0, 120.0)
+    plain = cut_outline(board, job)
+    on_edge = cut_outline(board, job, stock=(5.0, 10.0, 205.0, 160.0))
+    cut = [m for tp in on_edge for m in tp if not m.rapid]
+    assert min(m.x for m in cut) > 4.9                # the ring at 4.6 is gone
+    assert max(m.x for m in cut) == pytest.approx(105.4)
+    assert len(on_edge) >= len(plain)                 # still tabbed
+    inside = cut_outline(board, job, stock=(0.0, 0.0, 200.0, 160.0))
+    assert [[(m.x, m.y, m.z) for m in tp] for tp in inside] == \
+        [[(m.x, m.y, m.z) for m in tp] for tp in plain]
+
+
+def test_a_panel_that_fills_the_sheet_needs_only_the_middle_cut_and_the_ends():
+    two = MultiPolygon([box(0, 0, 100, 100), box(100, 0, 200, 100)])
+    job = CutoutJob(bit_diameter=0.8, tabs=4, tab_width=1.5,
+                    cut_depth=0.6, total_depth=0.6)
+    paths = cut_outline(two, job, stock=(0.0, -10.0, 200.0, 150.0))
+    cut = [m for tp in paths for m in tp if not m.rapid]
+    assert min(m.x for m in cut) > 0.5 and max(m.x for m in cut) < 199.5
+    assert _runs_at_x(paths, 100.0)
+
+
+def test_touching_boards_export_and_overlapping_ones_do_not(tmp_path):
+    st = _two()
+    st.arrange(0.0)
+    written = st.export(tmp_path)
+    assert any(Path(p).name.endswith("_cutout.nc") for p in written)
+    st.set_placement(st.boards[0].place_x, st.boards[0].place_y)   # on top
+    with pytest.raises(ValueError):
+        st.export(tmp_path / "again")

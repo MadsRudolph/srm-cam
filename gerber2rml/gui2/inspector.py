@@ -374,10 +374,16 @@ class SetupPage(Page):
                 "the board on the bed but a dowel off it cannot be run.")
         ah2.addWidget(self.autoplace_btn)
         self.arrange_btn = widgets.button(
-            "Lay them side by side", on=ctl.action_arrange,
+            "Lay them side by side", on=lambda: ctl.action_arrange(),
             tip="Line the boards up left to right with a strip of waste "
                 "between each pair, the first one staying where it is.")
         ah2.addWidget(self.arrange_btn)
+        self.butt_btn = widgets.button(
+            "Butt them together", on=lambda: ctl.action_arrange(0.0),
+            tip="Line the boards up touching. One cut runs between each pair "
+                "and separates them, so the panel needs no waste between the "
+                "boards - each loses half a cutter width along that edge.")
+        ah2.addWidget(self.butt_btn)
         ah2.addStretch(1)
         place.add(arow)
         self.place_hint = widgets.hint(
@@ -577,6 +583,7 @@ class SetupPage(Page):
         self.boards.setVisible(panel)
         self.remove_board_btn.setVisible(panel)
         self.arrange_btn.setVisible(panel)
+        self.butt_btn.setVisible(panel)
         if panel:
             self.boards.blockSignals(True)
             self.boards.clear()

@@ -32,6 +32,8 @@ def isolate(copper, job, outline=None):
     paths = []
     if job.offsets == -1:
         clip = outline if (outline is not None and not outline.is_empty) else copper.envelope
+        if not clip.is_valid:
+            clip = clip.buffer(0)        # touching islands, dissolved for the clip
         i = 0
         while True:
             grown = copper.buffer(r + i * step)

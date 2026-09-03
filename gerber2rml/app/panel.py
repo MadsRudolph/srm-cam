@@ -14,7 +14,7 @@ app's state keeps the list; the interface moves the members around.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from shapely.geometry import Polygon
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 from gerber2rml.loader import (Board, load_board, gerber_stem, rotate_board,
@@ -95,11 +95,12 @@ def compose(boards):
     """One :class:`Board` out of several placed ones.
 
     Copper is unioned, so isolation offsets around everything at once and the
-    shorts check sees two boards placed too close as the short it is. Outlines
-    are unioned as well: disjoint boards give a MultiPolygon that the cut-out
-    and the dry run walk island by island, and overlapping ones merge, which
-    :func:`clearances` reports before anything is written. Holes are simply
-    all of them.
+    shorts check sees two boards placed too close as the short it is. The
+    outlines are kept as they are, one island per board, and NOT unioned:
+    two boards butted together would dissolve into one outline, and the cut
+    that separates them is worked out from the pair. Overlapping boards make
+    an invalid MultiPolygon, which :func:`clearances` reports before anything
+    is written. Holes are simply all of them.
 
     One board comes back as itself, untouched, so a plain job is exactly what
     it was before panels existed.
@@ -114,8 +115,15 @@ def compose(boards):
         geoms = [g for g in geoms if g is not None and not g.is_empty]
         return unary_union(geoms) if geoms else Polygon()
 
+    islands = []
+    for b in boards:
+        o = b.outline
+        if o is None or o.is_empty:
+            continue
+        islands += [g for g in getattr(o, "geoms", [o])
+                    if isinstance(g, Polygon) and not g.is_empty]
     return Board(copper=union(b.copper for b in boards),
-                 outline=union(b.outline for b in boards),
+                 outline=MultiPolygon(islands) if islands else Polygon(),
                  holes=[h for b in boards for h in b.holes],
                  copper_top=union(b.copper_top for b in boards))
 

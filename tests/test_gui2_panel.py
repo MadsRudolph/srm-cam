@@ -190,15 +190,48 @@ def test_overlapping_boards_fail_the_checks_and_block_the_export(
     assert two.traveller.current() == "checks"
 
 
-def test_boards_too_close_to_cut_apart_are_refused(two):
+def test_boards_closer_than_the_bit_share_one_cut(two):
+    """They used to be refused - two rings would merge and leave the boards
+    joined. One channel centred in the gap separates them instead, and the
+    check says what each board loses along that edge."""
     st = two.state
     a = st.boards[0].bounds()
     m = st.boards[1]
     bit = st.cutout.bit_diameter
     two.action_place(m.place_x + (a[2] + bit / 2) - m.bounds()[0], m.place_y)
     two.refresh_checks()
-    assert any("too close" in c.title.lower()
-               for c in two._checks if c.level == "fail")
+    share = [c for c in two._checks if c.title == "Two boards share one cut"]
+    assert share and f"{bit / 4:.2f} mm" in share[0].detail
+    assert not any(c.level == "fail" and "boards" in c.title.lower()
+                   for c in two._checks)
+
+
+def test_butting_the_boards_together_shares_the_cut(two, tmp_path):
+    two.action_arrange(0.0)
+    a, b = (m.bounds() for m in two.state.boards)
+    assert b[0] == pytest.approx(a[2], abs=1e-6)
+    two.select_step("cutout_run")
+    xs = {round(x, 2) for x, _y in
+          [pt for run in two.stage._cuts for pt in run]}
+    assert round(a[2], 2) in xs, "no cut runs along the shared edge"
+    written = two.export_to(tmp_path)              # not refused any more
+    assert any(Path(p).name.endswith("_cutout.nc") for p in written)
+
+
+def test_a_board_on_the_sheet_edge_is_not_cut_there(two):
+    """Once the copper is declared, an edge on its edge is the sheet's edge:
+    nothing to cut, and the checks stop calling it a failure."""
+    st = two.state
+    x0, y0, x1, y1 = st.boards[0].bounds()
+    two.action_remove_board(index=1)
+    two.action_stock(x1 - x0 + 40.0, y1 - y0 + 40.0, x0 + 0.3, y0 - 20.0)  # 0.3 mm off
+    two.refresh_checks()
+    titles = {c.title: c.level for c in two._checks}
+    assert titles.get("The job reaches the edge of the copper") == "warn"
+    assert "The job runs off the copper" not in titles
+    two.select_step("cutout_run")
+    xs = [x for run in two.stage._cuts for x, _y in run]
+    assert min(xs) > x0 - 0.1, "the left side was still cut"
 
 
 def test_a_thin_strip_of_waste_is_a_warning(two):

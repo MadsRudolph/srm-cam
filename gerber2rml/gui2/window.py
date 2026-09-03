@@ -288,6 +288,10 @@ class MainWindow(QMainWindow):
         self._redraw_after = False     # ...and a redraw was asked for meanwhile
         self._last_pos = None
         self.stock = (0.0, 0.0, 100.0, 80.0)
+        # Whether the operator has SAID where the copper is. The default
+        # sheet above is a placeholder for the picture; nothing that cuts
+        # may treat its edges as real until a size or corner has been set.
+        self._stock_set = False
         self.show_stock = True
         self.show_bed = True     # the spoilboard grid; see _draw_screws
         self._manual_screws = None   # None = let the app choose them
@@ -497,7 +501,9 @@ class MainWindow(QMainWindow):
         self._act(v, "Fit the whole bed", lambda: self.stage.fit(), "Ctrl+Shift+0")
         v.addSeparator()
         self._act(v, "Centre the job on the bed", self.action_autoplace, "Ctrl+B")
-        self._act(v, "Lay the boards side by side", self.action_arrange)
+        self._act(v, "Lay the boards side by side", lambda: self.action_arrange())
+        self._act(v, "Butt the boards together",
+                  lambda: self.action_arrange(0.0))
         v.addSeparator()
         self.xray_act = self._act(v, "Design X-ray", self._toggle_xray, "Ctrl+D",
                                   checkable=True)
@@ -999,7 +1005,8 @@ class MainWindow(QMainWindow):
                         else drill_holes(st.board.holes, self.cutting_drill()),
                         None, st.drill.bit_diameter)
             if step.op == "cutout":
-                return (cut_outline(st.board.outline, self.cutting_cutout()),
+                return (cut_outline(st.board.outline, self.cutting_cutout(),
+                                    stock=self.declared_stock()),
                         None, st.cutout.bit_diameter)
             return (isolate(st.board.copper, self.cutting_trace(),
                             outline=st.board.outline), None, width)
@@ -1532,11 +1539,22 @@ class MainWindow(QMainWindow):
             if out_r: edges.append(f"{out_r:.2f} mm off the right edge")
             if out_b: edges.append(f"{out_b:.2f} mm off the front edge")
             if out_t: edges.append(f"{out_t:.2f} mm off the back edge")
-            out.append(diag.Check(
-                "fail", "The job runs off the copper",
-                "the work hangs " + " and ".join(edges) + " of the sheet. "
-                "Move the job, or set the sheet's real size and corner under "
-                "The copper."))
+            from gerber2rml.engine.cutout import SHEET_EDGE_MM
+            if self._stock_set and worst <= SHEET_EDGE_MM:
+                # A hair over: the sheet's edge IS the board's edge there,
+                # and the cut-out leaves that side out.
+                out.append(diag.Check(
+                    "warn", "The job reaches the edge of the copper",
+                    "the work hangs " + " and ".join(edges) + " of the "
+                    "sheet. The sheet's edge is the board's edge there, so "
+                    "the cut-out skips that side and the board is short by "
+                    "that much."))
+            else:
+                out.append(diag.Check(
+                    "fail", "The job runs off the copper",
+                    "the work hangs " + " and ".join(edges) + " of the sheet. "
+                    "Move the job, or set the sheet's real size and corner "
+                    "under The copper."))
         else:
             out.append(diag.Check(
                 "ok", "The job is on the copper",
@@ -1566,23 +1584,29 @@ class MainWindow(QMainWindow):
                 "fail", "Two boards overlap",
                 f"{a} and {b} sit on top of each other. Move one of them - "
                 f"nothing can be cut like this.")]
-        if gap < bit:
+        if gap <= bit + 1e-6:
+            lost = (bit - gap) / 2.0
             return [diag.Check(
-                "fail", "Two boards are too close to cut apart",
-                f"{a} and {b} are {gap:.2f} mm apart and the cut-out bit is "
-                f"{bit:.2f} mm wide, so their outlines would be milled as one "
-                f"shape and they would come off the sheet joined. Leave "
-                f"{comfortable:.1f} mm or more.")]
+                "warn" if lost >= 0.2 else "ok",
+                "Two boards share one cut",
+                f"{a} and {b} are {gap:.2f} mm apart, so the cut-out runs "
+                f"once between them, centred in the gap. Each loses "
+                f"{lost:.2f} mm along that edge - the edge as drawn ends up "
+                f"inside the cut.")]
         if gap < comfortable:
             strip = gap - 2.0 * bit
+            if strip <= 0:
+                return [diag.Check(
+                    "ok", "The boards keep clear of each other",
+                    f"{a} and {b} are {gap:.2f} mm apart; their cut-outs "
+                    f"overlap and nothing is left between them.")]
             return [diag.Check(
                 "warn", "Two boards are nearly touching",
-                f"only {gap:.2f} mm between {a} and {b}. "
-                + ("The two cut-out channels run into each other there."
-                   if strip <= 0 else
-                   f"The cut-outs leave a strip of stock {strip:.2f} mm wide "
-                   f"between them, which can break loose and jam the cutter.")
-                + f" {comfortable:.1f} mm or more is comfortable.")]
+                f"only {gap:.2f} mm between {a} and {b}. The cut-outs leave "
+                f"a strip of stock {strip:.2f} mm wide between them, which "
+                f"can break loose and jam the cutter. {comfortable:.1f} mm "
+                f"or more is comfortable, or butt them together and share "
+                f"one cut.")]
         return [diag.Check(
             "ok", "The boards keep clear of each other",
             f"the nearest pair, {a} and {b}, are {gap:.1f} mm apart.")]
@@ -1787,18 +1811,25 @@ class MainWindow(QMainWindow):
         self.stage.set_selected(index)
         self.inspector.setup.sync()
 
-    def action_arrange(self):
-        """Line the boards up left to right with waste between them."""
+    def action_arrange(self, gap=None):
+        """Line the boards up left to right - ``gap`` mm of waste between
+        them, or butted together (0) so one cut separates each pair."""
         st = self.state
         if not st.is_panel:
             self.say("warn", "There is only one board on the sheet.")
             return
-        st.arrange()
+        gap = PANEL_GAP_MM if gap is None else float(gap)
+        st.arrange(gap)
         self._paths_cache = {}
         self._after_params()
         QTimer.singleShot(0, self.stage.fit_work)
-        self.say("ok", f"{len(st.boards)} boards laid out left to right, "
-                       f"{PANEL_GAP_MM:g} mm apart.")
+        if gap <= 0:
+            self.say("ok", f"{len(st.boards)} boards butted together. One cut "
+                           f"runs between each pair and separates them; each "
+                           f"loses half a cutter width along that edge.")
+        else:
+            self.say("ok", f"{len(st.boards)} boards laid out left to right, "
+                           f"{gap:g} mm apart.")
 
     def action_name(self, text):
         """The operator typed a job name: keep it, whatever boards come and go."""
@@ -1884,11 +1915,21 @@ class MainWindow(QMainWindow):
         # assumption.
         cx, cy, _w, _h = self.stock
         self.stock = (cx if x is None else x, cy if y is None else y, w, h)
+        self._stock_set = True
         if show is not None:
             self.show_stock = bool(show)
         self._draw_screws()
         self._sync_stock()
         self.refresh_checks()
+
+    def declared_stock(self):
+        """The copper sheet as ``(x0, y0, x1, y1)``, once the operator has set
+        it, else None. Where a board edge lies on it there is nothing to
+        cut, and the cut-out is told so."""
+        if not self._stock_set:
+            return None
+        sx, sy, sw, sh = self.stock
+        return (sx, sy, sx + sw, sy + sh)
 
     def _sync_stock(self):
         """Draw the sheet when asked to, not only when it is screwed down.
@@ -2405,7 +2446,8 @@ class MainWindow(QMainWindow):
                 st.drill = self.cutting_drill()
                 st.cutout = self.cutting_cutout()
                 try:
-                    written = st.export(out_dir, level=level)
+                    written = st.export(out_dir, level=level,
+                                        stock=self.declared_stock())
                 finally:
                     st.trace, st.drill, st.cutout = keep
         except Exception as e:
@@ -2678,6 +2720,7 @@ class MainWindow(QMainWindow):
         try:
             x, y, w, h = (float(v) for v in stock)
             self.stock = (x, y, w, h)
+            self._stock_set = "stock" in data
         except (TypeError, ValueError):
             # Not four numbers. Keep the sheet we had rather than storing
             # something the stage cannot unpack — a dict's keys, say.
