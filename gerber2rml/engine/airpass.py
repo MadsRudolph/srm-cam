@@ -19,32 +19,38 @@ DEFAULT_FEED = 15.0       # mm/s; fast enough not to be tedious, slow enough to
                           # follow with your eyes and hit the pause button
 
 
-def _ring(outline):
-    """The outline's exterior as a closed list of (x, y), or None."""
-    geom = outline
-    if geom is None or geom.is_empty:
-        return None
-    if geom.geom_type == "MultiPolygon":
-        geom = max(geom.geoms, key=lambda g: g.area)     # the board itself
-    if geom.geom_type != "Polygon":
-        geom = geom.envelope
-    return list(geom.exterior.coords)
+def _rings(outline):
+    """The exterior of every island in *outline* as closed (x, y) lists.
+
+    One board is one loop. A sheet of several boards is a MultiPolygon and
+    gets a loop per board, left to right - the point of the dry run is to
+    watch each of them land on copper, not just the biggest.
+    """
+    if outline is None or outline.is_empty:
+        return []
+    if outline.geom_type == "MultiPolygon":
+        polys = sorted(outline.geoms, key=lambda g: (g.bounds[0], g.bounds[1]))
+    elif outline.geom_type == "Polygon":
+        polys = [outline]
+    else:
+        polys = [outline.envelope]
+    return [list(p.exterior.coords) for p in polys if not p.is_empty]
 
 
 def air_path(outline, height=DEFAULT_HEIGHT):
-    """One closed loop over *outline* at *height*, as a toolpath list.
+    """A closed loop over every island of *outline* at *height*, as a toolpath
+    list - one path per island.
 
-    The first move is a rapid to the start (nothing is near the tool at this
-    height); everything after is a feed move, because a rapid is far too fast
-    to react to and this exists to be watched.
+    The first move of each is a rapid to its start (nothing is near the tool
+    at this height); everything after is a feed move, because a rapid is far
+    too fast to react to and this exists to be watched.
     """
-    ring = _ring(outline)
-    if not ring:
-        return []
-
-    x0, y0 = ring[0]
-    moves = [Move(x0, y0, height, rapid=True)]
-    moves += [Move(x, y, height) for x, y in ring[1:]]
-    if (round(ring[-1][0], 6), round(ring[-1][1], 6)) != (round(x0, 6), round(y0, 6)):
-        moves.append(Move(x0, y0, height))               # close the loop
-    return [moves]
+    paths = []
+    for ring in _rings(outline):
+        x0, y0 = ring[0]
+        moves = [Move(x0, y0, height, rapid=True)]
+        moves += [Move(x, y, height) for x, y in ring[1:]]
+        if (round(ring[-1][0], 6), round(ring[-1][1], 6)) != (round(x0, 6), round(y0, 6)):
+            moves.append(Move(x0, y0, height))           # close the loop
+        paths.append(moves)
+    return paths

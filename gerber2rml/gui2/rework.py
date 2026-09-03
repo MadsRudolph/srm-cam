@@ -11,6 +11,7 @@ independent decisions, and each row in the table carries its box's colour.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QComboBox,
+                               QApplication,
                                QTableWidget, QTableWidgetItem, QHeaderView,
                                QFileDialog, QAbstractItemView, QCheckBox)
 from PySide6.QtGui import QColor, QBrush
@@ -23,6 +24,45 @@ from gerber2rml.backends import BACKENDS
 # is that no two adjacent ones read as the same colour.
 SERIES = [theme.PATH_FAR, theme.CAUTION, theme.VERIFIED, theme.HOLE,
           theme.PROBE, theme.COPPER_HI, theme.DANGER_HI, theme.FIXTURE]
+
+
+def _one_of_each(runs):
+    """One copy of each distinct run.
+
+    A cut-out's source is one path per depth pass; clipped to a box and
+    forced to one depth they become identical copies, cut one after another
+    in air - and counted in the run time and the "runs written" line."""
+    seen, out = set(), []
+    for tp in runs:
+        key = tuple((round(m.x, 4), round(m.y, 4), m.rapid) for m in tp)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tp)
+    return out
+
+
+def _ramped(runs, step):
+    """Take each run down in passes of ``step`` to its own depth, the way the
+    cut-out was cut the first time. One full-depth plunge of a 0.8 mm bit
+    into 1.7 mm of FR-4 is how bits break."""
+    from gerber2rml.toolpath import Move
+    step = max(float(step), 0.05)
+    out = []
+    for tp in runs:
+        cut_zs = [m.z for m in tp if not m.rapid]
+        if not cut_zs:
+            out.append(tp)
+            continue
+        target = -min(cut_zs)                     # depth, positive mm
+        depths, depth = [], 0.0
+        while depth < target - 1e-9:
+            depth = min(depth + step, target)
+            depths.append(depth)
+        for d in depths or [target]:
+            out.append([m if m.rapid else Move(m.x, m.y, -d, False)
+                        for m in tp])
+    return out
 
 
 class ReworkPage(inspector.Page):
@@ -41,12 +81,11 @@ class ReworkPage(inspector.Page):
 
         src = widgets.Section("What to repeat")
         self.source = QComboBox()
-        self.source.addItem("Isolation traces", "traces")
-        self.source.addItem("Board cut-out", "cutout")
         self.source.setToolTip(
             "Which pass the re-cut is taken from. The geometry is the "
             "original toolpath, clipped to your boxes, so it follows exactly "
             "the same route it did the first time.")
+        self.refresh_sources()
         self.source.currentIndexChanged.connect(lambda _i: ctl.refresh_preview())
         src.add(widgets.Field("Repeat from", self.source))
         self.depth = inspector.num(0.25, 0.02, 3.0, 0.05, 2,
@@ -93,6 +132,37 @@ class ReworkPage(inspector.Page):
         self.add(out)
         self.finish()
         self._sync()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.refresh_sources()
+
+    def refresh_sources(self):
+        """The passes this job has. A top-side pass is offered only on a job
+        that has a top side; a control for a pass that does not exist is the
+        dead control this interface refuses to ship."""
+        double = bool(getattr(self.ctl, "_double", False))
+        want = ([("Bottom traces", "traces"), ("Top traces", "top_traces")]
+                if double else [("Isolation traces", "traces")])
+        want.append(("Board cut-out", "cutout"))
+        current = self.source.currentData()
+        self.source.blockSignals(True)
+        self.source.clear()
+        for label, op in want:
+            self.source.addItem(label, op)
+        i = self.source.findData(current)
+        self.source.setCurrentIndex(i if i >= 0 else 0)
+        self.source.blockSignals(False)
+
+    def _step_for(self, op):
+        """The plan step whose toolpath ``op`` repeats, or None."""
+        plan = getattr(self.ctl, "plan", None)
+        if plan is None:
+            return None
+        double = bool(getattr(self.ctl, "_double", False))
+        key = {"traces": "bottom_traces" if double else "traces_run",
+               "top_traces": "top_traces", "cutout": "cutout_run"}.get(op)
+        return plan.by_key(key) if key else None
 
     # -- boxes -------------------------------------------------------------
     def _toggle_add(self, on):
@@ -163,23 +233,52 @@ class ReworkPage(inspector.Page):
         if st.board is None or not self._regions:
             return
         op = self.source.currentData()
-        try:
-            paths = st.toolpaths(op)
-        except Exception as e:
-            self.ctl.report_error(
-                "The source pass could not be generated", e,
-                "The rework file is a clipped copy of a real pass, so that "
-                "pass has to build first.")
+        step = self._step_for(op)
+        if step is None:
+            self.ctl.say("warn", "This job has no such pass to repeat.")
             return
+        # The controller's toolpath for the step, not the state's: on a
+        # double-sided job the pass that was cut is the LAYOUT'S, which the
+        # dowel frame shifts across the bed, and a top-side pass is warped to
+        # the measured flip. Clipping the plain board's paths instead wrote a
+        # rework file for a board that was never cut where it says.
+        cached = self.ctl._paths_cache.get(step.key)
+        if cached is not None:
+            paths = cached[0]              # the pass as it was last drawn
+        else:
+            self.ctl.stage.set_busy("Working out the pass to repeat…")
+            QApplication.processEvents()
+            try:
+                paths, _far, _width = self.ctl._toolpaths_for(step)
+            except Exception as e:
+                self.ctl.stage.set_busy("")
+                self.ctl.report_error(
+                    "The source pass could not be generated", e,
+                    "The rework file is a clipped copy of a real pass, so "
+                    "that pass has to build first.")
+                return
+            self.ctl.stage.set_busy("")
         regions = [((x0, y0, x1, y1), -abs(d))
                    for (x0, y0, x1, y1, d) in self._regions]
-        clipped = clip_toolpaths_to_regions(paths, regions)
+        clipped = _one_of_each(clip_toolpaths_to_regions(paths, regions))
         if not clipped:
             self.ctl.say("warn", "None of those boxes contains any cutting "
                                  "from that pass — nothing to re-cut.")
             return
+        if op == "cutout":
+            clipped = _ramped(clipped, st.cutout.cut_depth)
+        # To the surface the pass was cut to. A rework exists because a spot
+        # came out shallow; re-cutting it without the height map the export
+        # used reproduces the original miss on a board that is not flat.
+        levelled = False
+        side = "top" if op == "top_traces" else "bottom"
+        hmap = self.ctl.level_page.height_map(side)
+        if hmap is not None:
+            from gerber2rml.engine.leveling import apply_leveling
+            clipped = apply_leveling(clipped, hmap)
+            levelled = True
         backend = BACKENDS[st.machine]
-        job = st.trace if op == "traces" else st.cutout
+        job = st.cutout if op == "cutout" else st.trace
         default = (workspace.remembered_dir("out", "exports")
                    + f"/{st.name}_{op}_rework{backend.ext}")
         path, _ = QFileDialog.getSaveFileName(
@@ -191,7 +290,9 @@ class ReworkPage(inspector.Page):
             open(path, "w", encoding="utf-8").write(backend.render(
                 clipped, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed,
                 header=[f"{st.name} - REWORK, {len(self._regions)} area(s)",
-                        f"repeat of the {op} pass, clipped to the marked boxes",
+                        f"repeat of the {op} pass, clipped to the marked boxes"
+                        + (", warped to the probed surface" if levelled
+                           else ""),
                         "re-zero Z first; do NOT move the XY origin"]))
         except OSError as e:
             self.ctl.report_error("The rework program could not be written", e)

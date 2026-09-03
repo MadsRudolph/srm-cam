@@ -333,12 +333,13 @@ def button(text, *, kind="", tip="", on=None, enabled=True):
 
 
 class Segmented(QWidget):
-    """One row, one choice. Used for the stage's frame switch only.
+    """One row, one choice. The frame switch, and the height map's face.
 
     The first interface has four places that select the operation, two of them
     nested tab bars with the same labels; they can disagree with each other.
-    This control exists so there is exactly one of it in the application and it
-    is not selecting an operation.
+    This control exists so that nothing in this interface selects an OPERATION
+    except the traveller - both uses here pick which view of one thing you are
+    looking at, which is a different question and safe to have twice.
     """
     changed = Signal(str)
 
@@ -381,6 +382,12 @@ class Segmented(QWidget):
         for b, k in self._keys.items():
             if k == key:
                 b.setChecked(True)
+
+    def set_option_enabled(self, key, on):
+        """Grey one choice out - for a view that means nothing on this job."""
+        for b, k in self._keys.items():
+            if k == key:
+                b.setEnabled(bool(on))
 
 
 class Disclosure(QWidget):

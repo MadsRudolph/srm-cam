@@ -530,6 +530,22 @@ def rotate_board(board: Board, angle: float, origin=(0, 0)) -> Board:
     )
 
 
+def translate_board(board: Board, dx: float, dy: float) -> Board:
+    """Move copper, outline, holes and top copper by ``(dx, dy)`` mm.
+
+    Returns the same object when there is nothing to move, so a caller that
+    keys a cache on identity pays nothing for the common case."""
+    if not dx and not dy:
+        return board
+    ct = board.copper_top if board.copper_top is not None else Polygon()
+    return Board(
+        copper=_translate(board.copper, xoff=dx, yoff=dy),
+        outline=_translate(board.outline, xoff=dx, yoff=dy),
+        holes=[(x + dx, y + dy, d) for (x, y, d) in board.holes],
+        copper_top=_translate(ct, xoff=dx, yoff=dy),
+    )
+
+
 def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
     """Translate copper, outline and holes so the board's lower-left corner
     sits at (margin, margin). Machine coordinates (operator zeroes at the board

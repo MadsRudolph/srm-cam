@@ -64,6 +64,8 @@ class RelayPoller(threading.Thread):
                 self.error = str(e)
                 self._halt.wait(self.interval)
                 continue
+            if self._halt.is_set():            # stopped while fetching
+                return
             if len(data) < 100:                # relay never stores < 100 B
                 self._halt.wait(self.interval)
                 continue

@@ -295,9 +295,12 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     drill_tool = tool_id(drill)
     cutout_tool = tool_id(cutout)
 
+    boards = len(getattr(state, "boards", None) or [])
     seq = _Sequence()
     seq.add(Step("setup", "tool", "Set up the job",
-                 detail="Board, copper, tool, placement", op="board"))
+                 detail=(f"{boards} boards on one sheet, copper, tool, placement"
+                         if boards > 1 else "Board, copper, tool, placement"),
+                 op="board"))
     seq.add(Step("checks", "tool", "Check before cutting",
                  detail="Fit, depth, reach, shorts", op="board"))
 

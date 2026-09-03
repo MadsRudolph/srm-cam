@@ -419,11 +419,12 @@ smaller.
 
 - the **guided tour** (`gui/tour/`) — the first-launch walkthrough;
 - the **feed test card**;
-- **snap-to-feature jogging** (click-to-jog is here; the snap is not);
-- the **KiCad plugin** menu and the update check;
-- the **phone-photo QR hand-off**. The photo overlay itself is here; the
-  phone leg of it is not, though `engine/photorelay.py` and `photoshare.py`
-  are what it would be built on.
+- the **KiCad plugin** menu and the update check.
+
+*Corrected 2026-09-03.* Snap-to-feature jogging and the phone-photo QR
+hand-off were listed here as missing. Both were ported later: a jog click
+snaps to the nearest drawn hole (`gui2/stage.py`), and `gui2/phonephoto.py`
+is the phone leg of the photo overlay.
 
 **Ported since, and listed here because §8 is the honest half of this
 document:** the **machine test panel** (`gui2/machinetest.py` — the hardware
@@ -650,16 +651,23 @@ This one had teeth because `zero_z` and `touch_off` drive the tool for up to a
 minute on a worker thread while the UI stays live, and the first interface's
 fiducial dialog — a dialog you are *meant* to be jogging under — was modal.
 
-**The auto fiducial finder could not work, twice over.** The reference hole is
-drilled at `hole_diameter`, which was fixed at 0.8 mm: the same as the bit that
-drills it and the same as the bit that must descend inside it to probe it. Zero
-clearance before collet runout (~0.25 mm TIR on this machine), so the bit rests
-on the rim and the hole test reads copper at every point including dead centre.
-Separately, the worker latched the datum over the hole with `D` and then passed
-the tool's *machine* coordinates as the start point — but `H` and `P` probe at
-*datum + (x, y)*, so it aimed about a hundred millimetres off the board.
-Levelling gets away with machine coordinates only because the work origin is
-always the machine origin; that assumption does not hold here.
+**The auto fiducial finder could not work.** The reference hole is drilled at
+`hole_diameter`, which was fixed at 0.8 mm: the same as the bit that drills it
+and the same as the bit that must descend inside it to probe it. Zero clearance
+before collet runout (~0.25 mm TIR on this machine), so the bit rests on the rim
+and the hole test reads copper at every point including dead centre.
+
+*Corrected 2026-09-02.* This section previously claimed a second defect — that
+the worker passed machine coordinates to `H` while the firmware probed at
+*datum + (x, y)*. That is wrong, and the first interface was right. The two
+commands do not share a frame: `P` is datum-relative (firmware line 64, "each
+'P' probes datum+(x,y)") but `H` takes absolute machine coordinates (line 79,
+"hole test at absolute (x,y)"). The error was in the second interface, written
+against the assumption rather than the protocol, and it drove the head to
+machine zero on the first run. `d0da4ae`'s commit message repeats the same
+mistake and cannot be edited now that it is pushed; this note is the
+correction. The lesson is the one the section is otherwise about: read the
+firmware's own command table before assuming two commands agree.
 
 The hole is now settable in both interfaces and defaults to 1.6 mm, which
 `drill_single_bit` mills as a circle rather than plunging. The bisection's

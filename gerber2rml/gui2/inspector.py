@@ -20,10 +20,12 @@ first time it appears.
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QListWidget, QAbstractItemView
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
                                QScrollArea, QFrame, QLabel, QLineEdit, QComboBox,
                                QCheckBox, QDoubleSpinBox, QSpinBox, QSizePolicy)
 
+from gerber2rml.backends import BACKENDS
 from gerber2rml.gui2 import theme, widgets, tier
 from gerber2rml.engine.estimate import format_duration
 
@@ -134,6 +136,36 @@ class SetupPage(Page):
                 "from KiCad."))
         rh.addStretch(1)
         src.add(row)
+        # One sheet of copper can carry several boards, cut in one run. The
+        # list only appears once there are two; the button that starts a
+        # panel is always there, because that is how anyone finds out it can.
+        self.src_section = src
+        self.boards = QListWidget()
+        self.boards.setObjectName("boardList")
+        self.boards.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.boards.setFixedHeight(92)
+        self.boards.setToolTip(
+            "The boards on this sheet. Pick one and the placement below moves "
+            "it; the others stay where they are. Clicking a board on the bed "
+            "picks it too.")
+        self.boards.currentRowChanged.connect(self._on_board_row)
+        src.add(self.boards)
+        brow = QWidget()
+        bh = QHBoxLayout(brow)
+        bh.setContentsMargins(0, 0, 0, 0)
+        bh.setSpacing(theme.GAP_S)
+        bh.addWidget(widgets.button(
+            "Add another board…", on=ctl.action_add_board,
+            tip="Put a second Gerber folder on the same sheet of copper, "
+                "beside this one. Both are cut in the same run: one trace "
+                "file, one drill file, one cut-out. The same folder twice "
+                "makes two of the board."))
+        self.remove_board_btn = widgets.button(
+            "Take this board off", on=lambda: ctl.action_remove_board(),
+            tip="Take the picked board off the sheet. The others stay put.")
+        bh.addWidget(self.remove_board_btn)
+        bh.addStretch(1)
+        src.add(brow)
         self.name = QLineEdit(st.name)
         self.name.setToolTip("What the exported files are called. Taken from "
                              "the KiCad project name when a folder is loaded.")
@@ -159,6 +191,12 @@ class SetupPage(Page):
         tools.add(prow)
         self.tool_summary = widgets.hint("")
         tools.add(self.tool_summary)
+        # Only for a V-bit: a flat endmill's width does not move with depth,
+        # so the picture would say nothing the line above does not.
+        from gerber2rml.gui2.bitviz import BitProfile
+        self.bit_profile = BitProfile()
+        self.bit_profile.setVisible(False)
+        tools.add(self.bit_profile)
         self.add(tools)
 
         # -- the stock ---------------------------------------------------
@@ -240,6 +278,46 @@ class SetupPage(Page):
             "set yourself is kept.")
         self.screwed.toggled.connect(ctl.action_screws_toggled)
         stock.add(self.screwed)
+        self.hold = QComboBox()
+        self.hold.addItem("Screwed or clamped at points", "points")
+        self.hold.addItem("Bonded across the whole back (tape)", "bonded")
+        self.hold.setToolTip(
+            "How the copper is held to the bed, which decides whether the "
+            "probed surface is the surface that gets cut." + chr(10)*2 +
+            "Held at points, the board can arch over air between the "
+            "fixings. The probe measures it with a static tool at almost no "
+            "force; the cutter pushes down and the unsupported part deflects "
+            "instead of being cut, so the trace is missed exactly where the "
+            "height map is highest. The cut depth is deepened to reach "
+            "through anyway." + chr(10)*2 +
+            "Bonded across the whole back, there is nowhere for it to go, "
+            "the probed surface IS the cut surface, and nothing is added. "
+            "It is the better fixture.")
+        self.hold.currentIndexChanged.connect(
+            lambda _i: ctl.action_hold(self.hold.currentData()))
+        stock.add(widgets.Field("Held down by", self.hold))
+        # The extra depth itself, on the page. Worked out from the probe map
+        # by default, but a number the operator has cut with beats any
+        # estimate - and a board that keeps coming out too deep is exactly
+        # the case for typing one, down to nothing.
+        self.flex_auto = QCheckBox("Work the extra depth out from the probe map")
+        self.flex_auto.setChecked(True)
+        self.flex_auto.setToolTip(
+            "A quarter of the arch the map shows between the fixings, plus "
+            "the copper foil, and never more than a set cap. The map already "
+            "cuts along the arch; this covers what the cutter pushes the "
+            "board down by." + chr(10) + chr(10) +
+            "Untick it to set the extra depth yourself, including none.")
+        self.flex_auto.toggled.connect(self._on_flex)
+        stock.add(self.flex_auto)
+        self.flex_mm = num(0.0, 0.0, 1.0, 0.01, 3, self._on_flex, suffix=" mm")
+        self.flex_field = widgets.Field(
+            "Cut deeper by", self.flex_mm,
+            help="Added to the trace depth, the drill depth and the cut-out "
+                 "depth, for a board held at points.")
+        stock.add(self.flex_field)
+        self.hold_note = widgets.hint("")
+        stock.add(self.hold_note)
         self.pick_screws = QCheckBox("Choose the screw holes myself")
         self.pick_screws.setToolTip(
             "Click the spoilboard holes on the bed to screw through, and "
@@ -257,10 +335,23 @@ class SetupPage(Page):
                                     on=ctl.action_reset_screws))
         sh.addStretch(1)
         stock.add(self.screw_row)
+        # The screw file belongs HERE, not only in the Machine menu. The bed
+        # fixture really is cut once per spoilboard and can live in a menu;
+        # these holes are cut once per PIECE OF COPPER, which makes them part
+        # of setting the job up - three controls above decide where they go,
+        # and the one that writes them was two menus away.
+        self.screw_file_btn = widgets.button(
+            "Write the screw file…", on=ctl.action_export_screws,
+            tip="Drills the clearance holes for the hold-down screws, and "
+                "writes the procedure beside them." + chr(10)*2 +
+                "Run it FIRST, drop the screws in, then re-zero Z - the "
+                "board sits differently once it is bolted down.")
+        stock.add(self.screw_file_btn)
         self.add(stock)
 
         # -- placement ---------------------------------------------------
         place = widgets.Section("Where it sits on the bed")
+        self.place_section = place
         self.place_x = num(0.0, -50.0, 400.0, 1.0, 2, self._on_place, suffix=" mm")
         self.place_y = num(0.0, -50.0, 400.0, 1.0, 2, self._on_place, suffix=" mm")
         place.add(widgets.Field("Across (X)", self.place_x))
@@ -282,11 +373,23 @@ class SetupPage(Page):
                 "too — they sit outside the board, and a placement that puts "
                 "the board on the bed but a dowel off it cannot be run.")
         ah2.addWidget(self.autoplace_btn)
+        self.arrange_btn = widgets.button(
+            "Lay them side by side", on=lambda: ctl.action_arrange(),
+            tip="Line the boards up left to right with a strip of waste "
+                "between each pair, the first one staying where it is.")
+        ah2.addWidget(self.arrange_btn)
+        self.butt_btn = widgets.button(
+            "Butt them together", on=lambda: ctl.action_arrange(0.0),
+            tip="Line the boards up touching. One cut runs between each pair "
+                "and separates them, so the panel needs no waste between the "
+                "boards - each loses half a cutter width along that edge.")
+        ah2.addWidget(self.butt_btn)
         ah2.addStretch(1)
         place.add(arow)
-        place.add(widgets.hint(
+        self.place_hint = widgets.hint(
             "Or drag the board on the bed. Measured from the machine origin "
-            "at the front-left corner — the same zero VPanel shows."))
+            "at the front-left corner — the same zero VPanel shows.")
+        place.add(self.place_hint)
         self.add(place)
 
         # -- advanced ----------------------------------------------------
@@ -296,6 +399,13 @@ class SetupPage(Page):
         self.machine.setToolTip(
             "G-code (.nc) is what this lab runs: VPanel streams it in NC-code "
             "command mode and it honours the work Z origin. RML is a fallback.")
+        # Filled here, and quietly: the box was created empty and stayed so,
+        # a dropdown promising a choice it could not offer.
+        self.machine.blockSignals(True)
+        for name in BACKENDS:
+            self.machine.addItem(name)
+        self.machine.setCurrentText(st.machine)
+        self.machine.blockSignals(False)
         self.machine.currentTextChanged.connect(self._on_machine)
         self.advanced.add(widgets.Field("File format", self.machine))
         self.mirror = QCheckBox("Mirror for bottom-up milling")
@@ -332,7 +442,8 @@ class SetupPage(Page):
         self.registration.currentIndexChanged.connect(
             lambda _i: (ctl.action_registration(self.registration.currentData()),
                         self.sync()))
-        self.ds_section.add(widgets.Field("Registration", self.registration))
+        self.registration_field = widgets.Field("Registration", self.registration)
+        self.ds_section.add(self.registration_field)
         self.fid_dia = num(1.60, 0.5, 6.0, 0.1, 2, self._on_fid_dia,
                            suffix=" mm")
         self.fid_dia_field = widgets.Field(
@@ -380,8 +491,11 @@ class SetupPage(Page):
 
     # -- handlers ------------------------------------------------------
     def _on_name(self, text):
-        self.ctl.state.name = text.strip() or "board"
-        self.ctl.refresh_plan()
+        self.ctl.action_name(text)
+
+    def _on_board_row(self, row):
+        if row >= 0 and row != self.ctl.state.current:
+            self.ctl.action_select_board(row)
 
     def _on_thickness(self, v):
         self.ctl.action_thickness(v, self.overshoot.value(),
@@ -393,6 +507,9 @@ class SetupPage(Page):
 
     def _on_place(self, *_a):
         self.ctl.action_place(self.place_x.value(), self.place_y.value())
+
+    def _on_flex(self, *_a):
+        self.ctl.action_flex(self.flex_auto.isChecked(), self.flex_mm.value())
 
     def _on_fid_layout(self, *_a):
         self.ctl.action_fiducial_layout(int(self.fid_count.value()),
@@ -460,6 +577,37 @@ class SetupPage(Page):
             self.fid_place.setCurrentIndex(i)
         self.fid_place.blockSignals(False)
         self.rotate.set_current(str(st.rotate % 360))
+        boards = list(getattr(st, "boards", None) or [])
+        panel = len(boards) > 1
+        self.src_section.label.setText("The boards" if panel else "The board")
+        self.boards.setVisible(panel)
+        self.remove_board_btn.setVisible(panel)
+        self.arrange_btn.setVisible(panel)
+        self.butt_btn.setVisible(panel)
+        if panel:
+            self.boards.blockSignals(True)
+            self.boards.clear()
+            for m in boards:
+                x0, y0, x1, y1 = m.bounds()
+                self.boards.addItem(
+                    f"{m.name}  ·  {x1 - x0:.1f} × {y1 - y0:.1f} mm"
+                    + (f"  ·  {m.rotate % 360}°" if m.rotate % 360 else ""))
+            self.boards.setCurrentRow(st.current)
+            self.boards.blockSignals(False)
+            cur = boards[st.current]
+            self.place_section.label.setText(f"Where {cur.name} sits on the bed")
+            self.place_hint.setText(
+                f"Moving {cur.name}, board {st.current + 1} of {len(boards)}. "
+                f"Click a board on the bed to pick it and drag it to move "
+                f"only that one; the arrow keys nudge it 0.1 mm (Shift 1 mm, "
+                f"Ctrl 0.01 mm). Measured from the machine origin.")
+        else:
+            self.place_section.label.setText("Where it sits on the bed")
+            self.place_hint.setText(
+                "Or drag the board on the bed, then nudge it with the arrow "
+                "keys: 0.1 mm a tap, 1 mm with Shift, 0.01 mm with Ctrl. "
+                "Measured from the machine origin at the front-left corner — "
+                "the same zero VPanel shows.")
         plan = getattr(ctl, "plan", None)
         spec = (f"Traces {st.trace.effective_diameter():.2f} mm wide at "
                 f"{st.trace.effective_cut_depth():.2f} mm · drill "
@@ -468,18 +616,111 @@ class SetupPage(Page):
         if plan is not None and plan.single_tool:
             spec = (f"One {plan.tool_label} for all three operations — no bit "
                     f"changes in this job.\n" + spec)
+        rep = {"margin": 0.0, "auto": True, "hold": "points", "applied": False,
+               "arch": None, "range": None, "capped": False}
+        try:
+            rep = ctl.flex_report()
+        except Exception:
+            pass
+        margin = rep["margin"]
+        if margin and rep["auto"] and rep["arch"] is not None:
+            spec += (chr(10) + "Cut deepened by %.3f mm: the board is held at "
+                     "points and arches %.2f mm between the fixings; a quarter "
+                     "of that, plus the foil, is charged for what the cutter "
+                     "pushes it down by." % (margin, rep["arch"]))
+        elif margin and rep["auto"]:
+            spec += (chr(10) + "Cut deepened by %.3f mm: the whole range of "
+                     "the probe map, because the map is not being applied."
+                     % margin)
+        elif margin:
+            spec += (chr(10) + "Cut deepened by %.3f mm, set by hand under "
+                     "Held down by." % margin)
         self.tool_summary.setText(spec)
+        # The job as it will be CUT, margin included - a V-bit's width follows
+        # depth, so a margin that deepens the cut also widens every trace, and
+        # that is the number worth looking at.
+        try:
+            self.bit_profile.set_job(ctl.cutting_trace())
+        except Exception:
+            self.bit_profile.setVisible(False)
+        self.hold.blockSignals(True)
+        i = self.hold.findData(getattr(ctl, "_hold", "points"))
+        if i >= 0:
+            self.hold.setCurrentIndex(i)
+        self.hold.blockSignals(False)
+        points = rep["hold"] == "points"
+        self.flex_auto.setVisible(points)
+        self.flex_field.setVisible(points)
+        self.flex_auto.blockSignals(True)
+        self.flex_auto.setChecked(bool(rep["auto"]))
+        self.flex_auto.blockSignals(False)
+        self.flex_mm.blockSignals(True)
+        # In automatic mode the field shows the number being used, so that
+        # unticking starts from it rather than from zero.
+        self.flex_mm.setValue(margin if rep["auto"]
+                              else float(getattr(ctl, "_flex_mm", 0.0)))
+        self.flex_mm.blockSignals(False)
+        self.flex_mm.setEnabled(not rep["auto"])
+        if not points:
+            self.hold_note.setText(
+                "Nothing added: bonded flat, the probed surface is the "
+                "surface that gets cut.")
+        elif not rep["auto"]:
+            self.hold_note.setText(
+                "Adding %.3f mm, set by hand. Tick the box to go back to "
+                "working it out from the probe map." % margin)
+        elif rep["arch"] is not None:
+            from gerber2rml.gui2.window import FLEX_CAP_MM
+            self.hold_note.setText(
+                "Adding %.3f mm: a quarter of the %.2f mm arch, plus the foil. "
+                "The warp already cuts along the arch; this is for what the "
+                "cutter pushes the board down by. If the cut still comes out "
+                "too deep or too shallow, untick the box and set it."
+                % (margin, rep["arch"])
+                + (" Capped at %.2f mm - a board that arches this much wants "
+                   "re-fixing more than a deeper cut." % FLEX_CAP_MM
+                   if rep["capped"] else ""))
+        elif rep["range"] is not None:
+            self.hold_note.setText(
+                "Adding %.3f mm: the whole range of the probe map, because "
+                "the map is not being applied and nothing cancels the tilt. "
+                "Tick 'Warp the exported cut' on the levelling page and this "
+                "drops to a quarter of the arch." % margin)
+        else:
+            self.hold_note.setText(
+                "Probe the bed and a quarter of any arch between the fixings "
+                "is added to the cut depth so it still reaches through - or "
+                "untick the box and set the extra depth yourself.")
+        # The switches the controller owns, read back from it. They were
+        # write-only: a loaded setup restored the state and left the boxes
+        # showing the previous job's, and the dropdown named the registration
+        # scheme the job was NOT using while its fields stayed hidden.
+        for box, val in ((self.mirror, bool(st.mirror)),
+                         (self.double, bool(getattr(ctl, "_double", False))),
+                         (self.screwed, bool(getattr(ctl, "screwed", False)))):
+            box.blockSignals(True)
+            box.setChecked(val)
+            box.blockSignals(False)
+        self.registration.blockSignals(True)
+        i = self.registration.findData(getattr(ctl, "_registration", "dowel"))
+        if i >= 0:
+            self.registration.setCurrentIndex(i)
+        self.registration.blockSignals(False)
+        self.machine.blockSignals(True)
+        self.machine.setCurrentText(st.machine)
+        self.machine.blockSignals(False)
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.ds_section.setVisible(full)
         self.save_preset_btn.setVisible(full)
-        self.registration.setVisible(full and self.double.isChecked())
+        self.registration_field.setVisible(full and self.double.isChecked())
         fiducial = (full and self.double.isChecked()
                     and self.registration.currentData() == "fiducial")
         for f in (self.fid_dia_field, self.fid_place_field,
                   self.fid_offset_field, self.fid_count_field):
             f.setVisible(fiducial)
         self.screw_row.setVisible(self.screwed.isChecked())
+        self.screw_file_btn.setVisible(self.screwed.isChecked())
 
 
 # ---------------------------------------------------------------------------
@@ -768,8 +1009,7 @@ class StepPage(Page):
 
     def _set(self, job, field, value):
         setattr(job, field, value)
-        self.ctl.refresh_plan()
-        self.ctl.refresh_preview()
+        self.ctl.action_params_changed()
 
 
 # ---------------------------------------------------------------------------

@@ -123,6 +123,13 @@ const long PROBE_MAX_DROP_UM = 6000; // absolute floor: never drop > 6 mm from s
 const long OUTLIER_MARGIN_UM = 1200; // runaway guard: once a surface is known, never
                                      // descend more than this past it without contact.
 const long APPROACH_CLEAR_UM = 1000; // FAST APPROACH clearance above known copper
+const long COARSE_STEP_UM = 150;     // fast descent step, used ONLY above the
+                                     // highest copper ever seen - where copper
+                                     // cannot be, so a big step cannot drive
+                                     // the bit into it
+const long COARSE_KEEP_UM = 100;     // stop stepping coarsely this far above
+                                     // that surface and hand over to the fine
+                                     // step, so contact is always made gently
 const long MOVE_SPEED = -1;          // library default
 
 // ---- v3: machine status bits. Decoded from Roland's own getStatus example
@@ -412,6 +419,41 @@ int descendUntilTouch(long mx, long my, long &z, long step, long floorZ) {
   return 0;
 }
 
+// Descend fast down to just above known copper, then at the normal step.
+//
+// Every probe used to creep the whole way down at PROBE_STEP_UM: from the
+// approach plane that is 40 moves before the surface is even reached, and the
+// hole test - which only answers yes/no - paid it 28 times per fiducial.
+//
+// The saving is in WHERE the step size changes, not in the step size itself.
+// Above maxSurfaceZ no copper has ever been found, so a 150 um step there
+// cannot hit anything; below it the original 25 um step is used, so the touch
+// that actually registers is exactly as gentle as before.
+//
+// *expectZ* is where the surface is expected HERE, and it is the whole saving.
+// The grid probe roams the board and passes maxSurfaceZ, which is the only
+// safe answer when the next point could be anywhere. The hole test never
+// moves more than a millimetre or two from its datum, so it passes
+// refSurfaceZ - the surface it just measured - and on an arched board that is
+// half a millimetre lower than maxSurfaceZ, which is most of the descent.
+//
+// Returns 1 on contact, 0 if the floor is reached, -1 on abort - the same
+// contract as descendUntilTouch.
+int descendFast(long mx, long my, long &z, long floorZ, long expectZ) {
+  long handover = (haveRef ? expectZ + COARSE_KEEP_UM : floorZ);
+  if (handover < floorZ) handover = floorZ;
+  while (z > handover) {
+    if (checkAbort()) return -1;
+    long step = COARSE_STEP_UM;
+    if (z - step < handover) step = z - handover;   // land exactly on it
+    z -= step;
+    srm20.jumpTo(mx, my, z, MOVE_SPEED);
+    if (!waitForMotorStop()) return -1;
+    if (probeTouched()) return 1;                   // copper above where any
+  }                                                 // has been seen: believe it
+  return descendUntilTouch(mx, my, z, PROBE_STEP_UM, floorZ);
+}
+
 // Verified touch at the CURRENT contact: the coarse touch at *coarseZ* is
 // checked by lifting RETOUCH_LIFT_UM and re-descending at the fine step. The
 // two touches must agree within TOUCH_AGREE_UM (one retry, where the first
@@ -458,7 +500,9 @@ int probeAt(long mx, long my, long &touchZ) {
     if (refFloor > floorZ) { floorZ = refFloor; refLimited = true; }
   }
   long z = startZ;
-  int r = descendUntilTouch(mx, my, z, PROBE_STEP_UM, floorZ);
+  // The grid goes anywhere on the board, so the only safe expectation is the
+  // highest copper seen so far.
+  int r = descendFast(mx, my, z, floorZ, maxSurfaceZ);
   if (r == -1) { liftSafe(mx, my); return -1; }
   if (r == 0)  { liftSafe(mx, my); return refLimited ? -2 : 0; }
   long cx, cy, cz;
@@ -752,8 +796,10 @@ void handleLine(char *s) {
     srm20.jumpTo(x, y, startZ, MOVE_SPEED);
     if (!waitForMotorStop()) { liftSafe(x, y); Serial.println(F("E H ABORT")); return; }
     long z = startZ;
-    int r = descendUntilTouch(x, y, z, PROBE_STEP_UM,
-                              refSurfaceZ - 200);   // 0.2 mm past the surface
+    // Expect the surface where the datum found it: every hole test in a run
+    // sits within a millimetre or two of it, and this test's own floor
+    // already assumes as much.
+    int r = descendFast(x, y, z, refSurfaceZ - 200, refSurfaceZ);
     if (r == -1) { liftSafe(x, y); Serial.println(F("E H ABORT")); return; }
     liftToApproach(x, y);
     Serial.println(r == 1 ? F("H 1") : F("H 0"));

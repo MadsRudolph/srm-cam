@@ -29,6 +29,7 @@ the other. It is kept verbatim on purpose — it answers questions about the
 machine, not about the interface, and the two copies must not drift on that.
 Only the Qt shell at the bottom is this interface's own.
 """
+import time
 from collections import namedtuple
 
 from PySide6.QtCore import QMutex, QThread, Signal
@@ -105,20 +106,45 @@ MOVE_UM = 20000          # 20 mm — long enough to time, short enough to be saf
 MOVE_DONE = ("N ", "E ")
 
 
-def _drain_until(ser, prefixes, timeout):
+def _drain_until(ser, prefixes, timeout, should_abort=None):
     """Read lines until one starts with any of ``prefixes``; returns it, or None.
 
     Needed because the transport acks ('~ ok', '% ok') arrive interleaved with
-    the reply to a move that is still running.
+    the reply to a move that is still running. ``should_abort`` is polled
+    between lines so STOP gets through a 60 s wait.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        line = spi_probe._read_line(ser, deadline)
+        if should_abort is not None and should_abort():
+            return None
+        line = spi_probe._read_line(ser, deadline, should_abort)
         if line is None:
             return None
         if line.startswith(prefixes):
             return line
     return None
+
+
+def _wait_or_stop(ser, ctx, seconds):
+    """Sleep ``seconds`` unless the operator stops the test meanwhile.
+
+    A test that has just commanded a 20 mm move and sleeps through it cannot
+    be stopped by anything: the panel owns the port, so the bar's STOP can
+    only raise the abort flag, and this is where it has to be read. On abort
+    the move is cut short and the spindle stopped here, from the thread that
+    holds the port. Returns True if stopped.
+    """
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if ctx["abort"]():
+            ser.write(b"%\n")                  # stop the move in flight
+            spi_probe.spindle_off(ser)
+            return True
+        time.sleep(min(0.05, max(0.0, end - time.monotonic())))
+    return ctx["abort"]()
+
+
+STOPPED = "stopped by the operator - the head may not be where it started"
 
 
 # --- individual tests -------------------------------------------------------
@@ -250,6 +276,8 @@ def _t_jobctl(ser, ctx):
 
 def _t_view(ser, ctx):
     before = spi_probe.query_position(ser)
+    if ctx["abort"]():
+        return FAIL, STOPPED
     if not spi_probe.jump_to_view(ser):
         return FAIL, "no answer to 'Y' — jumpToView did not complete"
     after = spi_probe.query_position(ser)
@@ -269,9 +297,10 @@ def _t_stopmoving(ser, ctx):
     if before is None:
         return FAIL, "no position read — refusing to move"
     ser.write(f"N 0 {MOVE_UM} 0 -1\n".encode())
-    time.sleep(0.4)                      # let it get going...
+    if _wait_or_stop(ser, ctx, 0.4):     # let it get going...
+        return FAIL, STOPPED
     ser.write(b"%\n")                    # ...then cut it short mid-flight
-    ended = _drain_until(ser, MOVE_DONE, 30.0)   # 'E N ABORT' if it worked
+    ended = _drain_until(ser, MOVE_DONE, 30.0, ctx["abort"])   # 'E N ABORT'
     after = spi_probe.query_position(ser)
     if after is None:
         # Always put the head back, even when the check itself failed — a test
@@ -308,12 +337,17 @@ def _t_pauseresume(ser, ctx, hold_s=3.0):
         return FAIL, (f"the baseline move did not complete "
                       f"({why[0] if why else 'no reply'}){extra}")
     spi_probe.timed_move(ser, 0, -MOVE_UM, 0, -1)          # back to start
+    if ctx["abort"]():
+        return FAIL, STOPPED
     ser.write(f"N 0 {MOVE_UM} 0 -1\n".encode())
-    time.sleep(0.6)
+    if _wait_or_stop(ser, ctx, 0.6):
+        return FAIL, STOPPED
     ser.write(b"~\n")                                      # pause mid-move
-    time.sleep(hold_s)
+    if _wait_or_stop(ser, ctx, hold_s):
+        ser.write(b"^\n")                                  # never leave it held
+        return FAIL, STOPPED
     ser.write(b"^\n")                                      # resume
-    line = _drain_until(ser, MOVE_DONE, 60.0)
+    line = _drain_until(ser, MOVE_DONE, 60.0, ctx["abort"])
     spi_probe.timed_move(ser, 0, -MOVE_UM, 0, -1)          # back to start
     if line is None:
         return FAIL, "the paused move never reported back"
@@ -551,12 +585,15 @@ class _TestWorker(QThread):
     batch_done = Signal()
     failed = Signal(str)
 
-    def __init__(self, port):
+    def __init__(self, port, should_abort=None):
         super().__init__()
         self._port, self._run = port, True
         self._lock = QMutex()
         self._queue = []
         self._abort = False
+        # The main window's STOP, and Escape, reach a running test through
+        # this - the link's abort event - because the panel holds the port.
+        self._external_abort = should_abort or (lambda: False)
 
     def request_tests(self, keys):
         self._lock.lock()
@@ -574,7 +611,7 @@ class _TestWorker(QThread):
         self._lock.lock()
         a = self._abort
         self._lock.unlock()
-        return a
+        return a or bool(self._external_abort())
 
     def run(self):
         try:
@@ -586,12 +623,17 @@ class _TestWorker(QThread):
             while self._run:
                 self._lock.lock()
                 key = self._queue.pop(0) if self._queue else None
-                empty = not self._queue
                 self._lock.unlock()
                 if key is not None:
                     self.log.emit(f"--- {TEST_BY_KEY[key].label}")
                     st, detail = run_test(key, ser, self.log.emit, self.aborting)
                     self.result.emit(key, st, detail)
+                    # Read AFTER the test: Stop empties the queue mid-batch,
+                    # and a flag taken before the test ran left the panel's
+                    # buttons locked until it was closed and reopened.
+                    self._lock.lock()
+                    empty = not self._queue
+                    self._lock.unlock()
                     if empty:
                         self.batch_done.emit()
                     continue
@@ -624,7 +666,7 @@ _RISK_WORD = {SAFE: "reads only", MOTION: "moves the head",
 class MachineTestDialog(QDialog):
     """Every SPI command, one row each, with what it costs to find out."""
 
-    def __init__(self, port, parent=None):
+    def __init__(self, port, parent=None, should_abort=None):
         super().__init__(parent)
         self.setWindowTitle("Machine test")
         self.setModal(True)
@@ -705,7 +747,7 @@ class MachineTestDialog(QDialog):
         row.addWidget(widgets.button("Close", on=self.reject))
         v.addLayout(row)
 
-        self._worker = _TestWorker(port)
+        self._worker = _TestWorker(port, should_abort)
         self._worker.result.connect(self._on_result)
         self._worker.log.connect(self.log_lbl.setText)
         self._worker.batch_done.connect(self._on_batch_done)

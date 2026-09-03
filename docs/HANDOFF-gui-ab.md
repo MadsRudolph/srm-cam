@@ -25,7 +25,7 @@ same install, both drive the same `ProjectState` and write the same files.
 ```bash
 # from the repo root
 python -m gerber2rml.gui2     # the setup sheet — what SRM-CAM now opens
-python -m gerber2rml          # the original interface
+python -m gerber2rml.gui      # the original interface
 ```
 
 Nothing has been decided. The alternative is not a replacement until someone

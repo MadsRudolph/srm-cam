@@ -32,10 +32,12 @@ gerber2rml-cli = "gerber2rml.cli:main"
 gerber2rml-doctor = "gerber2rml.doctor:main"
 
 [project.gui-scripts]
-gerber2rml = "gerber2rml.gui.app:main"
-# The second interface, installed alongside the first so the two can be run
-# against the same engine at the same time and compared on a real job.
 srm-cam = "gerber2rml.gui2.app:main"
+# The name the desktop shortcut and the older docs use.
+gerber2rml = "gerber2rml.gui2.app:main"
+# The first interface. Superseded, kept launchable while the second one
+# settles on the machine.
+srm-cam-classic = "gerber2rml.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["gerber2rml*"]

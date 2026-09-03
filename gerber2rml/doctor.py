@@ -26,14 +26,15 @@ ROOT = Path(__file__).resolve().parent.parent      # repo root (holds pyproject.
 _IMPORT_HINT = {
     "PySide6": "PySide6", "PyOpenGL": "OpenGL", "pyserial": "serial",
     "pyqtgraph": "pyqtgraph", "matplotlib": "matplotlib", "shapely": "shapely",
-    "gerbonara": "gerbonara", "pytest": "pytest",
+    "gerbonara": "gerbonara", "pytest": "pytest", "qrcode": "qrcode",
 }
 
 # Fallback requirements if pyproject.toml can't be read/parsed (kept in sync
 # with pyproject.toml). Names only; version pins are enforced by pip on install.
 _FALLBACK = {
     "core": ["gerbonara", "shapely"],
-    "gui": ["PySide6", "matplotlib", "pyqtgraph", "PyOpenGL", "pyserial"],
+    "gui": ["PySide6", "matplotlib", "pyqtgraph", "PyOpenGL", "pyserial",
+            "qrcode"],
     "dev": ["pytest"],
 }
 
@@ -123,7 +124,7 @@ def main(argv=None):
     missing = _report(groups, args.dev)
 
     if not missing:
-        print("All set - the GUI should run:  python -m gerber2rml.gui.app")
+        print("All set - the GUI should run:  python -m gerber2rml")
         return 0
 
     print(f"Missing {len(missing)} package(s): {', '.join(missing)}")
@@ -140,7 +141,7 @@ def main(argv=None):
     if still:
         print(f"Still missing after install: {', '.join(still)}")
         return 1
-    print("All set - the GUI should run:  python -m gerber2rml.gui.app")
+    print("All set - the GUI should run:  python -m gerber2rml")
     return 0
 
 

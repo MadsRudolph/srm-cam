@@ -656,6 +656,60 @@ def build_top_cutout(folder, out_dir, name, cutout=None, dowels: DowelSpec = Non
     return out
 
 
+def build_top_drill(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
+                    machine=DEFAULT_MACHINE, offset=(0.0, 0.0), rotate=0,
+                    level=None, registration="dowel",
+                    fiducials: FiducialSpec = None, measured_fiducials=None,
+                    allow_scale=False, depth=None):
+    """Finish the holes from the far side, after the flip.
+
+    Holes are drilled from the first face. When that face is arched over its
+    fixings the board springs away from the drill and the hole stops short -
+    which is only discovered once the board is flipped and the blind holes are
+    on top. Re-drilling from this side meets them.
+
+    ``depth`` is how far to go from THIS face, and it is not the board
+    thickness: the hole is already most of the way through, so the bit has a
+    few tenths of material to remove and no reason to travel into the bed.
+    Left as None it uses the drill job's own depth, which is the through-hole
+    case.
+
+    Holes are reflected into the top frame and warped by the measured flip, so
+    they land on the ones already there rather than where the design says.
+    Written as ``<name>_top_drill``, beside the rest.
+    """
+    from dataclasses import replace
+    dowels = dowels or DowelSpec()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    drill = drill or DrillJob()
+    if depth is not None:
+        drill = replace(drill, total_depth=float(depth))
+    backend = BACKENDS[machine]
+    lay = layout_double_sided(folder, dowels=dowels, offset=offset, rotate=rotate,
+                              registration=registration, fiducials=fiducials)
+    holes = reflect_holes(lay.holes, lay.axis, lay.flip_pos)
+    if measured_fiducials:
+        from gerber2rml.engine.fiducial import fit_transform
+        nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
+        t = fit_transform(nom, measured_fiducials, allow_scale=allow_scale)
+        holes = [(*t.apply(x, y), d) for (x, y, d) in holes]
+    from gerber2rml.engine.drill import drill_holes
+    paths = (drill_single_bit(holes, drill) if drill.single_bit
+             else drill_holes(holes, drill))
+    if level is not None:
+        from gerber2rml.engine.leveling import apply_leveling
+        paths = apply_leveling(paths, level)
+    out = out_dir / f"{name}_top_drill{backend.ext}"
+    out.write_text(backend.render(paths, xy_feed=drill.xy_feed,
+                                  plunge_feed=drill.plunge_feed,
+                                  header=[f"{name} - finish the holes from the "
+                                          f"flipped side",
+                                          f"depth {drill.total_depth:.2f} mm "
+                                          f"from THIS face"]))
+    return out
+
+
 def _runplan_text(name, machine, lay, dowels, drill_step, align_depth, thickness):
     (bx, by, bd), (tx, ty, td) = lay.align_holes
     horiz = lay.axis == "horizontal"

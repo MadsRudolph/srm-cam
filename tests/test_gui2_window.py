@@ -687,6 +687,83 @@ def test_centring_is_reachable_without_the_mouse(loaded):
     assert shortcut, "centring has no keyboard shortcut"
 
 
+# --- the flex margin: tilt is not arch ---------------------------------------
+# Regression for a real board (vinyl_adc_digital, 2026-09-02). Its map spanned
+# 0.77 mm almost all of it tilt, the margin took the raw range, and the trace
+# depth came out at 0.955 mm instead of 0.15 - deep enough to mill FR-4 rather
+# than isolate copper.
+
+def _tilted_map():
+    """A rigid sheet on a slope: every point on one plane, 0.77 mm of range."""
+    return [[f"{x:.3f}", f"{y:.3f}", f"{0.008 * x:.4f}"]
+            for y in (23.11, 71.11, 119.11)
+            for x in (52.92, 100.92, 148.92)]
+
+
+def test_a_plane_fits_and_leaves_nothing_behind():
+    from gerber2rml.gui2.window import fit_plane, flex_residual
+    pts = [(0.0, 0.0, 1.0), (10.0, 0.0, 1.5), (0.0, 10.0, 1.2),
+           (10.0, 10.0, 1.7)]
+    a, b, c = fit_plane(pts)
+    assert a == pytest.approx(0.05) and b == pytest.approx(0.02)
+    assert c == pytest.approx(1.0)
+    assert flex_residual(pts) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_collinear_points_determine_no_plane():
+    """Probe points all on one line cannot separate tilt from arch, and a
+    plane through them is not unique - say so rather than return a fit."""
+    from gerber2rml.gui2.window import fit_plane, flex_residual
+    line = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.5), (20.0, 0.0, 1.0)]
+    assert fit_plane(line) is None
+    assert flex_residual(line) is None
+    assert fit_plane([(0.0, 0.0, 0.0), (1.0, 1.0, 0.0)]) is None
+
+
+def test_arch_survives_the_plane_but_tilt_does_not():
+    from gerber2rml.gui2.window import flex_residual
+    flat = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.8), (0.0, 10.0, 0.0),
+            (10.0, 10.0, 0.8)]
+    assert flex_residual(flat) == pytest.approx(0.0, abs=1e-9)
+    domed = list(flat) + [(5.0, 5.0, 0.6)]        # 0.2 proud of the plane
+    assert flex_residual(domed) == pytest.approx(0.2, abs=1e-9)
+
+
+def test_a_tilted_board_is_not_charged_for_its_tilt(loaded):
+    """The whole point: levelling already cuts a sloped rigid sheet to a
+    constant depth, so the margin has nothing to add but the foil."""
+    from gerber2rml.gui2.window import FOIL_MM
+    loaded.action_hold("points")
+    loaded.level_page._load_table({"rows": _tilted_map(), "apply": True,
+                                   "show": False})
+    pts = loaded.level_page.points()
+    zs = [z for _x, _y, z in pts]
+    assert max(zs) - min(zs) == pytest.approx(0.768, abs=1e-3), "a real slope"
+    assert loaded._flex_margin() == pytest.approx(FOIL_MM, abs=1e-6)
+    assert loaded.cutting_trace().cut_depth == pytest.approx(
+        loaded.state.trace.cut_depth + FOIL_MM, abs=1e-6)
+
+
+def test_a_bowed_board_still_gets_its_margin(loaded):
+    """The margin must not be optimised away - a board that really does arch
+    over its supports still has to be cut through where it springs back."""
+    from gerber2rml.gui2.window import FOIL_MM
+    loaded.action_hold("points")
+    rows = _tilted_map()
+    rows.append(["100.920", "71.110", f"{0.008 * 100.92 + 0.25:.4f}"])
+    loaded.level_page._load_table({"rows": rows, "apply": True, "show": False})
+    from gerber2rml.gui2.window import FLEX_FRACTION
+    assert loaded._flex_margin() == pytest.approx(
+        0.25 * FLEX_FRACTION + FOIL_MM, abs=0.02)
+
+
+def test_bonded_holds_add_nothing_however_bent_the_board(loaded):
+    loaded.action_hold("bonded")
+    loaded.level_page._load_table({"rows": _tilted_map(), "apply": True,
+                                   "show": False})
+    assert loaded._flex_margin() == 0.0
+
+
 # ------------------------------------------------------------------ _reveal
 def test_reveal_spawns_no_file_manager_where_none_can_select(win, tmp_path,
                                                              monkeypatch):
