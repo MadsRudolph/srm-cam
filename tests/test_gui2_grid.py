@@ -79,3 +79,22 @@ def test_a_finished_probe_switches_the_warp_on(loaded):
     assert page.use_chk.isChecked()
     assert "warp the exported cut" in said[-1][1]
     assert loaded.level_page.height_map(side="bottom") is not None
+
+
+def test_a_grid_past_the_travel_is_refused_at_the_probe(loaded, monkeypatch):
+    """Belt and braces: a grid from a CSV or an old setup can still carry
+    such points, and the probe run is the last place that can say no."""
+    page = loaded.level_page
+    page._points = [(10.0, 10.0), (100.0, 10.0), (203.22, 10.0)]
+    monkeypatch.setattr(loaded.link, "is_connected", lambda: True)
+    monkeypatch.setattr(loaded.link, "is_busy", lambda: False)
+    loaded._last_pos = (50.0, 50.0)
+    started = []
+    monkeypatch.setattr(loaded.link, "disconnect_from",
+                        lambda *a, **k: started.append(a))
+    said = []
+    loaded.say = lambda l, t: said.append((l, t))
+    page._probe()
+    assert started == []
+    assert said[-1][0] == "fail" and "row 3" in said[-1][1]
+    assert "203.2" in said[-1][1]
