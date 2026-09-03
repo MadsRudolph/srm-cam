@@ -6,7 +6,10 @@
 <title>Milling a board — SRM-CAM guide</title>
 <meta name="description" content="The single-sided workflow in the setup sheet: set up, check, export, run in VPanel.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
-<link rel="stylesheet" href="css/site.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20260903b">
 </head>
 <body>
 <div class="layout">
@@ -96,6 +99,10 @@
 
 <h2>3. Walk the plan</h2>
 <p>Select a numbered step and the stage draws its toolpath; the inspector shows the bit, the depth, the estimated time and — in the Full tier — the cutting parameters, editable. <span class="ui">View → Watch this step in 3D…</span> (<kbd>Ctrl</kbd>+<kbd>3</kbd>) plays it.</p>
+<figure class="fig">
+  <img src="img/gui2_drill.png" alt="The drill step selected: its toolpath on the bed and its page on the right">
+  <figcaption>Step 2, the drill: every hole plunged with one 0.8&nbsp;mm bit, the larger ones milled as circles.</figcaption>
+</figure>
 
 <h2>4. Export the job</h2>
 <p><span class="ui">Export the job</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes every file in the plan and puts the run sheet in front of you.</p>
