@@ -58,6 +58,35 @@ Pick per export on the **Drill** tab (`single bit` checkbox + `bit diameter`):
 - **offsets = -1** fully clears background copper (concentric pocketing clipped to
   the outline) — the laser-equivalent "rubout". Slower (many passes).
 
+## Several boards on one sheet
+
+Two or more Gerber folders, cut from one piece of copper in one run.
+
+- **Add:** File ▸ *Add another board to the sheet…* (Ctrl+Shift+O), or *Add
+  another board…* on the setup page. The same folder twice makes two of the
+  board (`buck`, `buck 2`).
+- **Place:** click a board on the bed to pick it; drag it and only that one
+  moves. *Where … sits on the bed* moves the picked board. *Centre it on the
+  bed* moves the whole sheet's worth together; *Lay them side by side* lines
+  them up 4 mm apart.
+- **Files:** one set, named after every board (`buck+buck_2_traces.nc`) unless
+  you type a job name. One trace pass, one drill file, one cut-out that frees
+  each board in turn. The dry run traces every outline.
+- **Butted boards:** boards closer than the cut-out bit share one cut, centred
+  in the gap, so the panel needs no waste between them; each loses half of
+  what the cutter takes beyond the gap (0.4 mm a side for touching boards and
+  a 0.8 mm bit). *Butt them together* does this for the whole row.
+- **Sheet edge:** once the copper sheet's size and corner are set, a board
+  edge that lies on the sheet's edge (within 0.5 mm) is not cut — the sheet
+  edge is the board edge there.
+- **Checks:** boards must not overlap (the export refuses). Between one and
+  two bit widths apart the two cut-outs overlap harmlessly; under
+  `2 × bit + 1 mm` is a warning: the strip of waste between them can break
+  loose.
+- **Single-sided only.** A double-sided job is one board registered to its
+  holes; add boards to a single-sided job.
+- Setups (`.srmcam`) save every board with its own placement and rotation.
+
 ## G-code (NC) output
 
 **G-code is the default** (machine *"Roland SRM-20 (G-code)"*, `.nc`): real-mm

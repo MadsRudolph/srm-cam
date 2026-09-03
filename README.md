@@ -29,7 +29,7 @@ python -m gerber2rml.cli <gerber-folder> -o out -n <board>   # headless CLI
 
 > **Two interfaces, one engine.** `gui2` — "the setup sheet" — is what SRM-CAM
 > opens, and what the lab is migrating to. The interface it replaces is still
-> shipped and still works: `python -m gerber2rml` from source, `SRM-CAM
+> shipped and still works: `python -m gerber2rml.gui` from source, `SRM-CAM
 > --original` from an install, or its own entry in the application launcher.
 > Both drive the same engine and write the same files, so a job started in one
 > finishes in the other. See [HANDOFF-gui-ab.md](docs/HANDOFF-gui-ab.md).

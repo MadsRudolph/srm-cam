@@ -35,6 +35,7 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, QObject, Signal, QTimer
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                                QComboBox, QSizePolicy)
 
@@ -96,6 +97,10 @@ class MachineLink(QObject):
         self.firmware = None
         self.last_status = {}
         self.last_position = None     # (x, y, z, touch) mm, last good read
+        # Machine Z of the copper, from the last verified touch (zero Z or a
+        # touch-off). It is what the pre-flight measures the Z stroke from;
+        # without it the deepest-cut check can only hedge.
+        self.surface_z = None
         self.spindle_on = False
         self._spindle_ours = False
 
@@ -110,9 +115,15 @@ class MachineLink(QObject):
         if self._ser is not None:
             self.disconnect_from("reconnecting")
         self._abort.clear()
-        self._thread = threading.Thread(target=self._run, name="srm-link",
-                                        daemon=True)
-        self._thread.start()
+        # One worker, ever. A failed connect leaves the thread alive and
+        # waiting for the next item; starting another per retry stacked
+        # workers on the one queue, and two of them could then run two
+        # commands on one serial port at once - the interleaving the queue
+        # exists to make impossible.
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._run, name="srm-link",
+                                            daemon=True)
+            self._thread.start()
         self.submit("connect", lambda _s: None, _connect_port=port)
 
     def disconnect_from(self, reason=""):
@@ -122,13 +133,17 @@ class MachineLink(QObject):
         # would be a surprise in the wrong direction.
         if ser is not None and self._spindle_ours:
             spi_probe.spindle_off(ser)
-        self._q.put(None)
+        # The worker is NOT told to exit: it is a daemon, it serialises the
+        # port for the life of the app, and the next connect reuses it.
+        # Closing the port under it is what ends an operation in flight.
         if ser is not None:
             try:
                 ser.close()
             except Exception:
                 pass
         self.firmware = None
+        self.surface_z = None         # a new session touches off again
+        self.last_position = None     # ...and reads its position afresh
         self.spindle_on = False
         self._spindle_ours = False
         self.unlinked.emit(reason)
@@ -147,7 +162,7 @@ class MachineLink(QObject):
         let go of it — but the run still has to be stoppable. It polls this
         object's abort event, so :meth:`stop_now` keeps working with no port of
         its own: it sets the event, the run's next read bails out, and the
-        firmware lifts the tool. This flag exists so the button can say so.
+        firmware stops the motion. This flag exists so the button can say so.
         """
         self._external = bool(on)
 
@@ -203,6 +218,8 @@ class MachineLink(QObject):
                     self.linked.emit(dict(self.firmware))
                 else:
                     result = fn(self._ser)
+                    if name in ("zero_z", "touch") and result:
+                        self.surface_z = float(result[2])
                     self.op_done.emit(name, result)
             except Exception as e:
                 self.op_failed.emit(name, f"{e.__class__.__name__}: {e}")
@@ -443,9 +460,10 @@ class MachineBar(QWidget):
         # a mode, a tier, a view or a dialog. Escape does the same thing.
         self.stop_btn = widgets.button(
             "STOP", kind="stop", on=self._stop,
-            tip="Stop the machine now: drops the move in flight, stops the "
-                "spindle and lifts.\n\nEscape does the same from anywhere in "
-                "the application.")
+            tip="Stop the machine now: drops the move in flight and stops "
+                "the spindle. The bit stays where it is - raise it with Page "
+                "Up before moving on.\n\nEscape does the same from anywhere "
+                "in the application.")
         self.stop_btn.setMinimumWidth(112)
         h.addWidget(self.stop_btn)
 
@@ -460,6 +478,22 @@ class MachineBar(QWidget):
         self._timer.timeout.connect(link.poll)
         self._touching = False
         self.refresh_ports()
+
+        # Page Up / Page Down nudge Z, as the two buttons' tooltips promise.
+        # On the window rather than on a focused control: you are looking at
+        # the bit, not the screen, and having to click into the right widget
+        # first is the friction that sends people back to VPanel.
+        for key, direction in ((Qt.Key_PageUp, +1), (Qt.Key_PageDown, -1)):
+            act = QAction(self)
+            act.setShortcut(QKeySequence(key))
+            # Application-wide, like Escape: Page Up is the lift, and it has
+            # to work with the 3D window in front. No auto-repeat: a held
+            # Page Down would queue a step per key repeat, thirty a second,
+            # and the firmware clamps Z upward only.
+            act.setShortcutContext(Qt.ApplicationShortcut)
+            act.setAutoRepeat(False)
+            act.triggered.connect(lambda _c=False, d=direction: self._jog(d))
+            self.addAction(act)
 
     # -- gated no-ops ------------------------------------------------------
     # The Machine menu still carries "Rescan the serial ports" and
@@ -544,8 +578,9 @@ class MachineBar(QWidget):
             self.link.stop_now()
             if not self.gated:                # no spindle button on a gated bar
                 self.spindle_btn.setChecked(False)
-            self.message.emit("warn", "STOP sent: move dropped, spindle off, "
-                                      "tool lifting.")
+            self.message.emit("warn", "STOP sent: move dropped, spindle off. "
+                                      "Raise the bit with Page Up before the "
+                                      "next move.")
         else:
             # Never a dead grey button. If there is no link there is still an
             # answer, and it is the one that actually stops this machine.

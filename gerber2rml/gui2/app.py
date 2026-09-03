@@ -36,7 +36,11 @@ def _log_path():
 
 def _redirect_output():
     """Send stdout/stderr to the log when there is no console to write to."""
-    if sys.stdout is not None and sys.stdout.isatty():
+    try:
+        interactive = sys.stdout is not None and sys.stdout.isatty()
+    except (ValueError, OSError):
+        interactive = False        # a closed stdout: the launcher case
+    if interactive:
         return None
     path = _log_path()
     if path is None:

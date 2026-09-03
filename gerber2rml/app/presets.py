@@ -106,9 +106,25 @@ def load_presets():
 
 
 def apply_preset(state, preset):
-    state.trace = replace(state.trace, **preset.get("trace", {}))
-    state.drill = replace(state.drill, **preset.get("drill", {}))
-    state.cutout = replace(state.cutout, **preset.get("cutout", {}))
+    """A profile is the whole set of numbers, not a delta on the last one.
+
+    Merging onto the current jobs kept whatever the profile did not name -
+    the V-bit profile's ``tool_type`` above all - so applying the flat profile
+    after it produced a job isolated for a 0.2 mm V-bit and cut with a 0.8 mm
+    endmill. Every job starts from its defaults: a profile that names a field
+    sets it, one that does not gets the default, and a field this version
+    does not know is dropped rather than refused.
+    """
+    from dataclasses import fields
+    from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+
+    def build(cls, block):
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in (block or {}).items() if k in known})
+
+    state.trace = build(TraceJob, preset.get("trace"))
+    state.drill = build(DrillJob, preset.get("drill"))
+    state.cutout = build(CutoutJob, preset.get("cutout"))
 
 
 def save_user_preset(name, state):

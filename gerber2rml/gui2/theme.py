@@ -243,6 +243,26 @@ def font(role="body", *, weight=None, mono=False, caps=False):
     return f
 
 
+def height_ink(dz, span):
+    """Colour for a surface deviation of ``dz`` mm, over a ±``span`` scale.
+
+    Diverging on purpose, with a neutral middle: the question a height map
+    answers is "which way, and how far, from the plane the Z zero was set on",
+    and a sequential ramp makes above and below look like more and less of the
+    same thing. Blue is low, amber is high, and the middle is the bed's own
+    grey so a flat board reads as no colour at all rather than as a wash.
+    """
+    from PySide6.QtGui import QColor
+    if not span:
+        return QColor(GRID)
+    t = max(-1.0, min(1.0, float(dz) / float(span)))
+    lo, mid, hi = QColor(LIVE), QColor(BED_EDGE), QColor(CAUTION)
+    a, b, f = (mid, hi, t) if t >= 0 else (mid, lo, -t)
+    return QColor(int(a.red() + (b.red() - a.red()) * f),
+                  int(a.green() + (b.green() - a.green()) * f),
+                  int(a.blue() + (b.blue() - a.blue()) * f))
+
+
 def gl_rgba(hex_colour, a=1.0):
     """``#rrggbb`` as the ``(r, g, b, a)`` floats OpenGL wants.
 
