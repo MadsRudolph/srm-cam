@@ -52,6 +52,34 @@ def _isolated_qsettings(tmp_path_factory):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _let_closed_windows_die():
+    """Delete the windows a test left behind, once it is over.
+
+    A closed QMainWindow is not a deleted one, and every second-interface
+    window schedules zero-delay timers whose callbacks hold it. Ninety such
+    windows were alive by the time the first-interface tests ran, and its
+    first test - which sets the APPLICATION stylesheet - then re-polished
+    every widget in all of them: five minutes and more of one test.
+
+    Pending timers are fired first, while the windows are still valid, so
+    nothing runs later on a deleted object.
+    """
+    yield
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        return
+    for _ in range(3):
+        app.processEvents()
+    for w in app.topLevelWidgets():
+        if not w.isVisible():
+            w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    app.processEvents()
+
+
 @pytest.fixture(scope="session")
 def qt_app():
     """One offscreen QApplication for the whole session.
