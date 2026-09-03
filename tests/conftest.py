@@ -32,6 +32,26 @@ def _professional_mode(monkeypatch):
     monkeypatch.setenv("SRM_CAM_MODE", "pro")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_qsettings(tmp_path_factory):
+    """Keep every QSettings the suite touches out of the developer's registry.
+
+    Both interfaces construct ``QSettings("SRM-CAM", ...)`` for the remembered
+    folders, the tier and the mode. In the native format on Windows that is
+    HKCU, and every test that loaded a fixture folder wrote it there as the
+    last-used Gerber folder - so the next REAL export dialog opened in a pytest
+    temp directory full of fixtures. Pointing the default format at INI files
+    under the session's temp dir catches every construction in the process,
+    with the product code untouched.
+    """
+    from PySide6.QtCore import QSettings
+    d = tmp_path_factory.getbasetemp() / "qsettings"
+    d.mkdir(parents=True, exist_ok=True)
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(d))
+    yield
+
+
 @pytest.fixture(scope="session")
 def qt_app():
     """One offscreen QApplication for the whole session.
