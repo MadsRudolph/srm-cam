@@ -38,6 +38,7 @@ from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
 from gerber2rml.app.panel import PANEL_GAP_MM
+from gerber2rml import platform as plat
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
 from gerber2rml.engine import spoilboard
@@ -2060,9 +2061,10 @@ class MainWindow(QMainWindow):
 
     def _reveal(self, path):
         path = Path(path)
-        if sys.platform.startswith("win"):
+        cmd = plat.reveal_command(path)
+        if cmd is not None:
             try:
-                subprocess.Popen(["explorer", "/select,", str(path)])
+                subprocess.Popen(cmd)
                 return
             except OSError:
                 pass

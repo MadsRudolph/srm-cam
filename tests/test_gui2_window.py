@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QWidget, QLabel
 
 from gerber2rml.gui2 import dialogs, style, tier
 from gerber2rml.gui2.window import MainWindow
@@ -760,3 +760,133 @@ def test_bonded_holds_add_nothing_however_bent_the_board(loaded):
     loaded.level_page._load_table({"rows": _tilted_map(), "apply": True,
                                    "show": False})
     assert loaded._flex_margin() == 0.0
+
+
+# ------------------------------------------------------------------ _reveal
+def test_reveal_spawns_no_file_manager_where_none_can_select(win, tmp_path,
+                                                             monkeypatch):
+    """On Linux there is no command that selects a file, so _reveal must not
+    spawn anything - it falls through to Qt, which opens the parent folder.
+    Spawning 'explorer' there is the bug this guards."""
+    from gerber2rml.gui2 import window as window_mod
+    from gerber2rml import platform as plat
+    spawned = []
+    monkeypatch.setattr(window_mod.subprocess, "Popen",
+                        lambda cmd, *a, **k: spawned.append(cmd))
+    monkeypatch.setattr(plat, "reveal_command", lambda p, platform=None: None)
+    opened = []
+    monkeypatch.setattr(window_mod.QDesktopServices, "openUrl",
+                        staticmethod(lambda url: opened.append(url)))
+
+    win._reveal(tmp_path / "board_traces.nc")
+
+    assert spawned == []
+    assert len(opened) == 1
+
+
+def test_reveal_selects_the_file_where_the_file_manager_can(win, tmp_path,
+                                                            monkeypatch):
+    from gerber2rml.gui2 import window as window_mod
+    from gerber2rml import platform as plat
+    spawned = []
+    monkeypatch.setattr(window_mod.subprocess, "Popen",
+                        lambda cmd, *a, **k: spawned.append(cmd))
+    monkeypatch.setattr(plat, "reveal_command",
+                        lambda p, platform=None: ["explorer", "/select,", str(p)])
+
+    win._reveal(tmp_path / "board_traces.nc")
+
+    assert len(spawned) == 1
+    assert spawned[0][0] == "explorer"
+
+
+# -------------------------------------------------------------- MachineBar
+def test_machine_bar_explains_itself_where_the_link_does_not_run(qt_app, monkeypatch):
+    """Not greyed out with no reason - that is the thing this interface refuses
+    to ship. It names the platform and points at the path that still works."""
+    from gerber2rml.gui2 import machine
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    text = " ".join(w.text() for w in bar.findChildren(QLabel))
+    assert "Windows" in text
+    assert "height map" in text.lower()
+    assert not hasattr(bar, "connect_btn")
+
+
+def test_machine_bar_is_unchanged_where_the_link_does_run(qt_app, monkeypatch):
+    from gerber2rml.gui2 import machine
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=True))
+    bar = machine.MachineBar(machine.MachineLink())
+    assert hasattr(bar, "connect_btn")
+    assert hasattr(bar, "port_combo")
+
+
+def test_machine_bar_note_does_not_set_the_window_minimum_width(qt_app,
+                                                                monkeypatch):
+    """A QLabel that may not wrap reports its whole line as its minimum size,
+    and a layout's minimum is the sum of its children's. Unwrapped, the
+    205-character sentence made MainWindow.minimumSizeHint() 2488 px wide
+    against a 1400 px default - wider than a 1920 px display, so the window
+    could not be narrowed at all on Linux."""
+    from gerber2rml.gui2 import machine, theme
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    note = [w for w in bar.findChildren(QLabel) if w.text()][0]
+    assert note.wordWrap() is True
+    assert bar.minimumSizeHint().width() < 400
+    # and it still fits the bar it lives in, at a normal window width
+    assert note.heightForWidth(1400 - 30) <= theme.BAR_H
+
+
+def test_machine_bar_note_uses_a_selector_that_exists(qt_app, monkeypatch):
+    """setObjectName only does something if the stylesheet has a rule for it.
+    The name this used before - "muted" - was the only occurrence repo-wide,
+    so the sentence rendered as full-strength body text."""
+    from gerber2rml.gui2 import machine, style
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    note = [w for w in bar.findChildren(QLabel) if w.text()][0]
+    assert note.objectName()
+    assert f"QLabel#{note.objectName()}" in style.STYLESHEET
+
+
+def test_the_machine_menu_does_not_raise_on_a_gated_bar(qt_app, monkeypatch):
+    """The three reach-throughs past the bar's early return. Each raised
+    AttributeError - 'MachineBar' object has no attribute 'port_combo' - the
+    moment the Machine menu was used on Linux."""
+    from gerber2rml.gui2 import machine
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "capabilities",
+                        lambda p=None: plat.Capabilities(machine_link=False))
+    bar = machine.MachineBar(machine.MachineLink())
+    said = []
+    bar.message.connect(lambda level, text: said.append((level, text)))
+
+    bar.refresh_ports()                      # Machine > Rescan the serial ports
+    bar._toggle_connect()                    # Machine > Connect / disconnect
+    assert bar.current_port() is None        # read by the machine test
+    bar._stop()                              # Escape, from anywhere
+
+    # Not silent: a menu item that does nothing is the dead control this
+    # interface refuses to ship, so each no-op says why in the window's log.
+    assert len(said) >= 2
+    for _level, text in said[:2]:
+        assert "Windows" in text
+
+
+def test_the_machine_menu_actions_work_where_the_link_does_run(win):
+    """The Windows path is untouched: the same three calls reach the real
+    implementations and the bar still has the widgets they drive."""
+    if not win.bar.gated:
+        assert hasattr(win.bar, "port_combo")
+        win.bar.refresh_ports()
+        assert win.bar.current_port() == win.bar.port_combo.currentData()
+

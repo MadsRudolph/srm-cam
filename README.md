@@ -23,11 +23,59 @@ replacing the mods site and FlatCAM.
 
 ```bash
 pip install -e ".[gui]"
-python -m gerber2rml                                          # GUI
+python -m gerber2rml.gui2                                     # GUI
 python -m gerber2rml.cli <gerber-folder> -o out -n <board>   # headless CLI
 ```
 
+> **Two interfaces, one engine.** `gui2` — "the setup sheet" — is what SRM-CAM
+> opens, and what the lab is migrating to. The interface it replaces is still
+> shipped and still works: `python -m gerber2rml.gui` from source, `SRM-CAM
+> --original` from an install, or its own entry in the application launcher.
+> Both drive the same engine and write the same files, so a job started in one
+> finishes in the other. See [HANDOFF-gui-ab.md](docs/HANDOFF-gui-ab.md).
+
 After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
+
+### Linux (Fedora, Ubuntu, Arch)
+
+Download `SRM-CAM-x86_64.AppImage` from the
+[latest release](https://github.com/MadsRudolph/srm-cam/releases/latest), then:
+
+```bash
+chmod +x SRM-CAM-x86_64.AppImage
+./SRM-CAM-x86_64.AppImage
+```
+
+No install step and no root. It carries its own Qt, so it does not care which
+version your distribution ships.
+
+The AppImage holds **both interfaces**. Without arguments it opens the setup
+sheet; `--original` opens the interface it replaces, which is what the second
+desktop entry runs:
+
+```bash
+./SRM-CAM-x86_64.AppImage --original
+```
+
+To get both into your application launcher, put the AppImage somewhere stable
+and install the two entries from `packaging/`:
+
+```bash
+install -Dm755 SRM-CAM-x86_64.AppImage ~/.local/bin/SRM-CAM
+install -Dm644 packaging/srm-cam-256.png ~/.local/share/icons/hicolor/256x256/apps/srm-cam.png
+install -Dm644 packaging/srm-cam.desktop packaging/srm-cam-original.desktop ~/.local/share/applications/
+```
+
+If the 3D views come up blank or the app will not start on a machine with no
+usable GPU driver — a VM, a remote session — run it with `GERBER2RML_GL=software`.
+
+**What Linux does not do:** the machine link — Connect, the DRO, jogging and
+bed probing over the Arduino — is Windows-only. Prepare the job on Linux,
+export, and send the files from VPanel on the CNC PC.
+
+That costs less than it sounds, because a height map is a file. Probe the bed
+once on the CNC PC, export the grid as CSV, and load it on Linux to export
+levelled toolpaths exactly as if you had measured them there.
 
 ## What it does
 

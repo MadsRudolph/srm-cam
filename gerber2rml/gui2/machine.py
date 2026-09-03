@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 
 from gerber2rml.gui2 import theme, widgets
 from gerber2rml.engine import spi_probe
+from gerber2rml import platform as plat
 
 POLL_MS = 300           # also the deadman feed: the firmware stops the spindle
                         # if the host goes quiet for 10 s, so this keeps a
@@ -299,6 +300,32 @@ class MachineBar(QWidget):
                              theme.GAP_S)
         h.setSpacing(theme.GAP_M)
 
+        # Where the link does not run, the bar says so and stops. Not a row of
+        # greyed-out controls: a dead control with no reason is exactly what
+        # this interface refuses to ship, and the honest sentence is short.
+        #
+        # Levelling is not lost with it. A height map is a file - the Level
+        # page loads a probe grid from CSV and exports through it identically -
+        # so the flow is "probe once on the CNC PC, carry the CSV", which is
+        # worth saying here because nobody would guess it.
+        self.gated = not plat.capabilities().machine_link
+        if self.gated:
+            note = QLabel(plat.NO_MACHINE_LINK_NOTE)
+            # Wrapped, or the sentence sets the window's minimum width. A
+            # QLabel that may not wrap reports its whole single line as its
+            # minimum size hint, and a layout's minimum is the sum of its
+            # children's - so 205 unwrapped characters made
+            # MainWindow.minimumSizeHint() 2488 px wide against a 1400 px
+            # default, and the window could not be narrowed below that on a
+            # 1920 px display. Wrapped it is two lines inside BAR_H.
+            note.setWordWrap(True)
+            # "hint" is a real selector in style.py (TEXT_3, small). The name
+            # this used before - "muted" - matched nothing repo-wide, so the
+            # sentence rendered in full-strength body text.
+            note.setObjectName("hint")
+            h.addWidget(note, 1)
+            return
+
         # -- link state --------------------------------------------------
         self.chip = widgets.Chip("Machine offline", "idle")
         h.addWidget(self.chip)
@@ -434,8 +461,41 @@ class MachineBar(QWidget):
         self._touching = False
         self.refresh_ports()
 
-    # -- ports -------------------------------------------------------------
+    # -- gated no-ops ------------------------------------------------------
+    # The Machine menu still carries "Rescan the serial ports" and
+    # "Connect / disconnect" (Ctrl+L), and window.py reads current_port() for
+    # the machine test - all three reached straight past the early return above
+    # and raised AttributeError on a gated bar. Gating the menu entries instead
+    # would leave items that silently do nothing, which is the dead control
+    # this interface refuses to ship; a no-op that SAYS WHY puts the
+    # explanation where the user clicked, in the same log line the bar already
+    # owns.
+    def _refused(self):
+        self.message.emit("warn", plat.NO_MACHINE_LINK_NOTE)
+
     def refresh_ports(self):
+        if self.gated:
+            return self._refused()
+        return self._refresh_ports()
+
+    def current_port(self):
+        """None where the link is gated - every caller already handles it.
+
+        window.py's machine test says "No serial port to test" and stops on a
+        falsy port, so returning None keeps that path honest rather than
+        handing a dialog a port that cannot be opened.
+        """
+        if self.gated:
+            return None
+        return self.port_combo.currentData()
+
+    def _toggle_connect(self):
+        if self.gated:
+            return self._refused()
+        return self._do_toggle_connect()
+
+    # -- ports -------------------------------------------------------------
+    def _refresh_ports(self):
         ports, why = list_ports()
         self.port_combo.clear()
         for device, chip in ports:
@@ -447,11 +507,8 @@ class MachineBar(QWidget):
                 f"No machine link: {why} Everything except probing works "
                 f"without it — export the files and send them from VPanel.")
 
-    def current_port(self):
-        return self.port_combo.currentData()
-
     # -- actions -----------------------------------------------------------
-    def _toggle_connect(self):
+    def _do_toggle_connect(self):
         if self.link.is_connected():
             self.link.disconnect_from("disconnected")
         else:
@@ -485,7 +542,8 @@ class MachineBar(QWidget):
     def _stop(self):
         if self.link.can_stop_something():
             self.link.stop_now()
-            self.spindle_btn.setChecked(False)
+            if not self.gated:                # no spindle button on a gated bar
+                self.spindle_btn.setChecked(False)
             self.message.emit("warn", "STOP sent: move dropped, spindle off, "
                                       "tool lifting.")
         else:
