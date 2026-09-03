@@ -20,6 +20,7 @@ first time it appears.
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QListWidget, QAbstractItemView
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
                                QScrollArea, QFrame, QLabel, QLineEdit, QComboBox,
                                QCheckBox, QDoubleSpinBox, QSpinBox, QSizePolicy)
@@ -134,6 +135,36 @@ class SetupPage(Page):
                 "from KiCad."))
         rh.addStretch(1)
         src.add(row)
+        # One sheet of copper can carry several boards, cut in one run. The
+        # list only appears once there are two; the button that starts a
+        # panel is always there, because that is how anyone finds out it can.
+        self.src_section = src
+        self.boards = QListWidget()
+        self.boards.setObjectName("boardList")
+        self.boards.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.boards.setFixedHeight(92)
+        self.boards.setToolTip(
+            "The boards on this sheet. Pick one and the placement below moves "
+            "it; the others stay where they are. Clicking a board on the bed "
+            "picks it too.")
+        self.boards.currentRowChanged.connect(self._on_board_row)
+        src.add(self.boards)
+        brow = QWidget()
+        bh = QHBoxLayout(brow)
+        bh.setContentsMargins(0, 0, 0, 0)
+        bh.setSpacing(theme.GAP_S)
+        bh.addWidget(widgets.button(
+            "Add another board…", on=ctl.action_add_board,
+            tip="Put a second Gerber folder on the same sheet of copper, "
+                "beside this one. Both are cut in the same run: one trace "
+                "file, one drill file, one cut-out. The same folder twice "
+                "makes two of the board."))
+        self.remove_board_btn = widgets.button(
+            "Take this board off", on=ctl.action_remove_board,
+            tip="Take the picked board off the sheet. The others stay put.")
+        bh.addWidget(self.remove_board_btn)
+        bh.addStretch(1)
+        src.add(brow)
         self.name = QLineEdit(st.name)
         self.name.setToolTip("What the exported files are called. Taken from "
                              "the KiCad project name when a folder is loaded.")
@@ -299,6 +330,7 @@ class SetupPage(Page):
 
         # -- placement ---------------------------------------------------
         place = widgets.Section("Where it sits on the bed")
+        self.place_section = place
         self.place_x = num(0.0, -50.0, 400.0, 1.0, 2, self._on_place, suffix=" mm")
         self.place_y = num(0.0, -50.0, 400.0, 1.0, 2, self._on_place, suffix=" mm")
         place.add(widgets.Field("Across (X)", self.place_x))
@@ -320,11 +352,17 @@ class SetupPage(Page):
                 "too — they sit outside the board, and a placement that puts "
                 "the board on the bed but a dowel off it cannot be run.")
         ah2.addWidget(self.autoplace_btn)
+        self.arrange_btn = widgets.button(
+            "Lay them side by side", on=ctl.action_arrange,
+            tip="Line the boards up left to right with a strip of waste "
+                "between each pair, the first one staying where it is.")
+        ah2.addWidget(self.arrange_btn)
         ah2.addStretch(1)
         place.add(arow)
-        place.add(widgets.hint(
+        self.place_hint = widgets.hint(
             "Or drag the board on the bed. Measured from the machine origin "
-            "at the front-left corner — the same zero VPanel shows."))
+            "at the front-left corner — the same zero VPanel shows.")
+        place.add(self.place_hint)
         self.add(place)
 
         # -- advanced ----------------------------------------------------
@@ -418,8 +456,11 @@ class SetupPage(Page):
 
     # -- handlers ------------------------------------------------------
     def _on_name(self, text):
-        self.ctl.state.name = text.strip() or "board"
-        self.ctl.refresh_plan()
+        self.ctl.action_name(text)
+
+    def _on_board_row(self, row):
+        if row >= 0 and row != self.ctl.state.current:
+            self.ctl.action_select_board(row)
 
     def _on_thickness(self, v):
         self.ctl.action_thickness(v, self.overshoot.value(),
@@ -498,6 +539,33 @@ class SetupPage(Page):
             self.fid_place.setCurrentIndex(i)
         self.fid_place.blockSignals(False)
         self.rotate.set_current(str(st.rotate % 360))
+        boards = list(getattr(st, "boards", None) or [])
+        panel = len(boards) > 1
+        self.src_section.label.setText("The boards" if panel else "The board")
+        self.boards.setVisible(panel)
+        self.remove_board_btn.setVisible(panel)
+        self.arrange_btn.setVisible(panel)
+        if panel:
+            self.boards.blockSignals(True)
+            self.boards.clear()
+            for m in boards:
+                x0, y0, x1, y1 = m.bounds()
+                self.boards.addItem(
+                    f"{m.name}  ·  {x1 - x0:.1f} × {y1 - y0:.1f} mm"
+                    + (f"  ·  {m.rotate % 360}°" if m.rotate % 360 else ""))
+            self.boards.setCurrentRow(st.current)
+            self.boards.blockSignals(False)
+            cur = boards[st.current]
+            self.place_section.label.setText(f"Where {cur.name} sits on the bed")
+            self.place_hint.setText(
+                f"Moving {cur.name}, board {st.current + 1} of {len(boards)}. "
+                f"Click a board on the bed to pick it and drag it to move "
+                f"only that one. Measured from the machine origin.")
+        else:
+            self.place_section.label.setText("Where it sits on the bed")
+            self.place_hint.setText(
+                "Or drag the board on the bed. Measured from the machine "
+                "origin at the front-left corner — the same zero VPanel shows.")
         plan = getattr(ctl, "plan", None)
         spec = (f"Traces {st.trace.effective_diameter():.2f} mm wide at "
                 f"{st.trace.effective_cut_depth():.2f} mm · drill "

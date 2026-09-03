@@ -78,7 +78,10 @@ class RunSheet(QWidget):
         return self._text
 
     def show_plan(self, plan, *, name, out_dir, machine, leveled=False,
-                  double_sided=False):
+                  double_sided=False, panel=None):
+        """``panel``: ``[(name, x, y, rotate)]`` for a sheet carrying several
+        boards - each one's front-left corner in machine mm, printed so the
+        operator can check the boards sit where the files expect them."""
         page = QWidget()
         page.setObjectName("sheetPage")
         page.setStyleSheet(f"QWidget#sheetPage {{ background: {theme.INK}; }}")
@@ -132,6 +135,23 @@ class RunSheet(QWidget):
         folder.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
         folder.setWordWrap(True)
         v.addWidget(folder)
+        if panel:
+            v.addSpacing(theme.GAP_S)
+            head = QLabel(f"{len(panel)} boards on the sheet")
+            head.setFont(theme.font("label"))
+            head.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
+            v.addWidget(head)
+            add_line(f"{len(panel)} boards on the sheet (front-left corner, "
+                     f"machine mm):")
+            for bname, x, y, rot in panel:
+                where = f"X{x:.2f} Y{y:.2f}" + (f", turned {rot % 360}°"
+                                                if rot % 360 else "")
+                row = QLabel(f"{bname} — {where}")
+                row.setFont(theme.font("small", mono=True))
+                row.setStyleSheet(f"color: {theme.SHEET_INK}; background: transparent;")
+                v.addWidget(row)
+                add_line(f"   {bname}: {where}")
+            add_line("")
         v.addSpacing(theme.GAP_M)
 
         # -- the standing rule -------------------------------------------

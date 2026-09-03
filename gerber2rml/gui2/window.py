@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
+from gerber2rml.app.panel import PANEL_GAP_MM
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
 from gerber2rml.engine import spoilboard
@@ -281,6 +282,9 @@ class MainWindow(QMainWindow):
         # surface is the surface that gets CUT. See _flex_margin.
         self._hold = "points"        # "bonded" | "points"
         self.screwed = False
+        # The job is named after the folder, or after every board on the
+        # sheet, until the operator types a name; then it is theirs.
+        self._custom_name = False
 
         self._build_ui()
         self._build_menus()
@@ -319,6 +323,7 @@ class MainWindow(QMainWindow):
         self.stage.screw_picked.connect(self._on_screw_click)
         self.stage.hovered.connect(self._on_hover)
         self.stage.region_added.connect(self._on_region)
+        self.stage.board_picked.connect(self.action_select_board)
         self.stage.set_empty(
             "No board loaded",
             "File ▸ Open Gerber folder, or try the demo board")
@@ -454,6 +459,8 @@ class MainWindow(QMainWindow):
 
         f = mb.addMenu("&File")
         self._act(f, "Open Gerber folder…", self.action_open, "Ctrl+O")
+        self._act(f, "Add another board to the sheet…", self.action_add_board,
+                  "Ctrl+Shift+O")
         self._act(f, "Open the demo board", self.action_open_demo)
         f.addSeparator()
         self._act(f, "Save the setup…", self.action_save_setup, "Ctrl+S")
@@ -469,6 +476,7 @@ class MainWindow(QMainWindow):
         self._act(v, "Fit the whole bed", lambda: self.stage.fit(), "Ctrl+Shift+0")
         v.addSeparator()
         self._act(v, "Centre the job on the bed", self.action_autoplace, "Ctrl+B")
+        self._act(v, "Lay the boards side by side", self.action_arrange)
         v.addSeparator()
         self.xray_act = self._act(v, "Design X-ray", self._toggle_xray, "Ctrl+D",
                                   checkable=True)
@@ -650,9 +658,9 @@ class MainWindow(QMainWindow):
         bx, by = tx1 - tx0, ty1 - ty0
         w, h = x1 - x0, y1 - y0
         # Move so the extent is centred: the gap either side is (target - span)/2.
-        self.state.set_placement(
-            self.state.place_x + tx0 + (bx - w) / 2.0 - x0,
-            self.state.place_y + ty0 + (by - h) / 2.0 - y0)
+        # Every board by the same amount, so a panel keeps its shape.
+        self.state.move_all(tx0 + (bx - w) / 2.0 - x0,
+                            ty0 + (by - h) / 2.0 - y0)
         self._paths_cache = {}
         self.inspector.setup.sync()
         self.refresh_checks()
@@ -668,7 +676,9 @@ class MainWindow(QMainWindow):
                      f"cut as it is. Rotating it 90°, or a bigger piece of "
                      f"copper, may help.")
         else:
-            what = "job" if not self._double else "job, dowels included,"
+            what = ("job, dowels included," if self._double
+                    else f"panel of {len(self.state.boards)} boards"
+                    if self.state.is_panel else "job")
             self.say("ok", f"{w:.1f} × {h:.1f} mm {what} centred on {what_on} — "
                            f"{mx:.1f} mm spare each side, {my:.1f} mm front "
                            f"and back.")
@@ -759,6 +769,8 @@ class MainWindow(QMainWindow):
             else st.board.copper.bounds
         bits = [f"{x1 - x0:.1f} × {y1 - y0:.1f} mm",
                 f"{len(st.board.holes)} holes"]
+        if st.is_panel:
+            bits.insert(0, f"{len(st.boards)} boards")
         if self.plan is not None and self.plan.single_tool:
             bits.append(f"one {self.plan.tool_label}")
         if self._double:
@@ -1012,6 +1024,9 @@ class MainWindow(QMainWindow):
         else:
             self.stage.set_board(st.board.copper, st.board.outline,
                                  st.board.holes)
+            self.stage.set_members(
+                [(m.name, b.copper, b.outline, b.holes)
+                 for m in st.boards for b in (m.board(),)], st.current)
         self._sync_stock()
         self._draw_screws()
 
@@ -1073,6 +1088,8 @@ class MainWindow(QMainWindow):
         if self.state.board is not None and self.state.board.holes:
             legend.append((theme.HOLE, "hole"))
         legend.append((theme.COPPER, "copper"))
+        if self.state.is_panel:
+            legend.append((theme.PRIMARY, "the board being moved"))
         if self._double:
             # The far face is only PAINTED in the X-ray frame, so listing it in
             # the bed frame would be a key entry for something not on screen.
@@ -1118,6 +1135,7 @@ class MainWindow(QMainWindow):
                               "been written.")
             return
         checks += self._stock_checks()
+        checks += self._panel_checks()
         checks += self._two_sided_depth_check()
         checks += self._screw_checks()
         self._checks = checks
@@ -1324,6 +1342,48 @@ class MainWindow(QMainWindow):
                 f"to spare."))
         return out
 
+    def _panel_checks(self):
+        """Do the boards on the sheet keep out of each other's way?
+
+        Each cut-out runs one cutter width outside its outline. Two outlines
+        closer than the bit are buffered into ONE shape by the engine and
+        milled as one, so the boards come off the sheet joined; a little
+        further apart the two channels meet, and any stock left between them
+        is a sliver that can break loose and jam the cutter.
+        """
+        st = self.state
+        if not st.is_panel:
+            return []
+        from gerber2rml.app.panel import clearances
+        bit = self.cutting_cutout().bit_diameter
+        comfortable = 2.0 * bit + 1.0
+        a, b, gap, overlap = clearances(st.boards)[0]
+        if overlap:
+            return [diag.Check(
+                "fail", "Two boards overlap",
+                f"{a} and {b} sit on top of each other. Move one of them - "
+                f"nothing can be cut like this.")]
+        if gap < bit:
+            return [diag.Check(
+                "fail", "Two boards are too close to cut apart",
+                f"{a} and {b} are {gap:.2f} mm apart and the cut-out bit is "
+                f"{bit:.2f} mm wide, so their outlines would be milled as one "
+                f"shape and they would come off the sheet joined. Leave "
+                f"{comfortable:.1f} mm or more.")]
+        if gap < comfortable:
+            strip = gap - 2.0 * bit
+            return [diag.Check(
+                "warn", "Two boards are nearly touching",
+                f"only {gap:.2f} mm between {a} and {b}. "
+                + ("The two cut-out channels run into each other there."
+                   if strip <= 0 else
+                   f"The cut-outs leave a strip of stock {strip:.2f} mm wide "
+                   f"between them, which can break loose and jam the cutter.")
+                + f" {comfortable:.1f} mm or more is comfortable.")]
+        return [diag.Check(
+            "ok", "The boards keep clear of each other",
+            f"the nearest pair, {a} and {b}, are {gap:.1f} mm apart.")]
+
     def _screw_checks(self):
         if not self.screwed:
             return []
@@ -1422,6 +1482,7 @@ class MainWindow(QMainWindow):
         self._top_fit = None
         self._fid_measured = []
         from gerber2rml.loader import gerber_stem
+        self._custom_name = False
         try:
             stem = gerber_stem(Path(folder))
             if stem:
@@ -1440,6 +1501,119 @@ class MainWindow(QMainWindow):
         self.stage.fit_work()
         self.say("ok", f"Loaded {self.state.name} — "
                        f"{len(self.state.board.holes)} holes.")
+
+    # ---------------------------------------------------- several boards
+    def action_add_board(self):
+        if self.state.board is None:
+            self.action_open()
+            return
+        d = QFileDialog.getExistingDirectory(
+            self, "Choose another board's Gerber folder",
+            workspace.remembered_dir("gerber"))
+        if d:
+            self.add_folder(d)
+
+    def add_folder(self, folder):
+        """Put another board on the sheet, beside the ones already there.
+
+        The dialog path and the tests both come here. With nothing loaded it
+        is simply a load; on a double-sided job it is refused, because that
+        job is one board registered to two holes and a second board has no
+        place in that registration.
+        """
+        st = self.state
+        if st.board is None:
+            self.load_folder(folder)
+            return
+        if self._double:
+            self.say("warn", "A double-sided job is one board. Untick "
+                             "“copper on both faces” to put several boards "
+                             "on the sheet.")
+            return
+        try:
+            m = st.add_board(folder)
+        except Exception as e:
+            self.report_error(
+                "That folder could not be read as a board", e,
+                "SRM-CAM needs a copper layer, an Edge.Cuts outline and a "
+                "drill file in one folder — the set KiCad's Plot and Generate "
+                "Drill Files produce. If the folder holds a zip, unpack it "
+                "first.")
+            return
+        workspace.remember_dir("gerber", folder)
+        if not self._custom_name:
+            st.name = self._auto_name()
+        self._forget_output()
+        self.refresh_plan()
+        self.refresh_checks()
+        self.select_step("setup")
+        self.stage.fit_work()
+        self.say("ok", f"{m.name} added — {len(st.boards)} boards on the "
+                       f"sheet. Drag each one where it should go; the files "
+                       f"cut them all in one run.")
+
+    def action_remove_board(self, index=None):
+        """Take the picked board (or ``index``) off the sheet."""
+        st = self.state
+        if not st.boards:
+            return
+        m = st.remove_board(st.current if index is None else index)
+        if not self._custom_name:
+            st.name = self._auto_name() if st.boards else "board"
+        self._forget_output()
+        self.refresh_plan()
+        self.refresh_checks()
+        self.select_step("setup")
+        self.stage.fit_work()
+        self.say("info", f"{m.name} taken off the sheet"
+                         + (f" — {len(st.boards)} left." if st.boards else "."))
+
+    def action_select_board(self, index):
+        """Make one board of the panel the one the placement controls move.
+
+        Nothing is regenerated: the boards have not moved, only which one the
+        next edit applies to. The stage marks it and the setup page follows.
+        """
+        st = self.state
+        if not 0 <= index < len(st.boards):
+            return
+        if index != st.current:
+            st.select_board(index)
+        self.stage.set_selected(index)
+        self.inspector.setup.sync()
+
+    def action_arrange(self):
+        """Line the boards up left to right with waste between them."""
+        st = self.state
+        if not st.is_panel:
+            self.say("warn", "There is only one board on the sheet.")
+            return
+        st.arrange()
+        self._paths_cache = {}
+        self._after_params()
+        QTimer.singleShot(0, self.stage.fit_work)
+        self.say("ok", f"{len(st.boards)} boards laid out left to right, "
+                       f"{PANEL_GAP_MM:g} mm apart.")
+
+    def action_name(self, text):
+        """The operator typed a job name: keep it, whatever boards come and go."""
+        self.state.name = text.strip() or "board"
+        self._custom_name = bool(text.strip())
+        self.refresh_plan()
+
+    def _auto_name(self):
+        """Every board's name, joined: what the files are called unless the
+        operator says otherwise."""
+        return "+".join(m.name.replace(" ", "_") for m in self.state.boards) \
+            or "board"
+
+    def _forget_output(self):
+        """The files on disk, and the ticks against them, no longer describe
+        the job."""
+        self._paths_cache = {}
+        self._exported = {}
+        self._export_dir = None
+        self.traveller.clear_done()
 
     def action_apply_preset(self):
         name = self.inspector.setup.preset.currentText()
@@ -1740,9 +1914,9 @@ class MainWindow(QMainWindow):
 
     def action_mirror(self, on):
         self.state.mirror = on
-        if self.state.gerber_dir is not None:
+        if self.state.boards:
             try:
-                self.state.load(self.state.gerber_dir)
+                self.state.reload()
             except Exception as e:
                 self.report_error("The board could not be re-read", e)
                 return
@@ -1750,6 +1924,15 @@ class MainWindow(QMainWindow):
         self._after_params()
 
     def action_double_sided(self, on):
+        if on and self.state.is_panel:
+            box = self.inspector.setup.double
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+            self.say("warn", f"Double-sided is for one board at a time — this "
+                             f"sheet has {len(self.state.boards)}. Take the "
+                             f"others off first.")
+            return
         self._double = bool(on)
         self._paths_cache = {}
         self.inspector.setup.registration.setVisible(
@@ -1909,6 +2092,14 @@ class MainWindow(QMainWindow):
             self.say("warn", "Load a Gerber folder first.")
             return
         self.refresh_checks()
+        # Before the shorts question: two boards on top of each other short
+        # everywhere, and there is no version of that job that cuts, so it is
+        # refused rather than confirmed.
+        blocking = [c for c in self._panel_checks() if c.level == "fail"]
+        if blocking:
+            self.say("fail", f"{blocking[0].title} — {blocking[0].detail}")
+            self.select_step("checks")
+            return
         if self._shorts and not dialogs.confirm_shorts(
                 self, self._shorts, st.trace.effective_diameter()):
             self.select_step("checks")
@@ -1972,7 +2163,8 @@ class MainWindow(QMainWindow):
         self.sheet.show_plan(
             self.plan, name=st.name, out_dir=self._export_dir,
             machine=st.machine, leveled=level is not None,
-            double_sided=self._double)
+            double_sided=self._double,
+            panel=st.panel_summary() if st.is_panel else None)
         self.centre.setCurrentWidget(self.sheet)
         total = self.plan.total_seconds
         self.say("ok", f"{len(written)} files written"
@@ -2148,6 +2340,14 @@ class MainWindow(QMainWindow):
             "level": self.level_page.state(),
             "show_stock": self.show_stock, "show_bed": self.show_bed,
             "thickness": self.inspector.setup.thickness.value(),
+            # Every board on the sheet, with its own placement. One entry is
+            # the ordinary job, and `gerber_dir`/`place`/`rotate` above are
+            # that board's too, so a setup written here still loads in the
+            # first interface.
+            "boards": [{"gerber_dir": str(m.gerber_dir), "name": m.name,
+                        "place": [m.place_x, m.place_y], "rotate": m.rotate}
+                       for m in self.state.boards],
+            "current": self.state.current,
         }
         try:
             Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -2210,13 +2410,17 @@ class MainWindow(QMainWindow):
         self._manual_screws = (None if ms is None
                                else [(float(x), float(y)) for x, y in ms])
         self.bed_act.setChecked(self.show_bed)
+        boards = data.get("boards") or []
         folder = data.get("gerber_dir")
-        if folder and Path(folder).is_dir():
+        if len(boards) > 1:
+            self._restore_panel(boards, data.get("current", 0), foreign)
+        elif folder and Path(folder).is_dir():
             self.load_folder(folder)
         # After load_folder, which names the job from the folder it read: the
         # name saved with the setup is the one the operator chose.
         if data.get("name"):
             st.name = data["name"]
+            self._custom_name = True
         # ...and which also cleared the measured flip, so re-apply the saved
         # one here. The AS PLACED views, jog and rework all follow it, so a
         # restored job comes back describing the same physical board.
@@ -2254,6 +2458,48 @@ class MainWindow(QMainWindow):
                        "before you cut.")
         else:
             self.say("ok", "Setup loaded.")
+
+    def _restore_panel(self, boards, current, foreign):
+        """Put every saved board back on the sheet where it was.
+
+        A board whose folder has gone is reported and skipped rather than
+        aborting the load: the rest of the sheet is still the job that was
+        saved, and the missing one is named so it can be found.
+        """
+        st = self.state
+        loaded = 0
+        for b in boards:
+            bdir = str(b.get("gerber_dir", ""))
+            bname = str(b.get("name", "") or "a board")
+            if not Path(bdir).is_dir():
+                foreign.append(f"{bname} (its folder is gone)")
+                continue
+            if loaded == 0:
+                self.load_folder(bdir)
+            else:
+                self.add_folder(bdir)
+            if len(st.boards) != loaded + 1:
+                foreign.append(bname)         # the folder no longer reads
+                continue
+            loaded += 1
+            m = st.boards[-1]
+            try:
+                px, py = b.get("place", [m.place_x, m.place_y])
+                m.place_x, m.place_y = float(px), float(py)
+                m.rotate = int(b.get("rotate", 0)) % 360
+            except (TypeError, ValueError):
+                foreign.append(f"where {bname} sits")
+            if b.get("name"):
+                m.name = bname
+        if not st.boards:
+            return
+        st.rebuild()
+        try:
+            cur = int(current)
+        except (TypeError, ValueError):
+            cur = 0
+        st.select_board(cur if 0 <= cur < len(st.boards) else 0)
+        self._paths_cache = {}
 
     # ----------------------------------------------------------------- misc
     def _after_params(self):
