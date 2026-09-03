@@ -55,6 +55,7 @@ def test_ensure_default_format_leaves_a_higher_version_alone():
     "gerber2rml.gui.bedviz",
     "gerber2rml.gui.sim3d",
     "gerber2rml.gui2.sim3d",
+    "gerber2rml.gui2.bedviz",
 ])
 def test_every_3d_window_module_secures_the_format_as_it_imports(module):
     """Importing a 3D window is enough; nothing has to remember to call main().

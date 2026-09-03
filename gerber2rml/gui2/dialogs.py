@@ -20,7 +20,7 @@ well enough to be handled, not a reason to show the exception instead.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                               QDialogButtonBox, QMessageBox, QWidget,
+                               QWidget,
                                QCheckBox, QScrollArea, QFrame)
 
 from gerber2rml.gui2 import theme, widgets
@@ -235,7 +235,6 @@ def about_tier(parent):
     s1 = widgets.Section("Full adds")
     for line in tier.ADDED_BY_FULL:
         s1.add(widgets.hint("· " + line))
-    d.add(s1)
     s2 = widgets.Section("Essential keeps, on purpose")
     for name, why in tier.KEPT_IN_ESSENTIAL:
         card = widgets.Card(quiet=True, pad=theme.GAP_S + 2, gap=2)
@@ -245,9 +244,19 @@ def about_tier(parent):
         card.box.addWidget(t)
         card.box.addWidget(widgets.hint(why))
         s2.add(card)
-    d.add(s2)
+    # Eleven paragraphs and five cards: on a 768 px laptop the Close button
+    # was below the screen edge. The two sections scroll inside the sheet.
+    inner = QWidget()
+    iv = QVBoxLayout(inner)
+    iv.setContentsMargins(0, 0, 0, 0)
+    iv.setSpacing(theme.GAP_L)
+    iv.addWidget(s1)
+    iv.addWidget(s2)
     sa = QScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QFrame.NoFrame)
+    sa.setWidget(inner)
+    sa.setMaximumHeight(440)
+    d.add(sa)
     d.act("Close", kind="primary", on=d.accept, default=True)
     d.exec()

@@ -383,6 +383,12 @@ class Segmented(QWidget):
             if k == key:
                 b.setChecked(True)
 
+    def set_option_enabled(self, key, on):
+        """Grey one choice out - for a view that means nothing on this job."""
+        for b, k in self._keys.items():
+            if k == key:
+                b.setEnabled(bool(on))
+
 
 class Disclosure(QWidget):
     """Progressive disclosure, done as a real control rather than a scrollbar.

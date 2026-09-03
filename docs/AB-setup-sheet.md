@@ -419,11 +419,12 @@ smaller.
 
 - the **guided tour** (`gui/tour/`) — the first-launch walkthrough;
 - the **feed test card**;
-- **snap-to-feature jogging** (click-to-jog is here; the snap is not);
-- the **KiCad plugin** menu and the update check;
-- the **phone-photo QR hand-off**. The photo overlay itself is here; the
-  phone leg of it is not, though `engine/photorelay.py` and `photoshare.py`
-  are what it would be built on.
+- the **KiCad plugin** menu and the update check.
+
+*Corrected 2026-09-03.* Snap-to-feature jogging and the phone-photo QR
+hand-off were listed here as missing. Both were ported later: a jog click
+snaps to the nearest drawn hole (`gui2/stage.py`), and `gui2/phonephoto.py`
+is the phone leg of the photo overlay.
 
 **Ported since, and listed here because §8 is the honest half of this
 document:** the **machine test panel** (`gui2/machinetest.py` — the hardware

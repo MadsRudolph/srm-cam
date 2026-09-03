@@ -16,6 +16,7 @@ Either way ``photo_path`` holds the saved file once the dialog is accepted.
 A copy of the first interface's dialog with this interface's palette and its
 own settings key. The transports themselves are the engine's.
 """
+import qrcode      # at import, so a missing package fails where the guard is
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
@@ -36,7 +37,6 @@ _LAN_WORDS = ("lan", "local", "direct")
 def qr_pixmap(text, module_px=7):
     """Render ``text`` as a QR code QPixmap (no PIL — painted from the
     module matrix). White quiet zone kept: scanners need the contrast."""
-    import qrcode
     q = qrcode.QRCode(border=2)
     q.add_data(text)
     q.make(fit=True)
@@ -122,6 +122,10 @@ class PhonePhotoDialog(QDialog):
             self._poller = None
 
     def _restart_transport(self):
+        if getattr(self, "_closing", False):
+            # Hiding the dialog blurs the relay field, whose editingFinished
+            # would start a fresh server that nothing can stop.
+            return
         text = self.relay_edit.text().strip()
         _settings().setValue("phone/relay_url", text)
         self._stop_transport()
@@ -154,5 +158,6 @@ class PhonePhotoDialog(QDialog):
         self.accept()
 
     def done(self, r):                      # any close path stops everything
+        self._closing = True
         self._stop_transport()
         super().done(r)

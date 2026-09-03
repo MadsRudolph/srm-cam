@@ -19,7 +19,10 @@ class ProbeError(RuntimeError):
 
 def _open_serial(port, baud, timeout):
     import serial  # lazy: pyserial only needed when actually probing
-    return serial.Serial(port, baud, timeout=timeout)
+    # write_timeout: the bar's STOP writes from the GUI thread, and a
+    # blocking write on a wedged port would hang the one control that must
+    # never hang.
+    return serial.Serial(port, baud, timeout=timeout, write_timeout=0.5)
 
 
 def _read_line(ser, deadline, should_abort=None):
