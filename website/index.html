@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SRM-CAM — PCB milling on the Roland SRM-20</title>
-<meta name="description" content="User guide for SRM-CAM: desktop CAM for milling PCBs on the Roland SRM-20. Gerber to G-code, bed leveling, double-sided registration, photo-based rework.">
+<title>SRM-CAM — SRM-CAM guide</title>
+<meta name="description" content="Desktop CAM for the Roland SRM-20: KiCad Gerbers in, ready-to-run G-code out, with bed levelling, panels and double-sided registration.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -54,96 +55,97 @@
 
 <div class="hero">
   <h1>SRM-CAM</h1>
-  <p class="lead">Desktop CAM for the <strong>Roland SRM-20</strong>: load KiCad Gerber&nbsp;+&nbsp;Excellon files, preview every toolpath, and export ready-to-run G-code — with bed leveling, double-sided registration, and photo-verified rework built in.</p>
+  <p class="lead">Desktop CAM for the <strong>Roland SRM-20</strong>: load KiCad Gerber&nbsp;+&nbsp;Excellon files, walk the run plan, and export ready-to-run G-code — with a probed surface the cut follows, several boards on one sheet, and double-sided registration built in.</p>
 
   <div class="badge-row">
-    <span class="badge copper">Windows installer — no Python needed</span>
+    <span class="badge copper">Windows installer</span>
+    <span class="badge">Linux AppImage</span>
     <span class="badge">G-code (.nc) &amp; RML output</span>
     <span class="badge">Open source</span>
   </div>
 
   <div class="btn-row">
     <a class="btn primary" href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">Download for Windows</a>
+    <a class="btn" href="https://github.com/MadsRudolph/srm-cam/releases/latest">Linux AppImage</a>
     <a class="btn" href="getting-started.html">Get started →</a>
     <a class="btn" href="https://github.com/MadsRudolph/srm-cam">GitHub</a>
   </div>
 </div>
 
 <figure class="fig">
-  <img src="img/srmcam_GUI_MainPage.png" alt="SRM-CAM main window with toolpath preview">
-  <figcaption>The main window: toolpath preview, per-operation settings, and machine controls in one place.</figcaption>
+  <img src="img/gui2_traces.png" alt="The SRM-CAM window: run plan on the left, the bed in the middle, the selected step on the right">
+  <figcaption>The setup sheet. Left: the run plan, in the order you send the files. Middle: the bed, the copper and the job. Right: the selected step. Bottom: the machine, and <span class="ui">STOP</span>.</figcaption>
 </figure>
 
 <h2>How it works</h2>
-<p>One tool for the whole SRM-20 flow — replaces the mods site and FlatCAM. One job file per operation — traces, drill, cut-out — plus a spindle-off dry-run outline that traces where the board will be cut before anything touches copper.</p>
+<p>One program for the whole SRM-20 flow. Every step of the run plan is a file you send from VPanel — traces, drill, cut-out — and step 0 is a spindle-off dry run that traces where the board will be cut before anything touches copper.</p>
 
 <div class="pill-flow">
   <span class="pf">KiCad Gerbers</span><span class="arr">→</span>
   <span class="pf">SRM-CAM</span><span class="arr">→</span>
-  <span class="pf">.nc files</span><span class="arr">→</span>
+  <span class="pf">.nc files + run sheet</span><span class="arr">→</span>
   <span class="pf">VPanel</span><span class="arr">→</span>
   <span class="pf">Milled board</span>
 </div>
-<p style="text-align:center;color:#8b94a1;font-size:13px;margin-top:-4px">With the Arduino fitted, SRM-CAM also drives the machine directly — spindle, pause, resume, jog and probing — while VPanel still plays the file and sets the spindle speed. <a href="machine-control.html">Machine control →</a></p>
+<p style="text-align:center;color:#8b94a1;font-size:13px;margin-top:-4px">With the Arduino fitted, SRM-CAM also reads the machine's position, jogs, probes the bed and zeroes Z — VPanel still plays the files and sets the spindle speed. <a href="machine-control.html">Machine control →</a></p>
 
 <h2>Guide contents</h2>
 <div class="cards">
   <a class="card" href="getting-started.html">
     <span class="ct"><span class="ico">🚀</span>Getting started</span>
-    <span class="cd">Install, first launch, the guided tour, workspace folders, and exporting KiCad files the right way.</span>
+    <span class="cd">Install on Windows or Linux, learn the four regions of the window, the two tiers, and the files KiCad has to give you.</span>
   </a>
   <a class="card" href="milling-a-board.html">
     <span class="ct"><span class="ico">🛠️</span>Milling a board</span>
-    <span class="cd">The full single-sided workflow: import, traces, drilling, cut-out, presets, export, and running jobs in VPanel.</span>
+    <span class="cd">Set up, check, export, run: the single-sided workflow from a Gerber folder to a board, with the run sheet at the end.</span>
+  </a>
+  <a class="card" href="panels.html">
+    <span class="ct"><span class="ico">🧩</span>Several boards on one sheet</span>
+    <span class="cd">Two or more designs on one piece of copper, cut in one run — one cut between boards that touch, none along the sheet's edge.</span>
   </a>
   <a class="card" href="holding-the-copper.html">
     <span class="ct"><span class="ico">🔩</span>Holding the copper</span>
-    <span class="cd">A datum the machine drills itself, screws through the spoilboard grid, and a spindle-off rehearsal before anything cuts.</span>
+    <span class="cd">Screws through the spoilboard grid, a datum the machine drills itself, the dry run, and what a board held at points does to the cut depth.</span>
+  </a>
+  <a class="card" href="bed-leveling.html">
+    <span class="ct"><span class="ico">📐</span>Bed levelling &amp; probing</span>
+    <span class="cd">Probe a height map over the link — or by hand — and every cut follows the real surface. One map per face.</span>
   </a>
   <a class="card" href="double-sided.html">
     <span class="ct"><span class="ico">🔁</span>Double-sided boards</span>
-    <span class="cd">Dowel-pin and fiducial registration, the flip, the run plan, and the automatic fiducial finder.</span>
-  </a>
-  <a class="card" href="bed-leveling.html">
-    <span class="ct"><span class="ico">📐</span>Bed leveling &amp; probing</span>
-    <span class="cd">Probe a height map over SPI so cut depth follows the real surface. Mesh checks and depth advice.</span>
+    <span class="cd">Dowel-pin or fiducial registration, the flip, measuring where the board landed, and the top files re-written to match.</span>
   </a>
   <a class="card" href="photo-and-rework.html">
     <span class="ct"><span class="ico">📷</span>Photo check &amp; rework</span>
-    <span class="cd">Overlay a board photo on the design, detect uncut channels automatically, and re-cut them in one pass.</span>
+    <span class="cd">Lay a photo of the board on the bed, box the spots that did not cut, and re-cut them deeper in one program.</span>
   </a>
   <a class="card" href="hardware.html">
     <span class="ct"><span class="ico">🔌</span>Hardware &amp; firmware</span>
-    <span class="cd">The Arduino on the machine's SPI bus: wiring, one-command flashing, firmware v3, and the safety limits.</span>
+    <span class="cd">The Arduino on the machine's SPI bus: wiring, one-command flashing, how a touch is measured, and the safety limits.</span>
   </a>
   <a class="card" href="machine-control.html">
     <span class="ct"><span class="ico">🎛️</span>Machine control</span>
-    <span class="cd">Drive the mill from SRM-CAM: spindle, pause, resume, jog, live status — and an honest list of what the link cannot do.</span>
+    <span class="cd">The machine bar and menu: position, jog, zero Z, spindle, STOP — and an honest list of what the link cannot do.</span>
   </a>
   <a class="card" href="reference.html">
     <span class="ct"><span class="ico">📄</span>Files &amp; reference</span>
-    <span class="cd">Output files, sessions, presets, the calibration coupon, CLI usage, and keyboard shortcuts.</span>
+    <span class="cd">Every file SRM-CAM reads and writes, setups, tool profiles, the parameters, the command line and the keys.</span>
   </a>
   <a class="card" href="troubleshooting.html">
     <span class="ct"><span class="ico">🩹</span>Troubleshooting</span>
-    <span class="cd">Symptoms and fixes: depth problems, registration scares, probing errors, photo detection refusals.</span>
+    <span class="cd">Symptom → fix, learned on real boards: depth, reach, probing, registration, setups.</span>
   </a>
 </div>
 
 <h2>Highlights</h2>
 <ul>
-  <li><strong>Trustworthy depth</strong> — probe the surface electrically, cut depth follows the real board. Drift-corrected, double-verified touches; mesh sanity check before you cut.</li>
-  <li><strong>Double-sided that registers</strong> — dowel pins (sub-0.1&nbsp;mm, zero measurement) or probed fiducials with an <span class="ui">Auto</span> hole finder (~50&nbsp;µm, no jogging by eye).</li>
-  <li><strong>Held down, and proven before you cut</strong> — bolt the copper through the spoilboard grid (travel height raises itself to clear the screw heads), let the machine drill its own dowel datum, and watch the spindle-off outline pass before the first cut.</li>
-  <li><strong>The machine, from the app</strong> — spindle, pause, resume, view and a live status strip over the Arduino link. Spindle <em>speed</em> stays on VPanel's slider.</li>
-  <li><strong>Two modes</strong> — Novice is the short path from Gerbers to files; Professional is every control.</li>
-  <li><strong>Problems caught early</strong> — preflight flags channels the bit can't cut; 3D simulation plays the whole job; after cutting, a board photo detects missed channels automatically.</li>
+  <li><strong>The checks are on screen, not in a box.</strong> Fits the bed, Z reach from the probed surface, nets the bit cannot separate (marked on the traces), the job on the copper, the screws in reach — all the time, and the worst finding stays on the rail until it is fixed.</li>
+  <li><strong>Depth you can trust.</strong> Probe the surface electrically and the cut follows it, per face. A board held at points gets a small, capped extra depth for the give under the cutter, and you can set it yourself.</li>
+  <li><strong>Several boards, one run.</strong> Put two designs on one sheet; touching boards share one cut, and an edge on the sheet's edge is not cut at all.</li>
+  <li><strong>Double-sided that registers.</strong> Dowel pins (sub-0.1&nbsp;mm, nothing to measure) or fiducial holes found electrically after the flip, with the top files re-written to where the board actually landed.</li>
+  <li><strong>STOP is part of the window.</strong> Never hidden by a tier, a step or a dialog; <kbd>Esc</kbd> does the same from anywhere.</li>
+  <li><strong>A run sheet, not a text file.</strong> Export writes the files and puts the plan in front of you: order, bit, depth, time, and the one rule — never re-zero XY.</li>
 </ul>
-
-<figure class="fig">
-  <img src="img/srmcam_doublesided.png" alt="Double-sided registration preview">
-  <figcaption>Double-sided registration: both layers previewed in register before anything is cut.</figcaption>
-</figure>
 
 <h2>A finished board</h2>
 <p>Both sides of a double-sided board milled with SRM-CAM, registered off dowel pins, held to the light:</p>
@@ -163,11 +165,12 @@
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">Source on GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
 </footer>
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Troubleshooting — SRM-CAM guide</title>
-<meta name="description" content="Symptoms and fixes: depth problems, probing errors, registration scares, photo detection refusals.">
+<meta name="description" content="Symptom → fix, learned on real boards.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,52 +59,53 @@
 <h2>Cutting</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Head lifts to the top, cuts air or shallow</td><td>Depth outside the ~60 mm Z travel → <strong>raise the work surface</strong> (add spoilboard). <span class="ui">Diagnostics</span> checks this.</td></tr>
-<tr><td>Cuts through in some areas, not others</td><td>Surface not flat vs a 0.15 mm cut → <a href="bed-leveling.html">level the bed</a>. Already leveled? Run <span class="ui">Mesh check</span> — a flaky point poisons its neighborhood. Missed spots → <a href="photo-and-rework.html">rework</a> + <span class="ui">Probe boxes</span>.</td></tr>
-<tr><td>Red channels in the Traces preview</td><td>Gaps narrower than the bit → will short. Widen clearance in KiCad, smaller bit, or V-bit.</td></tr>
-<tr><td>Wrong depth after a bit change</td><td>Re-zero <strong>Z</strong> after every bit change and after the flip. Never XY.</td></tr>
+<tr><td>Cut far deeper than the trace depth on a screwed-down board</td><td>The extra depth for a board held at points. It is a quarter of the arch the map shows, capped; if that is still too much, untick <span class="ui">Work the extra depth out from the probe map</span> and set <span class="ui">Cut deeper by</span> yourself. Make sure the map is applied — with the warp off the whole range is charged.</td></tr>
+<tr><td>Head lifts to the top, cuts air or shallow</td><td>Depth outside the 60&nbsp;mm Z stroke → raise the work surface. <span class="ui">Zero Z here</span> gives the check the real surface.</td></tr>
+<tr><td>Cuts through in some areas, not others</td><td>The surface is not flat against a 0.15&nbsp;mm cut → <a href="bed-leveling.html">probe the bed</a>. Missed spots afterwards → <a href="photo-and-rework.html">rework</a>.</td></tr>
+<tr><td>✕ marks on the traces, "spots will be shorted"</td><td>Nets closer than the bit. Widen the clearance in KiCad or use a narrower bit; milling more carefully will not fix it.</td></tr>
+<tr><td>VPanel refuses the file with an NC error</td><td>A coordinate outside the machine's travel, or a lift above the Z ceiling. The <em>Off the bed</em> check and the Z-reach check name the cause.</td></tr>
+<tr><td>Wrong depth after a bit change</td><td>Re-zero Z after every bit change and after the flip. Never XY.</td></tr>
 </table></div>
 
-<h2>Probing &amp; machine link</h2>
+<h2>Probing and the link</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Connect fails</td><td>Arduino Serial Monitor open (close it), wrong COM port, or replug the Arduino.</td></tr>
-<tr><td><code>NOTOUCH</code></td><td>Red clip off / dirty copper / board not isolated from the bed / datum too high.</td></tr>
-<tr><td><code>UNSTABLE</code></td><td>Flaky contact: clean the copper, reseat the red clip.</td></tr>
-<tr><td><code>RUNAWAY</code></td><td>Point over a hole / off the board / clip fell off. This guard saved your bed — fix and re-probe.</td></tr>
-<tr><td><code>NODATUM</code></td><td>Start probing from the app (it sets the datum for you).</td></tr>
-<tr><td><code>ABORT</code></td><td>You pressed STOP or the lid opened. Nothing broken.</td></tr>
-<tr><td><span class="ui">bit ○</span> never fills</td><td>Touch the red clip to the bit. Still nothing → check D7 at the Arduino + firmware banner in a serial terminal.</td></tr>
-<tr><td>Spiky mesh in 3D view</td><td>Flaky touches. <span class="ui">Mesh check</span> flags them; re-probe those points.</td></tr>
+<tr><td>Connect fails</td><td>The Arduino Serial Monitor holds the port, wrong port, or replug and <span class="ui">Rescan the serial ports</span>.</td></tr>
+<tr><td>A whole column of probe points <em>failed</em></td><td>They were outside the machine's travel. The grid is now clipped to the reachable copper, and the job itself is off the bed — see the checks.</td></tr>
+<tr><td><em>no touch</em></td><td>Clip off, dirty copper, board not isolated from the bed, or the bit started too high.</td></tr>
+<tr><td><em>unstable</em></td><td>A flaky contact: clean the copper, reseat the clip.</td></tr>
+<tr><td>The probe will not start: "no live position"</td><td>The readout has to be alive first; wait a moment after connecting.</td></tr>
+<tr><td>A lone spike in the 3D surface</td><td>A flaky touch. Clear that row and probe again.</td></tr>
+<tr><td>Nothing jogs after a STOP</td><td>Make one Z step first (<kbd>Page Up</kbd>); the firmware holds until then.</td></tr>
+<tr><td>No machine bar, just a sentence</td><td>Linux: the link is Windows-only. Export here, send from the CNC PC.</td></tr>
+</table></div>
+
+<h2>Panels</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Symptom</th><th>Cause → fix</th></tr>
+<tr><td>"Two boards overlap" and the export refuses</td><td>Move one; <span class="ui">Lay them side by side</span> or <span class="ui">Butt them together</span>.</td></tr>
+<tr><td>A board's side is not in the cut-out</td><td>Its edge is on the sheet's edge, so there is nothing to cut there. Set the sheet's real size and corner if that is wrong.</td></tr>
+<tr><td>The panel does not fit the reachable copper</td><td>The sheet ends before the travel does, or the boards plus a gap are wider than the sheet. Move the sheet, or cut the boards one after the other.</td></tr>
 </table></div>
 
 <h2>Double-sided</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Top mirrored/offset after the flip</td><td>Physical flip ≠ configured direction. Fiducial fits <strong>can't catch this</strong>. Prevention: jog to a distinctive board hole in Top view before cutting — bit must hover over it.</td></tr>
-<tr><td>Large fiducial fit RMS</td><td>Re-capture the worst fiducial (<span class="ui">Auto</span> is repeatable), clamp before measuring, use all 4 corners.</td></tr>
-<tr><td><span class="ui">Auto</span> finder fails</td><td>Start within ~1 mm of the hole; needs copper 2.5 mm west of it; needs firmware v3 (<a href="hardware.html">reflash</a> with <code>python scripts/flash_firmware.py</code>).</td></tr>
-<tr><td>NC job ignores my origin</td><td>NC obeys <strong>G54</strong> only, not the User CS. Set G54 in VPanel: XY at machine origin, zero only Z. Verify G54 Z once after <span class="ui">Zero Z on machine</span>.</td></tr>
+<tr><td>Top mirrored or offset after the flip</td><td>Physical flip ≠ expected direction. Fiducial fits cannot catch this. Jog to a distinctive board hole with the top step selected before cutting.</td></tr>
+<tr><td>"Too far out to cut"</td><td>Re-seat the board and probe again; <span class="ui">Find it for me</span> is repeatable. The files are not written under a bad fit without asking.</td></tr>
+<tr><td>NC job ignores my origin</td><td>NC obeys G54 only. XY at the machine origin, zero only Z.</td></tr>
 </table></div>
 
-<h2>Photo &amp; rework</h2>
+<h2>Setups</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td><span class="ui">Detect from photo</span> refuses</td><td>Photo can't answer: too low-res, soft focus, glare, or bad anchors. Reshoot closer/sharper/straighter, re-click anchors with the guide green.</td></tr>
-<tr><td>Boxes over areas that look fine</td><td>Delete false alarms — but look twice: extras cluster where the mesh under-measured.</td></tr>
-<tr><td>Missed a spot you know is bad</td><td>Shallow cuts look cut in any photo. Use <span class="ui">Probe boxes</span> + <span class="ui">Mesh check</span> for depth failures.</td></tr>
-<tr><td>Overlay doesn't line up</td><td>Re-do anchors (zoom in, watch the angle guide); shoot straighter down.</td></tr>
-</table></div>
-
-<h2>Sessions</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Session loads, board missing</td><td>Sessions store the Gerber folder <em>path</em> — restore the folder or reload it; mesh/boxes/photo are intact in the file.</td></tr>
-<tr><td>Can't find exports/sessions</td><td><code>Documents\SRM-CAM\exports</code> / <code>...\sessions</code>. Dialogs reopen the last-used folder.</td></tr>
+<tr><td>"Setup loaded, but … could not be read"</td><td>The Gerber folder moved, or the file is from the first interface with something this one cannot read. It says what; check the job before you cut.</td></tr>
+<tr><td>Can't find exports or setups</td><td><code>Documents\SRM-CAM\exports</code> and <code>…\sessions</code>. Dialogs reopen the last folder used.</td></tr>
+<tr><td>The window never opens</td><td>Read <code>Documents\SRM-CAM\gui2.log</code>. On Linux without a GPU driver, run with <code>GERBER2RML_GL=software</code>.</td></tr>
 </table></div>
 
 <div class="tip"><span class="t">Still stuck?</span>
-<p><a href="https://github.com/MadsRudolph/srm-cam/issues">Open an issue</a> with the symptom, the step you were on, and the exact status-bar error.</p></div>
+<p><a href="https://github.com/MadsRudolph/srm-cam/issues">Open an issue</a> with the symptom, the step you were on, and the text of the check or the toast.</p></div>
 
 <div class="page-nav">
   <a href="reference.html"><span class="lbl">Previous</span><span class="ttl">← Files &amp; reference</span></a>
@@ -116,6 +118,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

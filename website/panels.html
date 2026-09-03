@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Several boards on one sheet — SRM-CAM guide</title>
+<meta name="description" content="Two or more Gerber folders on one piece of copper, cut in one run.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link active" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Several boards on one sheet</h1>
+<p class="lead">Two or more designs on one piece of copper, cut in one run: one trace file, one drill file, one cut-out.</p>
+
+<figure class="fig">
+  <img src="img/gui2_panel_cutout.png" alt="Two boards butted together on one sheet, with the shared cut between them">
+  <figcaption>Two boards butted together. One channel between them separates both; the outer edges on the sheet's edge are not cut.</figcaption>
+</figure>
+
+<h2>Add and place</h2>
+<ol class="steps">
+  <li><span class="st">Add</span>
+    <span class="ui">File → Add another board to the sheet…</span> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>), or <span class="ui">Add another board…</span> on the setup page. It lands to the right of what is there. The same folder twice makes two of the board (<em>buck</em>, <em>buck 2</em>).</li>
+  <li><span class="st">Pick</span>
+    Click a board on the bed, or in the list on the setup page. The placement fields, the rotation and the arrow keys act on the picked board; the others stay put.</li>
+  <li><span class="st">Arrange</span>
+    <span class="ui">Lay them side by side</span> lines them up 4&nbsp;mm apart. <span class="ui">Butt them together</span> lines them up touching. <span class="ui">Centre it on the bed</span> moves the whole sheet's worth together.</li>
+  <li><span class="st">Take off</span>
+    <span class="ui">Take this board off</span> removes the picked one.</li>
+</ol>
+
+<h2>The cut-out</h2>
+<ul>
+  <li><strong>Boards closer than the cutter share one cut</strong>, centred in the gap. Each loses half of what the cutter takes beyond the gap — 0.4&nbsp;mm a side for touching boards and a 0.8&nbsp;mm bit. The check says the number.</li>
+  <li><strong>An edge on the sheet's edge is not cut.</strong> Once the copper's size and corner are set, a board edge within 0.5&nbsp;mm of the sheet's edge is the sheet's edge, and the cut-out leaves that side out. A board hanging that little off the copper is a warning, not a failure.</li>
+  <li>Boards between one and two bit widths apart get two rings that overlap harmlessly. A strip of waste under a millimetre between them is a warning: it can break loose and jam the cutter.</li>
+  <li>Boards that overlap cannot be cut, and the export refuses.</li>
+</ul>
+
+<h2>Everything else</h2>
+<ul>
+  <li>The files are named after every board (<code>buck+buck_2_traces.nc</code>) unless you type a job name.</li>
+  <li>The dry run traces every outline. Isolation sees all the copper at once, so two boards placed close enough to short each other show up in the checks like any other short.</li>
+  <li>The probe grid, the screws and the checks see the whole sheet's worth.</li>
+  <li>Setups save every board with its own placement and rotation.</li>
+</ul>
+<div class="note"><span class="t">Single-sided only</span>
+<p>A double-sided job is one board registered to its holes. Add boards to a single-sided job.</p></div>
+
+<div class="page-nav">
+  <a href="milling-a-board.html"><span class="lbl">Previous</span><span class="ttl">← Milling a board</span></a>
+  <a class="next" href="holding-the-copper.html"><span class="lbl">Next</span><span class="ttl">Holding the copper →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

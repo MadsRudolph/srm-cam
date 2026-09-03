@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hardware &amp; firmware — SRM-CAM guide</title>
-<meta name="description" content="The Arduino SPI probe board: wiring, flashing, safety limits, and the live machine link.">
+<meta name="description" content="The Arduino on the SRM-20's SPI bus: wiring, flashing, how a touch is measured, and the safety limits.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -53,95 +54,59 @@
 <div class="content">
 
 <h1>Hardware &amp; firmware</h1>
-<p class="lead">An Arduino on the SRM-20's internal SPI bus = live DRO, electrical touch sensing, auto probing, click-to-jog, auto fiducial finding — and, since firmware v3, the spindle and transport controls too (<a href="machine-control.html">Machine control</a>).</p>
+<p class="lead">An Arduino on the SRM-20's internal SPI bus gives a live position readout, electrical touch sensing, bed probing, click-to-jog, zero Z and the fiducial finder.</p>
 
-<div class="note"><span class="t">Optional — everything else works without it</span>
-<p>This whole page is about one convenience: <strong>automatic</strong> probing. Traces, drilling, cut-out, double-sided registration, rework, simulation and every export run on a stock SRM-20 through VPanel with nothing fitted to the machine, and <a href="getting-started.html#modes">Novice mode</a> hides the machine <em>dock</em> — live DRO, jog, streaming, the machine test — and bed leveling with it, because probing drives the machine and <span class="ui">STOP</span> is in that dock. Novice keeps <span class="ui">Corner = tool</span>, which only reads the tool position. Bed leveling without the Arduino works in either mode — <a href="bed-leveling.html">measure the grid by hand</a> and type the heights in.</p></div>
+<div class="note"><span class="t">Optional, and Windows-only</span>
+<p>Everything else — traces, drilling, cut-out, panels, double-sided registration, rework, the checks and every export — runs on a stock SRM-20 through VPanel with nothing fitted. Without the link the machine bar says so and stays out of the way. Bed levelling without the Arduino works by <a href="bed-leveling.html">measuring the grid by hand</a>.</p></div>
 
 <h2>Install (one-time)</h2>
 <ol class="steps">
   <li><span class="st">Fit the Arduino</span>
     Behind the SRM-20's back panel, wired to the controller's SPI header. Full wiring: <code>docs/2026-06-25-srm20-spi-and-bed-leveling.md</code> in the repo.</li>
   <li><span class="st">Flash</span>
-    <code>python scripts/flash_firmware.py</code> — syncs the bundled library, compiles, uploads, and verifies the board came back as v3 with the patched features. <code>--compile-only</code> just checks the build; <code>--port COM4</code> pins the port. Needs an <code>arduino-cli</code> (the Arduino IDE bundles one). 115200 baud.</li>
-  <li><span class="st">Verify, then close the Serial Monitor</span>
-    You should see <code># SRM-20 prober v3 ready.</code> followed by the command list. The app can't open the port while the Serial Monitor holds it.</li>
+    <code>python scripts/flash_firmware.py</code> syncs the bundled library, compiles, uploads and verifies the board came back as v3. Needs an <code>arduino-cli</code>; the Arduino IDE bundles one. 115200 baud.</li>
+  <li><span class="st">Close the Serial Monitor</span>
+    The app cannot open the port while the IDE holds it.</li>
 </ol>
-
 <div class="danger"><span class="t">Do not flash from the Arduino IDE</span>
-<p>The sketch includes the library with angle brackets, so the IDE resolves it from <code>Documents\Arduino\libraries</code> — <strong>not from this repo</strong>. If that copy is stale you get a firmware that compiles cleanly, boots, answers the version query and probes fine, but is quietly missing commands (they build as <code>NOPATCH</code> stubs). <code>flash_firmware.py</code> syncs first, every time, so the two cannot drift.</p></div>
-
-<div class="note"><span class="t">Old firmware?</span>
-<p>If probing works but <span class="ui">Auto</span> fiducials or drift correction don't, reflash — one flash gets everything (v3).</p></div>
+<p>The sketch includes the library with angle brackets, so the IDE resolves it from <code>Documents\Arduino\libraries</code>, not from this repo. A stale copy builds cleanly and quietly lacks commands. <code>flash_firmware.py</code> syncs first, every time.</p></div>
 
 <h2>Probe wiring (every session)</h2>
-<p><strong>One clip: red (D7) → the copper board.</strong> The tool is already grounded through the collet/spindle to the machine frame. Bit touches copper → D7 pulled LOW = contact.</p>
-<ul>
-  <li>Isolate the board from the bed (paper/tape under it) — the only ground path must be the bit on copper.</li>
-  <li>Spindle <strong>OFF</strong> for all probing.</li>
-  <li>Test: touch the red clip to the bit — <span class="ui">bit ○</span> fills.</li>
-</ul>
-
-<h2>Machine dock tools</h2>
-<p>The dock keeps what you reach for with a hand on the machine; the rest moved to the <span class="ui">Machine</span> menu. Both are covered in full on <a href="machine-control.html">Machine control</a>.</p>
-<div class="tbl-wrap"><table>
-<tr><th>Control</th><th>Does</th></tr>
-<tr><td><span class="ui">Connect</span> + port</td><td>Open/close the serial link; DRO goes live</td></tr>
-<tr><td><span class="ui">Z ▲ / ▼</span> + step</td><td>Jog Z. <kbd>PageUp</kbd>/<kbd>PageDown</kbd> do the same app-wide</td></tr>
-<tr><td><span class="ui">Probe Z</span></td><td>Touch-off: descend until contact, stop at the surface</td></tr>
-<tr><td><span class="ui">Spindle</span></td><td>Start/stop the tool. <strong>Speed is not set here</strong> — it stays on VPanel's slider</td></tr>
-<tr><td><span class="ui">Pause</span> / <span class="ui">Resume</span></td><td>Hold and release the move in progress</td></tr>
-<tr><td>Status strip</td><td><code>LID OPEN</code> · <code>spindle</code> · <code>ERROR</code> · <code>FAULT</code>, polled ~1 Hz from the machine's own status word</td></tr>
-<tr><td><span class="ui">STOP</span></td><td>Abort now: stop the queued move, lift, disconnect</td></tr>
-</table></div>
-
-<h3>On the Machine menu</h3>
-<div class="tbl-wrap"><table>
-<tr><th>Item</th><th>Does</th></tr>
-<tr><td><span class="ui">Click to jog</span></td><td>Click the preview → tool lifts ~5 mm, travels there. Snaps to holes/pins; <kbd>Ctrl</kbd>+click = exact point</td></tr>
-<tr><td><span class="ui">Align overlay to the bit</span></td><td>Sync the preview to reality (display only; exports untouched)</td></tr>
-<tr><td><span class="ui">Zero Z on machine</span></td><td>Touch-off + write origin Z. Writes the User CS origin — verify VPanel's G54 Z once before trusting for NC</td></tr>
-<tr><td><span class="ui">Move head to view position</span></td><td>Sends the head out of the way so you can reach the bed</td></tr>
-<tr><td><span class="ui">Tool trail</span> / <span class="ui">Clear trail</span></td><td>Draw the tool's path during a run</td></tr>
-<tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command, PASS / FAIL / UNKNOWN</td></tr>
-</table></div>
+<p><strong>One clip: red (D7) → the copper.</strong> The tool is grounded through the collet. Isolate the board from the bed with paper or tape, spindle <strong>off</strong>. Touch the clip to the bit: the touch chip on the machine bar reads <em>Touching</em>.</p>
 
 <h2>How a touch is measured</h2>
 <ul>
-  <li><strong>Debounced</strong> — 3 consecutive LOW reads; stepper EMI can't fake a touch.</li>
-  <li><strong>Two-stage verified</strong> — coarse 25&nbsp;µm find, lift, fine 10&nbsp;µm re-touch; must agree within 60&nbsp;µm or the point retries → <code>UNSTABLE</code>.</li>
-  <li><strong>Drift-corrected</strong> — periodic reference re-touch (<span class="ui">drift chk</span>) corrects warm-up drift.</li>
+  <li><strong>Debounced</strong> — three consecutive reads; stepper noise cannot fake a touch.</li>
+  <li><strong>Two-stage verified</strong> — a coarse descent to the surface, a lift, then a fine re-touch that must agree within 60&nbsp;µm or the point reads <em>unstable</em>.</li>
+  <li><strong>Fast above known copper</strong> — once the surface is known the descent is coarse until just above it, then fine.</li>
 </ul>
 
 <h3>Safety limits (in firmware)</h3>
 <div class="tbl-wrap"><table>
 <tr><th>Guard</th><th>Value</th><th>Prevents</th></tr>
-<tr><td>Drop floor</td><td>6 mm below safe Z</td><td>Endless descent on dead wiring</td></tr>
-<tr><td>Runaway guard</td><td>1.2 mm past known copper</td><td>Drilling into the bed when a point misses copper → <code>RUNAWAY</code></td></tr>
-<tr><td>Abort everywhere</td><td>—</td><td>STOP is honoured between every Z step, and when the lid pauses the machine</td></tr>
-<tr><td>Hole-test cap</td><td>0.2 mm past surface</td><td>Fiducial-finder touches plunging into a hole</td></tr>
+<tr><td>Drop floor</td><td>6&nbsp;mm below safe Z</td><td>Endless descent on dead wiring</td></tr>
+<tr><td>Runaway guard</td><td>1.2&nbsp;mm past known copper</td><td>Drilling into the bed when a point misses copper</td></tr>
+<tr><td>Abort everywhere</td><td>—</td><td>STOP is honoured between every Z step</td></tr>
+<tr><td>Hole-test cap</td><td>0.2&nbsp;mm past the surface</td><td>The fiducial finder plunging into a hole</td></tr>
 </table></div>
+
+<div class="warn"><span class="t">STOP does not lift the tool</span>
+<p>Motion and the spindle stop; the bit stays where it is. Raise it with <kbd>Page Up</kbd> before the next move. The retract in the firmware is cancelled by its own abort flag; the fix waits for a moment when the machine is idle to re-flash.</p></div>
 
 <h2>Serial protocol (bench reference)</h2>
 <p>115200 baud, newline-terminated, microns. The app speaks it for you.</p>
 <div class="tbl-wrap"><table>
 <tr><th>Cmd</th><th>Meaning</th></tr>
-<tr><td><code>D</code> / <code>P id x y</code> / <code>B</code></td><td>Set datum / probe point / re-touch reference (drift)</td></tr>
-<tr><td><code>T</code> / <code>W</code></td><td>Touch-off / touch-off + zero work-origin Z</td></tr>
-<tr><td><code>H x y</code></td><td>Hole test: <code>H 1</code> copper, <code>H 0</code> hole</td></tr>
+<tr><td><code>D</code> / <code>P id x y</code> / <code>B</code></td><td>Set datum / probe a point relative to it / re-touch the reference</td></tr>
+<tr><td><code>T</code> / <code>W</code></td><td>Touch-off / touch-off and zero the work-origin Z</td></tr>
+<tr><td><code>H x y</code></td><td>Hole test at absolute (x, y): copper or hole</td></tr>
 <tr><td><code>J x y</code> / <code>L</code></td><td>Jog (lifts first) / lift to safe Z</td></tr>
-<tr><td><code>Q</code> / <code>G</code> / <code>V</code></td><td>Position+touch / work origin / version+features</td></tr>
-<tr><td><code>C</code> / <code>M x y z s</code></td><td>Experimental streaming: begin session / one move</td></tr>
-<tr><td><code>X</code> / <code>S rpm</code></td><td>Full status word / spindle on-off (the rpm value is ignored by the machine)</td></tr>
+<tr><td><code>Q</code> / <code>G</code> / <code>V</code></td><td>Position and touch / work origin / version and features</td></tr>
+<tr><td><code>X</code> / <code>S rpm</code></td><td>Status word / spindle on-off (the rpm value is ignored by the machine)</td></tr>
 <tr><td><code>~</code> <code>^</code> <code>%</code> <code>K</code></td><td>Pause / resume / stop the move / cancel the job</td></tr>
-<tr><td><code>Y</code> / <code>I</code></td><td>Move to view position (<strong>moves the head</strong>) / machine remote-protocol version</td></tr>
-<tr><td><code>F us</code> / <code>N dx dy dz s</code> / <code>A 0|1</code></td><td>SPI framing delay / timed relative move / status-guard toggle</td></tr>
-<tr><td><code>!</code></td><td>ABORT — stops the spindle, drops the move in flight, releases a pause hold, then lifts</td></tr>
+<tr><td><code>Y</code> / <code>N dx dy dz s</code></td><td>Move to the view position / timed relative move</td></tr>
+<tr><td><code>!</code></td><td>Abort: stop the spindle and the move in flight</td></tr>
 </table></div>
-<p>Errors: <code>E &lt;id|cmd&gt; NOTOUCH | UNSTABLE | NODATUM | ABORT | RUNAWAY | LOW | COVER | NOPATCH | NOSESSION | CMDERR | DEADMAN | NOREF | PAUSETIMEOUT</code>. For probe points the second field is the point id; for every other command it is the command letter. Meanings in <a href="troubleshooting.html">Troubleshooting</a>.</p>
-
-<h2>Streaming (experimental)</h2>
-<p><span class="ui">Stream (exp.)</span> sends toolpaths move-by-move over SPI — no VPanel. Every session <strong>starts as a dry run</strong> (Z held 2&nbsp;mm up, can't cut); a wet run starts and stops the spindle itself, holds on <span class="ui">Pause</span> and aborts if the lid opens — but the <strong>spindle speed must still be set on VPanel's slider first</strong>, and the raw speed value has to be calibrated on dry runs. For real jobs, use exported <code>.nc</code> through VPanel. Full detail on <a href="machine-control.html">Machine control</a>.</p>
 
 <div class="page-nav">
   <a href="photo-and-rework.html"><span class="lbl">Previous</span><span class="ttl">← Photo check &amp; rework</span></a>
@@ -154,6 +119,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>
