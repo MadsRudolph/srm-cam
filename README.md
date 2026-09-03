@@ -11,7 +11,7 @@ replacing the mods site and FlatCAM.
 
 **📖 User guide: [madsrudolph.github.io/srm-cam](https://madsrudolph.github.io/srm-cam/)**
 
-![SRM-CAM main window](docs/Readme_photos/srmcam_GUI_MainPage.png)
+![SRM-CAM: the run plan, the bed, the selected step, the machine bar](website/img/gui2_traces.png)
 
 ## Install
 
@@ -139,12 +139,12 @@ Program Files so only an admin can change it. See
 
 <table>
 <tr>
-<td width="50%"><img src="docs/Readme_photos/srmcam_3dview_traces.png" alt="3D toolpath simulation"><br><sub><b>3D toolpath simulation</b> — orbit and play back the whole job before cutting.</sub></td>
-<td width="50%"><img src="docs/Readme_photos/srmcam_BedLeveling_3DView.png" alt="3D bed height-map"><br><sub><b>Bed height-map</b> — probe the surface so the cut depth follows the board.</sub></td>
+<td width="50%"><img src="website/img/gui2_checks.png" alt="The checks, on screen"><br><sub><b>Checks on screen</b> — fits the bed, Z reach, shorts, the copper, the screws; the worst finding stays on the rail.</sub></td>
+<td width="50%"><img src="website/img/gui2_level.png" alt="A probed surface drawn on the board"><br><sub><b>Bed levelling</b> — probe the surface so the cut depth follows the board, one map per face.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/Readme_photos/srmcam_doublesided.png" alt="Double-sided registration"><br><sub><b>Double-sided</b> — dowel-pin or measured-fiducial registration for the flip.</sub></td>
-<td width="50%"><img src="docs/Readme_photos/rework_example.png" alt="Multi-region rework"><br><sub><b>Rework</b> — box every spot to re-cut, each with its own depth, in one pass.</sub></td>
+<td width="50%"><img src="website/img/gui2_xray.png" alt="Design X-ray of a double-sided board"><br><sub><b>Double-sided</b> — dowel-pin or fiducial registration, and the top files re-written to where the board landed.</sub></td>
+<td width="50%"><img src="website/img/gui2_panel_cutout.png" alt="Two boards on one sheet with a shared cut"><br><sub><b>Panels</b> — several boards on one sheet; touching boards share one cut.</sub></td>
 </tr>
 </table>
 

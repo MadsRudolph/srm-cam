@@ -6,7 +6,10 @@
 <title>Double-sided boards — SRM-CAM guide</title>
 <meta name="description" content="Dowel-pin and fiducial registration, the flip, measuring where the board landed, and the top files re-written to match.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
-<link rel="stylesheet" href="css/site.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20260903b">
 </head>
 <body>
 <div class="layout">
@@ -63,6 +66,10 @@
 
 <h2>The plan</h2>
 <p>Ticking the box changes the run plan: the cut-out moves to the end, because it is what frees the board from its own registration.</p>
+<figure class="fig narrow">
+  <img src="img/gui2_rail_double.png" alt="The rail for a double-sided job with fiducial registration">
+  <figcaption>A fiducial job on the rail: the flip and the measurement sit between the bottom and the top passes.</figcaption>
+</figure>
 <ol class="steps">
   <li><span class="st">1 · Dowel holes / Fiducial holes</span> — <code>&lt;name&gt;_align.nc</code>. Dowels drill on into the bed and cannot be undone; the export asks first.</li>
   <li><span class="st">2 · Drill the board</span> — <code>&lt;name&gt;_bottom_drill.nc</code>.</li>

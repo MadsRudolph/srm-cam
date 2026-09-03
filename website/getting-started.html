@@ -6,7 +6,10 @@
 <title>Getting started — SRM-CAM guide</title>
 <meta name="description" content="Install SRM-CAM on Windows or Linux, learn the window, the two tiers, and the files KiCad has to give you.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
-<link rel="stylesheet" href="css/site.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20260903b">
 </head>
 <body>
 <div class="layout">
@@ -79,6 +82,21 @@
   <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected">
   <figcaption>Four regions that never move: the rail, the stage, the inspector, the machine bar.</figcaption>
 </figure>
+<div class="figs">
+  <figure class="fig">
+    <img src="img/gui2_rail.png" alt="The rail: the run plan with a finding on its banner">
+    <figcaption>The rail. Numbered steps are files; the rows between them are things you do by hand. The banner holds the worst finding.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/gui2_inspector_step.png" alt="The inspector showing the drill step">
+    <figcaption>The inspector for the drill step: what it needs, the file, and the cutting parameters in the Full tier.</figcaption>
+  </figure>
+</div>
+<figure class="fig">
+  <img src="img/gui2_bar.png" alt="The machine bar">
+  <figcaption>The machine bar. Everything except probing works without the link; <span class="ui">STOP</span> is always there.</figcaption>
+</figure>
+
 <ul>
   <li><strong>The rail</strong> (left) is the run plan — the same order, and the same files, that the export writes. Numbered steps are files you send; the ones between them (fit the bit, set the origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>
   <li><strong>The stage</strong> (middle) is the bed in machine coordinates: the copper sheet, the board, the toolpaths of the selected step, the spoilboard's screw grid. Drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan, <span class="ui">Fit</span> to frame the work. <span class="ui">Bed — as cut</span> is the only frame the machine understands; <span class="ui">Design X-ray</span> exists for checking that the two faces of a double-sided board register.</li>
@@ -96,6 +114,10 @@
 <tr><td>Hold-down screws, and the raised travel height that goes with them</td><td>Output format and mirroring</td></tr>
 <tr><td>Placing the job on the bed</td><td>Streaming over the link (experimental), the machine test, saving your own tool profiles</td></tr>
 </table></div>
+<figure class="fig narrow">
+  <img src="img/gui2_tiers.png" alt="The sheet explaining the two tiers">
+  <figcaption><span class="ui">Interface → What the two tiers differ by…</span></figcaption>
+</figure>
 <p><span class="ui">Interface → What the two tiers differ by…</span> lists it in the app. A lab that wants the tier fixed sets <code>SRM_CAM_MODE</code> to <code>essential</code> or <code>full</code> in the environment or the shortcut.</p>
 
 <h2>Files from KiCad</h2>
