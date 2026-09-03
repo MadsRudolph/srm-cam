@@ -91,6 +91,16 @@ class LevelPage(inspector.Page):
         self.set_head("When you need it", "Level the bed")
         self._points = []              # [(x, y)] in machine mm
         self._failed = []              # [(row, why)] from the last probe run
+        # Which face this map describes. After a flip the top is a different
+        # physical surface with its own zero, so a map is only meaningful on
+        # the side it was probed on - and one map that silently applies to
+        # both is how a good measurement ends up cutting the wrong face.
+        self._side = "bottom"
+        # One measurement PER FACE, kept side by side. They describe different
+        # physical surfaces, so overwriting one with the other loses a couple
+        # of minutes of machine time and, worse, invites cutting the top with
+        # the bottom's numbers.
+        self._maps = {"bottom": None, "top": None}
         self._run = None
 
         self.add(widgets.body(
@@ -114,6 +124,19 @@ class LevelPage(inspector.Page):
         self.add(first)
 
         grid = widgets.Section("The grid")
+        self.side_switch = widgets.Segmented(
+            [("bottom", "Bottom",
+              "The face milled first, with the board as you laid it down."),
+             ("top", "Top",
+              "The face milled after the flip. A different physical surface "
+              "with its own zero, so it gets its own measurement.")],
+            "bottom")
+        self.side_switch.changed.connect(self._on_side)
+        grid.add(self.side_switch)
+        grid.add(widgets.hint(
+            "Each face is measured separately and both are kept. The one you "
+            "are looking at follows the step you are on, and probing writes "
+            "into whichever is selected here."))
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
@@ -181,6 +204,15 @@ class LevelPage(inspector.Page):
             "is a real tilt or one bad point.")
         self.show_mesh.toggled.connect(lambda _v: self._draw_mesh())
         table.add(self.show_mesh)
+        self.solid_btn = widgets.button(
+            "See the surface in 3D…", on=self._show_solid,
+            tip="The same measurement as a solid you can turn over." +
+                chr(10)*2 +
+                "The heatmap says where it is high, which is what the cut "
+                "depth needs. This says what shape it is - a bow, a dish and "
+                "a tipped corner look alike from above and want different "
+                "fixtures.")
+        table.add(self.solid_btn)
         table.add(widgets.hint(
             "Height is relative to the first point, not an absolute machine Z. "
             "Positive means that spot sits higher than the reference."))
@@ -254,10 +286,34 @@ class LevelPage(inspector.Page):
                 continue
         return out
 
-    def height_map(self):
-        """The height map, or None if it is not on or not complete enough."""
+    def map_side(self):
+        return self._side
+
+    def height_map(self, side=None):
+        """The height map, or None if it is not on, not complete, or not this
+        face's. ``side`` defaults to whichever face the plan is showing."""
         if not self.use_chk.isChecked():
             return None
+        want = side or self.ctl.current_side() or self._side
+        if want and self._side != want:
+            # Not the face on screen: read that face's own measurement.
+            other = self._maps.get(want)
+            if not other or not other.get("apply"):
+                return None
+            pts = []
+            for cells in (other.get("rows") or []):
+                try:
+                    pts.append((float(cells[0]), float(cells[1]),
+                                float(cells[2])))
+                except (TypeError, ValueError, IndexError):
+                    continue
+            if len(pts) < 3:
+                return None
+            try:
+                return lv.HeightMap.from_points(pts, other.get("nx", 3),
+                                                other.get("ny", 3))
+            except Exception:
+                return None
         pts = self.points()
         if len(pts) < 3:
             return None
@@ -265,6 +321,66 @@ class LevelPage(inspector.Page):
             return lv.HeightMap.from_points(pts, self.nx.value(), self.ny.value())
         except Exception:
             return None
+
+    def _on_side(self, side):
+        """Switch faces, keeping both measurements."""
+        if side == self._side:
+            return
+        self._maps[self._side] = self._table_state()
+        self._side = side
+        self._load_table(self._maps.get(side))
+        n = len(self.points())
+        self.ctl.say("info", "Showing the %s. %s"
+                     % ("top" if side == "top" else "bottom",
+                        "%d points measured." % n if n else "Nothing probed "
+                        "on this face yet."))
+
+    def _table_state(self):
+        rows = []
+        for r in range(self.table.rowCount()):
+            rows.append([(self.table.item(r, c).text()
+                          if self.table.item(r, c) else "") for c in range(3)])
+        return {"nx": int(self.nx.value()), "ny": int(self.ny.value()),
+                "apply": bool(self.use_chk.isChecked()),
+                "show": bool(self.show_mesh.isChecked()), "rows": rows}
+
+    def _load_table(self, data):
+        data = data or {"rows": [], "apply": False, "show": False}
+        rows = data.get("rows") or []
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(rows))
+        pts = []
+        for r, cells in enumerate(rows):
+            for c, txt in enumerate(list(cells)[:3]):
+                it = QTableWidgetItem(str(txt))
+                if c < 2:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(r, c, it)
+            try:
+                pts.append((float(cells[0]), float(cells[1])))
+            except (TypeError, ValueError, IndexError):
+                pass
+        self.table.blockSignals(False)
+        self._points = pts
+        if "nx" in data:
+            self.nx.setValue(int(data["nx"]))
+            self.ny.setValue(int(data["ny"]))
+        self.use_chk.setChecked(bool(data.get("apply", False)))
+        self.show_mesh.setChecked(bool(data.get("show", False)))
+        self.ctl.stage.set_probe_points(self._points)
+        self._sync_enabled()
+        self._advise()
+        self._draw_mesh()
+
+    def follow_step(self, side):
+        """The plan moved to a face that CUTS; show that face's measurement.
+
+        ``side`` is None when the step cuts nothing - the levelling page's own
+        step included - and then the operator's choice stands.
+        """
+        if side and side != self._side:
+            self.side_switch.set_current(side)
+            self._on_side(side)
 
     def _draw_mesh(self):
         """Sample the measured surface over the board and hand it to the stage.
@@ -276,6 +392,16 @@ class LevelPage(inspector.Page):
         stage = self.ctl.stage
         if not self.show_mesh.isChecked():
             stage.set_level_mesh(None, None, 0.0)
+            return
+        showing = self.ctl.current_side()
+        if showing is not None and self._side != showing:
+            # Drawn on the wrong face it is not a helpful approximation, it is
+            # a picture of a surface that is not there.
+            stage.set_level_mesh(None, None, 0.0)
+            self.ctl.say("info",
+                         "This height map was probed on the %s. Nothing is "
+                         "drawn on the %s until you probe it."
+                         % (self._side, showing))
             return
         hmap = self.height_map()
         pts = self.points()
@@ -328,7 +454,12 @@ class LevelPage(inspector.Page):
                 it = self.table.item(r, c)
                 cells.append(it.text() if it else "")
             rows.append(cells)
-        return {"nx": int(self.nx.value()), "ny": int(self.ny.value()),
+        maps = dict(self._maps)
+        maps[self._side] = self._table_state()
+        return {"side": self._side, "maps": maps,
+                # The visible face, flat, so a setup written here still opens
+                # in a build that predates two-sided maps.
+                "nx": int(self.nx.value()), "ny": int(self.ny.value()),
                 "apply": bool(self.use_chk.isChecked()),
                 "show": bool(self.show_mesh.isChecked()),
                 "rows": rows}
@@ -355,6 +486,20 @@ class LevelPage(inspector.Page):
                 pass               # a row without coordinates is not a point
         self.table.blockSignals(False)
         self._points = pts
+        self._side = data.get("side", "bottom")
+        maps = data.get("maps")
+        if isinstance(maps, dict):
+            self._maps = {"bottom": maps.get("bottom"), "top": maps.get("top")}
+        else:
+            # A setup from before there were two: whatever it holds belongs to
+            # the face it says, and the other has not been probed.
+            self._maps = {"bottom": None, "top": None}
+            self._maps[self._side] = {
+                "nx": data.get("nx", 3), "ny": data.get("ny", 3),
+                "apply": bool(data.get("apply", False)),
+                "show": bool(data.get("show", False)),
+                "rows": data.get("rows") or []}
+        self.side_switch.set_current(self._side)
         self.use_chk.setChecked(bool(data.get("apply", False)))
         self.show_mesh.setChecked(bool(data.get("show", False)))
         self.ctl.stage.set_probe_points(self._points)
@@ -412,6 +557,9 @@ class LevelPage(inspector.Page):
             "lifts the tool." % (dx, dy))
         self._z0 = None
         self._failed = []
+        # The switch, not the step. The operator picked a face; a step that
+        # cuts nothing has no opinion, and taking one from it is how a top
+        # probe ended up stored as the bottom.
         self._run = ProbeRun(port, pts, link.should_abort, self)
         self._run.point.connect(self._on_point)
         self._run.finished.connect(lambda msg, p=port: self._on_done(msg, p))
@@ -449,6 +597,37 @@ class LevelPage(inspector.Page):
             self.table.blockSignals(False)
         self.progress.setValue(row + 1)
         self._draw_mesh()
+
+    def _show_solid(self):
+        """Open the measured surface as a turnable mesh."""
+        hmap = self.height_map(side=self._side)
+        pts = self.points()
+        if hmap is None or len(pts) < 3:
+            self.ctl.say("warn", "Probe at least three points on this face "
+                                 "first — there is no surface to show yet.")
+            return
+        try:
+            import numpy as np
+            from gerber2rml.gui2.bedviz import BedVisualizerWindow
+        except Exception as e:
+            self.ctl.report_error(
+                "The 3D view could not start", e,
+                "It needs pyqtgraph and PyOpenGL. Run "
+                "'python -m gerber2rml.doctor' to install the interface "
+                "dependencies, then try again.")
+            return
+        xs_p = [x for x, _y, _z in pts]
+        ys_p = [y for _x, y, _z in pts]
+        xs = np.linspace(min(xs_p), max(xs_p), 40)
+        ys = np.linspace(min(ys_p), max(ys_p), 40)
+        Z = [[float(hmap(float(x), float(y))) for y in ys] for x in xs]
+        self._solid = BedVisualizerWindow(
+            xs, ys, Z, pts,
+            title="%s — the %s face" % (self.ctl.state.name or "board",
+                                        self._side),
+            parent=self)
+        self._solid.show()
+        self._solid.raise_()
 
     def _report_failures(self):
         """Say which points the machine refused to stand behind, and why."""

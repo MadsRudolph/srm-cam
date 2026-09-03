@@ -47,12 +47,15 @@ class FidFindRun(QObject):
     link lets go of it, and STOP still reaches the run through the link's
     shared abort event rather than through the port.
 
-    The coordinates need care. ``D`` latches the datum at the CURRENT position
-    and every ``H``/``P`` after it is an offset FROM that datum - so with the
-    tool sitting over the hole, the hole is (0, 0) and the start point is
-    (0, 0), not the tool's machine position. Passing machine coordinates here
-    probes a hundred millimetres off the board; the result is turned back into
-    machine coordinates by adding the datum, which is where the tool was.
+    The coordinates need care, because the two commands used here do NOT agree
+    with each other. ``P`` - the surface reference - is an offset from the
+    datum ``D`` latched at the current position. ``H`` - the hole test the
+    edge-walking is built from - takes ABSOLUTE machine coordinates; the
+    firmware says so at the top of its handler and jumps straight to them.
+
+    So the start point is the tool's machine position, not (0, 0). Passing
+    zero drives the head to the corner of the bed at full speed, which is
+    exactly what it did the first time this ran on the machine.
     """
     found = Signal(int, float, float)         # row, machine x, machine y
     failed = Signal(int, str)
@@ -98,13 +101,14 @@ class FidFindRun(QObject):
             if seed is None:
                 return
             self.note.emit("Walking the hole edges…")
-            ox, oy = fidfind.find_hole_center(
+            # Absolute machine millimetres: H is not datum-relative.
+            cx, cy = fidfind.find_hole_center(
                 ser, seed[0] / 1000.0, seed[1] / 1000.0,
                 should_abort=self._should_abort)
             if self._should_abort():
                 self.failed.emit(self._row, "stopped")
                 return
-            self.found.emit(self._row, self._dx + ox, self._dy + oy)
+            self.found.emit(self._row, cx, cy)
         except Exception as e:
             try:
                 if ser is not None:
@@ -133,8 +137,11 @@ class FidFindRun(QObject):
         can actually see - it is visible, and that is faster than any search.
         """
         import math
-        if not fidfind.hole_test(ser, 0, 0, should_abort=self._should_abort):
-            return (0, 0)                      # already inside; nothing to do
+        # H is absolute, so the search walks around where the TOOL is.
+        x0 = int(round(self._dx * 1000))
+        y0 = int(round(self._dy * 1000))
+        if not fidfind.hole_test(ser, x0, y0, should_abort=self._should_abort):
+            return (x0, y0)                    # already inside; nothing to do
         step = max(200, int(self._clearance_um))    # never step over the hole
         rings = max(1, int(self._search_um // step))
         tested = 1
@@ -148,8 +155,8 @@ class FidFindRun(QObject):
                     self.failed.emit(self._row, "stopped")
                     return None
                 a = 2 * math.pi * k / n
-                x = int(round(r * math.cos(a)))
-                y = int(round(r * math.sin(a)))
+                x = x0 + int(round(r * math.cos(a)))
+                y = y0 + int(round(r * math.sin(a)))
                 tested += 1
                 if not fidfind.hole_test(ser, x, y,
                                          should_abort=self._should_abort):
@@ -277,11 +284,41 @@ class FlipFitPage(inspector.Page):
         fit.add(self.rms)
         self.verdict = widgets.body("")
         fit.add(self.verdict)
+        # The fit is NOT this button. It is adopted as soon as two rows are
+        # filled, because everything downstream needs it before this point is
+        # reached - the probe grid included. Calling the button "Fit and
+        # export" implied one step where there are three, and the middle one
+        # is the one people were skipping.
+        fit.add(widgets.body(
+            "The fit is applied as soon as two holes are measured — the top "
+            "views already show the board where it really is. What is left is "
+            "to measure THIS face's surface and then write the files:"))
+        self.order = widgets.hint("")
+        fit.add(self.order)
+        # Finishing blind holes is a separate job from writing the top traces:
+        # it only exists when the first side did not break through, and it is
+        # deliberately shallow, so it does not belong behind the same button.
+        self.finish_depth = inspector.num(0.50, 0.10, 3.0, 0.05, 2,
+                                          lambda _v: None, suffix=" mm")
+        fit.add(widgets.Field(
+            "Finish blind holes, depth", self.finish_depth,
+            help="How far to drill from THIS face, for holes the first side "
+                 "did not break through." + chr(10)*2 +
+                 "It is not the board thickness. The hole is already most of "
+                 "the way through, so a few tenths meets it - and going the "
+                 "whole way would put the bit into the bed for no reason."))
+        self.drill_btn = widgets.button(
+            "Finish the blind holes from this side", on=self._finish_holes,
+            tip="Writes <name>_top_drill: every hole, reflected and warped to "
+                "the measured flip so it lands on the one already there, at "
+                "the depth above.")
+        fit.add(self.drill_btn)
         self.fit_btn = widgets.button(
-            "Fit, and rewrite the top traces", kind="primary",
+            "Write the top traces and the cut-out", kind="primary",
             on=self._apply,
-            tip="Overwrites <name>_top_traces with a copy warped to the "
-                "measured flip. Nothing else is touched.")
+            tip="Rewrites <name>_top_traces and <name>_cutout, both warped to "
+                "the measured flip and levelled to this face if it has been "
+                "probed. Nothing else is touched.")
         self.fit_btn.setEnabled(False)
         fit.add(self.fit_btn)
         self.add(fit)
@@ -483,8 +520,74 @@ class FlipFitPage(inspector.Page):
                     "flipped the other way. Re-seat it and probe again."
                     ).format(worst)
         self.verdict.setText(note + f"  (RMS {err:.3f} mm)")
+        self._sync_order()
         self.fit_btn.setEnabled(True)
         self._show_where_to_jog(t, len(m))
+
+    def _finish_holes(self):
+        """Re-drill the holes from this side, to meet the blind ones."""
+        from gerber2rml.doublesided import build_top_drill
+        from gerber2rml.gui2 import workspace
+        st = self.ctl.state
+        m = self.measured()
+        if len(m) < 2 or st.gerber_dir is None:
+            self.ctl.say("warn", "Measure two reference holes first — without "
+                                 "the fit the new holes would not land on the "
+                                 "old ones.")
+            return
+        out = self.ctl.export_dir()
+        if out is None:
+            out = QFileDialog.getExistingDirectory(
+                self, "Which folder holds this job's files?",
+                workspace.remembered_dir("out", "exports"))
+            if not out:
+                return
+        depth = self.finish_depth.value()
+        thickness = self.ctl.inspector.setup.thickness.value()
+        if depth >= thickness:
+            if not dialogs.confirm_irreversible(
+                    self, "That goes through the board and into the bed",
+                    "%.2f mm from this face on a %.2f mm board reaches the "
+                    "spoilboard. The holes only need finishing — they are "
+                    "already drilled from the other side."
+                    % (depth, thickness), "Drill it anyway"):
+                return
+        try:
+            path = build_top_drill(
+                st.gerber_dir, out, st.name, drill=self.ctl.cutting_drill(),
+                machine=st.machine, offset=(st.place_x, st.place_y),
+                rotate=st.rotate, registration="fiducial",
+                fiducials=self.ctl.fiducial_spec(), measured_fiducials=m,
+                allow_scale=self.scale_chk.isChecked(),
+                level=self.ctl.level_page.height_map(side="top"),
+                depth=depth)
+        except Exception as e:
+            self.ctl.report_error(
+                "The finishing drill could not be written", e,
+                "Nothing has been changed. Check the folder still holds this "
+                "job's files.")
+            return
+        self.ctl.say("ok", "Wrote %s — %.2f mm from this face, on the fit."
+                     % (path.name, depth))
+
+    def _sync_order(self):
+        """The three steps, with the one you are on marked.
+
+        Written out because the middle one has no button of its own on this
+        page and was being skipped: the top traces would go out levelled by
+        the other face's map, or not levelled at all.
+        """
+        fitted = self.ctl._top_fit is not None
+        probed = self.ctl.level_page.height_map(side="top") is not None
+        rows = [("1  fit from the fiducials", fitted, "done" if fitted
+                 else "measure two holes"),
+                ("2  probe THIS face on Level the bed", probed,
+                 "done" if probed else "not yet - the traces would go out "
+                 "unlevelled"),
+                ("3  write the files", False, "this button")]
+        self.order.setText(chr(10).join(
+            "%s %s  -  %s" % ("[x]" if ok else "[ ]", label, note)
+            for label, ok, note in rows))
 
     def _show_where_to_jog(self, t, done):
         """Where the holes you have NOT measured yet actually are.
@@ -528,15 +631,45 @@ class FlipFitPage(inspector.Page):
                 workspace.remembered_dir("out", "exports"))
             if not out:
                 return
+        # The height map in hand is whichever face was last probed. After a
+        # flip the top is a DIFFERENT physical surface, with its own shape and
+        # its own zero, so the bottom's map does not describe it - applying it
+        # is worse than not levelling at all. Only the operator knows which
+        # side it came from, so ask rather than guess.
+        # Explicitly the TOP face's map: height_map() returns None when the
+        # one in hand belongs to the other side, so a bottom map cannot leak
+        # into a top-side export.
+        level = self.ctl.level_page.height_map(side="top")
+        if level is None and self.ctl.level_page.points():
+            self.ctl.say("warn",
+                         "The height map you have was probed on the %s, so the "
+                         "top traces will be written UNLEVELLED. Probe this "
+                         "face first if you want it levelled."
+                         % self.ctl.level_page.map_side())
+        if level is not None:
+            if not dialogs.confirm_irreversible(
+                    self, "Was this height map probed on THIS side?",
+                    "The top traces are about to be levelled with the height "
+                    "map currently loaded. That is whichever face you probed "
+                    "last, and after the flip the top is a different surface "
+                    "with a different zero." + chr(10)*2 +
+                    "Re-probe the top first if you have not, or clear the map "
+                    "and export unlevelled.",
+                    "It is this side's map"):
+                return
         try:
+            # cutting_trace, not st.trace: the top is cut from the same board,
+            # held the same way, so it needs the same flex margin the bottom
+            # got. Passing the nominal job gave the top a 0.15 mm cut while
+            # the bottom had 0.585.
             path = build_top_traces(
-                st.gerber_dir, out, st.name, trace=st.trace,
+                st.gerber_dir, out, st.name, trace=self.ctl.cutting_trace(),
                 machine=st.machine, offset=(st.place_x, st.place_y),
                 rotate=st.rotate, registration="fiducial",
                 fiducials=self.ctl.fiducial_spec(),
                 measured_fiducials=m,
                 allow_scale=self.scale_chk.isChecked(),
-                level=self.ctl.level_page.height_map())
+                level=level)
             # The cut-out runs last, on the same flipped board this fit
             # describes, so it takes the same warp. Left alone it keeps the
             # geometry written before the fit existed and misses the outline
@@ -548,7 +681,7 @@ class FlipFitPage(inspector.Page):
                 fiducials=self.ctl.fiducial_spec(),
                 measured_fiducials=m,
                 allow_scale=self.scale_chk.isChecked(),
-                level=self.ctl.level_page.height_map())
+                level=level)
         except Exception as e:
             self.ctl.report_error(
                 "The top traces could not be re-written", e,

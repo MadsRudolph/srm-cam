@@ -351,6 +351,27 @@ class Stage(QWidget):
             self.frame_changed.emit(frame)
             self.update()
 
+    def snap_to_feature(self, x, y):
+        """The centre of the drawn hole nearest ``(x, y)``, or the point itself.
+
+        Uses the markers this widget is actually drawing rather than the
+        board's own geometry: they are in whatever frame the current step put
+        them in - mirrored, placed, warped by a measured flip - so "jog to
+        that hole" lands on the hole the operator is looking at rather than on
+        where the design says it should be.
+
+        The tolerance is a fraction of the VIEW, not a fixed distance, so a
+        hole stays grabbable zoomed out and precision improves as you zoom in.
+        """
+        span = max(self.width(), 1) / max(self._scale, 1e-6)
+        tol = 0.025 * span
+        best, best_d = None, tol
+        for (hx, hy, *_r) in list(self._holes) + list(self._align_holes):
+            d = math.hypot(x - hx, y - hy)
+            if d < best_d:
+                best, best_d = (hx, hy), d
+        return best if best is not None else (x, y)
+
     def set_mode(self, mode):
         self.mode = mode
         self.setCursor(QCursor(Qt.CrossCursor if mode in ("jog", "screws")
