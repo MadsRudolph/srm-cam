@@ -45,6 +45,16 @@ from gerber2rml.engine import spoilboard
 
 FOIL_MM = 0.035        # copper foil on 1.6 mm FR-4; what a cut must break
 
+# How far the cutter pushes an unsupported board down, as a share of how far
+# it arches between its fixings. The probe measured that arch at no force and
+# the warp already cuts along it; what is left uncovered is the give under
+# the cutter, and a 0.8 mm endmill at 4 mm/s does not push a board flat.
+# Charging the whole arch cut a 0.15 mm trace 0.5 mm deep on a real board
+# (2026-09-03). A quarter, capped: a sheet that arches more than this wants
+# re-fixing, not a deeper cut.
+FLEX_FRACTION = 0.25
+FLEX_CAP_MM = 0.12
+
 
 def fit_plane(points):
     """Least-squares ``z = ax + by + c`` through ``(x, y, z)`` points.
@@ -284,6 +294,11 @@ class MainWindow(QMainWindow):
         # How the copper is held down, which decides whether the probed
         # surface is the surface that gets CUT. See _flex_margin.
         self._hold = "points"        # "bonded" | "points"
+        # The extra depth for a board held at points: worked out from the
+        # probe map, or typed. A number the operator has cut with beats any
+        # estimate, and a board that keeps coming out deep is the case for it.
+        self._flex_auto = True
+        self._flex_mm = 0.0
         self.screwed = False
         # The job is named after the folder, or after every board on the
         # sheet, until the operator types a name; then it is theirs.
@@ -1302,24 +1317,57 @@ class MainWindow(QMainWindow):
         """
         if self._hold != "points":
             return 0.0
+        if not self._flex_auto:
+            return max(0.0, float(self._flex_mm))
+        arch = self._flex_arch()
+        if arch is None:
+            return 0.0
+        applied, span = arch
+        if not applied:
+            # The map is not being applied, so nothing cancels the tilt: the
+            # whole range is what the cut has to reach through.
+            return max(0.0, span + FOIL_MM)
+        return max(0.0, min(span * FLEX_FRACTION, FLEX_CAP_MM) + FOIL_MM)
+
+    def _flex_arch(self):
+        """``(applied, span)`` from the bottom face's map, or None without one.
+
+        ``applied`` says whether the map is warping the cut. If it is, ``span``
+        is the arch - what a plane cannot explain, see :func:`flex_residual`;
+        if not, it is the whole range, since nothing cancels the tilt.
+        """
         # The bottom face's measurement, whichever face the rail is showing:
         # what gets exported must not depend on which row is highlighted.
         pts = self.level_page.points(side="bottom")
         if len(pts) < 3:
-            return 0.0
+            return None
+        zs = [z for _x, _y, z in pts]
         if self.level_page.height_map(side="bottom") is None:
-            # The map is not being applied, so nothing cancels the tilt: the
-            # whole range is what the cut has to reach through.
-            zs = [z for _x, _y, z in pts]
-            return max(0.0, (max(zs) - min(zs)) + FOIL_MM)
+            return False, max(zs) - min(zs)
         span = flex_residual(pts)
         if span is None:
             # The points are in a line, so no plane is determined and tilt
             # cannot be told from arch. Fall back to the raw range: too deep
             # beats not reaching the copper.
-            zs = [z for _x, _y, z in pts]
             span = max(zs) - min(zs)
-        return max(0.0, span + FOIL_MM)
+        return True, span
+
+    def flex_report(self):
+        """What the setup page says about the extra depth."""
+        arch = self._flex_arch()
+        applied = bool(arch and arch[0])
+        return {"margin": self._flex_margin(), "auto": self._flex_auto,
+                "hold": self._hold, "applied": applied,
+                "arch": arch[1] if applied else None,
+                "range": arch[1] if (arch and not applied) else None,
+                "capped": applied and arch[1] * FLEX_FRACTION > FLEX_CAP_MM}
+
+    def action_flex(self, auto, mm):
+        """The extra depth for a board held at points: from the map, or typed."""
+        self._flex_auto = bool(auto)
+        self._flex_mm = max(0.0, float(mm))
+        self._paths_cache = {}
+        self._after_params()
 
     def action_hold(self, how):
         self._hold = how or "points"
@@ -2535,6 +2583,7 @@ class MainWindow(QMainWindow):
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
             "fid_diameter": self._fid_diameter, "hold": self._hold,
+            "flex_auto": self._flex_auto, "flex_mm": self._flex_mm,
             "fid_count": self._fid_count,
             "fid_placement": self._fid_placement,
             "fid_offset": self._fid_offset,
@@ -2616,6 +2665,11 @@ class MainWindow(QMainWindow):
         # reproduces exactly what it produced then.
         self._fid_diameter = float(data.get("fid_diameter", 0.8))
         self._hold = data.get("hold", "points")
+        self._flex_auto = bool(data.get("flex_auto", True))
+        try:
+            self._flex_mm = max(0.0, float(data.get("flex_mm", 0.0)))
+        except (TypeError, ValueError):
+            self._flex_mm = 0.0
         self._fid_count = int(data.get("fid_count", 4))
         self._fid_placement = data.get("fid_placement", "onboard")
         self._fid_offset = float(data.get("fid_offset", 4.0))

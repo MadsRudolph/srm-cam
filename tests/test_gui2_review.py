@@ -129,7 +129,7 @@ def test_the_flex_margin_reads_the_bottom_face_whatever_is_shown(loaded):
     lp.follow_step("bottom")
     lp._load_table({"rows": _domed(), "apply": True, "show": False})
     m = loaded._flex_margin()
-    assert m > FOIL_MM + 0.1
+    assert m > FOIL_MM
     lp.follow_step("top")
     assert loaded._flex_margin() == pytest.approx(m)
 
@@ -167,7 +167,7 @@ def test_the_flex_margin_reaches_a_vbit(loaded):
     loaded.level_page._load_table({"rows": _domed(), "apply": True,
                                    "show": False})
     m = loaded._flex_margin()
-    assert m > 0.1
+    assert m > FOIL_MM
     t = loaded.cutting_trace()
     assert t.effective_cut_depth() == pytest.approx(
         loaded.state.trace.effective_cut_depth() + m, abs=1e-6)

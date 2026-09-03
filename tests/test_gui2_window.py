@@ -752,7 +752,9 @@ def test_a_bowed_board_still_gets_its_margin(loaded):
     rows = _tilted_map()
     rows.append(["100.920", "71.110", f"{0.008 * 100.92 + 0.25:.4f}"])
     loaded.level_page._load_table({"rows": rows, "apply": True, "show": False})
-    assert loaded._flex_margin() == pytest.approx(0.25 + FOIL_MM, abs=0.02)
+    from gerber2rml.gui2.window import FLEX_FRACTION
+    assert loaded._flex_margin() == pytest.approx(
+        0.25 * FLEX_FRACTION + FOIL_MM, abs=0.02)
 
 
 def test_bonded_holds_add_nothing_however_bent_the_board(loaded):
