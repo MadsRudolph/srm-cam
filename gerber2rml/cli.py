@@ -11,7 +11,7 @@ from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
                mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None,
-               rotate=0, lead_in=True):
+               rotate=0, lead_in=True, stock=None):
     """Load the board in ``gerber_dir`` and write its files: see :func:`write_jobs`.
 
     ``mirror`` flips the design for bottom-up milling. ``rotate`` (degrees,
@@ -23,12 +23,13 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
         board = place_in_positive_quadrant(rotate_board(board, rotate))
     return write_jobs(board, out_dir, name, trace=trace, drill=drill,
                       cutout=cutout, mirror=mirror, machine=machine,
-                      offset=offset, level=level, rotate=rotate, lead_in=lead_in)
+                      offset=offset, level=level, rotate=rotate, lead_in=lead_in,
+                      stock=stock)
 
 
 def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
                mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None,
-               rotate=0, lead_in=True, panel=None):
+               rotate=0, lead_in=True, panel=None, stock=None):
     """Write every job file for ``board`` into ``out_dir``, and the run plan
     beside them. Returns the paths written, in the order they are meant to be
     run.
@@ -48,7 +49,11 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
     rotate)]`` with each board's front-left corner in machine mm. It is printed
     in the run plan and changes nothing else: the boards have already been
     composed into ``board``. ``mirror`` and ``rotate`` are likewise only
-    reported."""
+    reported.
+
+    ``stock`` is the copper sheet as ``(x0, y0, x1, y1)`` in the same frame as
+    the (placed) toolpaths, when the operator declared one: the cut-out
+    leaves out any edge that lies on the sheet's edge."""
     from gerber2rml.engine.leadin import apply_lead_in
     _leadin = apply_lead_in if lead_in else (lambda p: p)
     from gerber2rml.toolpath import offset as offset_paths
@@ -105,7 +110,14 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
                header=[f"{name} - step 2 of 4: DRILL",
                        f"bit {drill.bit_diameter} mm, through {drill.total_depth} mm",
                        "re-zero Z after the bit change; do NOT move the XY origin"])
-    _write(f"{name}_cutout{ext}", _leadin(cut_outline(board.outline, cutout)), cutout,
+    # The sheet is in machine coordinates and the board is not yet placed,
+    # so it is brought back by the offset the paths will get.
+    sheet = None
+    if stock is not None:
+        sheet = (stock[0] - offset[0], stock[1] - offset[1],
+                 stock[2] - offset[0], stock[3] - offset[1])
+    _write(f"{name}_cutout{ext}",
+           _leadin(cut_outline(board.outline, cutout, stock=sheet)), cutout,
            header=[f"{name} - step 3 of 4: CUT-OUT - RUN THIS LAST",
                    f"bit {cutout.bit_diameter} mm, through {cutout.total_depth} mm, "
                    f"{cutout.tabs} tabs x {cutout.tab_width} mm",

@@ -139,7 +139,7 @@ class ProjectState:
             self._sync()
 
     # -- output ------------------------------------------------------------
-    def toolpaths(self, op):
+    def toolpaths(self, op, stock=None):
         if self.board is None:
             raise RuntimeError("load a Gerber folder first")
         if op == "traces":
@@ -147,30 +147,32 @@ class ProjectState:
         if op == "drill":
             return drill_holes(self.board.holes, self.drill)
         if op == "cutout":
-            return cut_outline(self.board.outline, self.cutout)
+            return cut_outline(self.board.outline, self.cutout, stock=stock)
         raise ValueError(f"unknown operation: {op}")
 
-    def export(self, out_dir, level=None):
+    def export(self, out_dir, level=None, stock=None):
+        """``stock`` is the copper sheet as ``(x0, y0, x1, y1)`` in machine
+        mm, when the operator declared one; the cut-out leaves out edges that
+        lie on it."""
         if self.gerber_dir is None:
             raise RuntimeError("load a Gerber folder first")
         if self.is_panel:
             bad = [(a, b) for a, b, gap, ov in panel_mod.clearances(self.boards)
-                   if ov or gap <= 1e-9]
+                   if ov]
             if bad:
-                # Touching outlines merge into one, and one ring frees one
-                # piece: the boards would come off the sheet joined.
+                # Touching boards are cut apart by one channel between them;
+                # overlapping ones are one shape and cannot be.
                 raise ValueError(f"the boards {bad[0][0]} and {bad[0][1]} "
-                                 f"overlap or touch; the cut-out would leave "
-                                 f"them joined")
+                                 f"overlap; they cannot be cut")
             # The members are already placed, so the composed geometry goes
             # straight to the writer; nothing is re-read from disk.
             return write_jobs(self.board, out_dir, self.name,
                               trace=self.trace, drill=self.drill,
                               cutout=self.cutout, mirror=self.mirror,
                               machine=self.machine, level=level,
-                              panel=self.panel_summary())
+                              panel=self.panel_summary(), stock=stock)
         return build_jobs(self.gerber_dir, out_dir, self.name,
                           trace=self.trace, drill=self.drill, cutout=self.cutout,
                           mirror=self.mirror, machine=self.machine,
                           offset=(self.place_x, self.place_y), level=level,
-                          rotate=self.rotate)
+                          rotate=self.rotate, stock=stock)
