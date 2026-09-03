@@ -73,6 +73,13 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+class _Server(ThreadingHTTPServer):
+    # Closing must not wait for a phone that is still uploading: stop() runs
+    # on the GUI thread, and block_on_close joins every handler thread.
+    daemon_threads = True
+    block_on_close = False
+
+
 class PhotoShareServer:
     """One-shot photo receiver. start() -> .url for the QR; on_photo(path)
     fires (from a server thread!) when a photo has been saved; stop() always.
@@ -132,7 +139,7 @@ class PhotoShareServer:
                 if owner.on_photo:
                     owner.on_photo(str(path))
 
-        self._httpd = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+        self._httpd = _Server(("0.0.0.0", 0), Handler)
         self._thread = threading.Thread(
             target=self._httpd.serve_forever, daemon=True)
         self._thread.start()

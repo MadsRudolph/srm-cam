@@ -159,6 +159,12 @@ class Stage(QWidget):
         self._member_src = None
         self._selected = -1
         self._drag_member = None          # index of the board being dragged
+        # Arrow-key nudges accumulate in _drag_offset and commit together a
+        # moment after the last key, so five taps cost one toolpath rebuild.
+        self._nudge_timer = QTimer(self)
+        self._nudge_timer.setSingleShot(True)
+        self._nudge_timer.setInterval(300)
+        self._nudge_timer.timeout.connect(self._commit_nudge)
 
         # cached painter paths (mm space)
         self._p_copper = None
@@ -292,8 +298,10 @@ class Stage(QWidget):
         # case needs care - two distinct empty lists are not the same object,
         # and comparing them by identity made every step change re-stroke the
         # whole toolpath for nothing.
-        same_far = (far is self._cuts_far) or (not far and not self._cuts_far)
-        if (cuts is self._cuts and rapids is self._rapids and same_far
+        def same(a, b):
+            return a is b or (not a and not b)
+        if (same(cuts, self._cuts) and same(rapids, self._rapids)
+                and same(far, self._cuts_far)
                 and (cut_width is None or cut_width == self._cut_width)):
             return
         self._cuts, self._rapids = cuts or [], rapids or []
@@ -545,6 +553,9 @@ class Stage(QWidget):
             return
         if e.button() != Qt.LeftButton:
             return
+        if self._nudge_timer.isActive():
+            self._nudge_timer.stop()
+            self._commit_nudge()
         p = self.to_mm(e.position())
         if self.mode == "jog":
             self.jog_requested.emit(p.x(), p.y())
@@ -579,6 +590,52 @@ class Stage(QWidget):
             self._begin_move("drag")
             self.setCursor(QCursor(Qt.SizeAllCursor))
 
+    # -- the keyboard ------------------------------------------------------
+    NUDGE_MM = 0.1            # one arrow tap; Shift makes it 1 mm, Ctrl 0.01
+
+    def keyPressEvent(self, e):
+        """Arrow keys move the picked board by a small, exact amount.
+
+        Dragging places a board roughly; the last tenth of a millimetre is
+        easier to say than to do with a mouse. The nudge is drawn at once, in
+        the same way a drag in flight is drawn, and committed - rebuilding the
+        toolpaths - a moment after the last tap, so a run of taps costs one
+        rebuild rather than one per key.
+        """
+        step = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0),
+                Qt.Key_Up: (0, 1), Qt.Key_Down: (0, -1)}.get(e.key())
+        if (step is None or self.mode != "place" or not self.has_board()
+                or self._dragging or self._panning):
+            super().keyPressEvent(e)
+            return
+        if self._members and not (0 <= self._selected < len(self._members)):
+            return
+        mods = e.modifiers()
+        size = (1.0 if mods & Qt.ShiftModifier else
+                0.01 if mods & Qt.ControlModifier else self.NUDGE_MM)
+        if self._drag_raster is None:
+            self._drag_member = self._selected if self._members else None
+            self._begin_move("drag")
+        dx, dy = self._drag_offset
+        self._drag_offset = (round(dx + step[0] * size, 4),
+                             round(dy + step[1] * size, 4))
+        self.placement_dragging.emit(*self._drag_offset)
+        self._nudge_timer.start()
+        self.update()
+        e.accept()
+
+    def _commit_nudge(self):
+        """The taps have stopped: move the board for real."""
+        if self._dragging:
+            return                     # the mouse took over; it commits
+        dx, dy = self._drag_offset
+        self._drag_offset = (0.0, 0.0)
+        self._drag_member = None
+        self._invalidate()
+        self.update()
+        if dx or dy:
+            self.placement_changed.emit(dx, dy)
+
     def _member_at(self, p):
         """Index of the panel board under ``p`` (mm), or None. Where two
         overlap it is the smaller, so a small board dropped on a big one can
@@ -592,8 +649,25 @@ class Stage(QWidget):
                     best, best_area = i, area
         return best
 
+    def _drag_bounds(self):
+        """What a press picks up: the work, not the sheet it sits on.
+
+        The copper sheet is bed furniture and stays put when the job is
+        moved (see _paint_static), so a press on bare sheet must not start a
+        drag - it did, because the fit box includes the sheet and was doing
+        double duty as the hit box.
+        """
+        boxes = [g.bounds for g in (self._outline, self._copper, self._copper_far)
+                 if g is not None and not g.is_empty]
+        for (x, y, d) in self._align_holes:
+            boxes.append((x - d / 2, y - d / 2, x + d / 2, y + d / 2))
+        if not boxes:
+            return None
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes))
+
     def _over_work(self, p):
-        b = self._work_bounds()
+        b = self._drag_bounds()
         if not b:
             return False
         dx, dy = self._drag_offset
@@ -639,8 +713,21 @@ class Stage(QWidget):
                                    else Qt.ArrowCursor))
 
     def mouseReleaseEvent(self, e):
-        if self._panning or self._dragging:
-            self._invalidate()
+        # Each gesture ends on the button that started it. A right-button
+        # release during a left-button box drag used to commit the box early
+        # and leave the pan armed with a closed-hand cursor.
+        button = e.button()
+        if button in (Qt.MiddleButton, Qt.RightButton):
+            if self._panning:
+                self._panning = False
+                self._invalidate()
+                self._restore_cursor()
+                # A repaint, not just a cache drop: without it the last frame
+                # of the pan stayed on screen with a bare band down one edge.
+                self.update()
+            return
+        if button != Qt.LeftButton:
+            return
         if self._box_from is not None and self._box_to is not None:
             a, b = self._box_from, self._box_to
             self._box_from = self._box_to = None
@@ -650,18 +737,24 @@ class Stage(QWidget):
                 self.region_added.emit(a.x(), a.y(), b.x(), b.y())
             self.update()
             return
-        if self._panning:
-            self._panning = False
-            self.setCursor(QCursor(Qt.ArrowCursor))
         if self._dragging:
             self._dragging = False
             self._drag_member = None
             dx, dy = self._drag_offset
             self._drag_offset = (0.0, 0.0)
+            self._invalidate()
             self.setCursor(QCursor(Qt.OpenHandCursor))
+            # Repainted whether or not it moved: a press that picked a board
+            # of a panel froze the scene without its toolpaths, and a release
+            # that commits nothing still has to put them back.
+            self.update()
             if dx or dy:
                 # One commit, at the end. This is the only expensive moment.
                 self.placement_changed.emit(dx, dy)
+
+    def _restore_cursor(self):
+        self.setCursor(QCursor(Qt.CrossCursor if self.mode in ("jog", "screws")
+                               else Qt.ArrowCursor))
 
     def leaveEvent(self, e):
         self.hovered.emit(None)
@@ -757,14 +850,11 @@ class Stage(QWidget):
         if not self._photo:
             return
         img, (x0, y0, x1, y1) = self._photo
-        # The world transform has Y running up the bed; an image drawn into it
-        # would land upside down, so flip inside the target rect rather than
-        # pre-flipping the pixels every repaint.
-        p.save()
-        p.translate(0.0, y0 + y1)
-        p.scale(1.0, -1.0)
+        # warp_photo's row 0 is the LOWEST y. Under the world transform, with
+        # Y running up the bed, drawing the image into its rectangle puts row
+        # 0 at y0 - the bottom - which is where it belongs. The flip the mesh
+        # needs (its row 0 is the top) mirrored the photo.
         p.drawImage(QRectF(x0, y0, x1 - x0, y1 - y0), img)
-        p.restore()
 
     def _paint_work(self, p):
         """What belongs to the job, and follows the cursor when it is dragged."""
@@ -815,14 +905,12 @@ class Stage(QWidget):
             self._drag_raster = (self._scene_raster if self._scene_raster
                                  is not None else self._raster(self._paint_work))
         else:
+            # The measured surface too: panning is how you check that the
+            # map still covers the job, and it vanished for the gesture.
             self._pan_raster = (self._raster(
-                lambda p: (self._paint_static(p), self._paint_work(p))),
+                lambda p: (self._paint_static(p), self._paint_work(p),
+                           self._paint_level_mesh(p))),
                 QPointF(0, 0))
-
-    def _end_move(self):
-        self._drag_raster = None
-        self._others_raster = None
-        self._pan_raster = None
 
     def _invalidate(self):
         """The drawn scene is stale: the content or the view changed."""
@@ -946,9 +1034,11 @@ class Stage(QWidget):
         if not self._members:
             return
         p.setFont(theme.font("micro", mono=True))
+        dx, dy = self._drag_offset
         for i, m in enumerate(self._members):
             x0, _y0, _x1, y1 = m.bounds
-            c = self.to_px_work(x0, y1)
+            ox, oy = (dx, dy) if i == self._drag_member else (0.0, 0.0)
+            c = self._world().map(QPointF(x0 + ox, y1 + oy))
             p.setPen(QColor(theme.PRIMARY if i == self._selected
                             else theme.TEXT_2))
             p.drawText(c + QPointF(2, -4), m.name)

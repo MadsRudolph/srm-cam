@@ -125,7 +125,6 @@ QPushButton#stop {
 }
 QPushButton#stop:hover   { background: $DANGER_HI; }
 QPushButton#stop:pressed { background: $DANGER_LO; }
-QPushButton#stop:disabled { background: $DANGER_LO; color: $DANGER_FILL; }
 
 QPushButton#ghost {
     background: transparent;

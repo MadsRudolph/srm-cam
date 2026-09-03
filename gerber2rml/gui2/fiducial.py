@@ -495,7 +495,9 @@ class FlipFitPage(inspector.Page):
             self.rms.set("—")
             self.verdict.setText(str(e))
             self.fit_btn.setEnabled(False)
+            self._worst = None
             return
+        self._worst = worst
         # Adopt it as soon as it is computed, not only when files are written:
         # the point of the fit is to SEE the board where it really is, and
         # exporting is a separate decision made afterwards.
@@ -523,6 +525,21 @@ class FlipFitPage(inspector.Page):
         self._sync_order()
         self.fit_btn.setEnabled(True)
         self._show_where_to_jog(t, len(m))
+
+    def _fit_is_usable(self, what):
+        """A fit the page has called too far out is not refused - the operator
+        may know why it is out - but nothing is written under it without
+        the number being put in front of them first. The verdict was in
+        words only, and the drill button read none of them."""
+        worst = getattr(self, "_worst", None)
+        if worst is None or worst < 0.15:
+            return True
+        return dialogs.confirm_irreversible(
+            self, "The fit is too far out to trust",
+            "The worst reference hole disagrees with the others by %.3f mm - "
+            "enough to put a trace on the wrong pad. Re-seat the board and "
+            "probe again, unless you know why it is out." % worst,
+            "Use it anyway and " + what)
 
     def _finish_holes(self):
         """Re-drill the holes from this side, to meet the blind ones."""
@@ -552,6 +569,8 @@ class FlipFitPage(inspector.Page):
                     "already drilled from the other side."
                     % (depth, thickness), "Drill it anyway"):
                 return
+        if not self._fit_is_usable("drill the holes"):
+            return
         try:
             path = build_top_drill(
                 st.gerber_dir, out, st.name, drill=self.ctl.cutting_drill(),
@@ -657,6 +676,8 @@ class FlipFitPage(inspector.Page):
                     "and export unlevelled.",
                     "It is this side's map"):
                 return
+        if not self._fit_is_usable("rewrite the top files"):
+            return
         try:
             # cutting_trace, not st.trace: the top is cut from the same board,
             # held the same way, so it needs the same flex margin the bottom
@@ -675,7 +696,7 @@ class FlipFitPage(inspector.Page):
             # geometry written before the fit existed and misses the outline
             # by the whole placement error.
             cut = build_top_cutout(
-                st.gerber_dir, out, st.name, cutout=st.cutout,
+                st.gerber_dir, out, st.name, cutout=self.ctl.cutting_cutout(),
                 machine=st.machine, offset=(st.place_x, st.place_y),
                 rotate=st.rotate, registration="fiducial",
                 fiducials=self.ctl.fiducial_spec(),

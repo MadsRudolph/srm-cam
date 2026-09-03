@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget
                                QScrollArea, QFrame, QLabel, QLineEdit, QComboBox,
                                QCheckBox, QDoubleSpinBox, QSpinBox, QSizePolicy)
 
+from gerber2rml.backends import BACKENDS
 from gerber2rml.gui2 import theme, widgets, tier
 from gerber2rml.engine.estimate import format_duration
 
@@ -160,7 +161,7 @@ class SetupPage(Page):
                 "file, one drill file, one cut-out. The same folder twice "
                 "makes two of the board."))
         self.remove_board_btn = widgets.button(
-            "Take this board off", on=ctl.action_remove_board,
+            "Take this board off", on=lambda: ctl.action_remove_board(),
             tip="Take the picked board off the sheet. The others stay put.")
         bh.addWidget(self.remove_board_btn)
         bh.addStretch(1)
@@ -372,6 +373,13 @@ class SetupPage(Page):
         self.machine.setToolTip(
             "G-code (.nc) is what this lab runs: VPanel streams it in NC-code "
             "command mode and it honours the work Z origin. RML is a fallback.")
+        # Filled here, and quietly: the box was created empty and stayed so,
+        # a dropdown promising a choice it could not offer.
+        self.machine.blockSignals(True)
+        for name in BACKENDS:
+            self.machine.addItem(name)
+        self.machine.setCurrentText(st.machine)
+        self.machine.blockSignals(False)
         self.machine.currentTextChanged.connect(self._on_machine)
         self.advanced.add(widgets.Field("File format", self.machine))
         self.mirror = QCheckBox("Mirror for bottom-up milling")
@@ -408,7 +416,8 @@ class SetupPage(Page):
         self.registration.currentIndexChanged.connect(
             lambda _i: (ctl.action_registration(self.registration.currentData()),
                         self.sync()))
-        self.ds_section.add(widgets.Field("Registration", self.registration))
+        self.registration_field = widgets.Field("Registration", self.registration)
+        self.ds_section.add(self.registration_field)
         self.fid_dia = num(1.60, 0.5, 6.0, 0.1, 2, self._on_fid_dia,
                            suffix=" mm")
         self.fid_dia_field = widgets.Field(
@@ -560,12 +569,15 @@ class SetupPage(Page):
             self.place_hint.setText(
                 f"Moving {cur.name}, board {st.current + 1} of {len(boards)}. "
                 f"Click a board on the bed to pick it and drag it to move "
-                f"only that one. Measured from the machine origin.")
+                f"only that one; the arrow keys nudge it 0.1 mm (Shift 1 mm, "
+                f"Ctrl 0.01 mm). Measured from the machine origin.")
         else:
             self.place_section.label.setText("Where it sits on the bed")
             self.place_hint.setText(
-                "Or drag the board on the bed. Measured from the machine "
-                "origin at the front-left corner — the same zero VPanel shows.")
+                "Or drag the board on the bed, then nudge it with the arrow "
+                "keys: 0.1 mm a tap, 1 mm with Shift, 0.01 mm with Ctrl. "
+                "Measured from the machine origin at the front-left corner — "
+                "the same zero VPanel shows.")
         plan = getattr(ctl, "plan", None)
         spec = (f"Traces {st.trace.effective_diameter():.2f} mm wide at "
                 f"{st.trace.effective_cut_depth():.2f} mm · drill "
@@ -614,11 +626,29 @@ class SetupPage(Page):
             self.hold_note.setText(
                 "Nothing added: bonded flat, the probed surface is the "
                 "surface that gets cut.")
+        # The switches the controller owns, read back from it. They were
+        # write-only: a loaded setup restored the state and left the boxes
+        # showing the previous job's, and the dropdown named the registration
+        # scheme the job was NOT using while its fields stayed hidden.
+        for box, val in ((self.mirror, bool(st.mirror)),
+                         (self.double, bool(getattr(ctl, "_double", False))),
+                         (self.screwed, bool(getattr(ctl, "screwed", False)))):
+            box.blockSignals(True)
+            box.setChecked(val)
+            box.blockSignals(False)
+        self.registration.blockSignals(True)
+        i = self.registration.findData(getattr(ctl, "_registration", "dowel"))
+        if i >= 0:
+            self.registration.setCurrentIndex(i)
+        self.registration.blockSignals(False)
+        self.machine.blockSignals(True)
+        self.machine.setCurrentText(st.machine)
+        self.machine.blockSignals(False)
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.ds_section.setVisible(full)
         self.save_preset_btn.setVisible(full)
-        self.registration.setVisible(full and self.double.isChecked())
+        self.registration_field.setVisible(full and self.double.isChecked())
         fiducial = (full and self.double.isChecked()
                     and self.registration.currentData() == "fiducial")
         for f in (self.fid_dia_field, self.fid_place_field,
@@ -914,8 +944,7 @@ class StepPage(Page):
 
     def _set(self, job, field, value):
         setattr(job, field, value)
-        self.ctl.refresh_plan()
-        self.ctl.refresh_preview()
+        self.ctl.action_params_changed()
 
 
 # ---------------------------------------------------------------------------

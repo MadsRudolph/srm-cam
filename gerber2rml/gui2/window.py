@@ -274,6 +274,8 @@ class MainWindow(QMainWindow):
         self._layout_placed_key = None
         self._paths_cache = {}         # step key -> (paths, far, cut width)
         self._current_step = None
+        self._drawing = False          # a toolpath is being built right now
+        self._redraw_after = False     # ...and a redraw was asked for meanwhile
         self._last_pos = None
         self.stock = (0.0, 0.0, 100.0, 80.0)
         self.show_stock = True
@@ -289,6 +291,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_menus()
+        self._sync_frame_options()
         self._load_presets()
         self.refresh_plan()
         self._sync_window_title()
@@ -351,7 +354,9 @@ class MainWindow(QMainWindow):
         self.bar.jog_mode_changed.connect(
             lambda on: self.set_stage_mode("jog" if on else "place"))
         self.link.position.connect(self._on_machine_position)
-        self.link.unlinked.connect(lambda _r: self.stage.set_tool(None))
+        self.link.op_done.connect(self._on_op_done)
+        self.link.linked.connect(self._on_linked)
+        self.link.unlinked.connect(self._on_unlinked)
         v.addWidget(self.bar)
 
         self.setCentralWidget(root)
@@ -706,14 +711,65 @@ class MainWindow(QMainWindow):
     def _on_machine_position(self, x, y, _z, _touch):
         self._last_pos = (x, y)
         self.stage.set_tool((x, y))
+        sim = self._sim()
+        if sim is not None:
+            sim.set_live_position(x, y)
+
+    def _on_op_done(self, name, _result):
+        """A touch just measured where the copper is: the Z-reach check can
+        be answered now instead of hedged."""
+        if name in ("zero_z", "touch") and self.state.board is not None:
+            self.refresh_checks()
+
+    def _on_linked(self, _info):
+        sim = self._sim()
+        if sim is not None:
+            sim.set_live_enabled(True)
+
+    def _on_unlinked(self, _reason):
+        self.stage.set_tool(None)
+        sim = self._sim()
+        if sim is not None:
+            sim.set_live_enabled(False)
+        # A probe run measures its grid from the last live position. After
+        # a reconnect the first fresh reading is a poll away, and the stale
+        # one was the LAST probe point - so a second run started in that
+        # window was laid out from the wrong datum, off the board.
+        self._last_pos = None
+        if self.state.board is not None:
+            self.refresh_checks()        # the surface is unknown again
+
+    def _sync_frame_options(self):
+        """The X-ray is the registration check between two faces. On a
+        single-sided job it showed the same mirrored board under a badge
+        saying it is not what gets cut - which it is."""
+        on = bool(self._double)
+        self.frame_switch.set_option_enabled("xray", on)
+        self.xray_act.setEnabled(on)
+        if not on and self.stage.frame == "xray":
+            self.frame_switch.set_current("bed")
+            self._on_frame("bed")
 
     def exported_path(self, filename):
         return self._exported.get(filename)
 
     def set_stage_mode(self, mode):
+        """One mode at a time, and every control that claims one agrees.
+
+        The boxes checkbox, the screw picker and the jog toggle each put the
+        stage in a mode. Leaving the others ticked left three controls lit
+        for one mode - and clearing the boxes tick fired its handler, which
+        put the stage back in ``place`` under a jog toggle still lit, so the
+        next click dragged the board instead of jogging.
+        """
         self.stage.set_mode(mode)
-        if mode != "box":
-            self.rework_page.add_chk.setChecked(False)
+        for box, owns in ((self.rework_page.add_chk, "box"),
+                          (self.inspector.setup.pick_screws, "screws"),
+                          (getattr(self.bar, "jog_btn", None), "jog")):
+            if box is not None and mode != owns and box.isChecked():
+                box.blockSignals(True)
+                box.setChecked(False)
+                box.blockSignals(False)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -744,6 +800,14 @@ class MainWindow(QMainWindow):
                 {n: estimate_file_seconds(p) for n, p in self._exported.items()
                  if p.suffix == ".nc"})
         self.traveller.set_plan(self.plan)
+        cur = self._current_step
+        if cur is not None and self.plan.by_key(cur.key) is None:
+            # The step on screen is not in the plan any more - per-diameter
+            # drills folded into one, or the flip and the top pass gone with
+            # double-sided. The rail has already moved; the inspector and
+            # the stage follow it rather than keep a page for a dead step.
+            self._current_step = None
+            self.select_step(self.traveller.current())
         self.traveller.set_exported(
             {s.key for s in self.plan if s.file and s.file in self._exported})
         self._sync_job_header()
@@ -766,8 +830,12 @@ class MainWindow(QMainWindow):
         if st.board is None:
             self.traveller.set_job("No job", "Load a Gerber folder to begin")
             return
-        x0, y0, x1, y1 = st.board.outline.bounds if st.board.outline is not None \
-            else st.board.copper.bounds
+        geom = (st.board.outline if st.board.outline is not None
+                and not st.board.outline.is_empty else st.board.copper)
+        if geom is None or geom.is_empty:
+            self.traveller.set_job(st.name, "no outline or copper to measure")
+            return
+        x0, y0, x1, y1 = geom.bounds
         bits = [f"{x1 - x0:.1f} × {y1 - y0:.1f} mm",
                 f"{len(st.board.holes)} holes"]
         if st.is_panel:
@@ -809,6 +877,24 @@ class MainWindow(QMainWindow):
             self._draw_step(step)
 
     def _draw_step(self, step):
+        # processEvents() below lets a click land while a toolpath is being
+        # built, and the click's own redraw was then overdrawn by this one
+        # when it resumed - the rail on one step, the stage on another. One
+        # draw at a time: a request that arrives during a build is honoured
+        # after it, for whichever step the rail is on by then.
+        if self._drawing:
+            self._redraw_after = True
+            return
+        self._drawing = True
+        try:
+            self._draw_step_now(step)
+        finally:
+            self._drawing = False
+        if self._redraw_after:
+            self._redraw_after = False
+            self._refresh_preview_now()
+
+    def _draw_step_now(self, step):
         st = self.state
         if st.board is None:
             self.stage.clear_board()
@@ -908,8 +994,8 @@ class MainWindow(QMainWindow):
         if step.op == "airpass":
             return air_path(lay.outline), None, 0.4
         if step.op == "align":
-            return (drill_single_bit(lay.align_holes, st.drill), None,
-                    st.drill.bit_diameter)
+            aj = self._align_job()
+            return drill_single_bit(lay.align_holes, aj), None, aj.bit_diameter
         if step.op == "drill":
             dj = self.cutting_drill()
             paths = (drill_single_bit(lay.holes, dj) if st.drill.single_bit
@@ -1006,8 +1092,14 @@ class MainWindow(QMainWindow):
                                          prev.holes, copper_far=prev.top_copper,
                                          align_holes=prev.align_holes)
                     return
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Never the machine frame under a badge that says design.
+                    self.frame_switch.set_current("bed")
+                    self.xray_act.setChecked(False)
+                    self.stage.set_frame("bed")
+                    self.say("fail", f"The design X-ray could not be built "
+                                     f"({e.__class__.__name__}: {e}). Showing "
+                                     f"the bed frame instead.")
             if step is not None and step.side == "top":
                 # AS PLACED once the fiducials have been measured: the flip is
                 # where the board actually is, not where a perfect flip would
@@ -1118,15 +1210,33 @@ class MainWindow(QMainWindow):
                                              st.trace.effective_diameter())
         except Exception:
             self._shorts = []           # a DRC that crashes must not block work
-        depths = diag.cut_depths(st.trace, st.drill, st.cutout)
-        bounds = None
-        geom = st.board.outline if st.board.outline is not None else st.board.copper
-        if geom is not None and not geom.is_empty:
-            bounds = geom.bounds
+        dowel_depth = None
+        if self._double and self._registration == "dowel":
+            # The dowel holes go through the stock and on into the bed. They
+            # are the deepest cut of a two-sided job, and a Z-reach check
+            # that does not know about them passes a job the machine cannot
+            # finish.
+            from gerber2rml.doublesided import DOWEL_BED_DEPTH
+            dowel_depth = (self.inspector.setup.thickness.value()
+                           + DOWEL_BED_DEPTH)
+        # The jobs as they will be CUT, margin included: the files carry the
+        # deepened depth, so the reach check has to as well.
+        depths = diag.cut_depths(self.cutting_trace(), self.cutting_drill(),
+                                 self.cutting_cutout(), dowel_depth)
+        # Everything that has to fit the travel, dowels included: on a
+        # double-sided job the board's own bounds leave the registration pins
+        # out, and a pin 6 mm off the back of the bed passed as "Fits the bed".
+        bounds = self.job_extent()
+        if bounds is None:
+            geom = (st.board.outline if st.board.outline is not None
+                    else st.board.copper)
+            if geom is not None and not geom.is_empty:
+                bounds = geom.bounds
         try:
             checks = diag.preflight(
                 depths=depths, bed=BACKENDS[st.machine].bed,
                 design_bounds=bounds, holes=st.board.holes,
+                surface_z=self.link.surface_z,
                 bit_diameter=st.drill.bit_diameter, trace=st.trace,
                 leveled=self.level_page.is_active(), shorts=self._shorts,
                 thickness=self.inspector.setup.thickness.value())
@@ -1192,9 +1302,16 @@ class MainWindow(QMainWindow):
         """
         if self._hold != "points":
             return 0.0
-        pts = self.level_page.points()
+        # The bottom face's measurement, whichever face the rail is showing:
+        # what gets exported must not depend on which row is highlighted.
+        pts = self.level_page.points(side="bottom")
         if len(pts) < 3:
             return 0.0
+        if self.level_page.height_map(side="bottom") is None:
+            # The map is not being applied, so nothing cancels the tilt: the
+            # whole range is what the cut has to reach through.
+            zs = [z for _x, _y, z in pts]
+            return max(0.0, (max(zs) - min(zs)) + FOIL_MM)
         span = flex_residual(pts)
         if span is None:
             # The points are in a line, so no plane is determined and tilt
@@ -1208,6 +1325,34 @@ class MainWindow(QMainWindow):
         self._hold = how or "points"
         self._paths_cache = {}
         self._after_params()
+
+    def action_params_changed(self):
+        """A cutting parameter was edited: nothing built from the old numbers
+        may be shown again. The cache is keyed by step, and a step's key
+        survives an edit to its bit or its depth; its toolpath does not."""
+        self._paths_cache = {}
+        self._after_params()
+
+    def action_level_toggled(self):
+        """Whether the map is applied changes the flex margin, the checks and
+        the run plan's facts - all of it, not only the plan."""
+        self._paths_cache = {}
+        self._after_params()
+
+    def _align_job(self):
+        """The drill job the export gives the registration holes: through the
+        stock and, for dowels, on into the bed. Previewing and streaming them
+        with the plain drill job showed a 1.7 mm hole where the file makes a
+        6.6 mm one - and streamed it."""
+        from gerber2rml.doublesided import (_align_drill, _fiducial_align_drill,
+                                            DowelSpec)
+        t = self.inspector.setup.thickness.value()
+        if self._registration == "fiducial":
+            job, _d = _fiducial_align_drill(self.cutting_drill(),
+                                            self.fiducial_spec(), t)
+        else:
+            job, _d = _align_drill(self.cutting_drill(), DowelSpec(), None, t)
+        return job
         self.refresh_preview()
 
     def cutting_trace(self):
@@ -1217,6 +1362,15 @@ class MainWindow(QMainWindow):
         if not m:
             return self.state.trace
         t = self.state.trace
+        if t.tool_type == "vbit":
+            # A V-bit's depth is back-solved from the width it is asked for,
+            # so deepening cut_depth alone changed nothing. Ask for the width
+            # the bit has at the deepened depth: the plunge goes down by the
+            # margin and the trace widens with it, which is what the bit
+            # profile then shows.
+            return replace(t, cut_depth=t.cut_depth + m,
+                           target_width=t.width_at_depth(
+                               t.effective_cut_depth() + m))
         return replace(t, cut_depth=t.cut_depth + m)
 
     def cutting_drill(self):
@@ -1491,10 +1645,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         workspace.remember_dir("gerber", folder)
-        self._paths_cache = {}
-        self._exported = {}
-        self._export_dir = None
-        self.traveller.clear_done()
+        self._forget_output()
         self.stage._fitted = False
         self.refresh_plan()
         self.refresh_checks()
@@ -1553,8 +1704,13 @@ class MainWindow(QMainWindow):
                        f"sheet. Drag each one where it should go; the files "
                        f"cut them all in one run.")
 
-    def action_remove_board(self, index=None):
-        """Take the picked board (or ``index``) off the sheet."""
+    def action_remove_board(self, *, index=None):
+        """Take the picked board (or ``index``) off the sheet.
+
+        Keyword-only: a button's ``clicked`` carries its checked flag, and
+        ``False`` is a perfectly good index for ``list.pop``, which is how
+        the button took the first board off instead of the picked one.
+        """
         st = self.state
         if not st.boards:
             return
@@ -1610,11 +1766,17 @@ class MainWindow(QMainWindow):
 
     def _forget_output(self):
         """The files on disk, and the ticks against them, no longer describe
-        the job."""
+        the job. Neither do a photo of the last board or the boxes drawn on
+        it: the same argument that clears the measured flip on load."""
         self._paths_cache = {}
         self._exported = {}
         self._export_dir = None
         self.traveller.clear_done()
+        self.rework_page._clear()
+        if self.stage.has_photo():
+            self.stage.set_photo(None, None)
+            self.stage.set_photo_dim(0.0)
+            self.photo_clear_act.setEnabled(False)
 
     def action_apply_preset(self):
         name = self.inspector.setup.preset.currentText()
@@ -1796,7 +1958,11 @@ class MainWindow(QMainWindow):
         m = 5.0
         rgba, extent = warp_photo(img, H, (wb[0] - m, wb[1] - m,
                                            wb[2] + m, wb[3] + m))
-        self.stage.set_photo(photo_mod.to_qimage(rgba), extent)
+        # warp_photo hands back matplotlib's (x0, x1, y0, y1); the stage
+        # wants the two corners. Passed straight through, the rectangle had
+        # no width and the photo never appeared.
+        px0, px1, py0, py1 = extent
+        self.stage.set_photo(photo_mod.to_qimage(rgba), (px0, py0, px1, py1))
         self.stage.set_photo_dim(0.55)
         self.photo_clear_act.setEnabled(True)
         return float(res.max())
@@ -1848,13 +2014,38 @@ class MainWindow(QMainWindow):
                 "dependencies, then try again.")
             return
         bounds = self.work_bounds()
+        old = getattr(self, "_sim_window", None)
+        if old is not None:
+            # One at a time. Reopening left the previous window up, alive
+            # and titled with the earlier step.
+            try:
+                old.close()
+                old.deleteLater()
+            except RuntimeError:
+                pass
         self._sim_window = Simulation3DWindow(
             paths, title=f"{self.state.name or 'board'} — {step.title}",
             parent=self, board=bounds, bed=BACKENDS[self.state.machine].bed,
             thickness=self.inspector.setup.thickness.value())
+        # LIVE follows the machine while the link is up. The window has the
+        # whole forward-only cursor; the first interface fed it and this one
+        # never did, so the button stayed disabled with a tooltip blaming
+        # the link.
+        self._sim_window.set_live_enabled(self.link.is_connected())
         self._sim_window.show()
         self._sim_window.raise_()
         self._sim_window.activateWindow()
+
+    def _sim(self):
+        """The open 3D window, or None once it has been closed and deleted."""
+        sim = getattr(self, "_sim_window", None)
+        if sim is None:
+            return None
+        try:
+            return sim if sim.isVisible() else None
+        except RuntimeError:                   # deleted underneath us
+            self._sim_window = None
+            return None
 
     def action_machine_test(self):
         """Which SPI commands this machine obeys — a diagnostic, not a step.
@@ -1872,8 +2063,18 @@ class MainWindow(QMainWindow):
         was_linked = self.link.is_connected()
         if was_linked:
             self.link.disconnect_from("handing the port to the machine test")
-        dlg = MachineTestDialog(port, self)
-        dlg.exec()
+        # The panel owns the port, but STOP and Escape still have to reach a
+        # test that is driving the head: the bar's stop sets the link's abort
+        # event, the panel's worker polls it, and the flag tells the bar
+        # there is something to stop while the panel is up.
+        self.link.clear_abort()
+        self.link.mark_external(True)
+        try:
+            dlg = MachineTestDialog(port, self,
+                                    should_abort=self.link.should_abort)
+            dlg.exec()
+        finally:
+            self.link.mark_external(False)
         if was_linked:
             self.link.connect_to(port)
 
@@ -1930,14 +2131,16 @@ class MainWindow(QMainWindow):
             box.blockSignals(True)
             box.setChecked(False)
             box.blockSignals(False)
+            self._double = False
             self.say("warn", f"Double-sided is for one board at a time — this "
                              f"sheet has {len(self.state.boards)}. Take the "
                              f"others off first.")
             return
         self._double = bool(on)
         self._paths_cache = {}
-        self.inspector.setup.registration.setVisible(
+        self.inspector.setup.registration_field.setVisible(
             tier.is_full() and self._double)
+        self._sync_frame_options()
         self._after_params()
         # Queued, not immediate: _after_params defers the preview rebuild, and
         # the registration pins only become part of the work bounds once that
@@ -2127,7 +2330,12 @@ class MainWindow(QMainWindow):
     def export_to(self, out_dir):
         """Write every file in the plan. The test suite calls this directly."""
         st = self.state
-        level = self.level_page.height_map()
+        # The BOTTOM face's map, explicitly. height_map() with no face
+        # follows the selected step, so exporting with "Top traces"
+        # highlighted handed the writer no map - or the top's - for the
+        # bottom-frame files. What is written must not depend on which row
+        # is lit.
+        level = self.level_page.height_map(side="bottom")
         try:
             if self._double:
                 from gerber2rml.doublesided import build_double_sided
@@ -2342,6 +2550,8 @@ class MainWindow(QMainWindow):
             "level": self.level_page.state(),
             "show_stock": self.show_stock, "show_bed": self.show_bed,
             "thickness": self.inspector.setup.thickness.value(),
+            "overshoot": self.inspector.setup.overshoot.value(),
+            "auto_depth": self.inspector.setup.auto_depth.isChecked(),
             # Every board on the sheet, with its own placement. One entry is
             # the ordinary job, and `gerber_dir`/`place`/`rotate` above are
             # that board's too, so a setup written here still loads in the
@@ -2378,8 +2588,11 @@ class MainWindow(QMainWindow):
         data, foreign = _as_gui2_setup(data)
         from dataclasses import replace
         st = self.state
-        st.name = data.get("name", st.name)
-        st.machine = data.get("machine", st.machine)
+        machine = data.get("machine", st.machine)
+        if machine in BACKENDS:
+            st.machine = machine
+        else:
+            foreign.append("the file format")
         st.mirror = bool(data.get("mirror", st.mirror))
         for key, attr in (("trace", "trace"), ("drill", "drill"),
                           ("cutout", "cutout")):
@@ -2388,7 +2601,16 @@ class MainWindow(QMainWindow):
                     setattr(st, attr, replace(getattr(st, attr), **data[key]))
                 except TypeError:
                     pass                 # a field this version does not have
+        boards = data.get("boards") or []
         self._double = bool(data.get("double_sided", False))
+        if self._double and len(boards) > 1:
+            # A sheet of several boards is single-sided. A file that says
+            # otherwise was edited by hand or written by a bug: the plan must
+            # not run the two-sided path on it, and add_folder would refuse
+            # the second board while the flag stood.
+            self._double = False
+            foreign.append("double-sided (a sheet of several boards is "
+                           "single-sided)")
         self._registration = data.get("registration", "dowel")
         # 0.8 for setups written before it was settable, so an old job
         # reproduces exactly what it produced then.
@@ -2412,15 +2634,21 @@ class MainWindow(QMainWindow):
         self._manual_screws = (None if ms is None
                                else [(float(x), float(y)) for x, y in ms])
         self.bed_act.setChecked(self.show_bed)
-        boards = data.get("boards") or []
         folder = data.get("gerber_dir")
+        placed = True              # may the saved name and placement be applied?
         if len(boards) > 1:
-            self._restore_panel(boards, data.get("current", 0), foreign)
+            placed = self._restore_panel(boards, data.get("current", 0), foreign)
         elif folder and Path(folder).is_dir():
             self.load_folder(folder)
+        elif folder or boards:
+            # The board itself is missing. Everything below would otherwise
+            # land on whatever was open before - renamed, moved to the saved
+            # placement, cut with the saved numbers - under "Setup loaded.".
+            foreign.append(f"the board (its folder {folder or ''} is gone)")
+            placed = False
         # After load_folder, which names the job from the folder it read: the
         # name saved with the setup is the one the operator chose.
-        if data.get("name"):
+        if data.get("name") and placed:
             st.name = data["name"]
             self._custom_name = True
         # ...and which also cleared the measured flip, so re-apply the saved
@@ -2439,14 +2667,30 @@ class MainWindow(QMainWindow):
             self.level_page.restore(data.get("level"))
         except Exception:
             foreign.append("the height map")
-        px, py = data.get("place", [0, 0])
-        st.set_rotation(data.get("rotate", 0))
-        st.set_placement(px, py)
+        if placed:
+            px, py = data.get("place", [0, 0])
+            st.set_rotation(data.get("rotate", 0))
+            st.set_placement(px, py)
         self._paths_cache = {}
-        self.inspector.setup.thickness.setValue(data.get("thickness", 1.6))
-        self.inspector.setup.double.setChecked(self._double)
-        self.inspector.setup.screwed.setChecked(self.screwed)
-        self.inspector.setup.sync()
+        setup = self.inspector.setup
+        # Signals blocked: a thickness that differs from the spinbox fired the
+        # auto-depth handler, which overwrote the drill and cut-out depths
+        # restored above with ones derived from THIS session's overshoot.
+        # Those two settings are saved with the setup as well now.
+        for spin, val in ((setup.thickness, data.get("thickness", 1.6)),
+                          (setup.overshoot,
+                           data.get("overshoot", setup.overshoot.value()))):
+            spin.blockSignals(True)
+            spin.setValue(float(val))
+            spin.blockSignals(False)
+        setup.auto_depth.blockSignals(True)
+        setup.auto_depth.setChecked(
+            bool(data.get("auto_depth", setup.auto_depth.isChecked())))
+        setup.auto_depth.blockSignals(False)
+        setup.double.setChecked(self._double)
+        setup.screwed.setChecked(self.screwed)
+        setup.sync()
+        self._sync_frame_options()
         self._after_params()
         self._sync_stock()
         self._draw_screws()
@@ -2469,8 +2713,8 @@ class MainWindow(QMainWindow):
         saved, and the missing one is named so it can be found.
         """
         st = self.state
-        loaded = 0
-        for b in boards:
+        loaded, landed = 0, {}        # saved index -> where it ended up
+        for k, b in enumerate(boards):
             bdir = str(b.get("gerber_dir", ""))
             bname = str(b.get("name", "") or "a board")
             if not Path(bdir).is_dir():
@@ -2483,6 +2727,7 @@ class MainWindow(QMainWindow):
             if len(st.boards) != loaded + 1:
                 foreign.append(bname)         # the folder no longer reads
                 continue
+            landed[k] = loaded
             loaded += 1
             m = st.boards[-1]
             try:
@@ -2494,14 +2739,19 @@ class MainWindow(QMainWindow):
             if b.get("name"):
                 m.name = bname
         if not st.boards:
-            return
+            return False
         st.rebuild()
         try:
             cur = int(current)
         except (TypeError, ValueError):
             cur = 0
+        # The saved index counts the boards as they were saved; a skipped one
+        # shifts everything after it down, so map it through where each
+        # board landed rather than move the wrong one to the saved spot.
+        cur = landed.get(cur, 0)
         st.select_board(cur if 0 <= cur < len(st.boards) else 0)
         self._paths_cache = {}
+        return len(landed) == len(boards)
 
     # ----------------------------------------------------------------- misc
     def _after_params(self):
@@ -2628,6 +2878,13 @@ class MainWindow(QMainWindow):
     def _on_jog_click(self, x, y):
         if not self.link.is_connected():
             self.say("warn", "Not connected — there is nothing to jog.")
+            return
+        if self.stage.frame != "bed":
+            # The X-ray is the design frame: unmirrored, and placed where the
+            # design overlay wants it. A click there is not a machine
+            # position, and neither is the hole it would snap to.
+            self.say("warn", "The X-ray is the design frame, not the "
+                             "machine's. Switch back to “Bed — as cut” to jog.")
             return
         # Snap to the hole under the cursor. Clicking a hole means "go to that
         # hole", and nobody can place a cursor on its centre to a tenth of a

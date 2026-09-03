@@ -25,6 +25,12 @@ import os
 # pyqtgraph is imported.
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
 
+# The safety net every 3D window module carries: a GL surface format Qt
+# will give pyqtgraph, secured at import, so a window opened by code that
+# never went through main() gets a view rather than a traceback.
+from gerber2rml import glconfig
+glconfig.ensure_default_format()
+
 import numpy as np
 import pyqtgraph.opengl as gl
 from pyqtgraph import Vector

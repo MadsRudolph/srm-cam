@@ -9,7 +9,7 @@ changes whether their board works.
 
 It can be here safely because the stop control is not in a panel — see
 ``machine.py``. The probe run is driven from the same window that is holding
-STOP, the run is abortable at every point, and the firmware lifts the tool on
+STOP, the run is abortable at every point, and the firmware stops the motion on
 abort.
 
 There are two ways in, and neither one is second-class:
@@ -61,14 +61,15 @@ class ProbeRun(QObject):
                              on_result=self.point.emit,
                              should_abort=self._should_abort)
             if self._should_abort():
-                self.finished.emit("Stopped. The tool has lifted; the points "
-                                   "already measured have been kept.")
+                self.finished.emit("Stopped. Motion is off and the points "
+                                   "already measured have been kept. Raise "
+                                   "the bit before jogging.")
                 return
             if len(res) < len(self._points):
                 last = res[-1] if res else {"id": -1, "error": "no datum"}
                 self.finished.emit(
                     f"Stopped at point {last['id'] + 1}: "
-                    f"{last.get('error', 'unknown')}. The tool lifted. Check "
+                    f"{last.get('error', 'unknown')}. Check "
                     f"the probe clip is on the copper and that the surface is "
                     f"found before this point.")
                 return
@@ -169,7 +170,7 @@ class LevelPage(inspector.Page):
             "Probe over the link", kind="primary", on=self._probe,
             tip="Drives the machine: the bit descends onto each point until it "
                 "touches copper, records the height and moves on.\n\n"
-                "STOP stops it at any point, and the tool lifts.")
+                "STOP stops it at any point.")
         ph.addWidget(self.probe_btn)
         ph.addStretch(1)
         probe.add(prow)
@@ -223,8 +224,9 @@ class LevelPage(inspector.Page):
         bh.addWidget(widgets.button("Save…", on=self._save_csv))
         bh.addWidget(widgets.button("Load…", on=self._load_csv))
         bh.addWidget(widgets.button("Clear", kind="danger", on=self._clear,
-                                    tip="Discards every measured height. The "
-                                        "grid stays."))
+                                    tip="Discards this face's measured heights. "
+                                        "The grid stays, and so does the other "
+                                        "face's measurement."))
         bh.addStretch(1)
         table.add(brow)
         self.add(table)
@@ -235,7 +237,7 @@ class LevelPage(inspector.Page):
             "Every Z in the exported files is adjusted to follow the measured "
             "heights. The dry run is deliberately left alone — it is in the "
             "air, and it has to stay identical whatever the surface does.")
-        self.use_chk.toggled.connect(lambda _v: ctl.refresh_plan())
+        self.use_chk.toggled.connect(lambda _v: ctl.action_level_toggled())
         use.add(self.use_chk)
         self.advice = widgets.body("")
         use.add(self.advice)
@@ -271,8 +273,21 @@ class LevelPage(inspector.Page):
         self.ctl.say("info", f"{len(self._points)} probe points laid over the "
                              f"board.")
 
-    def points(self):
-        """``[(x, y, dz)]`` for every row with a height, in machine mm."""
+    def points(self, side=None):
+        """``[(x, y, dz)]`` for every row with a height, in machine mm.
+
+        ``side`` asks for one face's measurement whichever face is on screen;
+        None is the table in front of you."""
+        if side and side != self._side:
+            out = []
+            for cells in ((self._maps.get(side) or {}).get("rows") or []):
+                try:
+                    if str(cells[2]).strip():
+                        out.append((float(cells[0]), float(cells[1]),
+                                    float(cells[2])))
+                except (TypeError, ValueError, IndexError):
+                    continue
+            return out
         out = []
         for r in range(self.table.rowCount()):
             z = self.table.item(r, 2)
@@ -292,11 +307,12 @@ class LevelPage(inspector.Page):
     def height_map(self, side=None):
         """The height map, or None if it is not on, not complete, or not this
         face's. ``side`` defaults to whichever face the plan is showing."""
-        if not self.use_chk.isChecked():
-            return None
         want = side or self.ctl.current_side() or self._side
         if want and self._side != want:
-            # Not the face on screen: read that face's own measurement.
+            # Not the face on screen: read that face's own measurement, and
+            # its OWN apply flag. The checkbox on screen belongs to the other
+            # face, and gating on it handed the flip-fit page no top map
+            # whenever the bottom was being looked at.
             other = self._maps.get(want)
             if not other or not other.get("apply"):
                 return None
@@ -314,6 +330,8 @@ class LevelPage(inspector.Page):
                                                 other.get("ny", 3))
             except Exception:
                 return None
+        if not self.use_chk.isChecked():
+            return None
         pts = self.points()
         if len(pts) < 3:
             return None
@@ -520,6 +538,13 @@ class LevelPage(inspector.Page):
         if not self._points:
             self.ctl.say("warn", "Build a grid first.")
             return
+        if link.is_busy():
+            # Taking the port off a worker mid-move ends the command, not the
+            # move: the Roland controller finishes it on its own, and the
+            # datum would be latched somewhere along the way.
+            self.ctl.say("warn", "The machine is still doing something. Wait "
+                                 "for it to finish before probing.")
+            return
         # WHERE THE TOOL IS STANDING IS THE ORIGIN OF EVERY POINT BELOW.
         #
         # probe_grid opens the port and latches the datum with 'D', which the
@@ -553,8 +578,8 @@ class LevelPage(inspector.Page):
         self.progress.show()
         self.probe_btn.setEnabled(False)
         self.probe_state.setText(
-            "Probing from X%.2f Y%.2f. STOP stops it at the next point and "
-            "lifts the tool." % (dx, dy))
+            "Probing from X%.2f Y%.2f. STOP stops it at the next point."
+            % (dx, dy))
         self._z0 = None
         self._failed = []
         # The switch, not the step. The operator picked a face; a step that
@@ -708,6 +733,10 @@ class LevelPage(inspector.Page):
             return
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
+                # Which face, and whose: the file is carried between
+                # machines (probe on the CNC PC, level on Linux), and a top
+                # map loaded as the bottom's is a wrong cut with no warning.
+                f.write(f"# face: {self._side}  job: {self.ctl.state.name}\n")
                 w = csv.writer(f)
                 w.writerow(["x_mm", "y_mm", "dz_mm"])
                 w.writerows(self.points())
@@ -726,7 +755,12 @@ class LevelPage(inspector.Page):
             return
         try:
             with open(path, newline="", encoding="utf-8") as f:
-                rows = [r for r in csv.reader(f) if r and not r[0].startswith("x")]
+                raw = list(csv.reader(f))
+            face = None
+            for r in raw:
+                if r and r[0].startswith("# face:"):
+                    face = r[0].split("face:", 1)[1].split()[0].strip()
+            rows = [r for r in raw if r and not r[0].startswith(("x", "#"))]
             pts = [(float(r[0]), float(r[1]), float(r[2])) for r in rows]
         except (OSError, ValueError, IndexError) as e:
             self.ctl.report_error(
@@ -747,6 +781,11 @@ class LevelPage(inspector.Page):
         self.ctl.stage.set_probe_points(self._points)
         self._advise()
         self._sync_enabled()
+        if face and face != self._side:
+            self.ctl.say("warn", f"That map was probed on the {face} face and "
+                                 f"has been loaded as the {self._side}'s. "
+                                 f"Switch faces first if that is not what "
+                                 f"you meant.")
 
     # -- advice ------------------------------------------------------------
     def _advise(self):

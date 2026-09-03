@@ -114,6 +114,8 @@ class ProjectState:
         at the current one."""
         if not self.boards:
             self.board = self._base_board = self.gerber_dir = None
+            self.place_x = self.place_y = 0.0
+            self.rotate = 0
             return
         self._sync_current()
         self.board = panel_mod.compose([m.board() for m in self.boards])
@@ -152,6 +154,14 @@ class ProjectState:
         if self.gerber_dir is None:
             raise RuntimeError("load a Gerber folder first")
         if self.is_panel:
+            bad = [(a, b) for a, b, gap, ov in panel_mod.clearances(self.boards)
+                   if ov or gap <= 1e-9]
+            if bad:
+                # Touching outlines merge into one, and one ring frees one
+                # piece: the boards would come off the sheet joined.
+                raise ValueError(f"the boards {bad[0][0]} and {bad[0][1]} "
+                                 f"overlap or touch; the cut-out would leave "
+                                 f"them joined")
             # The members are already placed, so the composed geometry goes
             # straight to the writer; nothing is re-read from disk.
             return write_jobs(self.board, out_dir, self.name,
