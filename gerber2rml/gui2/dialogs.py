@@ -56,6 +56,8 @@ class Sheet(QDialog):
         self.body.setSpacing(theme.GAP_M)
         v.addLayout(self.body)
         v.addStretch(1)
+        self._v = v
+        self._slack = v.count() - 1     # the stretch under the body
         self.actions = QHBoxLayout()
         self.actions.setSpacing(theme.GAP_S)
         self.actions.addStretch(1)
@@ -69,8 +71,17 @@ class Sheet(QDialog):
         self.body.addWidget(lb)
         return lb
 
-    def add(self, w):
-        self.body.addWidget(w)
+    def add(self, w, *, grow=False):
+        """Put a widget in the body.
+
+        grow: the widget takes the sheet's vertical slack, instead of the
+        space under the body. A scrolling list wants this; a run of labels
+        does not, or the slack would be dealt out between them as gaps.
+        """
+        self.body.addWidget(w, 1 if grow else 0)
+        if grow:
+            self._v.setStretchFactor(self.body, 1)
+            self._v.setStretch(self._slack, 0)
         return w
 
     def act(self, text, *, kind="", on=None, default=False):
@@ -257,6 +268,6 @@ def about_tier(parent):
     sa.setFrameShape(QFrame.NoFrame)
     sa.setWidget(inner)
     sa.setMaximumHeight(440)
-    d.add(sa)
+    d.add(sa, grow=True)
     d.act("Close", kind="primary", on=d.accept, default=True)
     d.exec()

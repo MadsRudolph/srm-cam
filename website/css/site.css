@@ -547,6 +547,7 @@ footer.site a { color: var(--text-3); }
   background: var(--panel);
 }
 .fig.narrow { max-width: 360px; }
+.fig.mid { max-width: 600px; }
 .fig.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
 
 .figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin: 0 0 20px; }
