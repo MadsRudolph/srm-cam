@@ -123,7 +123,7 @@ def main(argv=None):
     missing = _report(groups, args.dev)
 
     if not missing:
-        print("All set - the GUI should run:  python -m gerber2rml.gui.app")
+        print("All set - the GUI should run:  python -m gerber2rml")
         return 0
 
     print(f"Missing {len(missing)} package(s): {', '.join(missing)}")
@@ -140,7 +140,7 @@ def main(argv=None):
     if still:
         print(f"Still missing after install: {', '.join(still)}")
         return 1
-    print("All set - the GUI should run:  python -m gerber2rml.gui.app")
+    print("All set - the GUI should run:  python -m gerber2rml")
     return 0
 
 

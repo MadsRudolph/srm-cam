@@ -5,7 +5,7 @@ Kept separate from gerber2rml/__main__.py so the build target is explicit and
 PyInstaller's import graph starts from a plain module rather than a package
 __main__.
 """
-from gerber2rml.gui.app import main
+from gerber2rml.gui2.app import main
 
 if __name__ == "__main__":
     raise SystemExit(main())
