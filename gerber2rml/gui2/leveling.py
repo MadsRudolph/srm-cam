@@ -257,6 +257,11 @@ class LevelPage(inspector.Page):
             self.ctl.say("warn", "Load a board first — the grid is laid over "
                                  "its footprint.")
             return
+        b, clipped = self._reachable(b)
+        if b is None:
+            self.ctl.say("warn", "None of the job is on copper the machine "
+                                 "can reach — see the checks.")
+            return
         self._points = lv.probe_points(b, self.nx.value(), self.ny.value())
         self.table.blockSignals(True)
         self.table.setRowCount(len(self._points))
@@ -270,8 +275,42 @@ class LevelPage(inspector.Page):
         self.ctl.stage.set_probe_points(self._points)
         self.ctl.refresh_preview()          # so the key picks up the points
         self._sync_enabled()
-        self.ctl.say("info", f"{len(self._points)} probe points laid over the "
-                             f"board.")
+        if clipped:
+            self.ctl.say("warn", f"{len(self._points)} probe points laid over "
+                                 f"the part of the job the machine can reach: "
+                                 f"{clipped}. The checks say the same about "
+                                 f"the job itself.")
+        else:
+            self.ctl.say("info", f"{len(self._points)} probe points laid over "
+                                 f"the board.")
+
+    def _reachable(self, b):
+        """``b`` clipped to the travel and to the copper, and a sentence about
+        what was cut off - or ``(None, ...)`` if nothing is left.
+
+        A probe point past the end of the travel is one the machine cannot
+        get to, and a whole column of them fails with no clue why; one past
+        the edge of the copper is a bit descending onto bare spoilboard.
+        """
+        from gerber2rml.backends import BACKENDS
+        x0, y0, x1, y1 = b
+        bx, by = BACKENDS[self.ctl.state.machine].bed
+        limits = [(0.0, 0.0, bx, by, "the travel")]
+        ctl = self.ctl
+        if getattr(ctl, "show_stock", False) or getattr(ctl, "screwed", False):
+            sx, sy, sw, sh = ctl.stock
+            limits.append((sx, sy, sx + sw, sy + sh, "the copper"))
+        cut = []
+        for lx0, ly0, lx1, ly1, what in limits:
+            nx0, ny0 = max(x0, lx0), max(y0, ly0)
+            nx1, ny1 = min(x1, lx1), min(y1, ly1)
+            lost = max(lx0 - x0, x1 - lx1, ly0 - y0, y1 - ly1)
+            if lost > 1e-6:
+                cut.append(f"{lost:.1f} mm of it is past {what}")
+            x0, y0, x1, y1 = nx0, ny0, nx1, ny1
+        if x1 - x0 <= 0 or y1 - y0 <= 0:
+            return None, "; ".join(cut)
+        return (x0, y0, x1, y1), "; ".join(cut)
 
     def points(self, side=None):
         """``[(x, y, dz)]`` for every row with a height, in machine mm.
@@ -681,8 +720,16 @@ class LevelPage(inspector.Page):
         self.probe_btn.setEnabled(True)
         self.probe_state.setText(msg or "Done. Every point measured.")
         self.ctl.link.mark_external(False)
+        # A map that took minutes of machine time and is then not applied is
+        # the worst of both: the cut is not warped, and the flex margin
+        # charges the whole range of a surface nobody is correcting for.
+        # Probing is the decision to use it.
+        used = ""
+        if len(self.points()) >= 3 and not self.use_chk.isChecked():
+            self.use_chk.setChecked(True)
+            used = " It will warp the exported cut."
         self.ctl.say("warn" if msg else "ok",
-                     msg or "Bed probed — the height map is ready.")
+                     (msg or "Bed probed — the height map is ready.") + used)
         self._report_failures()
         self._advise()
         # Take the port back so the readout and STOP are live again.
