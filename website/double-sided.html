@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Double-sided boards — SRM-CAM guide</title>
-<meta name="description" content="Dowel-pin and fiducial registration, the flip, and the automatic fiducial finder.">
+<meta name="description" content="Dowel-pin and fiducial registration, the flip, measuring where the board landed, and the top files re-written to match.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link active" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -53,72 +54,56 @@
 <div class="content">
 
 <h1>Double-sided boards</h1>
-<p class="lead">Both sides register off machine-located holes — never the board edge. Tick <span class="ui">Double-sided</span> in <span class="ui">3 · Registration</span> (needs F.Cu).</p>
+<p class="lead">Both sides register off machine-located holes, never the board edge. Full tier: tick <span class="ui">This board has copper on both faces</span> on the setup page (needs F.Cu).</p>
 
 <figure class="fig">
-  <img src="img/srmcam_doublesided.png" alt="Double-sided registration preview">
-  <figcaption>Both layers previewed in register. Exports carry the real machine geometry (mirrored bottom, reflected top) — both are correct.</figcaption>
+  <img src="img/gui2_xray.png" alt="The design X-ray with both copper layers overlaid">
+  <figcaption><span class="ui">Design X-ray</span> (<kbd>Ctrl</kbd>+<kbd>D</kbd>): both faces in the design frame, where they are meant to overlay. The bed frame is what gets cut.</figcaption>
 </figure>
 
-<h2>Pick a method</h2>
-<div class="tbl-wrap"><table>
-<tr><th></th><th>Dowel pins (default)</th><th>Fiducial holes</th></tr>
-<tr><td>How</td><td>Holes drilled through stock into the bed; flip onto seated pins</td><td>2–4 stock-only corner holes; flip freely, probe where they landed, top warps to fit</td></tr>
-<tr><td>Measurement</td><td>None</td><td>Probe each hole after the flip</td></tr>
-<tr><td>Accuracy</td><td>sub-0.1 mm, proven</td><td>= fit RMS (aim &lt; 0.1 mm)</td></tr>
-<tr><td>Placement after flip</td><td>Fixed by pins</td><td>Anywhere reasonable</td></tr>
-</table></div>
-
-<h2>Dowel pins</h2>
-<div class="tbl-wrap"><table>
-<tr><th></th><th>Fresh-milled dowels (default)</th><th>Grid-seated pins</th></tr>
-<tr><td>Pins live in</td><td>fresh holes into the bed</td><td>the bed's threaded grid</td></tr>
-<tr><td>Pins</td><td>Ø2 + Ø3 mm</td><td>Ø4 mm</td></tr>
-<tr><td>Wrong flip blocked by</td><td>different diameters</td><td>asymmetric spacing</td></tr>
-</table></div>
-<ul>
-  <li><span class="ui">clr L</span> / <span class="ui">S</span>: hole clearances — defaults are dialed in for this machine; only touch if a pin binds.</li>
-  <li><span class="ui">bed</span>: how deep the holes bite into the spoilboard.</li>
-  <li><span class="ui">Cut dowels only...</span>: export just the dowel holes for a test fit (same XY origin!).</li>
-</ul>
-
-<h3>Sequence</h3>
+<h2>The plan</h2>
+<p>Ticking the box changes the run plan: the cut-out moves to the end, because it is what frees the board from its own registration.</p>
 <ol class="steps">
-  <li><span class="st">Read <code>&lt;name&gt;_runplan.txt</code></span> — it has the exact order, bits, pin sizes.</li>
-  <li><span class="st">Zero once</span> — XY once for the whole board; Z after every bit change <em>and</em> the flip.</li>
-  <li><span class="st">Run <code>_align</code></span> — drills the dowel holes; seat the pins.</li>
-  <li><span class="st">Bottom</span> — drill files, then <code>_bottom_traces</code>.</li>
-  <li><span class="st">Flip onto the pins</span> — wrong direction won't seat.</li>
-  <li><span class="st">Top, then cutout</span> — re-zero Z, <code>_top_traces</code>, <code>_cutout</code> last.</li>
+  <li><span class="st">1 · Dowel holes / Fiducial holes</span> — <code>&lt;name&gt;_align.nc</code>. Dowels drill on into the bed and cannot be undone; the export asks first.</li>
+  <li><span class="st">2 · Drill the board</span> — <code>&lt;name&gt;_bottom_drill.nc</code>.</li>
+  <li><span class="st">3 · Bottom traces</span> — <code>&lt;name&gt;_bottom_traces.nc</code>, mirrored.</li>
+  <li><span class="st">Flip the board</span> — onto the pins, or re-place it freely with fiducials. Re-zero Z on the new face. Never XY.</li>
+  <li><span class="st">Measure where it landed</span> — fiducials only; see below.</li>
+  <li><span class="st">4 · Top traces</span> — <code>&lt;name&gt;_top_traces.nc</code>, cut as plain F.Cu.</li>
+  <li><span class="st">5 · Cut the board out</span> — <code>&lt;name&gt;_cutout.nc</code>, last.</li>
 </ol>
 
-<h2>Fiducial holes</h2>
-<p>Settings: <span class="ui">n</span> fiducials (use 4), placement (<span class="ui">On board</span> / <span class="ui">In waste</span> / <span class="ui">Manual</span>), flip direction, optional <span class="ui">scale</span> fit.</p>
-<p>After milling the bottom and flipping: <span class="ui">Fit &amp; export top...</span> opens the alignment dialog. Fill in each fiducial's measured position:</p>
+<h2>Pick a registration</h2>
 <div class="tbl-wrap"><table>
-<tr><th>Way</th><th>How</th></tr>
-<tr><td>Type</td><td>Jog by hand, read VPanel, type X/Y</td></tr>
-<tr><td><span class="ui">Capture</span></td><td>Jog the bit into the hole, press — DRO position fills in</td></tr>
-<tr><td><span class="ui">Auto</span></td><td>Jog <em>roughly</em> over the hole, press — found electrically to ~0.05 mm, ~1 min</td></tr>
+<tr><th></th><th>Dowel pins</th><th>Fiducial holes</th></tr>
+<tr><td>How</td><td>Two holes of different sizes through the stock and 5&nbsp;mm into the bed; flip onto seated pins</td><td>2–4 holes in the stock only; flip freely, probe where they landed, the top files warp to fit</td></tr>
+<tr><td>Measurement</td><td>None</td><td>Probe each hole after the flip</td></tr>
+<tr><td>Accuracy</td><td>Sub-0.1&nbsp;mm, proven</td><td>As good as the probing</td></tr>
+<tr><td>Needs</td><td>Waste around the board for the pins</td><td>Nothing extra with the holes on the board</td></tr>
 </table></div>
-<p><span class="ui">Compute fit</span> shows RMS (want &lt; 0.1&nbsp;mm), rotation, scale. <span class="ui">OK</span> exports the warped top traces.</p>
+<p>Dowels use the lab's proven geometry — 3.1 and 1.9&nbsp;mm rods, clearances dialled in on a fit-test coupon. Fiducials have their settings on the setup page: hole diameter (wider than the bit, so it can be found from inside), <span class="ui">In the waste</span> or <span class="ui">On the board</span>, the offset from the corner, how many.</p>
 
-<h3>Auto finder requirements</h3>
-<ul>
-  <li>Firmware v3 (<a href="hardware.html">reflash once</a> with <code>python scripts/flash_firmware.py</code>), red clip on the copper, spindle OFF.</li>
-  <li>Jog within ~1&nbsp;mm of the hole, 2–3&nbsp;mm up.</li>
-  <li>Copper must exist ~2.5&nbsp;mm west of the hole (surface reference touch).</li>
-</ul>
+<h2>Measure where it landed</h2>
+<figure class="fig">
+  <img src="img/gui2_flipfit.png" alt="The flip-fit page">
+  <figcaption>The reference holes, where they should be and where they were found, and the verdict on the fit.</figcaption>
+</figure>
+<ol class="steps">
+  <li><span class="st">List the holes to probe</span> — the nominal positions after a perfect flip, and where to jog.</li>
+  <li><span class="st">Measure each one</span> — jog over the hole and <span class="ui">Capture into the selected row</span> from the position readout, or <span class="ui">Find it for me</span>: the bit is lowered inside the hole and the edge found electrically. Or type what VPanel shows.</li>
+  <li><span class="st">Read the verdict</span> — the worst hole's disagreement with the others. Under 0.05&nbsp;mm is good; up to 0.15 usable but re-probe the worst one; beyond that, re-seat the board and probe again. The fit is adopted as soon as it exists, so the stage shows the board where it really is.</li>
+  <li><span class="st">Write the top traces and the cut-out</span> — both files re-written to the measured flip, with the top face's height map if you probed it and the same extra depth the bottom got. <span class="ui">Finish the blind holes from this side</span> re-drills the holes from the top to meet the ones from below.</li>
+</ol>
 
 <div class="danger"><span class="t">Verify the flip direction before cutting the top</span>
-<p>Corner fiducials <strong>cannot detect a wrong flip direction</strong> — the fit looks great either way. Before running top traces: click-to-jog to a distinctive <em>board hole</em> in the Top view and confirm the bit hovers over it in reality. Ten seconds, saves the board.</p></div>
+<p>Corner fiducials <strong>cannot detect a wrong flip direction</strong> — the fit looks perfect either way. Before running the top traces, <span class="ui">Click to jog</span> to a distinctive board hole with the top step selected and confirm the bit hovers over it in reality. Ten seconds; saves the board.</p></div>
 
-<div class="tip"><span class="t">Level the top too</span>
-<p>After the flip: View = Top, <span class="ui">Build grid</span>, <span class="ui">Clear Z</span>, re-probe, <span class="ui">Export top traces (leveled)</span>. See <a href="bed-leveling.html">Bed leveling</a>.</p></div>
+<div class="note"><span class="t">Not in this interface</span>
+<p>Grid-seated dowel pins, editable dowel clearances, a chosen flip axis and hand-placed fiducials are settings of the first interface only. Reach it with <code>SRM-CAM --original</code>.</p></div>
 
 <div class="page-nav">
-  <a href="holding-the-copper.html"><span class="lbl">Previous</span><span class="ttl">← Holding the copper</span></a>
-  <a class="next" href="bed-leveling.html"><span class="lbl">Next</span><span class="ttl">Bed leveling &amp; probing →</span></a>
+  <a href="bed-leveling.html"><span class="lbl">Previous</span><span class="ttl">← Bed levelling &amp; probing</span></a>
+  <a class="next" href="photo-and-rework.html"><span class="lbl">Next</span><span class="ttl">Photo check &amp; rework →</span></a>
 </div>
 
 <footer class="site">
@@ -127,6 +112,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

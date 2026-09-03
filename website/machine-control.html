@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Machine control — SRM-CAM</title>
-<meta name="description" content="Drive the Roland SRM-20 from SRM-CAM over the Arduino SPI link: spindle, pause, resume, jog, live status — and what the link cannot do.">
+<title>Machine control — SRM-CAM guide</title>
+<meta name="description" content="The machine bar and menu: position, jog, zero Z, spindle, STOP, and what the link cannot do.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -54,98 +55,63 @@
 
 <div class="hero">
   <h1>Machine control</h1>
-  <p class="lead">With the Arduino fitted to the SRM-20's SPI header, SRM-CAM drives the machine itself — spindle, pause, resume, stop, jog, probing and live position — instead of only writing files for VPanel.</p>
+  <p class="lead">With the Arduino fitted, SRM-CAM reads the machine's position, jogs, probes, zeroes Z and starts the spindle — while VPanel still plays the files and sets the spindle speed.</p>
   <div class="badge-row">
-    <span class="badge copper">Professional mode</span>
+    <span class="badge copper">Windows only</span>
     <span class="badge">Firmware v3</span>
-    <span class="badge">VPanel still sets spindle speed</span>
+    <span class="badge">VPanel sets spindle speed</span>
   </div>
 </div>
 
-<p>This page is the honest scoreboard. Every command below was tested on a real SRM-20 and the results are recorded in <code>docs/2026-08-21-spi-command-audit.md</code>. Where something does <em>not</em> work, it says so — a command that acknowledges is not a command that did anything.</p>
-
-<h2>What the link gives you</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Control</th><th>What it drives</th><th>Proven on the machine</th></tr>
-<tr><td>Live status</td><td>The machine's own status word — lid, spindle, error, fault</td><td>Yes</td></tr>
-<tr><td><span class="ui">Spindle</span></td><td>Start / stop the tool — an <code>M3</code>/<code>M5</code> equivalent</td><td>Yes</td></tr>
-<tr><td><span class="ui">Pause</span> / <span class="ui">Resume</span></td><td>Hold and release a move in progress</td><td>Yes — 2.4&nbsp;s of hold measured for a 3&nbsp;s pause</td></tr>
-<tr><td><span class="ui">STOP</span></td><td>Kills the move queued in the controller, then lifts</td><td>Yes — cut a 20&nbsp;mm move short at 4.8&nbsp;mm</td></tr>
-<tr><td><span class="ui">Move head to view position</span></td><td>VPanel's View button</td><td>Yes</td></tr>
-<tr><td>Handshake</td><td>Reads the machine's remote-protocol version on connect</td><td>Yes — reports v1.00</td></tr>
-</table></div>
-
-<h2>What it does not give you</h2>
-
-<div class="danger"><span class="t">Spindle speed is still a VPanel setting</span>
-<p><strong>The machine ignores the RPM number.</strong> Commanding 500, 1000, 2000 and 3000 all settle on exactly the same speed — whatever VPanel's spindle slider is set to. SRM-CAM can start and stop the tool; it cannot choose how fast it turns. <strong>Set the speed on VPanel's slider before any wet run.</strong></p></div>
-
-<ul>
-  <li><strong>Feed rate is not calibrated.</strong> The link's speed value is Roland-internal, not mm/s. The default works out at about 19.1&nbsp;mm/s; any other value has to be dialled in against a stopwatch.</li>
-  <li><strong>Most status bits are unmapped.</strong> Only the lid bit is proven. The bit Roland labels "paused" demonstrably does not mean paused on this machine — it has been observed set on an idle, healthy mill, so do not read it as one.</li>
-  <li><strong>There is no "run this program" command.</strong> Playing a whole job means streaming every move individually — see <a href="#streaming">Streaming</a>, which is still experimental.</li>
-</ul>
-
-<h2>Where the controls live</h2>
-<p>The dock keeps what you reach for with a hand on the machine. Everything else moved to the <span class="ui">Machine</span> menu, because the strip used to run past the window edge and hide <span class="ui">Connect</span> and <span class="ui">STOP</span>.</p>
-
-<h3>Machine dock</h3>
+<h2>The machine bar</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Control</th><th>Does</th></tr>
-<tr><td><span class="ui">Connect</span> + port</td><td>Open/close the link; the position readout goes live</td></tr>
-<tr><td><span class="ui">Z ▲ / ▼</span> + step</td><td>Jog Z by the selected step. <kbd>PageUp</kbd>/<kbd>PageDown</kbd> do the same from anywhere in the app</td></tr>
-<tr><td><span class="ui">Probe Z</span></td><td>Touch-off: descend until the bit meets copper, stop at the surface</td></tr>
-<tr><td><span class="ui">Spindle</span></td><td>Start/stop the tool. Speed comes from VPanel — see above</td></tr>
-<tr><td><span class="ui">Pause</span> / <span class="ui">Resume</span></td><td>Hold and release the current move</td></tr>
-<tr><td>Status strip</td><td><code>LID OPEN</code> · <code>spindle</code> · <code>ERROR</code> · <code>FAULT</code>, polled about once a second</td></tr>
-<tr><td><span class="ui">STOP</span></td><td>Abort now: stop the queued move, lift, disconnect</td></tr>
+<tr><td><span class="ui">Connect</span> + port</td><td>Opens the link (<kbd>Ctrl</kbd>+<kbd>L</kbd>). Likely Arduinos are listed first. The chip says what the link is doing.</td></tr>
+<tr><td>X Y Z readout</td><td>Machine position, three times a second, and whether the bit is touching copper.</td></tr>
+<tr><td><span class="ui">↓</span> <span class="ui">↑</span> + step</td><td>Jog Z by the step. <kbd>Page Down</kbd> / <kbd>Page Up</kbd> do the same from anywhere. Down is refused while the probe says the bit is touching.</td></tr>
+<tr><td><span class="ui">Zero Z here</span></td><td>Touch the bit down on the copper and call that Z zero. Only Z; XY is never moved. The Z-reach check uses the surface it found.</td></tr>
+<tr><td><span class="ui">Spindle</span></td><td>Start or stop the tool. No speed control: the machine ignores it and runs at VPanel's slider.</td></tr>
+<tr><td><span class="ui">Click to jog</span></td><td>Click the bed and the head lifts and travels there, snapping to the nearest drawn hole. Bed frame only.</td></tr>
+<tr><td><span class="ui">STOP</span></td><td>Drops the move in flight and stops the spindle. <kbd>Esc</kbd> does the same from anywhere, dialogs included. The bit stays down — raise it with <kbd>Page Up</kbd>.</td></tr>
 </table></div>
 
-<h3>Machine menu</h3>
+<h2>The Machine menu</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Item</th><th>Does</th></tr>
-<tr><td><span class="ui">Click to jog</span></td><td>Click the preview and the tool lifts, then travels there. Snaps to holes and pins; <kbd>Ctrl</kbd>+click for an exact point</td></tr>
-<tr><td><span class="ui">Align overlay to the bit</span></td><td>Sync the preview to reality. Display only — exports are untouched</td></tr>
-<tr><td><span class="ui">Zero Z on machine</span></td><td>Touch-off, then write the origin Z</td></tr>
-<tr><td><span class="ui">Move head to view position</span></td><td>Sends the head out of the way so you can reach the bed</td></tr>
-<tr><td><span class="ui">Tool trail</span> / <span class="ui">Clear trail</span></td><td>Draw where the bit has actually travelled</td></tr>
-<tr><td><span class="ui">Stream job over the link (experimental)…</span></td><td>See <a href="#streaming">below</a></td></tr>
-<tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command and report what works</td></tr>
+<tr><td><span class="ui">Rescan the serial ports</span></td><td>After plugging the Arduino in.</td></tr>
+<tr><td><span class="ui">Move the head to the View position</span></td><td>Out of the way, so you can reach the bed.</td></tr>
+<tr><td><span class="ui">Export the hold-down screw file…</span></td><td>See <a href="holding-the-copper.html">Holding the copper</a>.</td></tr>
+<tr><td><span class="ui">Export the bed fixture (pin holes)…</span></td><td>The three dowel-pin holes in the spoilboard.</td></tr>
+<tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command and report PASS / FAIL / UNKNOWN. Read-only by default; motion and spindle tests are armed separately. <span class="ui">STOP</span> reaches a running test.</td></tr>
+<tr><td><span class="ui">Stream this step over the link (experimental)…</span></td><td>Sends the selected step's moves one by one instead of through VPanel. Starts as a dry run. The speed units are not calibrated; for real jobs, export and play the files from VPanel.</td></tr>
 </table></div>
 
-<h2>The spindle, and the rules around it</h2>
-<p>A proven command can still do the wrong thing, so the button is fenced:</p>
+<h2>What the link does not give you</h2>
+<div class="danger"><span class="t">Spindle speed is a VPanel setting</span>
+<p>The machine ignores the RPM number; whatever VPanel's slider says is what you get. Set it there before any wet run.</p></div>
 <ul>
-  <li>It <strong>will not start with the lid open</strong> — checked in the app, and again in the firmware.</li>
-  <li>It <strong>follows the machine, not the app.</strong> A spindle started from VPanel shows as on here.</li>
-  <li><strong>Disconnecting never stops a spindle SRM-CAM did not start.</strong> The operator's own spindle is not the app's to police.</li>
-  <li>There is a <strong>deadman in firmware</strong>: a spindle SRM-CAM started stops by itself if the app goes quiet for 10 seconds.</li>
-  <li>A <strong>dry run never spins the tool at all.</strong></li>
+  <li><strong>No pause and resume</strong> in this interface. VPanel has them, and so does the first interface.</li>
+  <li><strong>Feed rate is not calibrated</strong> for streamed moves.</li>
+  <li><strong>Only the lid bit of the status word is proven.</strong></li>
+  <li><strong>After a STOP, click-to-jog does nothing</strong> until a Z step has been made; a firmware fix waits for an idle machine.</li>
 </ul>
 
-<div class="tip"><span class="t">Pausing a streamed run is safe to hold</span>
-<p>The deadman counts host silence, and a hold would once have <em>been</em> silence — pause a wet run for more than ten seconds and the spindle stopped, then the run resumed into copper with a stationary tool. SRM-CAM now keeps talking to the board while it holds, and re-checks that the spindle is actually turning before resuming. If it is not, the run stops and lifts instead of cutting.</p></div>
-
-<h2 id="streaming">Streaming a job (experimental)</h2>
-
-<div class="warn"><span class="t">This is not the normal path</span>
-<p>For real jobs, export <code>.nc</code> files and play them from VPanel. Streaming exists so the machine can eventually be driven end to end from SRM-CAM, but the speed units are not calibrated yet. Treat it as a bench feature.</p></div>
-
-<p>Every session <strong>starts as a dry run</strong> — Z is held 2&nbsp;mm above the work origin and nothing can cut. A wet run starts and stops the spindle itself, holds on <span class="ui">Pause</span>, and aborts if the lid opens — checked before the first move, then at least once a second and at least every ten moves, so a short job is covered too — but the <strong>spindle speed must still be set on VPanel's slider first</strong>, and the raw speed value has to be validated on dry runs.</p>
-
-<div class="note"><span class="t">Bed leveling is not applied to a streamed job</span>
-<p>The height map warps <em>exported</em> files. A streamed job runs at nominal Z. If you have probed a map and need it honoured, export and run from VPanel.</p></div>
+<h2>The spindle's rules</h2>
+<ul>
+  <li>It will not start with the lid open.</li>
+  <li>The button follows the machine: a spindle started from VPanel shows as on here.</li>
+  <li>Disconnecting never stops a spindle SRM-CAM did not start.</li>
+  <li>A spindle SRM-CAM started stops by itself if the app goes quiet for ten seconds.</li>
+  <li>A dry run never spins the tool.</li>
+</ul>
 
 <h2>Checking the link</h2>
 <ol class="steps">
   <li><span class="st">From the app</span>
-    <span class="ui">Machine → Machine test…</span> runs each command and reports PASS / FAIL / UNKNOWN with a pasteable report. Read-only by default; motion and spindle tests are armed separately. Treat a PASS on job control as "the opcode was accepted", not "the machine did it".</li>
+    <span class="ui">Machine → Machine test…</span>.</li>
   <li><span class="st">From the command line</span>
-    <code>python scripts/srm20_bench.py --port COM5 --features</code> is the safe, read-only "is the board flashed and talking to the machine?" check. Add <code>--map-bits</code>, <code>--frame-soak</code> or <code>--speed-sweep</code> for the longer experiments.</li>
+    <code>python scripts/srm20_bench.py --port COM5 --features</code> is the read-only "is the board flashed and talking?" check.</li>
 </ol>
-
-<div class="note"><span class="t">In Novice mode</span>
-<p>The machine dock and this whole menu are hidden, <strong>including <span class="ui">STOP</span></strong> — and so is bed leveling, for exactly that reason: probing drives the machine, and a mode with no stop button has no business starting motion. Novice keeps <span class="ui">Corner = tool</span>, which only <em>reads</em> the tool position and commands nothing. Switch to Professional to drive the machine.</p></div>
 
 <div class="page-nav">
   <a href="hardware.html"><span class="lbl">Previous</span><span class="ttl">← Hardware &amp; firmware</span></a>
@@ -158,6 +124,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

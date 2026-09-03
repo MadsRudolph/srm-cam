@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting started — SRM-CAM guide</title>
-<meta name="description" content="Install SRM-CAM, take the guided tour, and learn the layout of the main window.">
+<meta name="description" content="Install SRM-CAM on Windows or Linux, learn the window, the two tiers, and the files KiCad has to give you.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -53,87 +54,66 @@
 <div class="content">
 
 <h1>Getting started</h1>
-<p class="lead">Install, take the tour, learn the window.</p>
+<p class="lead">Install, learn the window, load a board.</p>
 
 <h2>Install</h2>
-<ol class="steps">
-  <li><span class="st">Download</span>
-    <a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a> — no Python needed.</li>
-  <li><span class="st">Run the installer</span>
-    Creates the Start-menu entry and <code>Documents\SRM-CAM\</code> workspace folders.</li>
-  <li><span class="st">Launch</span>
-    A demo board loads and the guided tour starts. Replay it anytime with <span class="ui">Guide</span>, or <span class="ui">Help → Replay the guided tour</span>. <kbd>F1</kbd> opens this guide, and <span class="ui">Help → Check for updates…</span> asks GitHub whether a newer release exists — the app also checks quietly at launch and speaks only when there is one.</li>
-</ol>
-
-<p>From source:</p>
-<pre><code>pip install -e ".[gui]"
-python -m gerber2rml</code></pre>
-
-<div class="note"><span class="t">Upgrading</span>
-<p>Install the new setup over the old one. Sessions, presets, and probe CSVs survive.</p></div>
+<div class="tbl-wrap"><table>
+<tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
+<tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive.</td></tr>
+<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. <strong>The machine link is Windows-only</strong> — prepare and export on Linux, send the files from VPanel on the CNC PC, and carry a probed height map over as a CSV.</td></tr>
+<tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
+</table></div>
+<p>The first interface is still shipped: <code>SRM-CAM --original</code> from an install, <code>python -m gerber2rml.gui</code> from source. Same engine, same files.</p>
 
 <h2>Workspace folders</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Folder</th><th>Contents</th></tr>
-<tr><td><code>Documents\SRM-CAM\sessions</code></td><td>Saved setups (<span class="ui">Save setup...</span>)</td></tr>
-<tr><td><code>Documents\SRM-CAM\exports</code></td><td>Exported <code>.nc</code> / <code>.rml</code> + runplan</td></tr>
+<tr><td><code>Documents\SRM-CAM\sessions</code></td><td>Setups (<code>.srmcam</code>) and height maps (<code>.csv</code>)</td></tr>
+<tr><td><code>Documents\SRM-CAM\exports</code></td><td>Exported <code>.nc</code> / <code>.rml</code> files and the run plan</td></tr>
 <tr><td><code>Documents\SRM-CAM\photos</code></td><td>Board photos for the overlay</td></tr>
+<tr><td><code>Documents\SRM-CAM\gui2.log</code></td><td>Where a start-up problem ends up when there is no console. Read it first if the window never opens.</td></tr>
 </table></div>
 
-<h2>The main window</h2>
-
+<h2>The window</h2>
 <figure class="fig">
-  <img src="img/srmcam_GUI_MainPage.png" alt="SRM-CAM main window">
-  <figcaption>Left: run-plan steps · Center: settings for the active step · Right: preview · Bottom: machine dock.</figcaption>
+  <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected">
+  <figcaption>Four regions that never move: the rail, the stage, the inspector, the machine bar.</figcaption>
 </figure>
-
 <ul>
-  <li><strong>Sidebar</strong> — the run plan. In <strong>Novice</strong> (the default): <span class="ui">1 · Set up board</span> → <span class="ui">2 · Traces</span> → <span class="ui">3 · Drill</span> → <span class="ui">4 · Cut out</span> → <span class="ui">5 · Check in 3D</span>. In <strong>Professional</strong>: <span class="ui">1 · Setup board</span> → <span class="ui">8 · Top traces</span>, plus <span class="ui">Rework</span> and <span class="ui">3D viewer</span>. Click any step, nothing is locked — it is a map, not a gate.</li>
-  <li><strong>Preview</strong> — toolpaths on the bed. Drag to place the board, scrub the slider to see cut order, <span class="ui">Fit</span> to re-center. Click-to-jog when connected.</li>
-  <li><strong>Machine dock</strong> (Professional) — <span class="ui">Connect</span> + port, live DRO, <span class="ui">bit ○</span> touch indicator, <span class="ui">Z ▲/▼</span> + step, <span class="ui">Probe Z</span>, <span class="ui">Spindle</span>, <span class="ui">Pause</span>, <span class="ui">Resume</span>, a live machine-status strip, red <span class="ui">STOP</span>, and the <span class="ui">Run:</span> progress row. Click-to-jog, tool trail, align overlay, <span class="ui">Zero Z on machine</span>, streaming and the machine test are on the <span class="ui">Machine</span> menu — see <a href="machine-control.html">Machine control</a>.</li>
-  <li><strong>Status chips</strong> — <em>board · mesh · fit · photo · boxes · link</em> light up as your setup completes.</li>
+  <li><strong>The rail</strong> (left) is the run plan — the same order, and the same files, that the export writes. Numbered steps are files you send; the ones between them (fit the bit, set the origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>
+  <li><strong>The stage</strong> (middle) is the bed in machine coordinates: the copper sheet, the board, the toolpaths of the selected step, the spoilboard's screw grid. Drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan, <span class="ui">Fit</span> to frame the work. <span class="ui">Bed — as cut</span> is the only frame the machine understands; <span class="ui">Design X-ray</span> exists for checking that the two faces of a double-sided board register.</li>
+  <li><strong>The inspector</strong> (right) shows the selected step: the setup page, the checks, or a step's parameters, estimate and file.</li>
+  <li><strong>The machine bar</strong> (bottom) is always there: <span class="ui">Connect</span> and the port, the position readout, Z jog, <span class="ui">Zero Z here</span>, <span class="ui">Spindle</span>, <span class="ui">Click to jog</span>, and <span class="ui">STOP</span>. <kbd>Esc</kbd> stops the machine from anywhere, including with a dialog open.</li>
 </ul>
 
-<h2 id="modes">Novice &amp; Professional</h2>
-<p>SRM-CAM has two UI modes. <strong>Novice is the default on a fresh install</strong>, because the person who has never opened the app before is exactly the person the default is for. Switch from the <span class="ui">Mode</span> menu.</p>
-
-<p>Novice is a <strong>strict subset</strong>, not a separate program: same widgets, same handlers, same exports. What you produce in Novice is byte-identical to what the same settings produce in Professional.</p>
-
+<h2 id="tiers">Essential &amp; Full</h2>
+<p>Two tiers, on the <span class="ui">Interface</span> menu. Essential is the whole single-sided job, including bed levelling; Full adds the rest. Essential is a strict subset — the same controls, the same handlers, files that come out byte for byte identical.</p>
 <div class="tbl-wrap"><table>
-<tr><th>Novice keeps</th><th>Novice puts away</th></tr>
-<tr><td>Load, drill, traces, cut out, export</td><td>Job parameters — feeds, depths, offsets, stepover, V-bit geometry (the preset sets these)</td></tr>
-<tr><td>The dry-run outline, exported with every job</td><td>Bed leveling — probing drives the machine, and <span class="ui">STOP</span> is in the Professional-only dock</td></tr>
-<tr><td><span class="ui">Corner = tool</span></td><td>Double-sided milling — registration, flip + align, top traces</td></tr>
-<tr><td>The screw fixture</td><td>Rework — boxing spots to re-cut</td></tr>
-<tr><td>Diagnostics and the Guide</td><td>The machine dock and menu — live DRO, jog, streaming, the machine test</td></tr>
-<tr><td></td><td>Output format, mirroring, preview frame, the feed test card, saving presets</td></tr>
+<tr><th>Essential keeps</th><th>Full adds</th></tr>
+<tr><td>Bed levelling — the stop control is part of the window, so probing is safe to keep</td><td>Per-operation cutting parameters: feeds, depths, offsets, stepover, V-bit geometry (in Essential the tool profile sets these)</td></tr>
+<tr><td>The dry run</td><td>Double-sided boards: registration, the flip, top traces</td></tr>
+<tr><td>The pre-flight checks</td><td>Rework</td></tr>
+<tr><td>Hold-down screws, and the raised travel height that goes with them</td><td>Output format and mirroring</td></tr>
+<tr><td>Placing the job on the bed</td><td>Streaming over the link (experimental), the machine test, saving your own tool profiles</td></tr>
 </table></div>
-
-<p>Controls are <strong>hidden, not disabled</strong> — a greyed-out control still invites clicking and still has to be explained; a hidden one costs a beginner nothing. <span class="ui">Mode → What's hidden in Novice?</span> lists all of it in the app, so nobody has to guess whether a feature is gone or just tucked away.</p>
-
-<div class="note"><span class="t">Pinning the mode for a shared machine</span>
-<p>Switching is a menu item, not a password. A lab that wants it fixed can set the <code>SRM_CAM_MODE</code> environment variable to <code>novice</code> or <code>pro</code> — machine-wide, or in the shortcut that launches the app. That overrides the stored preference and greys out the menu.</p></div>
-
-<div class="note"><span class="t">Why bed leveling is not in Novice</span>
-<p>Probing <em>drives the machine</em> — it steps Z down onto the copper, repeatedly. The <span class="ui">STOP</span> button lives in the machine dock, which is Professional-only, so a Novice user could start that motion with no in-app way to stop it. Either both belong in Novice or neither does; for now, neither. Switch to Professional to level the bed.</p></div>
+<p><span class="ui">Interface → What the two tiers differ by…</span> lists it in the app. A lab that wants the tier fixed sets <code>SRM_CAM_MODE</code> to <code>essential</code> or <code>full</code> in the environment or the shortcut.</p>
 
 <h2>Files from KiCad</h2>
 <ol class="steps">
   <li><span class="st">Plot Gerbers</span>
-    <span class="ui">File → Fabrication Outputs → Gerbers</span> — at least <strong>B.Cu</strong> + <strong>Edge.Cuts</strong> (+ <strong>F.Cu</strong> for double-sided).</li>
+    <span class="ui">File → Fabrication Outputs → Gerbers</span> — at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (+ <strong>F.Cu</strong> for double-sided).</li>
   <li><span class="st">Drill files</span>
     Same dialog → <span class="ui">Generate Drill Files</span> (Excellon). Everything in one folder.</li>
-  <li><span class="st">Load</span>
-    <span class="ui">Load Gerber folder...</span> picks up all layers + drills automatically.</li>
+  <li><span class="st">Open</span>
+    <span class="ui">File → Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) picks up the layers and the drills and names the job after the KiCad project.</li>
 </ol>
-
 <div class="tip"><span class="t">No KiCad handy?</span>
-<p>Load <code>examples/calibration</code> — a bundled 40×30&nbsp;mm test board that exercises every operation.</p></div>
+<p><span class="ui">Demo board</span> on the setup page loads a bundled 40×30&nbsp;mm coupon that exercises every operation.</p></div>
 
-<h2>Sessions</h2>
-<p><span class="ui">Save setup...</span> stores <strong>everything</strong> — board, placement, all settings, height map, rework boxes, photo — in one file. <span class="ui">Load setup...</span> restores it exactly, even after an update.</p>
+<h2>Setups</h2>
+<p><span class="ui">File → Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes one <code>.srmcam</code> file with everything: the boards and where they sit, the tool, the copper sheet, the screws, the height maps of both faces, the measured flip. <span class="ui">Load a setup…</span> brings it back. A setup written by the first interface loads too.</p>
 <div class="warn"><span class="t">Save after probing</span>
-<p>A probed height map is real machine time. Save the session right after probing.</p></div>
+<p>A probed height map is minutes of machine time. Save the setup right after probing; the map is in it.</p></div>
 
 <div class="page-nav">
   <a href="index.html"><span class="lbl">Previous</span><span class="ttl">← Overview</span></a>
@@ -146,6 +126,7 @@ python -m gerber2rml</code></pre>
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

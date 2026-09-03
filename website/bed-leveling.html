@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bed leveling &amp; probing — SRM-CAM guide</title>
-<meta name="description" content="Probe a height map so cut depth follows the real surface.">
+<title>Bed levelling &amp; probing — SRM-CAM guide</title>
+<meta name="description" content="Probe a height map so the cut depth follows the real surface, one map per face.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link active" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link active" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -52,58 +53,52 @@
 <main>
 <div class="content">
 
-<h1>Bed leveling &amp; probing</h1>
-<p class="lead">Isolation cuts are ~0.15&nbsp;mm deep; FR-4 bows more than that. Probe the surface, and every cut follows it.</p>
-
-<div class="note"><span class="t">Needs the probe hardware</span>
-<p>One-time Arduino install, then <code>python scripts/flash_firmware.py</code> — see <a href="hardware.html">Hardware &amp; firmware</a>. Without it, <span class="ui">Export probe files...</span> gives you per-point programs for VPanel and you type the Z values in by hand.</p></div>
-
-<h2>Setup</h2>
-<ol class="steps">
-  <li><span class="st">Wire</span>
-    Red clip (D7) → the copper board — the only clip; the tool grounds through the collet. Isolate the board from the bed (paper/tape under it). Spindle <strong>OFF</strong>.</li>
-  <li><span class="st">Origin</span>
-    G54 XY at machine origin, zero <strong>only Z</strong>. NC jobs obey G54 only.</li>
-  <li><span class="st">Connect</span>
-    Pick the COM port, <span class="ui">Connect</span>. Touch the red clip to the bit once — <span class="ui">bit ○</span> should fill.</li>
-</ol>
-
-<h2>Probe</h2>
-<ol class="steps">
-  <li><span class="st">Build grid</span>
-    Set <span class="ui">nx</span> × <span class="ui">ny</span> (3×3 to start), <span class="ui">Build grid</span>, check with <span class="ui">Show grid</span>.</li>
-  <li><span class="st">Park over point 1</span>
-    Click-to-jog 2–3&nbsp;mm above the first grid point — this becomes the datum.</li>
-  <li><span class="st">Probe over SPI</span>
-    Each point gets a two-stage verified touch; Z column fills live. <span class="ui">STOP</span> aborts instantly, even mid-descent.</li>
-</ol>
-<p><span class="ui">drift chk</span> (default: every 6 points) re-touches the reference and corrects thermal drift across the grid. Leave it on.</p>
-
-<h2>Check the mesh</h2>
-<p>One flaky touch poisons a height map. Press <span class="ui">Mesh check</span> — it flags:</p>
-<ul>
-  <li><strong>Flaky points</strong> — no smooth surface can explain them → re-probe those.</li>
-  <li><strong>Minimum depth</strong> — a cut depth that survives this mesh's uncertainty.</li>
-  <li><strong>Coarse regions</strong> — with one-click <span class="ui">Insert suggested row(s)</span>.</li>
-</ul>
+<h1>Bed levelling &amp; probing</h1>
+<p class="lead">Isolation cuts 0.15&nbsp;mm into copper that is 0.035&nbsp;mm thick; FR-4 bows more than that. Measure the surface, and every cut follows it.</p>
 
 <figure class="fig">
-  <img src="img/srmcam_BedLeveling_3DView.png" alt="3D bed height-map view">
-  <figcaption><span class="ui">3D view</span>: a real board is smooth — isolated spikes are flaky touches.</figcaption>
+  <img src="img/gui2_level.png" alt="The levelling page with a probed surface drawn on the board">
+  <figcaption><span class="ui">Level the bed</span>: the grid on the stage, the measured surface drawn over the board, the heights in the table.</figcaption>
 </figure>
 
-<h2>Apply &amp; keep</h2>
+<div class="note"><span class="t">Before you probe</span>
+<p>Set the Z origin on the copper in VPanel and leave X and Y alone. Paper or tape under the board so it is isolated from the bed; the red clip on the copper; spindle <strong>off</strong>. Leave the tool a couple of millimetres above the copper — that is the height it lifts back to between points.</p></div>
+
+<h2>Measure</h2>
+<ol class="steps">
+  <li><span class="st">Build the grid</span>
+    Set <span class="ui">across</span> × <span class="ui">up</span> (3×3 to start, denser for a warped board) and <span class="ui">Build the grid over the board</span>. It is laid over the part of the job the machine can reach and that is on the copper; if part of the job is past either, it says so — and so do the checks.</li>
+  <li><span class="st">Probe over the link</span>
+    Start from wherever the tool is: the grid is in machine coordinates and the run is measured from the live position. Each point is a two-stage verified touch; the table fills as it goes. <span class="ui">STOP</span> stops it at the next point.</li>
+  <li><span class="st">No Arduino?</span>
+    <span class="ui">Write one file per point…</span> gives you a program per grid point for VPanel. Run each, read Z at contact, type it into the table.</li>
+</ol>
+<p>A finished probe switches <span class="ui">Warp the exported cut to this surface</span> on by itself. The advice underneath says the shallowest depth this map supports.</p>
+
+<div class="tbl-wrap"><table>
+<tr><th>In the table</th><th>Meaning</th></tr>
+<tr><td><em>no touch</em></td><td>The bit reached the floor without contact: no copper there, clip off, or started too high.</td></tr>
+<tr><td><em>unstable</em></td><td>The two touches disagreed — a dirty contact. Clean the copper, reseat the clip, probe again.</td></tr>
+<tr><td><em>failed</em></td><td>The firmware refused the point. A point outside the travel used to end up here; the grid no longer goes there.</td></tr>
+</table></div>
+
+<h2>Use it</h2>
 <ul>
-  <li>Tick <span class="ui">Apply bed leveling on export</span> — every cutting Z warps to the surface.</li>
-  <li><span class="ui">Save CSV</span> / <span class="ui">Load CSV</span> to keep the mesh; <span class="ui">Save setup...</span> includes it. <span class="ui">Clear Z</span> for a clean re-probe.</li>
+  <li><span class="ui">Warp the exported cut to this surface</span> — every cutting Z in the files follows the map. The dry run is left alone; it is in the air.</li>
+  <li><span class="ui">Draw the measured surface on the board</span> and <span class="ui">See the surface in 3D…</span> show what was measured. A real board is smooth; a lone spike is a flaky touch.</li>
+  <li><span class="ui">Save…</span> / <span class="ui">Load…</span> keep the map as a CSV that carries which face it was probed on. <span class="ui">Clear</span> discards this face's heights only.</li>
+  <li>A board held at points gets a little extra depth worked out from the map — see <a href="holding-the-copper.html">Holding the copper</a>.</li>
 </ul>
 
-<h2>Top side (after the flip)</h2>
-<p>View = <span class="ui">Top</span> → <span class="ui">Build grid</span> → <span class="ui">Clear Z</span> → probe → <span class="ui">Export top traces (leveled)</span>. The old mesh is invalid — the board sits on new terrain.</p>
+<h2>Two faces</h2>
+<p>On a double-sided job the page has a <span class="ui">Bottom</span> / <span class="ui">Top</span> switch, and each face keeps its own measurement. Selecting a step that cuts a face shows that face's map; after the flip, switch to the top, build and probe again — the board sits on new terrain — and the top files use the top's map, never the bottom's.</p>
+
+<div class="warn"><span class="t">Save the setup</span>
+<p>The maps of both faces are saved in the setup file. Save it right after probing.</p></div>
 
 <div class="page-nav">
-  <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>
-  <a class="next" href="photo-and-rework.html"><span class="lbl">Next</span><span class="ttl">Photo check &amp; rework →</span></a>
+  <a href="holding-the-copper.html"><span class="lbl">Previous</span><span class="ttl">← Holding the copper</span></a>
+  <a class="next" href="double-sided.html"><span class="lbl">Next</span><span class="ttl">Double-sided boards →</span></a>
 </div>
 
 <footer class="site">
@@ -112,6 +107,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

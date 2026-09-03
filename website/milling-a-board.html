@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Milling a board — SRM-CAM guide</title>
-<meta name="description" content="The single-sided workflow: load, place, check, export, run in VPanel.">
+<meta name="description" content="The single-sided workflow in the setup sheet: set up, check, export, run in VPanel.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link active" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -56,78 +57,77 @@
 <p class="lead">The single-sided workflow, start to finish.</p>
 
 <div class="pill-flow">
-  <span class="pf">Load</span><span class="arr">→</span>
-  <span class="pf">Place</span><span class="arr">→</span>
+  <span class="pf">Set up</span><span class="arr">→</span>
   <span class="pf">Check</span><span class="arr">→</span>
   <span class="pf">Export</span><span class="arr">→</span>
   <span class="pf">Run in VPanel</span>
 </div>
 
-<h2>1. Load &amp; configure</h2>
-<p>In <span class="ui">1 · Setup board</span>: <span class="ui">Load Gerber folder...</span>, set a <span class="ui">Name</span> (= export file prefix).</p>
-<ul>
-  <li><span class="ui">Preset</span> → <span class="ui">Apply</span> — a complete bit + feeds set for all three operations. Built-in: <strong>SRM-20 0.8 mm flat</strong>. Tweak, then <span class="ui">Save...</span> your own.</li>
-  <li><span class="ui">Stock</span> — measure your board with calipers; nominal 1.6&nbsp;mm varies.</li>
-  <li><span class="ui">Auto depth = stock +</span> — drill/cutout depth = stock + breakthrough (default 0.1&nbsp;mm). Leave on.</li>
-</ul>
+<h2>1. Set up the job</h2>
+<p>The first step on the rail. Everything about the job is on this one page.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Section</th><th>What to do</th></tr>
+<tr><td><strong>The board</strong></td><td><span class="ui">Open Gerber folder…</span> or <span class="ui">Demo board</span>. The job name is the KiCad project's; it is what the files are called. <span class="ui">Add another board…</span> starts a <a href="panels.html">panel</a>.</td></tr>
+<tr><td><strong>The tool</strong></td><td>Pick a profile and <span class="ui">Apply profile</span> — a complete set of bits, depths and feeds for all three operations. The lab's <em>SRM-20 0.8 mm flat</em> opens applied. The summary underneath says what will be cut, and by how much deeper if the board is held at points.</td></tr>
+<tr><td><strong>The copper</strong></td><td>Board thickness from calipers. <span class="ui">Cut through by</span> derives the drill and cut-out depth from it. Sheet width and height, and its front-left corner — <span class="ui">Set the corner from the tool</span> reads it off the machine. <span class="ui">Held down with M4 screws</span> and <span class="ui">Held down by</span> are on <a href="holding-the-copper.html">Holding the copper</a>.</td></tr>
+<tr><td><strong>Where it sits</strong></td><td>Type X and Y, turn it in 90° steps, or <span class="ui">Centre it on the bed</span>. Or drag it on the stage and nudge with the arrow keys.</td></tr>
+</table></div>
 
 <div class="tbl-wrap"><table>
 <tr><th>Operation</th><th>Layer</th><th>Does</th></tr>
-<tr><td><strong>Traces</strong></td><td>B.Cu (mirrored)</td><td>Isolation channels; <code>offsets=-1</code> = full copper clear (rubout)</td></tr>
-<tr><td><strong>Drill</strong></td><td>Excellon</td><td>One file per diameter, or single-bit (larger holes interpolated)</td></tr>
-<tr><td><strong>Cutout</strong></td><td>Edge.Cuts</td><td>Outline with holding tabs — run last</td></tr>
+<tr><td><strong>Isolation traces</strong></td><td>B.Cu, mirrored</td><td>Channels around every copper feature; <code>-1</code> passes clears all the background copper</td></tr>
+<tr><td><strong>Drill</strong></td><td>Excellon</td><td>One bit for every hole, larger ones milled as circles — or one file per diameter</td></tr>
+<tr><td><strong>Cut the board out</strong></td><td>Edge.Cuts</td><td>The outline with holding tabs — always last</td></tr>
 </table></div>
 
-<h2>2. Place on the bed</h2>
-<ul>
-  <li>Drag the design on the preview, or type <span class="ui">Place</span> X/Y. <span class="ui">Rotate 90°</span> as needed.</li>
-  <li><span class="ui">Show bed (fit check)</span> confirms it fits.</li>
-  <li>Enter your copper piece under <span class="ui">Copper stock</span> — jog to its corner and hit <span class="ui">Corner = tool</span>, then <span class="ui">Center design</span>.</li>
-</ul>
-
-<h2>3. Check before cutting</h2>
-<ul>
-  <li><strong>Red channels</strong> on the Traces preview = gaps the bit can't isolate → will short. Fix in KiCad or use a smaller bit / V-bit.</li>
-  <li><span class="ui">Diagnostics</span> — fits the bed? deepest cut inside the Z range? holes vs bit? Run it before full-bed jobs.</li>
-  <li><span class="ui">Simulate 3D</span> — play back the whole cut.</li>
-  <li><span class="ui">Feed card</span> (optional) — cut a feed ladder on scrap, photograph it, and the app recommends the fastest clean feed.</li>
-</ul>
-
+<h2>2. Check before cutting</h2>
 <figure class="fig">
-  <img src="img/srmcam_3dview_traces.png" alt="3D toolpath simulation">
-  <figcaption>Simulate 3D: scrub to check cut order before committing stock.</figcaption>
+  <img src="img/gui2_checks.png" alt="The checks page">
+  <figcaption>The checks live on a page, not in a message box, and re-run whenever the job changes.</figcaption>
 </figure>
+<ul>
+  <li><strong>Fits the bed</strong> — the whole job, dowels included, inside the 203 × 152&nbsp;mm travel.</li>
+  <li><strong>Z reach</strong> — the deepest cut against the 60&nbsp;mm stroke, measured from the surface once <span class="ui">Zero Z here</span> has touched it.</li>
+  <li><strong>Nets closer than the bit</strong> — spots the cutter physically cannot separate, marked ✕ on the traces. These will short whatever the depth: fix the clearance in KiCad or use a narrower bit.</li>
+  <li><strong>The job is on the copper</strong> — against the sheet you declared, not the bed.</li>
+  <li><strong>Holes fit the bit</strong>, the screw heads clear the lift height, the boards of a panel keep clear of each other.</li>
+</ul>
+<p>The worst finding is on the rail's red banner as well, and stays there. <span class="ui">Copy report</span> puts the list on the clipboard.</p>
 
-<h2>4. Export</h2>
-<pre><code>&lt;name&gt;_airpass.nc           DRY RUN — spindle off, bit 5 mm up. RUN FIRST.
-&lt;name&gt;_traces.nc            isolation (mirrored)
-&lt;name&gt;_drill.nc             one bit, larger holes interpolated (default)
-&lt;name&gt;_drill_&lt;dia&gt;mm.nc     one file per diameter (multi-bit mode)
-&lt;name&gt;_cutout.nc            outline + tabs — run LAST
-&lt;name&gt;_runplan.txt          READ FIRST: order, bits, zeroing</code></pre>
-<p><span class="ui">Machine</span> = <strong>Roland SRM-20 (G-code)</strong> (default, recommended). RML available as fallback.</p>
+<h2>3. Walk the plan</h2>
+<p>Select a numbered step and the stage draws its toolpath; the inspector shows the bit, the depth, the estimated time and — in the Full tier — the cutting parameters, editable. <span class="ui">View → Watch this step in 3D…</span> (<kbd>Ctrl</kbd>+<kbd>3</kbd>) plays it.</p>
+
+<h2>4. Export the job</h2>
+<p><span class="ui">Export the job</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes every file in the plan and puts the run sheet in front of you.</p>
+<pre><code>&lt;name&gt;_airpass.nc           step 0 · DRY RUN — spindle off, bit 5 mm up
+&lt;name&gt;_traces.nc            step 1 · isolation, mirrored
+&lt;name&gt;_drill.nc             step 2 · one bit, larger holes milled as circles
+&lt;name&gt;_drill_&lt;dia&gt;mm.nc     step 2 · one file per diameter instead
+&lt;name&gt;_cutout.nc            step 3 · outline with tabs — LAST
+&lt;name&gt;_runplan.txt          the same plan as text</code></pre>
+<figure class="fig">
+  <img src="img/gui2_runsheet.png" alt="The run sheet after an export">
+  <figcaption>The run sheet: every step with its bit, depth and time, and the one rule. <span class="ui">Copy the plan</span>, <span class="ui">Open the folder</span>, or go <span class="ui">Back to the board</span>.</figcaption>
+</figure>
 
 <h2>5. Run in VPanel</h2>
 <ol class="steps">
-  <li><span class="st">Watch the dry run first</span>
-    Send <code>&lt;name&gt;_airpass.nc</code> before anything else. The spindle stays off, the bit is held 5&nbsp;mm up, and it traces where the board will be cut, slowly enough to follow. If the bit leaves the copper, stop and re-place the stock — nothing has been cut. Worth doing before <em>every</em> job. See <a href="holding-the-copper.html">Holding the copper</a>.</li>
-  <li><span class="st">Set the G54 origin</span>
-    XY zero <strong>once</strong> for the whole board. Re-zero <strong>Z only</strong> after every bit change.</li>
+  <li><span class="st">Fit the bit, set the origin</span>
+    X, Y and Z, once. From here on only Z is ever re-zeroed. NC jobs obey <strong>G54</strong>: XY at the machine origin, zero only Z.</li>
+  <li><span class="st">Watch the dry run</span>
+    Send <code>&lt;name&gt;_airpass.nc</code> first. Spindle off, bit 5&nbsp;mm up, tracing the outline slowly enough to follow. If it leaves the copper, stop and re-place the stock — nothing has been cut.</li>
   <li><span class="st">NC-code mode</span>
-    <span class="ui">Cut → Add → Output</span> — the <code>.nc</code> streams like RML.</li>
-  <li><span class="st">Run-plan order</span>
-    Airpass → traces → drill → cutout last. Re-zero Z at each bit change (<span class="ui">Zero Z on machine</span> does it electrically — <a href="hardware.html">hardware</a>).</li>
+    <span class="ui">Cut → Add → Output</span>; the <code>.nc</code> streams like RML.</li>
+  <li><span class="st">In order</span>
+    Traces, drill, cut-out last. Re-zero Z after a bit change; <span class="ui">Mark as run</span> on each step ticks it off on the rail.</li>
 </ol>
 
 <div class="danger"><span class="t">Z travel</span>
-<p>~60&nbsp;mm usable Z. If the surface sits too low the head tops out and cuts air/shallow. Fix: <strong>raise the work surface</strong> (add spoilboard). <span class="ui">Diagnostics</span> checks this.</p></div>
-
-<h2 id="tracking">Track the run</h2>
-<p>Machine connected → the <span class="ui">Run:</span> row follows the job: pick the operation, <span class="ui">Auto</span> starts tracking when the tool moves, progress bar + ETA count down, live crosshair on the preview (<span class="ui">Trail</span> draws the path).</p>
+<p>About 60&nbsp;mm of usable Z. If the surface sits too low the head tops out and cuts air or shallow. <strong>Raise the work surface</strong> (add spoilboard). The Z-reach check knows, once the surface has been touched.</p></div>
 
 <div class="page-nav">
   <a href="getting-started.html"><span class="lbl">Previous</span><span class="ttl">← Getting started</span></a>
-  <a class="next" href="holding-the-copper.html"><span class="lbl">Next</span><span class="ttl">Holding the copper →</span></a>
+  <a class="next" href="panels.html"><span class="lbl">Next</span><span class="ttl">Several boards on one sheet →</span></a>
 </div>
 
 <footer class="site">
@@ -136,6 +136,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>

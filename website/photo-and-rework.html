@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Photo check &amp; rework — SRM-CAM guide</title>
-<meta name="description" content="Overlay a board photo, detect uncut channels, re-cut them in one pass.">
+<meta name="description" content="Lay a photo of the board on the bed, box the spots that did not cut, and re-cut them deeper in one program.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="stylesheet" href="css/site.css">
 </head>
@@ -33,9 +33,10 @@
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
         <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="bed-leveling.html">Bed leveling &amp; probing</a>
         <a class="nav-link active" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -53,72 +54,34 @@
 <div class="content">
 
 <h1>Photo check &amp; rework</h1>
-<p class="lead">Did every channel cut through? Photograph the board, overlay it on the design, box the failures, re-cut them in one pass. Board stays on the machine — never re-zero XY.</p>
+<p class="lead">Did every channel cut through? Box the spots that did not and re-cut them deeper, in one program. The board stays on the machine — never re-zero XY.</p>
 
-<div class="pill-flow">
-  <span class="pf">Photo</span><span class="arr">→</span>
-  <span class="pf">Detect</span><span class="arr">→</span>
-  <span class="pf">Review boxes</span><span class="arr">→</span>
-  <span class="pf">Probe boxes</span><span class="arr">→</span>
-  <span class="pf">Export rework NC</span>
-</div>
-
-<figure class="fig">
-  <img src="img/rework_example.png" alt="Multi-region rework">
-  <figcaption>Each box = one region to re-cut, with its own depth and height-map toggle.</figcaption>
-</figure>
-
-<h2>Rework boxes</h2>
+<h2>Rework</h2>
+<p><span class="ui">Rework</span> is on the rail under <em>When you need it</em> (Full tier).</p>
 <ol class="steps">
-  <li><span class="st">Mark</span>
-    <span class="ui">Add areas</span> → drag a box over each failed spot. Each gets a table row.</li>
-  <li><span class="st">Depth</span>
-    <span class="ui">New-box depth</span> = default for the next box; edit per box in the table. Go slightly deeper than the trace depth.</li>
-  <li><span class="st">lvl toggle</span>
-    Warps the box to the probed surface (needs a height map). On by default.</li>
-  <li><span class="st">Export</span>
-    <span class="ui">Export rework NC...</span> → one <code>&lt;name&gt;_&lt;op&gt;_rework.nc</code> on a single-sided board, <code>&lt;name&gt;_&lt;side&gt;_&lt;op&gt;_rework.nc</code> on a double-sided one, only the boxed toolpaths, each at its own depth.</li>
+  <li><span class="st">Repeat from</span>
+    <span class="ui">Isolation traces</span> or <span class="ui">Board cut-out</span> — on a double-sided job, <span class="ui">Bottom traces</span> or <span class="ui">Top traces</span>. The geometry is the pass as it was cut, clipped to your boxes, so it follows the same route.</li>
+  <li><span class="st">Mark the spots</span>
+    Tick <span class="ui">Drag boxes on the bed</span> and drag a box over each spot. Each box keeps its own depth; set <span class="ui">Depth for the next box</span> before drawing, or edit it in the table. Go a little deeper than the pass that missed.</li>
+  <li><span class="st">Export the rework program…</span>
+    One <code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code>. It is warped to the face's height map if one is applied, and a cut-out rework is taken down in passes rather than one deep plunge.</li>
 </ol>
 
-<h2>Photo overlay</h2>
+<h2>A photo of the board</h2>
+<p>A board that has been cut differs from its design: it sits a degree off, a trace lifted. A photo warped into machine coordinates puts the two in one frame, so a box drawn on the photo lands where the damage is.</p>
 <ol class="steps">
   <li><span class="st">Shoot</span>
-    Straight-down, evenly lit, sharp, high-res. No glare.</li>
-  <li><span class="st">Load</span>
-    <span class="ui">Load photo...</span> → the anchor dialog opens.</li>
-  <li><span class="st">Click the 4 anchors</span>
-    The prompt names each hole and a <strong>design map</strong> beside the photo rings the one being asked for. <strong>Scroll</strong> = zoom, <strong>drag</strong> = pan, <strong>right-click</strong> = undo. The live angle guide turns <span style="color:var(--good)">green</span> when the clicked edge matches the design, <span style="color:var(--bad)">red</span> when you clicked the wrong hole.</li>
-  <li><span class="st">Blend</span>
-    Photo opacity slider + <span class="ui">Traces</span> dim slider (fade the toolpaths so the photo reads; boxes stay full-strength).</li>
+    Straight down, evenly lit, sharp. <span class="ui">View → Take one with a phone…</span> shows a QR code; scan it, take the photo on the phone, and it arrives in the app.</li>
+  <li><span class="st">Lay it on the bed</span>
+    <span class="ui">View → Lay a photo of the board on the bed…</span>. Click the four anchor holes in the photo in the order the design map beside it asks for. Scroll to zoom, drag to pan, undo the last click. The note says how well the fit lands.</li>
+  <li><span class="st">Look</span>
+    The photo is drawn under the work and the work is faded so the photo reads. <span class="ui">View → Take the photo off</span> when done.</li>
 </ol>
-<p>The photo is warped into machine coordinates — a defect on the photo <em>is</em> that spot on the machine. Saved with the session.</p>
-
-<h3>Which holes are the anchors</h3>
-<p>By default: the 4 corner-most drilled features. On a double-sided job those are the dowel or fiducial holes — big, obvious, unmistakable in a photo. <strong>A single-sided board has none</strong>, so the corners are ordinary vias that may be tiny or impossible to tell apart.</p>
-<p><span class="ui">Anchors...</span> lets you pick your own instead: click any <strong>4 or more</strong> drill holes on the design.</p>
-<ul>
-  <li>Pick holes you can <strong>recognise again</strong> in the photo — largest diameters, board corners, ones standing alone.</li>
-  <li><strong>Spread them out.</strong> Holes in a line are rejected; bunched holes make the fit extrapolate badly.</li>
-  <li>Picks are <strong>numbered on the preview</strong>, and the photo dialog asks for them in that order.</li>
-  <li>More than 4 is fine — the fit is least-squares, so extra anchors reduce the error.</li>
-  <li>Stored in the session; a new board clears them.</li>
-</ul>
-
-<h2>Detect from photo</h2>
-<p><span class="ui">Detect from photo</span> walks every isolation channel and proposes a box wherever the photo shows no cut. A cut channel reads <em>bright</em> (exposed substrate + burrs); a failed one reads flat/dark like copper. Trained on real production ground truth (20/21 regions found).</p>
-
-<div class="warn"><span class="t">Limits</span>
-<ul>
-  <li><strong>Shallow cuts look cut</strong> in any photo — depth failures need <span class="ui">Probe boxes</span> / <span class="ui">Mesh check</span>, not the camera.</li>
-  <li><strong>It refuses</strong> on blur, glare, low res, or bad anchors — reshoot rather than trust garbage.</li>
-  <li><strong>Review before export</strong> — delete false alarms.</li>
-</ul></div>
-
-<h2>Probe boxes</h2>
-<p>A spot failed because the surface sat <em>higher</em> than the mesh believed. <span class="ui">Probe boxes</span> re-measures each box center and deepens it by exactly the measured difference. Jog above leveling grid point 1 first, spindle OFF, red clip on the copper.</p>
+<div class="note"><span class="t">Not in this interface</span>
+<p>Automatic detection of uncut channels from the photo, probing the rework boxes, and choosing your own anchor holes are in the first interface (<code>SRM-CAM --original</code>).</p></div>
 
 <div class="page-nav">
-  <a href="bed-leveling.html"><span class="lbl">Previous</span><span class="ttl">← Bed leveling &amp; probing</span></a>
+  <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>
   <a class="next" href="hardware.html"><span class="lbl">Next</span><span class="ttl">Hardware &amp; firmware →</span></a>
 </div>
 
@@ -128,6 +91,7 @@
 
 </div>
 </main>
+
 </div>
 </body>
 </html>
