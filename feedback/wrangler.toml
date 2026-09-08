@@ -16,7 +16,16 @@ binding = "DB"
 database_name = "srm-cam-feedback"
 database_id = "f549d8be-ab30-4400-93df-5e0a28aaba25"
 
+# One email per submission, sent through Email Routing on the same zone.
+# The binding can only deliver to this verified address, so a bug here can
+# never spam anyone else.
+[[send_email]]
+name = "NOTIFY"
+destination_address = "mads28122001@gmail.com"
+
 [vars]
 # Origins allowed to POST. The guide on GitHub Pages, plus a local file
 # for testing the form from disk (file:// pages send Origin "null").
 ALLOWED_ORIGINS = "https://madsrudolph.github.io,null"
+NOTIFY_FROM = "feedback@madsrudolph.dev"
+NOTIFY_TO = "mads28122001@gmail.com"

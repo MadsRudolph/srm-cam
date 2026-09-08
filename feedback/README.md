@@ -47,6 +47,21 @@ The full answer set of every row is JSON in the `answers` column. Keys are
 the form's field names (`step_level`, `guide_gaps`, `fix_one`, ...), so a new
 question in the form needs no schema change.
 
+## The email per submission
+
+Every stored submission also sends one plain-text mail to `NOTIFY_TO` (set in
+`wrangler.toml`), from `feedback@madsrudolph.dev` through Email Routing on the
+zone. The mail carries the "fix this first" answer, the key facts, and every
+free-text field, so most feedback can be read without opening the dashboard.
+
+The `send_email` binding is restricted to that one destination address, which
+has to be a verified destination in Email Routing. To change who gets the
+mail: add the new address as a destination (`npx wrangler email routing
+addresses create <address>`, then click the verification mail), change
+`destination_address` and `NOTIFY_TO`, deploy. The mail is sent after the
+student has already got their "received" answer; if it fails, the row is
+still stored and the failure is only in the Worker log.
+
 ## Deploying a change
 
 ```bash
