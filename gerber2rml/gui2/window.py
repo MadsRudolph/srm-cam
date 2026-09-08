@@ -569,6 +569,8 @@ class MainWindow(QMainWindow):
                                    "F1")
         self.guide_act.setToolTip(USER_GUIDE_URL)
         self._act(h, "How this works", self.action_help)
+        self.basics_act = self._act(h, "The machine, in five minutes",
+                                    self.action_basics)
         self.update_act = self._act(h, "Check for updates…",
                                     self.action_check_updates)
         self._act(h, "About SRM-CAM", self.action_about)
@@ -3047,6 +3049,10 @@ class MainWindow(QMainWindow):
               "sheet it is registered in.")
         d.act("Close", kind="primary", on=d.accept, default=True)
         d.exec()
+
+    def action_basics(self):
+        from gerber2rml.gui2 import basics
+        basics.machine_basics(self).exec()
 
     def action_user_guide(self):
         """F1. The step-by-step guide with photos, in the browser."""
