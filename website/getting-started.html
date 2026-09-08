@@ -67,6 +67,7 @@
 <tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. <strong>The machine link is Windows-only</strong> — prepare and export on Linux, send the files from VPanel on the CNC PC, and carry a probed height map over as a CSV.</td></tr>
 <tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
 </table></div>
+<p><strong>Staying current.</strong> The app checks GitHub for a newer release a moment after it opens and says so once, with the download link. <span class="ui">Help → Check for updates…</span> asks any time. It never installs anything by itself: you download the new file and install it the same way as the first time.</p>
 <p>The first interface is still shipped: <code>SRM-CAM --original</code> from an install, <code>python -m gerber2rml.gui</code> from source. Same engine, same files.</p>
 
 <h2>Workspace folders</h2>
