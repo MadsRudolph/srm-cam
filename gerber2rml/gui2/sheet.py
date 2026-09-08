@@ -33,6 +33,7 @@ class RunSheet(QWidget):
     open_folder = Signal()
     copy_text = Signal()
     back = Signal()
+    feedback = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,6 +63,16 @@ class RunSheet(QWidget):
                                     tip="Copies this sheet as plain text — "
                                         "paste it into a lab logbook, or send "
                                         "it to whoever is running the machine."))
+        # The ask sits with the other controls, where it is seen without
+        # scrolling. It leads to the guide's form, tagged as coming from the
+        # app; the two minutes are worth more once the board is out.
+        fb = widgets.button("Give feedback", on=self.feedback.emit,
+                            tip="Two minutes, once the board is out of the "
+                                "machine: what was unclear, and what was "
+                                "not. It changes the sheet the next "
+                                "student sees.")
+        fb.setObjectName("sheetFeedback")
+        bh.addWidget(fb)
         bh.addWidget(widgets.button("Back to the board", kind="primary",
                                     on=self.back.emit))
         outer.addWidget(bar)
@@ -222,28 +233,6 @@ class RunSheet(QWidget):
             foot.setWordWrap(True)
             foot.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
             v.addWidget(foot)
-
-        # -- colophon ----------------------------------------------------
-        # The one line on the sheet that is not about this job. It sits where
-        # a printed sheet keeps its colophon, in the smallest type, and asks
-        # for the board to be out first - the only moment a student can say
-        # whether any of the above was clear. It is not in the copied text:
-        # that goes in a logbook.
-        v.addSpacing(theme.GAP_L)
-        v.addWidget(self._rule())
-        v.addSpacing(theme.GAP_S)
-        ask = QLabel(
-            "When the board is out of the machine: two minutes of "
-            f'<a href="{FEEDBACK_URL}" style="color: {theme.COPPER_HI};'
-            ' text-decoration: none;">feedback</a> on what was unclear, and '
-            "the next student gets a better sheet.")
-        ask.setObjectName("sheetAsk")
-        ask.setFont(theme.font("micro"))
-        ask.setWordWrap(True)
-        ask.setOpenExternalLinks(True)
-        ask.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        ask.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
-        v.addWidget(ask)
 
         wrap.addWidget(doc)
         wrap.addStretch(1)

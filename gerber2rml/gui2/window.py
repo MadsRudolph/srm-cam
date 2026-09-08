@@ -127,7 +127,7 @@ from gerber2rml.gui2.machine import MachineLink, MachineBar
 from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
 from gerber2rml.gui2.fiducial import FlipFitPage
-from gerber2rml.gui2.sheet import RunSheet
+from gerber2rml.gui2.sheet import RunSheet, FEEDBACK_URL
 
 DEMO = Path(__file__).resolve().parents[2] / "examples" / "calibration"
 FIXTURE = Path(__file__).resolve().parents[1] / "examples"
@@ -354,6 +354,8 @@ class MainWindow(QMainWindow):
         self.sheet.back.connect(lambda: self.centre.setCurrentWidget(self.stage))
         self.sheet.open_folder.connect(self.action_open_export_folder)
         self.sheet.copy_text.connect(self._copy_sheet)
+        self.sheet.feedback.connect(
+            lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
         self.centre = QStackedWidget()
         self.centre.addWidget(self.stage)
         self.centre.addWidget(self.sheet)

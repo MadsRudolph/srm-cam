@@ -99,18 +99,21 @@ def test_the_run_sheet_replaces_the_board_after_an_export(loaded, tmp_path):
 
 
 def test_the_run_sheet_asks_for_feedback_once_the_board_is_out(loaded, tmp_path):
-    """One quiet line at the foot of the sheet links the guide's feedback
-    form, tagged as coming from the app. It is not in the copied text, which
-    is for a logbook."""
-    from PySide6.QtWidgets import QLabel
+    """A "Give feedback" button sits in the sheet's bar with the other
+    controls, seen without scrolling, and leads to the guide's form tagged
+    as coming from the app. The copied plan text stays a logbook entry."""
+    from PySide6.QtWidgets import QPushButton
     from gerber2rml.gui2.sheet import FEEDBACK_URL
     loaded.export_to(tmp_path)
-    asks = [w for w in loaded.sheet.findChildren(QLabel)
-            if w.objectName() == "sheetAsk"]
-    assert len(asks) == 1
-    assert FEEDBACK_URL in asks[0].text()
+    btns = [b for b in loaded.sheet.findChildren(QPushButton)
+            if b.objectName() == "sheetFeedback"]
+    assert len(btns) == 1
+    assert btns[0].text() == "Give feedback"
     assert "for=app" in FEEDBACK_URL
-    assert asks[0].openExternalLinks()
+    fired = []
+    loaded.sheet.feedback.connect(lambda: fired.append(1))
+    btns[0].click()
+    assert fired == [1]
     assert "feedback" not in loaded.sheet.text().lower()
 
 
