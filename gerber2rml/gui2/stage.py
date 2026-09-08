@@ -149,6 +149,8 @@ class Stage(QWidget):
         self._photo = None                # (QImage, (x0, y0, x1, y1)) in mm
         self._mesh = None                 # (QImage, rect, span) height map
         self._photo_dim = 0.0             # how far the work is faded over it
+        self._photo_alpha = 1.0           # how strongly the photo itself shows
+        self._photo_anchors = []          # [(x, y)] the holes a photo is fitted on
         self._tool = None                 # (x, y) mm
         self._cut_width = 0.8
         self._show_travel = True
@@ -381,6 +383,28 @@ class Stage(QWidget):
             return
         self._photo_dim = amount
         self._invalidate()
+        self.update()
+
+    def set_photo_opacity(self, amount):
+        """How strongly the photo shows. Its own control, separate from the
+        fade above: one slider sets how much photo there is, the other how
+        much design is left over it, and the two read differently — a faint
+        photo under a full-strength design is for checking placement, a full
+        photo under a faint design is for finding the damage on it."""
+        amount = max(0.0, min(1.0, float(amount)))
+        if amount == self._photo_alpha:
+            return
+        self._photo_alpha = amount
+        self._invalidate()
+        self.update()
+
+    def set_photo_anchors(self, pts):
+        """The holes the operator chose to fit a photo on, numbered on the
+        bed in the order the photo dialog will ask for them."""
+        pts = [(float(x), float(y)) for x, y in (pts or [])]
+        if pts == self._photo_anchors:
+            return
+        self._photo_anchors = pts
         self.update()
 
     def has_photo(self):
@@ -815,6 +839,7 @@ class Stage(QWidget):
             p.restore()
 
         self._paint_box(p)
+        self._paint_photo_anchors(p)
         self._paint_shorts(p)
         self._paint_tags(p)
         self._paint_tool(p)
@@ -854,7 +879,30 @@ class Stage(QWidget):
         # Y running up the bed, drawing the image into its rectangle puts row
         # 0 at y0 - the bottom - which is where it belongs. The flip the mesh
         # needs (its row 0 is the top) mirrored the photo.
+        if self._photo_alpha < 1.0:
+            p.save()
+            p.setOpacity(self._photo_alpha)
+            p.drawImage(QRectF(x0, y0, x1 - x0, y1 - y0), img)
+            p.restore()
+            return
         p.drawImage(QRectF(x0, y0, x1 - x0, y1 - y0), img)
+
+    def _paint_photo_anchors(self, p):
+        """Numbered rings on the chosen anchor holes, in device space so the
+        ring and its numeral stay readable at any zoom — and so the numeral
+        is not drawn upside down by the world transform's flipped Y."""
+        if not self._photo_anchors:
+            return
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setFont(theme.font("label"))
+        for i, (x, y) in enumerate(self._photo_anchors, 1):
+            c = self.to_px(x, y)
+            p.setPen(QPen(QColor(theme.TOOL), 1.5))
+            p.setBrush(QBrush(theme.alpha(theme.TOOL, 0.18)))
+            p.drawEllipse(c, 9.0, 9.0)
+            p.setPen(QColor(theme.TEXT))
+            p.drawText(QRectF(c.x() - 9, c.y() - 9, 18, 18), Qt.AlignCenter,
+                       str(i))
 
     def _paint_work(self, p):
         """What belongs to the job, and follows the cursor when it is dragged."""

@@ -16,17 +16,28 @@ are matplotlib canvases, and this package draws with ``QPainter``. The
 behaviour they earned is kept — click in order, undo the last one, a map of
 the design beside the photo showing WHICH hole is wanted, and a running note
 of how well the fit lands.
+
+Two more things the first interface learned are here as well. The anchor
+holes can be chosen by hand (:class:`HolePickDialog`): the automatic pick
+takes the corner-most holes, which is right when the board has dowel or
+fiducial holes and wrong on a single-sided board, whose corner holes may be
+tiny or impossible to tell apart in a photo. And the photo's strength and the
+design's fade over it are sliders (:class:`PhotoControls`) rather than one
+fixed number, because checking a placement and finding a torn pad want the
+two set differently.
 """
 import math
 
-from PySide6.QtCore import Qt, QPointF, QRectF, QSize
+from PySide6.QtCore import Qt, QPointF, QRectF, QSize, Signal
 from PySide6.QtGui import QImage, QPainter, QPen, QBrush, QColor, QPolygonF
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QVBoxLayout,
-                               QWidget, QSizePolicy)
+                               QWidget, QSizePolicy, QSlider, QGridLayout)
 
-from gerber2rml.gui2 import theme, widgets
+from gerber2rml.gui2 import theme, widgets, dialogs
 
 _MIN_ANCHORS = 4           # a homography needs four; fewer is a different fit
+MIN_SPREAD_MM = 3.0        # the picked set's narrow axis: kills a collinear pick
+SNAP_MM = 0.25             # a saved pick further than this from any hole is stale
 
 
 def pick_anchor_holes(holes, want=_MIN_ANCHORS):
@@ -57,6 +68,51 @@ def pick_anchor_holes(holes, want=_MIN_ANCHORS):
     my = sum(p[1] for p in chosen) / len(chosen)
     chosen.sort(key=lambda p: -math.atan2(p[1] - my, p[0] - mx))
     return chosen
+
+
+def anchor_spread(pts):
+    """How wide the picked set is across its NARROWEST direction, in mm.
+
+    Twice the standard deviation along the minor axis of the points. Four
+    holes along one edge of a board give a set that is long one way and
+    nearly zero the other, and a homography fitted to it is exact on that
+    edge and unbounded off it; the fit itself only raises an error when the
+    points are exactly collinear, which a 0.3 mm scatter never is.
+    """
+    pts = [(float(x), float(y)) for x, y in (pts or [])]
+    n = len(pts)
+    if n < 2:
+        return 0.0
+    cx = sum(p[0] for p in pts) / n
+    cy = sum(p[1] for p in pts) / n
+    sxx = sum((p[0] - cx) ** 2 for p in pts) / n
+    syy = sum((p[1] - cy) ** 2 for p in pts) / n
+    sxy = sum((p[0] - cx) * (p[1] - cy) for p in pts) / n
+    tr, det = sxx + syy, sxx * syy - sxy * sxy
+    lam_min = tr / 2.0 - math.sqrt(max(tr * tr / 4.0 - det, 0.0))
+    return 2.0 * math.sqrt(max(lam_min, 0.0))
+
+
+def snap_picks(picks, holes, tol=SNAP_MM):
+    """The operator's chosen anchors, re-matched to the holes on screen now.
+
+    The picks are stored as machine coordinates, and the board can have been
+    moved or reloaded since they were made. Each is snapped to the nearest
+    hole within ``tol``; if any has none — the picks belong to a board that
+    is no longer where it was — the whole set is stale and None comes back,
+    so the caller falls back to the automatic pick rather than fitting a
+    photo to holes that are not there.
+    """
+    hs = [(float(x), float(y)) for x, y, *_ in (holes or [])]
+    if not picks or not hs:
+        return None
+    out = []
+    for px, py in picks:
+        hx, hy = min(hs, key=lambda h: math.hypot(h[0] - px, h[1] - py))
+        if math.hypot(hx - px, hy - py) > tol or (hx, hy) in out:
+            return None
+        out.append((hx, hy))
+    return out if len(out) >= _MIN_ANCHORS else None
 
 
 class _PhotoCanvas(QWidget):
@@ -203,18 +259,30 @@ class _DesignMap(QWidget):
         m = 4.0
         return (min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m)
 
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor(theme.BED))
+    def _mapping(self):
+        """``(scale, ox, oy, x0, y0)``: mm to pixels, the design fitted in
+        the widget with a margin. One place, so the painter and a click agree
+        about where a hole is."""
         x0, y0, x1, y1 = self._bounds()
         w, h = max(1e-6, x1 - x0), max(1e-6, y1 - y0)
         s = min(self.width() / w, self.height() / h) * 0.9
         ox = (self.width() - w * s) / 2.0
         oy = (self.height() - h * s) / 2.0
+        return s, ox, oy, x0, y0
 
-        def to_px(x, y):                      # y up, screen y down
-            return QPointF(ox + (x - x0) * s, self.height() - oy - (y - y0) * s)
+    def to_px(self, x, y):                    # y up, screen y down
+        s, ox, oy, x0, y0 = self._mapping()
+        return QPointF(ox + (x - x0) * s, self.height() - oy - (y - y0) * s)
 
+    def to_mm(self, pos):
+        s, ox, oy, x0, y0 = self._mapping()
+        return ((pos.x() - ox) / s + x0,
+                (self.height() - oy - pos.y()) / s + y0)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(theme.BED))
+        to_px = self.to_px
         p.setRenderHint(QPainter.Antialiasing, True)
         if self._outline is not None:
             try:
@@ -241,7 +309,7 @@ class _DesignMap(QWidget):
             p.drawEllipse(to_px(x, y), 2.0, 2.0)
         for i, (ax, ay) in enumerate(self._anchors, 1):
             c = to_px(ax, ay)
-            wanted = (i == self._next + 1)
+            wanted = (i == self._next + 1) or self._next < 0
             ink = theme.TOOL if wanted else theme.TEXT_3
             pen = QPen(QColor(ink), 2 if wanted else 1)
             pen.setCosmetic(True)
@@ -253,6 +321,161 @@ class _DesignMap(QWidget):
             p.drawText(QRectF(c.x() - 8, c.y() - 8, 16, 16),
                        Qt.AlignCenter, str(i))
         p.end()
+
+
+class _HolePickCanvas(_DesignMap):
+    """The design map, but the holes on it can be clicked to become anchors.
+
+    A click lands on the nearest hole within a grab radius, never on empty
+    board: an anchor that is not a drilled hole cannot be found in the photo.
+    """
+    changed = Signal()
+    GRAB_PX = 14
+
+    def __init__(self, holes, outline, preset=None, parent=None):
+        super().__init__(holes, outline, [], parent)
+        self._next = -1                       # every pick is "wanted": all lit
+        self.setCursor(Qt.CrossCursor)
+        self.setMinimumSize(520, 420)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        for x, y in (preset or []):
+            hit = self._hole_near_mm(x, y, SNAP_MM)
+            if hit is not None and hit not in self._anchors:
+                self._anchors.append(hit)
+
+    def sizeHint(self):
+        return QSize(640, 480)
+
+    def _hole_near_mm(self, x, y, tol):
+        best, bd = None, tol
+        for hx, hy in self._holes:
+            d = math.hypot(hx - x, hy - y)
+            if d < bd:
+                best, bd = (hx, hy), d
+        return best
+
+    def pick_at(self, pos):
+        """Add the hole under a widget position; True if one was there."""
+        if not self._holes:
+            return False
+        s = self._mapping()[0]
+        x, y = self.to_mm(pos)
+        hit = self._hole_near_mm(x, y, self.GRAB_PX / max(s, 1e-6))
+        if hit is None or hit in self._anchors:
+            return False
+        self._anchors.append(hit)
+        self.update()
+        self.changed.emit()
+        return True
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.pick_at(e.position())
+
+    def undo(self):
+        if self._anchors:
+            self._anchors.pop()
+            self.update()
+            self.changed.emit()
+
+    def picks(self):
+        return list(self._anchors)
+
+
+class HolePickDialog(dialogs.Sheet):
+    """Choose which drilled holes anchor the photo.
+
+    ``anchors()`` returns the picks in click order, which is the order the
+    photo dialog then asks for them.
+    """
+
+    def __init__(self, parent, holes, outline=None, preset=None):
+        super().__init__(parent, "Choose the holes that anchor the photo",
+                         width=720)
+        self.say("Click at least four holes you will be able to find again in "
+                 "the photo, spread towards the corners. The automatic choice "
+                 "takes the corner-most holes, which is right when the board "
+                 "has dowel or fiducial holes — a single-sided board has "
+                 "none, and its corner holes may be tiny or look alike.")
+        self.canvas = _HolePickCanvas(holes, outline, preset, self)
+        self.canvas.changed.connect(self._sync)
+        self.add(self.canvas, grow=True)
+        self.prompt = self.say("", small=True)
+        self.undo_btn = self.act("Undo the last one", on=self.canvas.undo)
+        self.act("Cancel", on=self.reject)
+        self.ok_btn = self.act("Use these holes", kind="primary",
+                               on=self.accept, default=True)
+        self._sync()
+
+    def _sync(self):
+        picks = self.canvas.picks()
+        n = len(picks)
+        thin = n >= _MIN_ANCHORS and anchor_spread(picks) < MIN_SPREAD_MM
+        self.undo_btn.setEnabled(n > 0)
+        self.ok_btn.setEnabled(n >= _MIN_ANCHORS and not thin)
+        if thin:
+            self.prompt.setText(
+                "Those holes are nearly in a line, so a photo fitted on them "
+                "would be right along that line and wrong everywhere else. "
+                "Add one away from it.")
+        elif n < _MIN_ANCHORS:
+            self.prompt.setText("%d chosen — %d more to go. Click a hole to "
+                                "add it." % (n, _MIN_ANCHORS - n))
+        else:
+            self.prompt.setText(
+                "%d chosen, numbered in the order the photo will ask for "
+                "them. Add more if the photo is at an angle; undo any that "
+                "look alike." % n)
+
+    def anchors(self):
+        return self.canvas.picks()
+
+
+class PhotoControls(QWidget):
+    """Two sliders: how strongly the photo shows, and how far the design is
+    faded over it. Lives in the View menu next to the photo actions, so it
+    is where the photo was put on, and it keeps the menu open while a slider
+    is dragged — the bed updates underneath as it moves."""
+    opacity_changed = Signal(float)
+    dim_changed = Signal(float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        g = QGridLayout(self)
+        g.setContentsMargins(theme.GAP_M + 4, theme.GAP_S, theme.GAP_M + 4,
+                             theme.GAP_S)
+        g.setHorizontalSpacing(theme.GAP_S)
+        g.setVerticalSpacing(2)
+        self.opacity = QSlider(Qt.Horizontal)
+        self.opacity.setRange(0, 100)
+        self.opacity.setValue(100)
+        self.opacity.setToolTip("How strongly the photo shows on the bed.")
+        self.dim = QSlider(Qt.Horizontal)
+        self.dim.setRange(0, 100)
+        self.dim.setValue(55)
+        self.dim.setToolTip("How far the copper and toolpaths are faded so "
+                            "the photo underneath reads clearly. Rework "
+                            "boxes stay at full strength.")
+        for s in (self.opacity, self.dim):
+            s.setMinimumWidth(160)
+        g.addWidget(widgets.micro("Photo"), 0, 0)
+        g.addWidget(self.opacity, 0, 1)
+        g.addWidget(widgets.micro("Fade the design"), 1, 0)
+        g.addWidget(self.dim, 1, 1)
+        self.opacity.valueChanged.connect(
+            lambda v: self.opacity_changed.emit(v / 100.0))
+        self.dim.valueChanged.connect(lambda v: self.dim_changed.emit(v / 100.0))
+
+    def set_values(self, opacity, dim):
+        """Put saved values on the sliders without firing them: the caller
+        applies them itself, in the order it needs."""
+        for s, v in ((self.opacity, opacity), (self.dim, dim)):
+            s.blockSignals(True)
+            s.setValue(int(round(max(0.0, min(1.0, float(v))) * 100)))
+            s.blockSignals(False)
+
+    def values(self):
+        return self.opacity.value() / 100.0, self.dim.value() / 100.0
 
 
 class PhotoAnchorDialog(QDialog):

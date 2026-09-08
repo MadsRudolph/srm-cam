@@ -12,12 +12,17 @@ Relay field and remembered:
   which client-isolating wifi forbids.
 
 Either way ``photo_path`` holds the saved file once the dialog is accepted.
+:func:`autocrop_to_copper` then trims the shot to the board, because a phone
+photographs the whole machine and the anchor dialog is easier on a picture
+that is mostly board.
 
 A copy of the first interface's dialog with this interface's palette and its
 own settings key. The transports themselves are the engine's.
 """
+from pathlib import Path
+
 import qrcode      # at import, so a missing package fails where the guard is
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal, QRect
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
                                QLabel, QLineEdit, QVBoxLayout)
@@ -26,6 +31,48 @@ from gerber2rml.engine import photorelay
 from gerber2rml.engine.photoshare import PhotoShareServer
 from gerber2rml.gui2.workspace import _settings
 from gerber2rml.gui2 import theme
+
+
+def autocrop_to_copper(path):
+    """Crop a phone photo to the copper stock, writing ``<name>_crop.jpg``
+    beside it. Returns the crop's path, or ``path`` itself when nothing
+    convincing was found or the board already fills the frame.
+
+    The crop is cut from the FULL-resolution file rather than the small copy
+    the detector runs on: "propose boxes from the photo" re-reads the file
+    at native resolution, and the channel signature it looks for does not
+    survive a downscale. Any failure hands back the original — a photo that
+    could not be cropped is still a photo that can be anchored.
+    """
+    try:
+        import numpy as np
+        from gerber2rml.engine.autocrop import copper_bbox
+        img = QImage(str(path))
+        if img.isNull():
+            return path
+        # The finder works on a ~400 px copy; decode a small one so a 12 MP
+        # shot is not converted to an array just to be thrown away.
+        small = img.scaled(1000, 1000, Qt.KeepAspectRatio,
+                           Qt.SmoothTransformation)
+        small = small.convertToFormat(QImage.Format_RGBA8888)
+        h, w, bpl = small.height(), small.width(), small.bytesPerLine()
+        buf = np.frombuffer(small.constBits(), np.uint8, count=h * bpl)
+        rgba = buf.reshape(h, bpl)[:, :w * 4].reshape(h, w, 4)
+        box = copper_bbox(rgba)
+        if box is None:
+            return path
+        x0, y0, x1, y1 = box
+        if (x1 - x0) * (y1 - y0) > 0.90:          # the board is the frame
+            return path
+        W, H = img.width(), img.height()
+        rect = QRect(int(x0 * W), int(y0 * H),
+                     max(1, round((x1 - x0) * W)), max(1, round((y1 - y0) * H)))
+        out = Path(path).with_name(Path(path).stem + "_crop.jpg")
+        if img.copy(rect).save(str(out), "JPG", 92):
+            return str(out)
+    except Exception:
+        pass
+    return path
 
 # The team relay (relay/worker.js on Cloudflare). Used when the Relay
 # field is empty, so the dialog works on any network with zero setup;
