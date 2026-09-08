@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feedback — SRM-CAM guide</title>
+<meta name="description" content="Eight minutes of feedback from a student who milled a board with the guide and SRM-CAM.">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #08090b;
+    --base: #101318;
+    --panel: #161a20;
+    --panel-hi: #1c2129;
+    --raised: #242b34;
+    --sunk: #0d1015;
+    --rule: #1f242b;
+    --rule-hi: #2b323b;
+    --rule-strong: #3b4550;
+    --text: #eef2f6;
+    --text-dim: #aab3bd;
+    --text-mute: #6f7a86;
+    --on-light: #08090b;
+    --copper: #b4763c;
+    --copper-hi: #d59456;
+    --copper-dim: #6b482a;
+    --copper-fill: #2a1e13;
+    --verified: #52c98a;
+    --verified-fill: #0f2419;
+    --verified-edge: #22503a;
+    --caution: #f0a33c;
+    --danger: #ff4d4d;
+    --danger-fill: #2b1113;
+    --danger-edge: #5e1f22;
+    --radius: 3px;
+    --display: "Barlow Semi Condensed", "Bahnschrift", "Arial Narrow", sans-serif;
+    --sans: "Inter", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--base);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--copper-hi); }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 40px 24px 96px;
+  }
+
+  /* ---- header ---- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--copper-hi);
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 40px;
+    line-height: 1.05;
+    letter-spacing: -.01em;
+    margin: 6px 0 14px;
+    text-wrap: balance;
+  }
+  .lede { color: var(--text-dim); max-width: 60ch; margin: 0 0 8px; }
+  .lede strong { color: var(--text); font-weight: 500; }
+  .meta {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-mute);
+    display: flex; gap: 18px; flex-wrap: wrap;
+    margin-top: 18px;
+  }
+
+  /* ---- sections ---- */
+  section {
+    border-top: 1px solid var(--rule-hi);
+    margin-top: 40px;
+    padding-top: 26px;
+  }
+  .sec-head {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .sec-n {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--copper);
+    padding-top: 6px;
+  }
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 24px;
+    line-height: 1.1;
+    margin: 0;
+  }
+  .sec-why {
+    grid-column: 2;
+    color: var(--text-dim);
+    font-size: 14px;
+    margin: 0 0 22px;
+    max-width: 58ch;
+  }
+
+  /* ---- questions ---- */
+  .q { display: grid; grid-template-columns: 34px 1fr; gap: 14px; margin: 0 0 26px; }
+  .q > .lbl { grid-column: 2; }
+  .q > .body { grid-column: 2; }
+  .lbl {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 9px;
+    text-wrap: balance;
+  }
+  .lbl .hint { color: var(--text-mute); font-weight: 400; font-size: 13.5px; }
+  .opt { color: var(--text-mute); font-weight: 400; font-size: 12px; font-family: var(--mono); margin-left: 8px; }
+
+  /* choice chips */
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .choices label {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 7px 12px;
+    background: var(--panel);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 14px;
+    user-select: none;
+    transition: border-color .12s, background .12s;
+  }
+  .choices label:hover { border-color: var(--copper-dim); background: var(--panel-hi); }
+  .choices input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .choices label:has(input:checked) {
+    background: var(--copper-fill);
+    border-color: var(--copper);
+    color: var(--copper-hi);
+  }
+  .choices label:has(input:focus-visible) { outline: 2px solid var(--copper-hi); outline-offset: 2px; }
+  .choices.stack { flex-direction: column; align-items: flex-start; }
+
+  /* 1–5 scale */
+  .scale { display: inline-grid; grid-template-columns: repeat(5, 44px); gap: 0; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; }
+  .scale label {
+    position: relative;
+    display: grid; place-items: center;
+    height: 38px;
+    background: var(--panel);
+    border-right: 1px solid var(--rule-strong);
+    cursor: pointer;
+    font-family: var(--mono); font-size: 13px;
+    color: var(--text-dim);
+    transition: background .12s, color .12s;
+  }
+  .scale label:last-child { border-right: 0; }
+  .scale label:hover { background: var(--panel-hi); color: var(--text); }
+  .scale input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .scale label:has(input:checked) { background: var(--copper); color: var(--on-light); font-weight: 500; }
+  .scale label:has(input:focus-visible) { outline: 2px solid var(--copper-hi); outline-offset: -2px; }
+  .scale-ends {
+    display: flex; justify-content: space-between;
+    width: 220px;
+    font-family: var(--mono); font-size: 11px; color: var(--text-mute);
+    margin-top: 5px;
+  }
+
+  /* per-step table */
+  .steps { border: 1px solid var(--rule-hi); border-radius: var(--radius); overflow-x: auto; }
+  .steps-grid { display: grid; grid-template-columns: minmax(150px, 1fr) auto auto; min-width: 520px; }
+  .steps-grid > div { padding: 10px 14px; border-top: 1px solid var(--rule); display: flex; align-items: center; }
+  .steps-grid > .h { border-top: 0; background: var(--sunk); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-mute); padding: 8px 14px; }
+  .step-name { font-family: var(--mono); font-size: 13.5px; color: var(--text); gap: 10px; }
+  .step-name .arrow { color: var(--copper-dim); }
+  .step-name small { font-family: var(--sans); color: var(--text-mute); font-size: 12.5px; }
+  .steps-grid .scale label { height: 32px; width: 36px; }
+  .steps-grid .scale { grid-template-columns: repeat(5, 36px); }
+  .skip label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-dim); cursor: pointer; white-space: nowrap; }
+  .skip input { accent-color: var(--copper); }
+
+  /* text */
+  textarea, input[type=text], input[type=email] {
+    width: 100%;
+    background: var(--sunk);
+    color: var(--text);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 14.5px;
+    resize: vertical;
+    min-height: 44px;
+  }
+  textarea { min-height: 88px; }
+  textarea:focus, input:focus { outline: 2px solid var(--copper); outline-offset: 0; border-color: var(--copper); }
+  textarea::placeholder, input::placeholder { color: var(--text-mute); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
+
+  /* submit */
+  .submit-bar {
+    margin-top: 40px;
+    padding-top: 26px;
+    border-top: 1px solid var(--rule-hi);
+    display: grid; grid-template-columns: 34px 1fr; gap: 14px;
+  }
+  .submit-bar > * { grid-column: 2; }
+  button.primary {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: .02em;
+    background: var(--copper);
+    color: var(--on-light);
+    border: 0;
+    border-radius: var(--radius);
+    padding: 12px 26px;
+    cursor: pointer;
+    justify-self: start;
+  }
+  button.primary:hover { background: var(--copper-hi); }
+  button.primary:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    font: inherit; font-size: 13.5px;
+    background: transparent; color: var(--text-dim);
+    border: 1px solid var(--rule-strong); border-radius: var(--radius);
+    padding: 8px 14px; cursor: pointer;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--copper-dim); }
+  .status { font-size: 14px; color: var(--text-dim); min-height: 1.4em; }
+  .status.ok { color: var(--verified); }
+  .status.err { color: var(--danger); }
+  .note {
+    background: var(--panel); border: 1px solid var(--rule-hi); border-left: 3px solid var(--copper);
+    border-radius: var(--radius); padding: 12px 14px; font-size: 13.5px; color: var(--text-dim);
+  }
+  .note code { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+  pre.copy {
+    background: var(--sunk); border: 1px solid var(--rule-strong); border-radius: var(--radius);
+    padding: 12px; font-family: var(--mono); font-size: 12px; overflow-x: auto; max-height: 260px; white-space: pre-wrap;
+  }
+
+  /* thanks */
+  #done { display: none; }
+  #done .big {
+    font-family: var(--display); font-weight: 700; font-size: 34px; line-height: 1.1; margin: 0 0 10px;
+  }
+  .check { color: var(--verified); font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+
+  .req { color: var(--copper-hi); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media (max-width: 560px) {
+    main { padding: 28px 16px 80px; }
+    h1 { font-size: 32px; }
+    .q, .sec-head, .submit-bar { grid-template-columns: 1fr; gap: 6px; }
+    .q > .lbl, .q > .body, .sec-why, .submit-bar > * { grid-column: 1; }
+    .sec-n { padding-top: 0; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow"><a href="index.html" style="color:inherit;text-decoration:none">← SRM-CAM guide</a> · Roland SRM-20 · DTU Ballerup</div>
+    <h1>How did the board go?</h1>
+    <p class="lede" id="lede-general">Used the guide or SRM-CAM for a board? Tell us how it went. Every answer changes what the next student sees, and a wrong number or a confusing screen is far more useful to hear about than a compliment. <strong>Blunt is better than polite.</strong> There are no wrong answers, and you can skip anything. Prefer GitHub? <a href="https://github.com/MadsRudolph/srm-cam/issues">Open an issue</a> instead.</p>
+    <p class="lede" id="lede-ahmad" hidden>You milled a PCB with the guide and SRM-CAM without anyone standing next to you. That is exactly the situation the tool is built for, so <strong>your answers will change what the next student sees.</strong> Blunt is better than polite. There are no wrong answers, and you can skip anything.</p>
+    <div class="meta">
+      <span>~8 minutes</span>
+      <span>Goes straight to the team</span>
+      <span>Draft saved in this browser</span>
+    </div>
+  </header>
+
+  <form id="f" novalidate>
+
+    <!-- 1 ---------------------------------------------------------- -->
+    <section>
+      <div class="sec-head">
+        <div class="sec-n">01</div>
+        <h2>Starting point</h2>
+        <p class="sec-why">So we know who the guide worked for.</p>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Before this, how much had you done with CNC or PCB milling?</span>
+        <div class="body choices">
+          <label><input type="radio" name="experience" value="none">Nothing at all</label>
+          <label><input type="radio" name="experience" value="watched">Seen it done</label>
+          <label><input type="radio" name="experience" value="some">Done it once or twice</label>
+          <label><input type="radio" name="experience" value="lots">Regularly</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">What did you try before the SRM-20? <span class="opt">optional</span></span>
+        <div class="body choices">
+          <label><input type="checkbox" name="before" value="fiber-laser">The fiber laser</label>
+          <label><input type="checkbox" name="before" value="etching">Chemical etching</label>
+          <label><input type="checkbox" name="before" value="ordered">Ordering from a fab</label>
+          <label><input type="checkbox" name="before" value="nothing">Nothing, went straight to the mill</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Which computer did you run SRM-CAM on?</span>
+        <div class="body choices">
+          <label><input type="radio" name="os" value="windows">Windows</label>
+          <label><input type="radio" name="os" value="linux">Linux</label>
+          <label><input type="radio" name="os" value="macos">macOS</label>
+          <label><input type="radio" name="os" value="lab-pc">The lab's CNC PC</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">How did you install it?</span>
+        <div class="body choices">
+          <label><input type="radio" name="install" value="installer">Windows installer (.exe)</label>
+          <label><input type="radio" name="install" value="appimage">Linux AppImage</label>
+          <label><input type="radio" name="install" value="source">From source with pip</label>
+          <label><input type="radio" name="install" value="unsure">Not sure</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Did it start on the first try?</span>
+        <div class="body choices">
+          <label><input type="radio" name="install_ok" value="yes">Yes</label>
+          <label><input type="radio" name="install_ok" value="retry">After some fiddling</label>
+          <label><input type="radio" name="install_ok" value="help">Needed help</label>
+          <label><input type="radio" name="install_ok" value="no">Never worked, used something else</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">If installing was not smooth, what happened? <span class="opt">optional</span></span>
+        <div class="body"><textarea name="install_notes" placeholder="Error messages, missing steps, what you did to get past it…"></textarea></div>
+      </div>
+    </section>
+
+    <!-- 2 ---------------------------------------------------------- -->
+    <section>
+      <div class="sec-head">
+        <div class="sec-n">02</div>
+        <h2>The guide</h2>
+        <p class="sec-why">The web guide at madsrudolph.github.io/srm-cam, with the photos.</p>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Which pages did you actually read? <span class="hint">Tick all you opened, even briefly.</span></span>
+        <div class="body choices">
+          <label><input type="checkbox" name="pages" value="getting-started">Getting started</label>
+          <label><input type="checkbox" name="pages" value="milling-a-board">Milling a board</label>
+          <label><input type="checkbox" name="pages" value="holding-the-copper">Holding the copper</label>
+          <label><input type="checkbox" name="pages" value="bed-leveling">Bed leveling</label>
+          <label><input type="checkbox" name="pages" value="machine-control">Machine control</label>
+          <label><input type="checkbox" name="pages" value="double-sided">Double-sided</label>
+          <label><input type="checkbox" name="pages" value="panels">Panels</label>
+          <label><input type="checkbox" name="pages" value="photo-and-rework">Photo and rework</label>
+          <label><input type="checkbox" name="pages" value="hardware">Hardware</label>
+          <label><input type="checkbox" name="pages" value="troubleshooting">Troubleshooting</label>
+          <label><input type="checkbox" name="pages" value="reference">Reference</label>
+          <label><input type="checkbox" name="pages" value="none">I mostly skipped the guide</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Was it obvious where to start and what order to do things in?</span>
+        <div class="body">
+          <div class="scale">
+            <label><input type="radio" name="guide_order" value="1">1</label>
+            <label><input type="radio" name="guide_order" value="2">2</label>
+            <label><input type="radio" name="guide_order" value="3">3</label>
+            <label><input type="radio" name="guide_order" value="4">4</label>
+            <label><input type="radio" name="guide_order" value="5">5</label>
+          </div>
+          <div class="scale-ends"><span>lost</span><span>obvious</span></div>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Did the photos match what was in front of you in the lab?</span>
+        <div class="body choices">
+          <label><input type="radio" name="guide_photos" value="yes">Yes, same machine, same screens</label>
+          <label><input type="radio" name="guide_photos" value="mostly">Mostly, some differences</label>
+          <label><input type="radio" name="guide_photos" value="no">No, the lab looked different</label>
+          <label><input type="radio" name="guide_photos" value="na">Did not look at the photos</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Where did the guide fall short? <span class="hint">A step that was missing, wrong, out of date, or that you had to figure out yourself.</span></span>
+        <div class="body"><textarea name="guide_gaps" placeholder="For example: “the guide says X but the screen showed Y”, or “I did not know how to …”"></textarea></div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Did you look anywhere else for help? <span class="opt">optional</span></span>
+        <div class="body choices">
+          <label><input type="checkbox" name="other_help" value="roland-manual">The Roland manual</label>
+          <label><input type="checkbox" name="other_help" value="youtube">YouTube</label>
+          <label><input type="checkbox" name="other_help" value="chatgpt">An AI assistant</label>
+          <label><input type="checkbox" name="other_help" value="person">Asked a person in the lab</label>
+          <label><input type="checkbox" name="other_help" value="none">No, the guide was enough</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 ---------------------------------------------------------- -->
+    <section>
+      <div class="sec-head">
+        <div class="sec-n">03</div>
+        <h2>The app</h2>
+        <p class="sec-why">SRM-CAM opens in Essential mode and walks the job in order. Rate each step on how easy it was to understand what to do, not on how well the machine behaved.</p>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Did you stay in Essential, or switch to Full?</span>
+        <div class="body choices">
+          <label><input type="radio" name="tier" value="essential">Stayed in Essential</label>
+          <label><input type="radio" name="tier" value="full">Switched to Full</label>
+          <label><input type="radio" name="tier" value="unaware">Did not notice there were two</label>
+          <label><input type="radio" name="tier" value="original">Used the original interface (--original)</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">How easy was each step? <span class="hint">1 = confusing, 5 = obvious. Tick “skipped” if you did not do it.</span></span>
+        <div class="body steps">
+          <div class="steps-grid">
+            <div class="h">Step</div><div class="h">Ease</div><div class="h"></div>
+
+            <div class="step-name">load <small>Gerber + drill files in</small></div>
+            <div><div class="scale">
+              <label><input type="radio" name="step_load" value="1">1</label><label><input type="radio" name="step_load" value="2">2</label><label><input type="radio" name="step_load" value="3">3</label><label><input type="radio" name="step_load" value="4">4</label><label><input type="radio" name="step_load" value="5">5</label>
+            </div></div>
+            <div class="skip"><label><input type="checkbox" name="step_load_skip" value="1">skipped</label></div>
+
+            <div class="step-name">level <small>probe the bed</small></div>
+            <div><div class="scale">
+              <label><input type="radio" name="step_level" value="1">1</label><label><input type="radio" name="step_level" value="2">2</label><label><input type="radio" name="step_level" value="3">3</label><label><input type="radio" name="step_level" value="4">4</label><label><input type="radio" name="step_level" value="5">5</label>
+            </div></div>
+            <div class="skip"><label><input type="checkbox" name="step_level_skip" value="1">skipped</label></div>
+
+            <div class="step-name">drill <small>holes</small></div>
+            <div><div class="scale">
+              <label><input type="radio" name="step_drill" value="1">1</label><label><input type="radio" name="step_drill" value="2">2</label><label><input type="radio" name="step_drill" value="3">3</label><label><input type="radio" name="step_drill" value="4">4</label><label><input type="radio" name="step_drill" value="5">5</label>
+            </div></div>
+            <div class="skip"><label><input type="checkbox" name="step_drill_skip" value="1">skipped</label></div>
+
+            <div class="step-name">traces <small>isolation</small></div>
+            <div><div class="scale">
+              <label><input type="radio" name="step_traces" value="1">1</label><label><input type="radio" name="step_traces" value="2">2</label><label><input type="radio" name="step_traces" value="3">3</label><label><input type="radio" name="step_traces" value="4">4</label><label><input type="radio" name="step_traces" value="5">5</label>
+            </div></div>
+            <div class="skip"><label><input type="checkbox" name="step_traces_skip" value="1">skipped</label></div>
+
+            <div class="step-name">cut-out <small>board outline</small></div>
+            <div><div class="scale">
+              <label><input type="radio" name="step_cutout" value="1">1</label><label><input type="radio" name="step_cutout" value="2">2</label><label><input type="radio" name="step_cutout" value="3">3</label><label><input type="radio" name="step_cutout" value="4">4</label><label><input type="radio" name="step_cutout" value="5">5</label>
+            </div></div>
+            <div class="skip"><label><input type="checkbox" name="step_cutout_skip" value="1">skipped</label></div>
+
+            <div class="step-name">export <small>the .nc / .rml files</small></div>
+            <div><div class="scale">
+              <label><input type="radio" name="step_export" value="1">1</label><label><input type="radio" name="step_export" value="2">2</label><label><input type="radio" name="step_export" value="3">3</label><label><input type="radio" name="step_export" value="4">4</label><label><input type="radio" name="step_export" value="5">5</label>
+            </div></div>
+            <div class="skip"><label><input type="checkbox" name="step_export_skip" value="1">skipped</label></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Each step explains itself on screen. Did you read those explanations, and did they help?</span>
+        <div class="body choices">
+          <label><input type="radio" name="onscreen" value="helped">Read them, they helped</label>
+          <label><input type="radio" name="onscreen" value="unclear">Read them, still unclear</label>
+          <label><input type="radio" name="onscreen" value="skimmed">Skimmed, mostly guessed</label>
+          <label><input type="radio" name="onscreen" value="unseen">Did not notice them</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Which step took the longest, or where did you get stuck? What were you unsure about?</span>
+        <div class="body"><textarea name="app_stuck" placeholder="Which button, which number, which setting. Be specific if you can."></textarea></div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Did anything in the app surprise you, break, or behave differently than you expected? <span class="opt">optional</span></span>
+        <div class="body"><textarea name="app_bugs" placeholder="Crashes, a preview that looked wrong, a setting you could not find…"></textarea></div>
+      </div>
+    </section>
+
+    <!-- 4 ---------------------------------------------------------- -->
+    <section>
+      <div class="sec-head">
+        <div class="sec-n">04</div>
+        <h2>At the machine</h2>
+        <p class="sec-why">Everything between “export” and a cut board: laptop, USB, leveling, VPanel.</p>
+      </div>
+
+      <div class="q">
+        <span class="lbl">How did you connect to the machine?</span>
+        <div class="body choices stack">
+          <label><input type="radio" name="connect" value="own-laptop">My own laptop, USB cable to the Arduino</label>
+          <label><input type="radio" name="connect" value="lab-pc">The lab's CNC PC</label>
+          <label><input type="radio" name="connect" value="mixed">Both, at different steps</label>
+          <label><input type="radio" name="connect" value="none">Never connected from SRM-CAM, only used VPanel</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Was getting the connection to work straightforward?</span>
+        <div class="body choices">
+          <label><input type="radio" name="connect_ok" value="yes">Yes, found the port and it just worked</label>
+          <label><input type="radio" name="connect_ok" value="fiddly">Took a few tries</label>
+          <label><input type="radio" name="connect_ok" value="no">Could not get it to connect</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Bed leveling: did the probe run work on the first attempt?</span>
+        <div class="body choices">
+          <label><input type="radio" name="level_ok" value="first">Yes, first try</label>
+          <label><input type="radio" name="level_ok" value="retry">After re-running it</label>
+          <label><input type="radio" name="level_ok" value="skipped">I skipped leveling</label>
+          <label><input type="radio" name="level_ok" value="no">Never got it to work</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Holding the copper: tape, sacrificial board, clamping. Was the guide's advice enough?</span>
+        <div class="body choices">
+          <label><input type="radio" name="holding" value="enough">Enough, board stayed put</label>
+          <label><input type="radio" name="holding" value="moved">The board moved or lifted</label>
+          <label><input type="radio" name="holding" value="unsure">I was not sure what to do and improvised</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Running the files in VPanel: anything unclear?</span>
+        <div class="body"><textarea name="vpanel_notes" placeholder="Setting origin, choosing the file, changing tools between drill and traces, what to press…"></textarea></div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Tool changes: did you know which bit to put in for each step, and how to set its height?</span>
+        <div class="body choices">
+          <label><input type="radio" name="tools" value="clear">Yes, clear from the guide or the app</label>
+          <label><input type="radio" name="tools" value="guessed">Guessed and it worked</label>
+          <label><input type="radio" name="tools" value="wrong">Got it wrong at least once</label>
+          <label><input type="radio" name="tools" value="helped">Someone showed me</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 ---------------------------------------------------------- -->
+    <section>
+      <div class="sec-head">
+        <div class="sec-n">05</div>
+        <h2>The result</h2>
+        <p class="sec-why">Whether the board was actually good, and what it cost you in time and copper.</p>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Did you end up with a usable board?</span>
+        <div class="body choices stack">
+          <label><input type="radio" name="result" value="first">Yes, on the first board</label>
+          <label><input type="radio" name="result" value="second">Yes, but it took a second board</label>
+          <label><input type="radio" name="result" value="third-plus">Yes, after three or more</label>
+          <label><input type="radio" name="result" value="rework">Usable after fixing it by hand</label>
+          <label><input type="radio" name="result" value="no">No</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">What went wrong on the boards that did not work? <span class="opt">optional</span></span>
+        <div class="body choices">
+          <label><input type="checkbox" name="defects" value="shorts">Traces not separated (shorts)</label>
+          <label><input type="checkbox" name="defects" value="broken">Broken or lifted traces</label>
+          <label><input type="checkbox" name="defects" value="depth">Cut too deep or too shallow</label>
+          <label><input type="checkbox" name="defects" value="offset">Drills not lined up with pads</label>
+          <label><input type="checkbox" name="defects" value="outline">Cut-out wrong or board came loose</label>
+          <label><input type="checkbox" name="defects" value="broke-bit">Broke a bit</label>
+          <label><input type="checkbox" name="defects" value="none">Nothing, first one was fine</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Roughly, from “I have the KiCad files” to “I am holding the board”, how long?</span>
+        <div class="body choices">
+          <label><input type="radio" name="duration" value="lt1h">Under an hour</label>
+          <label><input type="radio" name="duration" value="1-2h">1 to 2 hours</label>
+          <label><input type="radio" name="duration" value="2-4h">2 to 4 hours</label>
+          <label><input type="radio" name="duration" value="half-day">Half a day</label>
+          <label><input type="radio" name="duration" value="multi-day">More than a day</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">About the design <span class="opt">optional</span></span>
+        <div class="body row2">
+          <input type="text" name="board_desc" placeholder="Single/double-sided, size">
+          <input type="text" name="board_pitch" placeholder="Smallest trace or gap, e.g. 0.3 mm">
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 ---------------------------------------------------------- -->
+    <section>
+      <div class="sec-head">
+        <div class="sec-n">06</div>
+        <h2>Overall</h2>
+        <p class="sec-why">The three answers here matter most.</p>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Could you have done it without the guide and app, using only the Roland manual and VPanel?</span>
+        <div class="body choices">
+          <label><input type="radio" name="counterfactual" value="no">No chance</label>
+          <label><input type="radio" name="counterfactual" value="slower">Probably, but much slower</label>
+          <label><input type="radio" name="counterfactual" value="yes">Yes, it did not change much</label>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">How likely are you to point another student at this guide and app?</span>
+        <div class="body">
+          <div class="scale">
+            <label><input type="radio" name="recommend" value="1">1</label>
+            <label><input type="radio" name="recommend" value="2">2</label>
+            <label><input type="radio" name="recommend" value="3">3</label>
+            <label><input type="radio" name="recommend" value="4">4</label>
+            <label><input type="radio" name="recommend" value="5">5</label>
+          </div>
+          <div class="scale-ends"><span>would not</span><span>already have</span></div>
+        </div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">If we could fix only one thing before the next student, what should it be? <span class="req">*</span></span>
+        <div class="body"><textarea name="fix_one" required placeholder="One thing. The most annoying, the most confusing, or the one that cost you a board."></textarea></div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">What worked well and should not be touched? <span class="opt">optional</span></span>
+        <div class="body"><textarea name="keep" placeholder="Something that made you think “oh, that’s nice”."></textarea></div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Anything else? <span class="opt">optional</span></span>
+        <div class="body"><textarea name="other" placeholder="Anything that did not fit above."></textarea></div>
+      </div>
+
+      <div class="q">
+        <span class="lbl">Name and email <span class="opt">optional</span> <span class="hint">Only so we can ask a follow-up question. Leave blank to stay anonymous.</span></span>
+        <div class="body row2">
+          <input type="text" name="name" placeholder="Name" autocomplete="name">
+          <input type="email" name="email" placeholder="Email" autocomplete="email">
+        </div>
+      </div>
+      <div class="q">
+        <div class="body choices">
+          <label><input type="checkbox" name="followup" value="yes">OK to email me one follow-up question</label>
+          <label><input type="checkbox" name="quote_ok" value="yes">OK to quote my answers, anonymously, when improving the guide</label>
+        </div>
+      </div>
+    </section>
+
+    <div class="submit-bar">
+      <button class="primary" type="submit" id="send">Send feedback</button>
+      <div class="status" id="status"></div>
+      <div id="fallback" hidden>
+        <div class="note" style="margin-bottom:10px">Sending did not work just now. Your answers are below. Copy them and send them to Mads by email or paste them into a <a href="https://github.com/MadsRudolph/srm-cam/issues">GitHub issue</a>, nothing is lost.</div>
+        <pre class="copy" id="copytext"></pre>
+        <button class="ghost" type="button" id="copybtn">Copy answers</button>
+      </div>
+    </div>
+  </form>
+
+</main>
+
+<script>
+(function () {
+  var API = 'https://srm-cam-feedback.madsrudolph.dev/';
+  var FORM_VERSION = 1;
+
+  var form = document.getElementById('f');
+  var status = document.getElementById('status');
+  var send = document.getElementById('send');
+  var fallback = document.getElementById('fallback');
+  var copytext = document.getElementById('copytext');
+  var DRAFT_KEY = 'srm-cam-feedback-draft-v1';
+
+  // ?for=<name> picks a tailored intro and tags the submission, so a link
+  // sent to one student can be told apart from the general page.
+  var FOR = '';
+  try { FOR = (new URLSearchParams(location.search).get('for') || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40); } catch (e) {}
+  if (FOR) {
+    var tailored = document.getElementById('lede-' + FOR);
+    if (tailored) { tailored.hidden = false; document.getElementById('lede-general').hidden = true; }
+  }
+
+  var MULTI = ['before', 'pages', 'other_help', 'defects'];
+  var STEPS = ['load', 'level', 'drill', 'traces', 'cutout', 'export'];
+
+  function collect() {
+    var out = {};
+    var fd = new FormData(form);
+    fd.forEach(function (v, k) {
+      var val = typeof v === 'string' ? v.trim() : '';
+      if (val === '') return;
+      if (k in out) out[k] = [].concat(out[k], val); else out[k] = val;
+    });
+    MULTI.forEach(function (k) { if (k in out && !Array.isArray(out[k])) out[k] = [out[k]]; });
+    STEPS.forEach(function (s) {
+      var skip = out['step_' + s + '_skip'] === '1';
+      delete out['step_' + s + '_skip'];
+      if (skip) out['step_' + s] = 'skipped';
+      else if (out['step_' + s]) out['step_' + s] = Number(out['step_' + s]);
+    });
+    ['guide_order', 'recommend'].forEach(function (k) { if (out[k]) out[k] = Number(out[k]); });
+    ['followup', 'quote_ok'].forEach(function (k) { out[k] = out[k] === 'yes'; });
+    out._form_version = FORM_VERSION;
+    if (FOR) out._for = FOR;
+    return out;
+  }
+
+  function asText(a) {
+    var lines = ['SRM-CAM feedback', 'Date: ' + new Date().toISOString().slice(0, 10), ''];
+    Object.keys(a).forEach(function (k) {
+      if (k.charAt(0) === '_') return;
+      var v = Array.isArray(a[k]) ? a[k].join(', ') : String(a[k]);
+      lines.push(k + ': ' + v);
+    });
+    return lines.join('\n');
+  }
+
+  // ---- draft in this browser --------------------------------------------
+  function rawState() {
+    var st = {};
+    for (var i = 0; i < form.elements.length; i++) {
+      var el = form.elements[i];
+      if (!el.name) continue;
+      if (el.type === 'radio' || el.type === 'checkbox') { if (el.checked) st[el.name + '=' + el.value] = true; }
+      else st[el.name] = el.value;
+    }
+    return st;
+  }
+  function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(rawState())); } catch (e) {} }
+  function loadDraft() {
+    var st = null;
+    try { st = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+    if (!st) return;
+    for (var i = 0; i < form.elements.length; i++) {
+      var el = form.elements[i];
+      if (!el.name) continue;
+      if (el.type === 'radio' || el.type === 'checkbox') el.checked = !!st[el.name + '=' + el.value];
+      else if (el.name in st) el.value = st[el.name];
+    }
+  }
+  loadDraft();
+  form.addEventListener('input', saveDraft);
+  form.addEventListener('change', saveDraft);
+
+  // a step rating and its "skipped" box are exclusive
+  form.addEventListener('change', function (e) {
+    var t = e.target;
+    if (!t.name) return;
+    if (/^step_\w+_skip$/.test(t.name) && t.checked) {
+      var base = t.name.replace(/_skip$/, '');
+      var radios = form.querySelectorAll('input[name="' + base + '"]');
+      for (var i = 0; i < radios.length; i++) radios[i].checked = false;
+    } else if (/^step_\w+$/.test(t.name) && t.type === 'radio') {
+      var sk = form.querySelector('input[name="' + t.name + '_skip"]');
+      if (sk) sk.checked = false;
+    }
+  });
+
+  // ---- submit -----------------------------------------------------------
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var fix = form.elements['fix_one'];
+    if (!fix.value.trim()) {
+      status.textContent = 'One thing we should fix first is the one answer we really need.';
+      status.className = 'status err';
+      fix.focus();
+      return;
+    }
+    var answers = collect();
+    send.disabled = true;
+    status.textContent = 'Sending…';
+    status.className = 'status';
+
+    fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(answers)
+    }).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t || ('HTTP ' + r.status)); });
+      return r.json();
+    }).then(function () {
+      try { localStorage.removeItem(DRAFT_KEY); } catch (err) {}
+      form.hidden = true;
+      document.getElementById('done').style.display = 'block';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }).catch(function (err) {
+      status.textContent = 'Could not send: ' + (err && err.message ? err.message : 'network error') + '.';
+      status.className = 'status err';
+      copytext.textContent = asText(answers);
+      fallback.hidden = false;
+      send.disabled = false;
+    });
+  });
+
+  document.getElementById('copybtn').addEventListener('click', function () {
+    var btn = this;
+    function selectIt() {
+      var r = document.createRange(); r.selectNodeContents(copytext);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      btn.textContent = 'Selected, press Ctrl+C';
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(copytext.textContent).then(function () { btn.textContent = 'Copied'; }, selectIt);
+    } else selectIt();
+  });
+})();
+</script>
+</body>
+</html>
