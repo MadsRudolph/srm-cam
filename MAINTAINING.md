@@ -66,10 +66,10 @@ gerber2rml/          the Python package (the app; the name predates "SRM-CAM")
   gui/                 PySide6 window; app.py is the big one
 hardware/            Arduino sketches for the optional SPI probe
 packaging/           how the .exe is built            -> packaging/README.md
-website/             the user guide (plain HTML, auto-published to Pages)
+website/             the user guide (plain HTML, auto-published to Pages); media-plan.html is the internal shot list
 relay/               Cloudflare Worker: phone photo relay      -> relay/README.md
 feedback/            Cloudflare Worker + D1: student feedback  -> feedback/README.md
-docs/                the living docs: usage, design, the A/B write-up, the port audit, the media plan
+docs/                the living docs: usage, design, the A/B write-up, the port audit
   archive/           dated dev logs, old handoffs, plans; history only
 tests/               492 tests; pytest
 ```
