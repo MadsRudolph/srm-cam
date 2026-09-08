@@ -232,7 +232,7 @@ You don't have to take these, but they're the kind of move I'm after:
   commits per coherent change.
 - **The machine/SPI behavior is touchy** (single-read SPI garbage, Uno reset on port
   open, DRO jump-filter). If you touch `_DROPoller` / `_ProbeWorker` wiring, keep the
-  threading model intact — see `docs/2026-06-25-srm20-spi-and-bed-leveling.md` and
+  threading model intact — see `docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md` and
   the `srm20-spi-remote-interface` memory note for why it's built the way it is. I
   can't have you test the live machine path, so be conservative there; focus the
   redesign on layout/style/flow, not the serial internals.
@@ -257,12 +257,12 @@ You don't have to take these, but they're the kind of move I'm after:
 
 ## 9. Pointers / further reading
 
-- `docs/2026-06-25-srm20-spi-and-bed-leveling.md` — why the machine cockpit, bed
+- `docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md` — why the machine cockpit, bed
   leveling, and dowel features exist and how they behave (the *why* behind the
   clutter).
-- `docs/HANDOFF.md`, `docs/design.md`, `README.md` — architecture overview and the
+- `docs/archive/2026-08-21-handoff-gerber2rml.md`, `docs/design.md`, `README.md` — architecture overview and the
   GUI-free-core philosophy.
-- `docs/gui-manual-check.md` — existing manual-QA checklist for the GUI.
+- `docs/archive/gui-manual-check.md` — existing manual-QA checklist for the GUI.
 - Memory notes (`srm20-*`) capture machine facts dialed in on real hardware — don't
   contradict them.
 

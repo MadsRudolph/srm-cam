@@ -41,8 +41,8 @@ already tried and correctly rejected.
 Ranked by how much VPanel it removes.
 
 1. **`turnSpindle` (0x42)** — the big one. The codebase states throughout that
-   RPM is a VPanel cut-setting ([backends/gcode.py](../gerber2rml/backends/gcode.py),
-   [HANDOFF.md](HANDOFF.md)). That is true of NC/RML — there is no `S` word —
+   RPM is a VPanel cut-setting ([backends/gcode.py](../../gerber2rml/backends/gcode.py),
+   [HANDOFF.md](2026-08-21-handoff-gerber2rml.md)). That is true of NC/RML — there is no `S` word —
    but not of the SPI link. Roland's own `SRMTest.ino` has
    `turnSpindle(10000)/5000/0` commented out. This is the single hard
    dependency forcing a VPanel round-trip on every wet run.
@@ -84,7 +84,7 @@ previously acked as if it had run.
 There is **no "run this program" opcode**. Retiring VPanel means streaming every
 move (the `M` command). Two things stand in the way:
 
-- **`SPITxRx` sleeps 5 ms per byte** ([SRM20SPIRemote.cpp](../hardware/SRM20SPIRemote/SRM20SPIRemote.cpp)).
+- **`SPITxRx` sleeps 5 ms per byte** ([SRM20SPIRemote.cpp](../../hardware/SRM20SPIRemote/SRM20SPIRemote.cpp)).
   A `jumpTo` is 18 bytes = **~90 ms of pure sleep**; a status poll ~55 ms;
   `readPos` >200 ms. That caps throughput near 5–10 moves/s against jobs of
   thousands of moves. The delay is vendored 2014 code, not a measured
@@ -99,18 +99,18 @@ streaming, because the firmware caches its own origin and sends absolute moves.
 
 - **Library patch** — `getCommandVersion` made public, `rawTxRx` escape hatch,
   tunable framing delay. Guarded by `SRM20SPIREMOTE_LOCAL_PATCH`; see
-  [hardware/README.md](../hardware/README.md).
+  [hardware/README.md](../../hardware/README.md).
 - **Firmware v3** — `S` spindle, `X` status, `~ ^ % K` job control, `Y` view,
   `I` machine version, `F` framing delay, `N` timed move, `A` guard toggle.
   Plus: the status guard replaces the 8 s heuristic, transport commands are
   honoured mid-move, a spindle deadman, and `!` now stops the spindle too.
 - **Host driver** — the matching helpers in
-  [engine/spi_probe.py](../gerber2rml/engine/spi_probe.py), all failing soft
+  [engine/spi_probe.py](../../gerber2rml/engine/spi_probe.py), all failing soft
   (None/False, never an exception) because none of this is proven yet.
-- **GUI Machine test panel** — [gui/machinetest.py](../gerber2rml/gui/machinetest.py).
+- **GUI Machine test panel** — [gui/machinetest.py](../../gerber2rml/gui/machinetest.py).
   Every command as a row, PASS / FAIL / UNKNOWN, live status strip, pasteable
   report. Motion and spindle tests separately armed.
-- **Bench script** — [scripts/srm20_bench.py](../scripts/srm20_bench.py) for the
+- **Bench script** — [scripts/srm20_bench.py](../../scripts/srm20_bench.py) for the
   long sweeps (framing delay vs corruption, speed units).
 
 ## 6. Results so far (2026-08-21, read-only tests on the machine)

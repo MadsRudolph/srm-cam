@@ -44,7 +44,7 @@
  * V3 SAFETY UPGRADE (the reason the status bits matter): v2's waitForMotorStop
  * could not tell "move finished" from "machine paused", and inferred a pause
  * from an 8-SECOND TIMEOUT — that ambiguity is what let a paused machine keep
- * queueing deeper Z moves (see docs/2026-06-25-srm20-spi-and-bed-leveling.md).
+ * queueing deeper Z moves (see docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md).
  * v3 reads the machine's own PAUSE / COVER-OPEN / FATAL bits and stops at once.
  * The bits are debounced (2 consecutive reads) because SPI reads are flaky, and
  * the whole guard can be disarmed with 'A 0' if they turn out to be unreliable

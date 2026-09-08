@@ -1068,7 +1068,7 @@ class MainWindow(QMainWindow):
         self.stream_btn.triggered.connect(self._on_stream_job)
         # ---- machine transport: VPanel's Pause / Resume / Stop / View / spindle,
         # in the app. Every one drives an SPI command proven on the machine in
-        # the 2026-08 audit (docs/2026-08-21-spi-command-audit.md).
+        # the 2026-08 audit (docs/archive/2026-08-21-spi-command-audit.md).
         self.spindle_btn = QPushButton("Spindle")
         self.spindle_btn.setCheckable(True)
         self.spindle_btn.setEnabled(False)

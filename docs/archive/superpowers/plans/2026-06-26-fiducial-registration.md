@@ -750,8 +750,8 @@ git commit -m "feat(fiducial): GUI mode selector + measure/capture/fit panel"
 
 **Files:**
 - Modify: `README.md` (double-sided section: mention the two registration modes)
-- Create: `docs/2026-06-26-fiducial-registration.md` (dev log, sibling style to
-  `docs/2026-06-25-srm20-spi-and-bed-leveling.md`)
+- Create: `docs/archive/2026-06-26-fiducial-registration.md` (dev log, sibling style to
+  `docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md`)
 
 **Interfaces:** none (documentation only).
 
@@ -771,7 +771,7 @@ pointing at the dev log.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add README.md docs/2026-06-26-fiducial-registration.md
+git add README.md docs/archive/2026-06-26-fiducial-registration.md
 git commit -m "docs: fiducial registration mode + dev log"
 ```
 

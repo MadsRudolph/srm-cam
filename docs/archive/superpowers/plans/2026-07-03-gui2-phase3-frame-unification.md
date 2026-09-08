@@ -1,7 +1,7 @@
 # GUI 2.0 phase 3 — frame unification (implementation map)
 
 Branch: `feat/gui2-phase3-frame-unification` (stacked on phase 2 / PR #26).
-Design: docs/2026-07-02-gui2-cockpit-design.md §"One frame, one switcher".
+Design: docs/archive/2026-07-02-gui2-cockpit-design.md §"One frame, one switcher".
 
 ## Target model
 

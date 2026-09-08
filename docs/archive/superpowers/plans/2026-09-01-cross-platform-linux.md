@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10+, PySide6, PyInstaller, linuxdeploy, GitHub Actions.
 
-**Spec:** `docs/superpowers/specs/2026-09-01-cross-platform-linux-design.md`
+**Spec:** `docs/archive/superpowers/specs/2026-09-01-cross-platform-linux-design.md`
 
 ## Global Constraints
 

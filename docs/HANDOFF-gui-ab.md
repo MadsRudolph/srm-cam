@@ -65,7 +65,7 @@ windows gives a **false negative** from some shells. Check in-process with
 | `gerber2rml/gui/` | the original interface, untouched in design, with two bug fixes merged in from `main` |
 | `gerber2rml/gui2/` | the alternative, 20 modules |
 | `docs/AB-setup-sheet.md` | the full write-up: what changed, why, and screenshots of both at 1400×900 and 1280×720 |
-| `docs/BRIEF-alternative-gui.md` | the brief the alternative was built against — read §3, the non-negotiables |
+| `docs/archive/BRIEF-alternative-gui.md` | the brief the alternative was built against — read §3, the non-negotiables |
 
 `main` carries only the two bug fixes (commit `734e001`); the alternative
 interface exists on this branch alone. Tests: **878 pass, 2 skip.**
@@ -152,7 +152,7 @@ worth more than any amount of screenshot comparison.
 
 ## 4 · Ground rules that do not change
 
-From `docs/BRIEF-alternative-gui.md` §3, and they apply to whichever interface
+From `docs/archive/BRIEF-alternative-gui.md` §3, and they apply to whichever interface
 survives:
 
 * the dry run is step 0 and the cut-out runs **last** — on a double-sided job,

@@ -747,7 +747,7 @@ git commit -m "Add MainWindow, GUI entry points, and offscreen window tests"
 ## Task 8: Manual visual smoke (human-in-loop)
 
 **Files:**
-- Create: `docs/gui-manual-check.md`
+- Create: `docs/archive/gui-manual-check.md`
 
 Automated tests run offscreen; a human must confirm the window actually looks/behaves right once.
 
@@ -757,10 +757,10 @@ Run: `.venv\Scripts\python.exe -m gerber2rml`
 
 - [ ] **Step 2: Exercise it** — Load `tests/fixtures/mosfet_test`, switch tabs, change a bit diameter, Generate Preview (confirm cuts redraw), Export to a temp folder (confirm 3 `.rml` + runplan written).
 
-- [ ] **Step 3: Record the outcome** in `docs/gui-manual-check.md` (date, OS, what worked, any visual issues). Commit it.
+- [ ] **Step 3: Record the outcome** in `docs/archive/gui-manual-check.md` (date, OS, what worked, any visual issues). Commit it.
 
 ```bash
-git add docs/gui-manual-check.md
+git add docs/archive/gui-manual-check.md
 git commit -m "Record manual GUI smoke check"
 ```
 

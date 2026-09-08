@@ -6,8 +6,8 @@ board — drill 2–4 corner *fiducial* holes, flip and re-place the board freel
 probe where the holes actually landed, and warp the top traces to the measured
 fit. The proven dowel-pin workflow is untouched and stays the default.
 
-Spec: [`docs/superpowers/specs/2026-06-26-fiducial-registration-design.md`](superpowers/specs/2026-06-26-fiducial-registration-design.md).
-Plan: [`docs/superpowers/plans/2026-06-26-fiducial-registration.md`](superpowers/plans/2026-06-26-fiducial-registration.md).
+Spec: [`docs/archive/superpowers/specs/2026-06-26-fiducial-registration-design.md`](superpowers/specs/2026-06-26-fiducial-registration-design.md).
+Plan: [`docs/archive/superpowers/plans/2026-06-26-fiducial-registration.md`](superpowers/plans/2026-06-26-fiducial-registration.md).
 
 ---
 

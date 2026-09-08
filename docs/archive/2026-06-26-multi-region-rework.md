@@ -5,8 +5,8 @@
 every spot that needs re-cutting as its own coloured box with its own depth and
 height-map-follow toggle, and export them all as **one** G-code file.
 
-Spec: [`docs/superpowers/specs/2026-06-26-multi-region-rework-design.md`](superpowers/specs/2026-06-26-multi-region-rework-design.md).
-Plan: [`docs/superpowers/plans/2026-06-26-multi-region-rework.md`](superpowers/plans/2026-06-26-multi-region-rework.md).
+Spec: [`docs/archive/superpowers/specs/2026-06-26-multi-region-rework-design.md`](superpowers/specs/2026-06-26-multi-region-rework-design.md).
+Plan: [`docs/archive/superpowers/plans/2026-06-26-multi-region-rework.md`](superpowers/plans/2026-06-26-multi-region-rework.md).
 
 ---
 

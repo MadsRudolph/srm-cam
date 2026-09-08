@@ -872,7 +872,7 @@ git commit -m "Add CLI that writes three SRM-20 RML jobs"
 ## Task 9: mods parity check (trust gate before milling)
 
 **Files:**
-- Create: `docs/parity-mosfet_test.md`
+- Create: `docs/archive/parity-mosfet_test.md`
 
 Manual verification task — confirms our RML drives the machine like the trusted mods output before anyone cuts metal.
 
@@ -886,12 +886,12 @@ Export the same B.Cu as PNG/SVG, run it through the mods `mill 2D PCB` SRM-20 pr
 
 - [ ] **Step 3: Compare and record**
 
-In `docs/parity-mosfet_test.md`, record: bounding box of moves (ours vs mods, should match within rounding), total cut length, spindle on/off presence, and any divergence. Note that exact move ordering will differ (different path planners) — what must match is **geometry extent and that copper is fully isolated**.
+In `docs/archive/parity-mosfet_test.md`, record: bounding box of moves (ours vs mods, should match within rounding), total cut length, spindle on/off presence, and any divergence. Note that exact move ordering will differ (different path planners) — what must match is **geometry extent and that copper is fully isolated**.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/parity-mosfet_test.md
+git add docs/archive/parity-mosfet_test.md
 git commit -m "Add mods parity verification notes for mosfet_test"
 ```
 

@@ -15,7 +15,7 @@ the single most useful thing the Arduino buys someone who has never run this
 machine.
 
 Three machine facts this file refuses to lie about, all of them learned on the
-hardware and written up in ``docs/2026-08-21-spi-command-audit.md``:
+hardware and written up in ``docs/archive/2026-08-21-spi-command-audit.md``:
 
 * **Spindle speed is not settable over this link.** ``turnSpindle``'s RPM
   argument is ignored: 500, 1000, 2000 and 3000 all settle on whatever VPanel's

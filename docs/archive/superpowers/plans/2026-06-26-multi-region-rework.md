@@ -666,7 +666,7 @@ git commit -m "feat(rework): export/run-progress/simulate over all regions"
 
 **Files:**
 - Modify: `README.md` (Rework section, if present, else add a short note)
-- Create: `docs/2026-06-26-multi-region-rework.md` (dev log, sibling style)
+- Create: `docs/archive/2026-06-26-multi-region-rework.md` (dev log, sibling style)
 
 **Interfaces:** none.
 
@@ -684,7 +684,7 @@ export as one file; point at the dev log.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add README.md docs/2026-06-26-multi-region-rework.md
+git add README.md docs/archive/2026-06-26-multi-region-rework.md
 git commit -m "docs: multi-region rework + dev log"
 ```
 

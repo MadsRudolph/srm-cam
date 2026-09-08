@@ -6,7 +6,7 @@
 > whatever VPanel's slider is set to. So the note below stands — RPM is still a
 > VPanel cut-setting — and SPI adds an `M3`/`M5` equivalent, not speed control.
 > Also proven over SPI: pause/resume/stopMoving, jumpToView, and the full status
-> word. See `docs/2026-08-21-spi-command-audit.md`.
+> word. See `docs/archive/2026-08-21-spi-command-audit.md`.
 
 > **2026-06-30 — spindle spin-up settle + ramped lead-in.** NC header dwells
 > (`G04 X<sec>`, default 2 s) after `M3` so the spindle is at full RPM before the
@@ -14,14 +14,14 @@
 > Cut paths (traces/cut-out) enter via a ramped lead-in (`engine/leadin.py`,
 > `apply_lead_in`) not a vertical plunge; drills stay vertical. On by default
 > (`build_jobs(..., lead_in=)`, `gcode.render(..., spinup_s=)`). Details:
-> `docs/2026-06-30-spindle-spinup-and-lead-in.md`.
+> `docs/archive/2026-06-30-spindle-spinup-and-lead-in.md`.
 
 > **2026-06-30 — V-bit engraving support added.** Trace isolation now supports a
 > V-shaped engraving bit (for ~0.2 mm SMD traces) next to the flat endmill. Cut
 > width is depth-dependent: `W = T + 2*D*tan(theta/2)`, driven width-first
 > (`TraceJob.tool_type="vbit"`, set `target_width`, depth is derived). `isolate()`
 > uses `TraceJob.effective_diameter()/effective_cut_depth()`; pre-flight warns on a
-> V-bit without bed leveling. Details: `docs/2026-06-30-vbit-engraving-support.md`.
+> V-bit without bed leveling. Details: `docs/archive/2026-06-30-vbit-engraving-support.md`.
 
 **Date:** 2026-06-22 · **Repo:** github.com/MadsRudolph/gerber2rml · **main @ `6175dd4`** (pushed).
 **On disk (dev clone, has `.venv` with deps):**
@@ -64,4 +64,4 @@ Add an offscreen test in `tests/test_window.py` (build MainWindow, load FIXT, ch
 `tools/srm-cam` submodule in the TEAM repo (`team/`, separate git repo) is pinned at `0eb2a3b` and lags far behind `gerber2rml` main (`6175dd4`). Bump it via a branch+PR on the team repo, leaving the user's KiCad working tree untouched (use a throwaway worktree — see how the spec/submodule were added earlier). Owner: MadsRudolph; both repos private (teammates need collaborator access on gerber2rml).
 
 ## Recent design docs / plans (in repo)
-`docs/design.md`, `docs/superpowers/plans/2026-06-21-{core-pipeline,gui,presets-calibration,preflight-report-clearing,double-sided}.md`, `docs/parity-mosfet_test.md`, `docs/gui-manual-check.md`.
+`docs/design.md`, `docs/archive/superpowers/plans/2026-06-21-{core-pipeline,gui,presets-calibration,preflight-report-clearing,double-sided}.md`, `docs/archive/parity-mosfet_test.md`, `docs/archive/gui-manual-check.md`.
