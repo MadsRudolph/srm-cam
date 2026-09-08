@@ -418,8 +418,12 @@ smaller.
 **Not ported:**
 
 - the **guided tour** (`gui/tour/`) — the first-launch walkthrough;
-- the **feed test card**;
-- the **KiCad plugin** menu and the update check.
+- the **feed test card**.
+
+*Corrected 2026-09-08.* The KiCad plugin menu and the update check were
+listed here too. Both were ported that day (`gui2/kicadsetup.py`,
+`gui2/updatecheck.py`). The full list of what has still not crossed over
+is kept in [gui2-port-audit.md](gui2-port-audit.md).
 
 *Corrected 2026-09-03.* Snap-to-feature jogging and the phone-photo QR
 hand-off were listed here as missing. Both were ported later: a jog click
