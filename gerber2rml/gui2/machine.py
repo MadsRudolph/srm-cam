@@ -180,6 +180,7 @@ class MachineLink(QObject):
         run watching the abort event.
         """
         self._abort.set()
+        self._paused = False
         ser = self._ser
         if ser is None:
             return self._external
@@ -207,6 +208,7 @@ class MachineLink(QObject):
                 return
             name, fn, port = item
             self._busy = True
+            self._current = name
             self.busy_changed.emit(True)
             try:
                 if port is not None:
@@ -227,7 +229,42 @@ class MachineLink(QObject):
                     self._ser = None
             finally:
                 self._busy = False
+                self._current = None
                 self.busy_changed.emit(False)
+
+    def current_op(self):
+        """The name of the op the worker is inside, or None."""
+        return getattr(self, "_current", None)
+
+    # -- hold ----------------------------------------------------------------
+    # VPanel's Pause. Not a stop: the spindle keeps turning and the job
+    # resumes where it was. Two paths, because two things can be running.
+    # A streamed job is inside one long op that owns the port, so it is held
+    # by a flag its loop polls; anything the machine runs from a VPanel file
+    # is held by the firmware's suspendJob, queued like any other command.
+    def pause(self):
+        self._paused = True
+        if self.current_op() == "stream":
+            return True                 # the stream loop holds on the flag
+        if self._ser is None:
+            return False
+        self.submit("pause", lambda ser: spi_probe.suspend_job(ser))
+        return True
+
+    def resume(self):
+        self._paused = False
+        if self.current_op() == "stream":
+            return True
+        if self._ser is None:
+            return False
+        self.submit("resume", lambda ser: spi_probe.resume_job(ser))
+        return True
+
+    def should_pause(self):
+        return bool(getattr(self, "_paused", False))
+
+    def is_paused(self):
+        return self.should_pause()
 
     # -- the operations the bar drives ------------------------------------
     def poll(self):
@@ -442,6 +479,15 @@ class MachineBar(QWidget):
         self.spindle_btn.setCheckable(True)
         lh.addWidget(self.spindle_btn)
 
+        self.pause_btn = widgets.button(
+            "Pause", on=self._toggle_pause,
+            tip="Hold the machine where it is, spindle still turning, and "
+                "carry on from the same place with Resume. VPanel's Pause, "
+                "from here.\n\nSTOP is the other thing: it drops the move "
+                "and stops the spindle, and the job does not resume.")
+        self.pause_btn.setCheckable(True)
+        lh.addWidget(self.pause_btn)
+
         self.jog_btn = widgets.button(
             "Click to jog", on=self._toggle_jog,
             tip="While this is on, clicking the bed moves the head there. "
@@ -573,7 +619,24 @@ class MachineBar(QWidget):
     def _toggle_jog(self):
         self.jog_mode_changed.emit(self.jog_btn.isChecked())
 
+    def _toggle_pause(self):
+        want = self.pause_btn.isChecked()
+        ok = self.link.pause() if want else self.link.resume()
+        if not ok:
+            self.pause_btn.setChecked(False)
+            self.ctl.say("warn", "Nothing to hold: connect to the machine first.")
+            return
+        self.pause_btn.setText("Resume" if want else "Pause")
+        self.ctl.say("ok", "Held. Resume carries on from here." if want
+                     else "Resuming.")
+
     def _stop(self):
+        # A stop is not a hold. The button must not claim one is in force.
+        # (Absent on a gated bar, which has no live controls at all.)
+        pause = getattr(self, "pause_btn", None)
+        if pause is not None:
+            pause.setChecked(False)
+            pause.setText("Pause")
         if self.link.can_stop_something():
             self.link.stop_now()
             if not self.gated:                # no spindle button on a gated bar

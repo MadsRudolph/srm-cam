@@ -129,6 +129,8 @@ from gerber2rml.gui2.rework import ReworkPage
 from gerber2rml.gui2.fiducial import FlipFitPage
 from gerber2rml.gui2.sheet import RunSheet, FEEDBACK_URL
 
+USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/"
+
 DEMO = Path(__file__).resolve().parents[2] / "examples" / "calibration"
 FIXTURE = Path(__file__).resolve().parents[1] / "examples"
 
@@ -563,6 +565,9 @@ class MainWindow(QMainWindow):
                                   "whether your board fits.")
 
         h = mb.addMenu("&Help")
+        self.guide_act = self._act(h, "User guide (web)…", self.action_user_guide,
+                                   "F1")
+        self.guide_act.setToolTip(USER_GUIDE_URL)
         self._act(h, "How this works", self.action_help)
         self.update_act = self._act(h, "Check for updates…",
                                     self.action_check_updates)
@@ -2611,7 +2616,8 @@ class MainWindow(QMainWindow):
             return spi_stream.stream_toolpaths(
                 ser, paths, dry_run=choice["dry"],
                 spindle_rpm=0 if choice["dry"] else 7000,
-                should_abort=self.link.should_abort)
+                should_abort=self.link.should_abort,
+                should_pause=self.link.should_pause)
 
         self.link.submit("stream", op)
         self.say("warn", "Streaming. STOP drops the move in flight.")
@@ -2650,6 +2656,7 @@ class MainWindow(QMainWindow):
             # couple of minutes of machine time; a measurement that does not
             # survive closing the app is one nobody relies on.
             "level": self.level_page.state(),
+            "rework": self.rework_page.state(),
             "show_stock": self.show_stock, "show_bed": self.show_bed,
             "thickness": self.inspector.setup.thickness.value(),
             "overshoot": self.inspector.setup.overshoot.value(),
@@ -2773,6 +2780,8 @@ class MainWindow(QMainWindow):
                               for x, y in (data.get("fid_measured") or [])]
         try:
             self.level_page.restore(data.get("level"))
+            # The boxes are the work; a restart used to lose them.
+            self.rework_page.restore(data.get("rework"))
         except Exception:
             foreign.append("the height map")
         if placed:
@@ -3038,6 +3047,15 @@ class MainWindow(QMainWindow):
               "sheet it is registered in.")
         d.act("Close", kind="primary", on=d.accept, default=True)
         d.exec()
+
+    def action_user_guide(self):
+        """F1. The step-by-step guide with photos, in the browser."""
+        if not QDesktopServices.openUrl(QUrl(USER_GUIDE_URL)):
+            d = dialogs.Sheet(self, "The guide is on the web", width=520)
+            d.say("A browser could not be opened from here. The guide is at:")
+            d.say(USER_GUIDE_URL, mono=True)
+            d.act("Close", kind="primary", on=d.accept, default=True)
+            d.exec()
 
     # -------------------------------------------------------------- kicad
     def action_setup_kicad_plugin(self):

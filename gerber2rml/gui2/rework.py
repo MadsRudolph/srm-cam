@@ -226,6 +226,37 @@ class ReworkPage(inspector.Page):
                             "Nothing marked yet. Tick the box above and drag "
                             "over each spot that needs re-cutting.")
 
+    # -- setup file --------------------------------------------------------
+    def state(self):
+        """What the setup file keeps: every box, the pass it repeats, and the
+        depth for the next one."""
+        return {"regions": [list(r) for r in self._regions],
+                "source": self.source.currentData(),
+                "depth": float(self.depth.value())}
+
+    def restore(self, data):
+        data = data or {}
+        regions = []
+        for r in data.get("regions") or []:
+            try:
+                x0, y0, x1, y1, d = (float(v) for v in r)
+            except (TypeError, ValueError):
+                continue
+            regions.append((min(x0, x1), min(y0, y1), max(x0, x1),
+                            max(y0, y1), d))
+        self._regions = regions
+        try:
+            self.depth.setValue(float(data.get("depth", self.depth.value())))
+        except (TypeError, ValueError):
+            pass
+        src = data.get("source")
+        if src is not None:
+            i = self.source.findData(src)
+            if i >= 0:
+                self.source.setCurrentIndex(i)
+        self._rebuild_table()
+        self._push()
+
     # -- export ------------------------------------------------------------
     def _export(self):
         from gerber2rml.gui2 import workspace

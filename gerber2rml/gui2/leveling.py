@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QHeaderView, QFileDialog, QProgressBar,
                                QAbstractItemView)
 
-from gerber2rml.gui2 import theme, widgets, inspector
+from gerber2rml.gui2 import dialogs, theme, widgets, inspector
 from gerber2rml.engine import leveling as lv
 
 
@@ -81,6 +81,18 @@ class ProbeRun(QObject):
             self.finished.emit(
                 f"The probe run failed: {e.__class__.__name__}: {e}. The port "
                 f"may still be held by the live link, or by VPanel.")
+
+
+def resume_selection(measured):
+    """Which grid indices to probe again, given which are already measured.
+
+    The anchor (index 0) is always re-probed: every Z is stored relative to
+    it, and a run that starts elsewhere would have no datum to store
+    against. After it, only the points that have no number yet.
+    """
+    if not measured:
+        return []
+    return [0] + [i for i, ok in enumerate(measured) if not ok and i != 0]
 
 
 class LevelPage(inspector.Page):
@@ -629,13 +641,26 @@ class LevelPage(inspector.Page):
                                  "moment and try again.")
             return
         dx, dy = pos[0], pos[1]
+        # A grid that is part-done - after a STOP, or a few points the probe
+        # could not read - is resumed, not started over. Every measured point
+        # is a minute of machine time.
+        which = list(range(len(self._points)))
+        measured = self._measured()
+        done, todo = sum(measured), len(measured) - sum(measured)
+        if done and todo:
+            choice = self._ask_resume(done, todo)
+            if choice is None:
+                return
+            if choice == "resume":
+                which = resume_selection(measured)
         port = (link.firmware or {}).get("port")
         # probe_grid opens the port itself, so the live link has to release it.
         link.mark_external(True)
         link.disconnect_from("handing the port to the probe run")
         link.clear_abort()
-        pts = [(i, int(round((x - dx) * 1000)), int(round((y - dy) * 1000)))
-               for i, (x, y) in enumerate(self._points)]
+        pts = [(i, int(round((self._points[i][0] - dx) * 1000)),
+                int(round((self._points[i][1] - dy) * 1000)))
+               for i in which]
         self.progress.setRange(0, len(pts))
         self.progress.setValue(0)
         self.progress.show()
@@ -652,6 +677,38 @@ class LevelPage(inspector.Page):
         self._run.point.connect(self._on_point)
         self._run.finished.connect(lambda msg, p=port: self._on_done(msg, p))
         self._run.start()
+
+    def _measured(self):
+        """One flag per grid point: does the table hold a number for it?"""
+        flags = []
+        for r in range(len(self._points)):
+            it = self.table.item(r, 2) if r < self.table.rowCount() else None
+            txt = it.text().strip() if it else ""
+            try:
+                float(txt)
+                flags.append(True)
+            except ValueError:
+                flags.append(False)
+        return flags
+
+    def _ask_resume(self, done, todo):
+        """'resume', 'all', or None for cancel. Named buttons, not Yes/No:
+        this sits directly in front of a probing run."""
+        d = dialogs.Sheet(self, "Carry on, or start again?", width=520)
+        d.say(f"{done} of {done + todo} points are already measured. The "
+              f"missing {todo} can be probed on their own; the first point "
+              "is re-touched too, so the new numbers share the old datum.")
+        out = {"c": None}
+
+        def pick(v):
+            out["c"] = v
+            d.accept()
+        d.act("Cancel", on=d.reject)
+        d.act("Probe all again", on=lambda: pick("all"))
+        d.act(f"Only the missing {todo}", kind="primary",
+              on=lambda: pick("resume"), default=True)
+        d.exec()
+        return out["c"]
 
     def _on_point(self, d):
         row = d["id"]
