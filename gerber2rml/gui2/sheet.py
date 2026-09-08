@@ -22,6 +22,10 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from gerber2rml.gui2 import theme, widgets
 from gerber2rml.engine.estimate import format_duration
 
+# The guide's feedback form. ``for=app`` tags the answer as having come from
+# a run sheet, so the dashboard can tell it from the link in an email.
+FEEDBACK_URL = "https://madsrudolph.github.io/srm-cam/feedback.html?for=app"
+
 
 class RunSheet(QWidget):
     """The exported plan, as a document."""
@@ -218,6 +222,28 @@ class RunSheet(QWidget):
             foot.setWordWrap(True)
             foot.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
             v.addWidget(foot)
+
+        # -- colophon ----------------------------------------------------
+        # The one line on the sheet that is not about this job. It sits where
+        # a printed sheet keeps its colophon, in the smallest type, and asks
+        # for the board to be out first - the only moment a student can say
+        # whether any of the above was clear. It is not in the copied text:
+        # that goes in a logbook.
+        v.addSpacing(theme.GAP_L)
+        v.addWidget(self._rule())
+        v.addSpacing(theme.GAP_S)
+        ask = QLabel(
+            "When the board is out of the machine: two minutes of "
+            f'<a href="{FEEDBACK_URL}" style="color: {theme.COPPER_HI};'
+            ' text-decoration: none;">feedback</a> on what was unclear, and '
+            "the next student gets a better sheet.")
+        ask.setObjectName("sheetAsk")
+        ask.setFont(theme.font("micro"))
+        ask.setWordWrap(True)
+        ask.setOpenExternalLinks(True)
+        ask.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        ask.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
+        v.addWidget(ask)
 
         wrap.addWidget(doc)
         wrap.addStretch(1)

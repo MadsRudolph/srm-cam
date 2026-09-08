@@ -98,6 +98,22 @@ def test_the_run_sheet_replaces_the_board_after_an_export(loaded, tmp_path):
     assert "Dry run" in text
 
 
+def test_the_run_sheet_asks_for_feedback_once_the_board_is_out(loaded, tmp_path):
+    """One quiet line at the foot of the sheet links the guide's feedback
+    form, tagged as coming from the app. It is not in the copied text, which
+    is for a logbook."""
+    from PySide6.QtWidgets import QLabel
+    from gerber2rml.gui2.sheet import FEEDBACK_URL
+    loaded.export_to(tmp_path)
+    asks = [w for w in loaded.sheet.findChildren(QLabel)
+            if w.objectName() == "sheetAsk"]
+    assert len(asks) == 1
+    assert FEEDBACK_URL in asks[0].text()
+    assert "for=app" in FEEDBACK_URL
+    assert asks[0].openExternalLinks()
+    assert "feedback" not in loaded.sheet.text().lower()
+
+
 # ------------------------------------------------------------ machine safety
 def test_stop_is_always_visible_and_always_enabled(win):
     """It is never hidden by a tier, a view, a step or a disconnection.
