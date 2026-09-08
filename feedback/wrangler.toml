@@ -1,0 +1,22 @@
+# Cloudflare Worker config for the SRM-CAM feedback API.
+# Receives the guide's feedback form (website/feedback.html) and stores
+# each answer set as one row in D1. Deploy: see feedback/README.md.
+name = "srm-cam-feedback"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+
+# Same pattern as the photo relay: a custom domain on the zone that lives
+# on this Cloudflare account. DNS and certificate are created on deploy.
+routes = [
+  { pattern = "srm-cam-feedback.madsrudolph.dev", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "srm-cam-feedback"
+database_id = "f549d8be-ab30-4400-93df-5e0a28aaba25"
+
+[vars]
+# Origins allowed to POST. The guide on GitHub Pages, plus a local file
+# for testing the form from disk (file:// pages send Origin "null").
+ALLOWED_ORIGINS = "https://madsrudolph.github.io,null"
