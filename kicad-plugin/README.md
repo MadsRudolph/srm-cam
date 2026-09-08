@@ -21,10 +21,16 @@ act on it.
 folder into every KiCad version it finds and tells you where it went. SRM-CAM
 also offers this once, at launch, if KiCad is present and the plugin is not.
 
-**By hand**, if you would rather:
+**By hand**, if you would rather. KiCad loads user plugins from its data
+tree, which is a different place on each OS:
 
 ```bash
+# Windows
 cp -r kicad-plugin "$APPDATA/kicad/10.0/scripting/plugins/srm20_build_area"
+# Linux
+cp -r kicad-plugin ~/.local/share/kicad/10.0/scripting/plugins/srm20_build_area
+# macOS
+cp -r kicad-plugin ~/Documents/KiCad/10.0/scripting/plugins/srm20_build_area
 ```
 
 Restart KiCad either way — plugins are loaded at startup.

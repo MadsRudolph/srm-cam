@@ -555,6 +555,13 @@ class MainWindow(QMainWindow):
         self._act(i, "What the two tiers differ by…",
                   lambda: dialogs.about_tier(self))
 
+        k = mb.addMenu("&KiCad")
+        self.kicad_act = self._act(k, "Set up the build-area plugin…",
+                                   self.action_setup_kicad_plugin)
+        self.kicad_act.setToolTip("Add a button to KiCad's PCB editor that "
+                                  "draws the SRM-20's build area and says "
+                                  "whether your board fits.")
+
         h = mb.addMenu("&Help")
         self._act(h, "How this works", self.action_help)
         self.update_act = self._act(h, "Check for updates…",
@@ -3031,6 +3038,19 @@ class MainWindow(QMainWindow):
               "sheet it is registered in.")
         d.act("Close", kind="primary", on=d.accept, default=True)
         d.exec()
+
+    # -------------------------------------------------------------- kicad
+    def action_setup_kicad_plugin(self):
+        from gerber2rml.gui2 import kicadsetup
+        kicadsetup.setup(self)
+
+    def maybe_offer_kicad_plugin(self):
+        """Launch-time offer, once per plugin version. Called by app.py."""
+        from gerber2rml.gui2 import kicadsetup
+        try:
+            kicadsetup.maybe_offer(self)
+        except Exception:                       # noqa: BLE001 - a nicety
+            pass
 
     # ------------------------------------------------------------ updates
     def action_check_updates(self):
