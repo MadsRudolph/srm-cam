@@ -123,7 +123,7 @@ from gerber2rml.gui2 import (theme, widgets, style, runplan, tier, workspace,
 from gerber2rml.gui2.stage import Stage
 from gerber2rml.gui2.traveller import Traveller
 from gerber2rml.gui2.inspector import Inspector
-from gerber2rml.gui2.machine import MachineLink, MachineBar
+from gerber2rml.gui2.machine import MachineLink, MachineBar, RunTracker
 from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
 from gerber2rml.gui2.fiducial import FlipFitPage
@@ -261,6 +261,14 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.state = ProjectState()
         self.link = MachineLink(self)
+        # Run tracking off the position poll, for the step the rail is on.
+        self.tracker = RunTracker(self.link)
+        self._last_xyz = None          # last live (x, y, z), machine mm
+        # Design frame minus machine frame, mm. Non-zero only after "Align
+        # the overlay to the bit": the drawn bit, click-to-jog and run
+        # tracking are corrected by it; the exported job never is.
+        self._overlay_trim = (0.0, 0.0)
+        self._align_armed = False      # the next jog click sets the trim
         self.plan = None
         self._checks = []
         self._shorts = []
@@ -345,6 +353,7 @@ class MainWindow(QMainWindow):
         self.stage.placement_changed.connect(self._on_drag)
         self.stage.placement_dragging.connect(self._on_dragging)
         self.stage.jog_requested.connect(self._on_jog_click)
+        self.stage.jog_step_requested.connect(self._on_jog_step)
         self.stage.screw_picked.connect(self._on_screw_click)
         self.stage.hovered.connect(self._on_hover)
         self.stage.region_added.connect(self._on_region)
@@ -384,6 +393,15 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
         self.toast = Toast(root)
+
+        # The status chips answer for five pages that are edited on their
+        # own - level, flip fit, photo, rework, the link. Rather than have
+        # each of them know about the strip, the strip looks once a second;
+        # what it reads is a handful of attributes and a small table.
+        self._chip_timer = QTimer(self)
+        self._chip_timer.setInterval(1000)
+        self._chip_timer.timeout.connect(self.refresh_chips)
+        self._chip_timer.start()
 
         # Escape stops the machine from anywhere, including with a dialog's
         # child widget focused. It is the one shortcut that must never be
@@ -470,6 +488,31 @@ class MainWindow(QMainWindow):
         h.addWidget(self.travel_btn)
 
         h.addStretch(1)
+        # One glance at the measured state of the job, in the order the work
+        # happens: is the bed measured, is the flip fitted, is a photo on,
+        # is rework boxed. Each is a dim word until it is true, then a lit
+        # word with its number - so a fact that is missing is missing
+        # visibly. The first interface's strip had two more, the board and
+        # the link; here both are already on screen at all times (the rail's
+        # job line, the bar's chip), and the header has room for four chips
+        # at 1280 px, not six.
+        self.chips = {}
+        for name, tip in (
+                ("mesh", "The bed height map: lit once at least three "
+                         "points are measured and the map is applied on "
+                         "export. Shows the point count."),
+                ("fit", "The measured flip of a double-sided board: lit once "
+                        "the fiducials have been found and fitted. Shows "
+                        "the rotation the fit found."),
+                ("photo", "A photo of the milled board is laid over the "
+                          "design, so uncut copper can be seen."),
+                ("boxes", "Rework areas boxed for a second pass. Shows how "
+                          "many.")):
+            chip = widgets.Chip(name.capitalize(), "idle")
+            chip.setToolTip(tip)
+            self.chips[name] = chip
+            h.addWidget(chip)
+        h.addSpacing(theme.GAP_XS)
         self.coords = QLabel("")
         self.coords.setFont(theme.font("small", mono=True))
         self.coords.setStyleSheet(f"color: {theme.TEXT_3};")
@@ -515,6 +558,13 @@ class MainWindow(QMainWindow):
                                     checkable=True, checked=True)
         self.bed_act = self._act(v, "Spoilboard screw grid", self._toggle_bed,
                                  "Ctrl+G", checkable=True, checked=True)
+        self.trail_act = self._act(v, "Tool trail", self.action_trail,
+                                   checkable=True, checked=True)
+        self.trail_act.setToolTip(
+            "Leave a fading trail of where the bit has been, so a pass can "
+            "be followed by its tracks.")
+        self.trail_clear_act = self._act(v, "Clear the trail",
+                                         self.action_clear_trail)
         v.addSeparator()
         self._act(v, "Watch this step in 3D…", self.action_sim3d, "Ctrl+3")
         v.addSeparator()
@@ -531,6 +581,33 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "Move the head to the View position",
                   self.action_view_position)
+        m.addSeparator()
+        self.track_act = self._act(m, "Track this step's run",
+                                   self.action_track_run, checkable=True)
+        self.track_act.setToolTip(
+            "Follow the run on the mill from the bit's position: the bar "
+            "shows how far it has got and how long is left. Press Run in "
+            "VPanel, then this; or leave the next item on and it starts by "
+            "itself.")
+        self.autotrack_act = self._act(m, "Start tracking when the bit moves",
+                                       self.action_autotrack, checkable=True,
+                                       checked=True)
+        self.autotrack_act.setToolTip(
+            "Start following the selected step as soon as the bit has been "
+            "moving for a moment, so nothing has to be pressed here when "
+            "the run starts in VPanel. A jog from this app does not count.")
+        m.addSeparator()
+        self.align_act = self._act(m, "Align the overlay to the bit",
+                                   self.action_align_overlay, checkable=True)
+        self.align_act.setToolTip(
+            "When the machine's work origin is not where the design sits on "
+            "screen, the drawn bit lands beside the hole it is really in. "
+            "Turn this on, then click the design point the bit is "
+            "PHYSICALLY at. Only the picture, click-to-jog and run tracking "
+            "are corrected; the exported files are untouched.")
+        self.trim_clear_act = self._act(m, "Clear the overlay trim",
+                                        self.action_clear_trim)
+        self.trim_clear_act.setEnabled(False)
         m.addSeparator()
         self.screw_act = self._act(m, "Export the hold-down screw file…",
                                    self.action_export_screws)
@@ -604,8 +681,13 @@ class MainWindow(QMainWindow):
         pinned = tier.pinned_tier() is not None
         self.essential_act.setEnabled(not pinned)
         self.full_act.setEnabled(not pinned)
-        for a in (self.stream_act, self.fixture_act, self.mtest_act):
+        for a in (self.stream_act, self.fixture_act, self.mtest_act,
+                  self.align_act, self.trim_clear_act):
             a.setVisible(full)
+        # The fit and the boxes are Full-tier work; a chip saying "Fit —"
+        # to someone who cannot reach the fit would be a control to explain.
+        for name in ("fit", "boxes"):
+            self.chips[name].setVisible(full)
 
     # ------------------------------------------------------- the ctl protocol
     def say(self, level, text):
@@ -745,12 +827,222 @@ class MainWindow(QMainWindow):
                 else self.state.board.copper)
         return None if geom is None or geom.is_empty else geom.bounds
 
-    def _on_machine_position(self, x, y, _z, _touch):
-        self._last_pos = (x, y)
-        self.stage.set_tool((x, y))
+    def _on_machine_position(self, x, y, z, touch):
+        # The bar shows the RAW machine readout, VPanel-equal. Everything
+        # drawn on the design - the bit, its trail, the run tracking, the 3D
+        # cursor - is in the design frame, so it takes the overlay trim.
+        self._last_xyz = (x, y, z)
+        tx, ty = self._overlay_trim
+        dx, dy = x + tx, y + ty
+        self._last_pos = (dx, dy)
+        self.stage.set_tool((dx, dy), touch=touch)
         sim = self._sim()
         if sim is not None:
-            sim.set_live_position(x, y)
+            sim.set_live_position(dx, dy)
+        self._on_tracking(dx, dy, z)
+
+    # ------------------------------------------------------- run tracking
+    def _track_feeds(self, step):
+        """(xy_feed, plunge_feed) mm/s for a step - the ones its file carries,
+        so the readout lands on the estimate the rail showed."""
+        job = {"traces": self.state.trace, "top_traces": self.state.trace,
+               "drill": self.state.drill, "align": self.state.drill,
+               "cutout": self.state.cutout}.get(step.op)
+        if job is None:                        # the dry run has its own feed
+            from gerber2rml.engine.airpass import DEFAULT_FEED
+            return DEFAULT_FEED, DEFAULT_FEED
+        return job.xy_feed, job.plunge_feed
+
+    def _arm_tracking(self, silent=False):
+        """Follow the step the rail is on. True when armed; otherwise it has
+        said why, unless ``silent`` (the auto-start must not nag on every
+        poll)."""
+        if self.plan is None or self.state.board is None:
+            if not silent:
+                self.say("warn", "Load a board first — there is no run to "
+                                 "follow.")
+            return False
+        key = self.traveller.current()
+        step = self.plan.by_key(key) if key else None
+        if step is None or step.kind != "run":
+            if not silent:
+                self.say("warn", "Pick a numbered step in the plan; that is "
+                                 "the run the bar will follow.")
+            return False
+        cached = self._paths_cache.get(step.key)
+        try:
+            # The stage built this toolpath when the step was selected; the
+            # auto-start runs from the position poll and must not build an
+            # isolation pass on the GUI thread in the middle of a run.
+            paths = cached[0] if cached else self._toolpaths_for(step)[0]
+        except Exception as e:
+            if not silent:
+                self.report_error("That step's toolpath could not be built, "
+                                  "so its run cannot be followed", e)
+            return False
+        xy, plunge = self._track_feeds(step)
+        total = self.tracker.arm(paths, xy, plunge, label=step.title)
+        run = getattr(self.bar, "run", None)
+        if run is not None:
+            run.set_armed(step.title, total, self.link.is_connected())
+        self.track_act.blockSignals(True)
+        self.track_act.setChecked(True)
+        self.track_act.blockSignals(False)
+        return True
+
+    def _disarm_tracking(self):
+        self.tracker.disarm()
+        run = getattr(self.bar, "run", None)
+        if run is not None:
+            run.clear()
+        self.track_act.blockSignals(True)
+        self.track_act.setChecked(False)
+        self.track_act.blockSignals(False)
+
+    def action_track_run(self, on):
+        if not on:
+            self._disarm_tracking()
+            return
+        if not self._arm_tracking():
+            self._disarm_tracking()
+            return
+        if self.link.is_connected():
+            self.say("info", f"Following {self.tracker.label} from the "
+                             f"bit's position.")
+        else:
+            self.say("info", f"Following {self.tracker.label} once the "
+                             f"machine is connected.")
+
+    def action_autotrack(self, on):
+        self.tracker.auto = bool(on)
+
+    def _on_tracking(self, x, y, z):
+        """One live position into the tracker, and its answer onto the bar."""
+        def start():
+            # A run that finished and a bit that moves again is the next
+            # run: rebuild in place, as the first interface did.
+            if self._arm_tracking(silent=True):
+                self.say("info", f"The bit is moving — following "
+                                 f"{self.tracker.label}.")
+                return True
+            return False
+        result = self.tracker.feed(x, y, z, start=start)
+        run = getattr(self.bar, "run", None)
+        if result is None or run is None:
+            return
+        frac, _elapsed, remaining = result
+        run.set_run(self.tracker.label, frac, remaining)
+
+    # ----------------------------------------------- the overlay and the bit
+    def action_align_overlay(self, on):
+        """Arm the one-shot pick: the next click on the bed is where the bit
+        physically is, and the difference becomes the overlay trim."""
+        if not on:
+            self._align_armed = False
+            return
+        if not self.link.is_connected() or self._last_xyz is None:
+            self.say("warn", "Connect the machine and wait for a position "
+                             "reading first; the trim is measured from "
+                             "where the bit is.")
+            self.align_act.setChecked(False)
+            return
+        self._align_armed = True
+        if not getattr(self.bar, "gated", True):
+            self.bar.jog_btn.setChecked(True)
+        self.set_stage_mode("jog")
+        self.say("info", "Click the design point the bit is physically at — "
+                         "the hole it is in, say. Nothing moves.")
+
+    def action_clear_trim(self):
+        self._set_trim(0.0, 0.0)
+        self.say("ok", "Overlay trim cleared: the drawn bit is at the raw "
+                       "machine position again.")
+
+    def _set_trim(self, tx, ty):
+        self._overlay_trim = (float(tx), float(ty))
+        on = bool(tx or ty)
+        self.trim_clear_act.setEnabled(on)
+        self.trim_clear_act.setText(
+            f"Clear the overlay trim (dX {tx:+.2f}, dY {ty:+.2f} mm)" if on
+            else "Clear the overlay trim")
+        # The crumbs were laid in the old frame; they would draw as a step.
+        self.stage.clear_trail()
+        if self._last_xyz is not None:
+            x, y, z = self._last_xyz
+            self.stage.set_tool((x + tx, y + ty))
+            self._last_pos = (x + tx, y + ty)
+
+    def _on_align_pick(self, x, y):
+        self._align_armed = False
+        self.align_act.setChecked(False)
+        if self._last_xyz is None:
+            self.say("warn", "No position from the machine yet; the trim "
+                             "was not set.")
+            return
+        mx, my, _mz = self._last_xyz
+        self._set_trim(x - mx, y - my)
+        tx, ty = self._overlay_trim
+        self.say("ok", f"Overlay trimmed by dX {tx:+.2f}, dY {ty:+.2f} mm. "
+                       f"The picture, click-to-jog and run tracking follow "
+                       f"it; the job itself is untouched.")
+
+    def _on_jog_step(self, dx, dy):
+        """An arrow key over the stage in jog mode: move the head by (dx, dy)
+        mm from where it is. Relative, so it is right whatever the overlay
+        trim says - unlike a click, which names an absolute point."""
+        if not self.link.is_connected():
+            self.say("warn", "Not connected — there is nothing to jog.")
+            return
+        if self._last_xyz is None:
+            self.say("warn", "Waiting for a position reading before "
+                             "jogging.")
+            return
+        x, y, z = self._last_xyz
+        nx, ny = x + dx, y + dy
+        bx, by = self.stage.bed
+        if not (0 <= nx <= bx and 0 <= ny <= by):
+            self.say("warn", "That step would take the head off the "
+                             "machine's travel.")
+            return
+        self.link.jog_to(nx, ny)
+        # Advance the local position now, so quick taps add up to one move
+        # to the final spot instead of all reading the same stale XY.
+        self._last_xyz = (nx, ny, z)
+        self.say("info", f"Jog {dx:+.1f} {dy:+.1f} mm → X{nx:.2f} Y{ny:.2f}.")
+
+    def action_trail(self, on):
+        self.stage.set_trail_visible(on)
+
+    def action_clear_trail(self):
+        self.stage.clear_trail()
+
+    # ------------------------------------------------------- status chips
+    def refresh_chips(self):
+        """Bring the header's status chips up to date. Cheap, and called on a
+        timer as well as from the handlers that change what it reads."""
+        chips = getattr(self, "chips", None)
+        if not chips:
+            return
+        try:
+            n = len(self.level_page.points())
+        except Exception:
+            n = 0
+        applied = n >= 3 and self.level_page.is_active()
+        # Measured but not applied is the state that costs boards: the
+        # number is there and the map is doing nothing. Amber, not green.
+        chips["mesh"].set(f"Mesh {n}" if n else "Mesh",
+                          "ok" if applied else "warn" if n >= 3 else "idle")
+        fit = self._top_fit
+        if fit is not None:
+            import math
+            chips["fit"].set(f"Fit {math.degrees(fit.theta):+.2f}°", "ok")
+        else:
+            chips["fit"].set("Fit", "idle")
+        photo = self.stage.has_photo()
+        chips["photo"].set("Photo", "ok" if photo else "idle")
+        boxes = len(getattr(self.rework_page, "_regions", []) or [])
+        chips["boxes"].set(f"Boxes {boxes}" if boxes else "Boxes",
+                           "ok" if boxes else "idle")
 
     def _on_op_done(self, name, _result):
         """A touch just measured where the copper is: the Z-reach check can
@@ -762,12 +1054,24 @@ class MainWindow(QMainWindow):
         sim = self._sim()
         if sim is not None:
             sim.set_live_enabled(True)
+        self.refresh_chips()
+        # Armed before the link was up: the readout said "connect", and now
+        # it can count.
+        if self.tracker.is_tracking() and getattr(self.bar, "run", None):
+            self.bar.run.set_armed(self.tracker.label, self.tracker.total)
 
     def _on_unlinked(self, _reason):
         self.stage.set_tool(None)
         sim = self._sim()
         if sim is not None:
             sim.set_live_enabled(False)
+        # No position, no run to follow; the trim was measured against a
+        # position that is gone too.
+        self._last_xyz = None
+        self._disarm_tracking()
+        self._align_armed = False
+        self.align_act.setChecked(False)
+        self.refresh_chips()
         # A probe run measures its grid from the last live position. After
         # a reconnect the first fresh reading is a poll away, and the stale
         # one was the LAST probe point - so a second run started in that
@@ -807,6 +1111,13 @@ class MainWindow(QMainWindow):
                 box.blockSignals(True)
                 box.setChecked(False)
                 box.blockSignals(False)
+        if mode == "jog":
+            # The arrow keys jog the bit while the stage has the keyboard;
+            # turning jog on hands it over, so they work at once.
+            self.stage.setFocus()
+        else:
+            self._align_armed = False
+            self.align_act.setChecked(False)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -3010,6 +3321,14 @@ class MainWindow(QMainWindow):
         # it or drop a pin in it.
         sx, sy = self.stage.snap_to_feature(x, y)
         snapped = (sx, sy) != (x, y)
+        if self._align_armed:
+            # Not a jog: the click says where the bit already is.
+            self._on_align_pick(sx, sy)
+            return
+        # The click is a point on the drawn design; the machine target is
+        # that point with the overlay trim taken back off.
+        tx, ty = self._overlay_trim
+        sx, sy = sx - tx, sy - ty
         bx, by = self.stage.bed
         if not (0 <= sx <= bx and 0 <= sy <= by):
             self.say("warn", "That point is off the machine's travel.")
@@ -3025,6 +3344,12 @@ class MainWindow(QMainWindow):
     def _on_hover(self, pos):
         self.coords.setText("" if pos is None
                             else f"x {pos[0]:7.2f}   y {pos[1]:7.2f}")
+        # Hovering the stage in jog mode is enough for the arrow keys to
+        # jog: you are looking at the bit, not hunting for a widget to
+        # click into first.
+        if (pos is not None and self.stage.mode == "jog"
+                and not self.stage.hasFocus()):
+            self.stage.setFocus()
 
     def _on_region(self, x0, y0, x1, y1):
         self.rework_page.add_region(x0, y0, x1, y1)
