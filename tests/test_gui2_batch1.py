@@ -164,3 +164,17 @@ def test_rework_boxes_survive_a_setup_save_and_load(loaded, tmp_path, monkeypatc
     loaded.action_load_setup()
     assert loaded.rework_page._regions == [(10, 10, 20, 15, 0.4), (25, 5, 30, 9, 0.4)]
     assert loaded.rework_page.table.rowCount() == 2
+
+
+# --- the machine lessons the tour used to carry ----------------------------------
+
+def test_help_carries_the_machine_lessons(win):
+    """The tour was dropped on purpose; its lessons about the machine were
+    not meant to go with it. One sheet under Help holds them, with the
+    numbers the run sheet relies on."""
+    from gerber2rml.gui2 import basics
+    assert win.basics_act.text() == "The machine, in five minutes"
+    d = basics.machine_basics(win)
+    text = " ".join(l.text() for l in d.findChildren(type(d.head)))
+    for must in ("G54", "MACHINE", "−50 mm", "60.5 mm", "red lead", "STOP", "Pause"):
+        assert must in text, must

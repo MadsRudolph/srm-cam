@@ -68,6 +68,9 @@
 <div class="note"><span class="t">Before you probe</span>
 <p>Set the Z origin on the copper in VPanel and leave X and Y alone. Paper or tape under the board so it is isolated from the bed; the red clip on the copper; spindle <strong>off</strong>. Leave the tool a couple of millimetres above the copper — that is the height it lifts back to between points.</p></div>
 
+<div class="note"><span class="t">Three coordinate systems, one that matters</span>
+<p>VPanel lists several. <strong>MACHINE</strong> is the mill's own: its origin is fixed and its Z stroke is 60.5&nbsp;mm. <strong>USER</strong> is what Roland's RML software uses. <strong>G54</strong> is the work system NC code uses, and NC code is what SRM-CAM exports, so the origin is set in G54 with the Command Set on NC&nbsp;Code. Only Z is ever set: X and Y are already at the machine origin, which the files assume. Keep the MACHINE Z above −50&nbsp;mm when the bit touches the copper; lower than that, raise the work surface instead of pushing on. The same lesson is in the app under <span class="ui">Help → The machine, in five minutes</span>.</p></div>
+
 <h2>Measure</h2>
 <ol class="steps">
   <li><span class="st">Build the grid</span>
