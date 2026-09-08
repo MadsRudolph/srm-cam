@@ -263,6 +263,14 @@ ALIGN_NOTE = (
     "by re-zeroing and trying again.\n\n"
     "Run the dry run first.")
 
+GRID_ALIGN_NOTE = (
+    "The pins stand in two holes of the spoilboard's tapped grid, so nothing "
+    "is drilled into the bed: this only clears the stock down onto them. The "
+    "XY origin has to be a grid hole - the one the layout calls (0, 0) - or "
+    "the clearance holes miss the pins.\n\n"
+    "The two pins are spaced unevenly on purpose, so the board still seats "
+    "only one way round.")
+
 FLIP_NOTE = (
     "Lift the board off the pins, turn it over about the pin line, and drop it "
     "back on the same two pins. The pins sit ON the flip axis, so they do not "
@@ -279,11 +287,13 @@ FIDUCIAL_FLIP_NOTE = (
 
 
 def build(state, *, double_sided=False, registration="dowel", holes=None,
-          align_holes=None):
+          align_holes=None, dowels=None, bed_bite=None, flip_axis="vertical"):
     """The plan for the job currently in ``state``.
 
     ``holes`` overrides the hole list used to name per-diameter drill files
     (the double-sided path drills the placed layout's holes, not the board's).
+    ``dowels`` (a DowelSpec), ``bed_bite`` and ``flip_axis`` only word the
+    dowel and flip steps: which pins, how deep, and which way the board turns.
     """
     ext = BACKENDS[state.machine].ext
     name = state.name or "board"
@@ -345,15 +355,30 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                 caution="Runs last - it frees the board", note=CUTOUT_NOTE)
     else:
         fiducial = registration == "fiducial"
+        grid = (not fiducial and dowels is not None
+                and getattr(dowels, "mode", "fresh") == "grid")
         align_word = "reference holes" if fiducial else "dowel holes"
+        detail = (f"{len(align_holes or [])} {align_word} - "
+                  f"{drill.bit_diameter:.2f} mm bit")
+        if grid:
+            detail += (f" · {dowels.grid_pin:g} mm pins already in the grid, "
+                       f"stock cleared over them")
+        elif not fiducial and dowels is not None:
+            detail += (f" · {dowels.pin_large:g} and {dowels.pin_small:g} mm "
+                       f"rods")
+            if bed_bite is not None:
+                detail += f", {bed_bite:g} mm into the bed"
         seq.run("align", "Fiducial holes" if fiducial else "Dowel holes",
                 ordinal=1, op="align", file=f"{name}_align{ext}",
                 tool=drill_tool, bit=drill.bit_diameter,
-                detail=(f"{len(align_holes or [])} {align_word} - "
-                        f"{drill.bit_diameter:.2f} mm bit"),
-                caution=None if fiducial else "Drills into the sacrificial bed",
-                irreversible=not fiducial,
-                note=ALIGN_NOTE if not fiducial else
+                detail=detail,
+                caution=(None if fiducial or grid
+                         else "Drills into the sacrificial bed"),
+                # Grid pins stand in holes the bed already has: nothing is
+                # drilled into it, and nothing is there to take back.
+                irreversible=not (fiducial or grid),
+                note=GRID_ALIGN_NOTE if grid else ALIGN_NOTE if not fiducial
+                     else
                      "Through-holes in the stock only - these never reach the "
                      "bed. They are what the app measures the flipped board "
                      "against, so the further apart they are, the better the "
@@ -378,10 +403,18 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
 
         # The flip is a Z re-zero whatever the tooling: it is the other face of
         # the board, and it is not at the same height.
+        # Which way it turns is part of the instruction, not a footnote: the
+        # pins fix it on a dowel job and the operator's word fixes it on a
+        # fiducial one, and either way it is the choice that mirrors the
+        # top side when it is wrong.
+        turn = ("top-bottom, about a horizontal line"
+                if flip_axis == "horizontal"
+                else "left-right, about a vertical line")
         seq.hand("flip",
                  "Flip the board, re-place it, probe" if fiducial
                  else "Flip the board onto the pins",
-                 "Then re-zero Z on the new face. Never re-zero XY.",
+                 f"Turn it over {turn}. Then re-zero Z on the new face. "
+                 f"Never re-zero XY.",
                  caution="Getting this backwards mirrors every trace",
                  note=FIDUCIAL_FLIP_NOTE if fiducial else FLIP_NOTE)
 

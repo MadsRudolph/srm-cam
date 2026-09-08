@@ -444,6 +444,90 @@ class SetupPage(Page):
                         self.sync()))
         self.registration_field = widgets.Field("Registration", self.registration)
         self.ds_section.add(self.registration_field)
+
+        # -- dowel pins: which pins, which edges, and how the holes fit ---
+        # The first interface hid all of this in Novice. Here it is Full-tier
+        # like the rest of the section: a dowel job that cannot say which
+        # edges the pins are on is a dowel job that flips the wrong way.
+        from gerber2rml.doublesided import (CLEAR_LARGE, CLEAR_SMALL,
+                                            DOWEL_BED_DEPTH, GRID_PITCH,
+                                            GRID_PIN, PIN_LARGE, PIN_SMALL)
+        self.dowel_mode = QComboBox()
+        self.dowel_mode.addItem(
+            f"Fresh-milled — {PIN_SMALL:g} and {PIN_LARGE:g} mm rods", "fresh")
+        self.dowel_mode.addItem("Grid-seated — M4 pins in the spoilboard grid",
+                                "grid")
+        self.dowel_mode.setToolTip(
+            "Fresh-milled: the mill drills two holes of different sizes "
+            "through the stock and into the bed, and two loose rods seat in "
+            "them. Works anywhere on the bed; the holes stay in the bed."
+            + chr(10)*2 +
+            "Grid-seated: the pins stand in two holes of the spoilboard's "
+            "tapped grid and the mill only clears the stock over them. "
+            "Nothing is drilled into the bed, but the job has to sit on the "
+            "grid's pitch and the XY origin must be a grid hole.")
+        self.dowel_mode.currentIndexChanged.connect(self._on_dowels)
+        self.dowel_mode_field = widgets.Field("Dowels", self.dowel_mode)
+        self.ds_section.add(self.dowel_mode_field)
+        self.dowel_edges = QComboBox()
+        self.dowel_edges.addItem("Beyond the top and bottom edges", "topbottom")
+        self.dowel_edges.addItem("Beyond the left and right edges", "leftright")
+        self.dowel_edges.currentIndexChanged.connect(self._on_dowels)
+        self.dowel_edges_field = widgets.Field(
+            "Pins sit", self.dowel_edges,
+            help="Which two edges the pins are beyond, which is also the flip: "
+                 "top and bottom means the board turns over left-right, left "
+                 "and right means top-bottom. Put them on whichever pair has "
+                 "the most waste copper for the pins.")
+        self.ds_section.add(self.dowel_edges_field)
+        self.grid_pitch = num(GRID_PITCH, 5.0, 50.0, 0.1, 2, self._on_dowels,
+                              suffix=" mm")
+        self.grid_pitch_field = widgets.Field(
+            "Grid pitch", self.grid_pitch,
+            help="Hole-to-hole spacing of the spoilboard grid, measured, not "
+                 "read off a drawing.")
+        self.ds_section.add(self.grid_pitch_field)
+        self.grid_pin = num(GRID_PIN, 1.0, 8.0, 0.1, 2, self._on_dowels,
+                            suffix=" mm")
+        self.grid_pin_field = widgets.Field(
+            "Pin diameter", self.grid_pin,
+            help="The grid hole's size, which is the rod that fits it.")
+        self.ds_section.add(self.grid_pin_field)
+        # Per pin, because the kerf differs by hole size: the numbers were
+        # dialled in on the fit-test coupon and the big hole wants more.
+        self.clear_large = num(CLEAR_LARGE, 0.0, 1.0, 0.05, 2, self._on_dowels,
+                               suffix=" mm")
+        self.clear_large_field = widgets.Field(
+            f"Big hole, extra", self.clear_large,
+            help=f"Added to the {PIN_LARGE:g} mm hole so the rod slips in. "
+                 f"{CLEAR_LARGE:.2f} seats it snug on this machine; raise it "
+                 f"a little if the rod binds on a test cut.")
+        self.ds_section.add(self.clear_large_field)
+        self.clear_small = num(CLEAR_SMALL, 0.0, 1.0, 0.05, 2, self._on_dowels,
+                               suffix=" mm")
+        self.clear_small_field = widgets.Field(
+            f"Small hole, extra", self.clear_small,
+            help=f"Added to the {PIN_SMALL:g} mm hole. A touch tighter than "
+                 f"the big one.")
+        self.ds_section.add(self.clear_small_field)
+        self.bed_bite = num(DOWEL_BED_DEPTH, 0.0, 12.0, 0.5, 1, self._on_dowels,
+                            suffix=" mm")
+        self.bed_bite_field = widgets.Field(
+            "Into the bed", self.bed_bite,
+            help="How far the dowel holes go on into the spoilboard below the "
+                 "stock. The rods seat in this. If they do not bite deep "
+                 "enough, raise it and re-cut just the dowel holes.")
+        self.ds_section.add(self.bed_bite_field)
+        self.dowels_only_btn = widgets.button(
+            "Re-cut the dowel holes only…", on=ctl.action_export_dowels_only,
+            tip="Writes only the dowel-hole program, over the one the export "
+                "wrote - no traces, no drills, no cut-out. For test-fitting "
+                "the rods, or deepening the bite after a rod would not seat."
+                + chr(10)*2 +
+                "Keep the SAME XY origin: the hole centres do not move with "
+                "the clearances, so the re-cut lands on the existing holes.")
+        self.ds_section.add(self.dowels_only_btn)
+
         self.fid_dia = num(1.60, 0.5, 6.0, 0.1, 2, self._on_fid_dia,
                            suffix=" mm")
         self.fid_dia_field = widgets.Field(
@@ -461,13 +545,17 @@ class SetupPage(Page):
         self.fid_place = QComboBox()
         self.fid_place.addItem("In the waste, outside the board", "waste")
         self.fid_place.addItem("On the board, inside its corners", "onboard")
+        self.fid_place.addItem("Where I drag them on the stage", "manual")
         self.fid_place.setToolTip(
             "Where the four reference holes go." + chr(10) + chr(10) +
             "In the waste: the finished board is clean, but the stock has to "
             "be bigger than the board by the offset all round." + chr(10) +
             "On the board: the holes stay in the finished board, which is what "
             "you want when the stock is barely bigger than the design - a "
-            "full-bed board has no waste to put them in.")
+            "full-bed board has no waste to put them in." + chr(10) +
+            "Where I drag them: each pin goes wherever you put it on the "
+            "stage - for a big board with waste on only some edges, where "
+            "neither corner scheme fits the stock.")
         self.fid_place.currentIndexChanged.connect(self._on_fid_layout)
         self.fid_offset = num(4.0, 0.5, 30.0, 0.5, 1, self._on_fid_layout,
                               suffix=" mm")
@@ -485,6 +573,26 @@ class SetupPage(Page):
         for f in (self.fid_place_field, self.fid_offset_field,
                   self.fid_count_field):
             self.ds_section.add(f)
+        self.fid_manual_hint = widgets.hint(
+            "Drag the gold pins on the stage to where the holes should go, on "
+            "a bottom-side step or in the X-ray. Anywhere with copper under "
+            "it will do; further apart is a better fit.")
+        self.ds_section.add(self.fid_manual_hint)
+        # The one choice the fit cannot check. Said here, where it is made,
+        # and again on the measuring page.
+        self.fid_flip = QComboBox()
+        self.fid_flip.addItem("Left-right, about a vertical line", "vertical")
+        self.fid_flip.addItem("Top-bottom, about a horizontal line", "horizontal")
+        self.fid_flip.currentIndexChanged.connect(self._on_fid_flip)
+        self.fid_flip_field = widgets.Field(
+            "Flipped", self.fid_flip,
+            help="Which way you physically turn the board over. The fit "
+                 "cannot tell: corner holes make a symmetric rectangle, so "
+                 "both directions fit equally well and a wrong choice mirrors "
+                 "every top-side trace under a perfect number. Pick the one "
+                 "you actually do, and jog-check a drilled hole in the top "
+                 "view before cutting.")
+        self.ds_section.add(self.fid_flip_field)
         self.add(self.ds_section)
 
         self.finish()
@@ -518,6 +626,16 @@ class SetupPage(Page):
 
     def _on_fid_dia(self, *_a):
         self.ctl.action_fiducial_diameter(self.fid_dia.value())
+
+    def _on_fid_flip(self, *_a):
+        self.ctl.action_fiducial_flip(self.fid_flip.currentData())
+
+    def _on_dowels(self, *_a):
+        self.ctl.action_dowels(self.dowel_mode.currentData(),
+                               self.dowel_edges.currentData(),
+                               self.grid_pitch.value(), self.grid_pin.value(),
+                               self.clear_large.value(),
+                               self.clear_small.value(), self.bed_bite.value())
 
     def _on_stock(self, *_a):
         self.ctl.action_stock(self.stock_w.value(), self.stock_h.value(),
@@ -576,6 +694,30 @@ class SetupPage(Page):
         if i >= 0:
             self.fid_place.setCurrentIndex(i)
         self.fid_place.blockSignals(False)
+        self.fid_flip.blockSignals(True)
+        i = self.fid_flip.findData(getattr(ctl, "_fid_flip", "vertical"))
+        if i >= 0:
+            self.fid_flip.setCurrentIndex(i)
+        self.fid_flip.blockSignals(False)
+        for combo, val in ((self.dowel_mode, getattr(ctl, "_dowel_mode", "fresh")),
+                           (self.dowel_edges,
+                            getattr(ctl, "_dowel_edges", "topbottom"))):
+            combo.blockSignals(True)
+            i = combo.findData(val)
+            if i >= 0:
+                combo.setCurrentIndex(i)
+            combo.blockSignals(False)
+        for spin, attr in ((self.grid_pitch, "_grid_pitch"),
+                           (self.grid_pin, "_grid_pin"),
+                           (self.clear_large, "_clear_large"),
+                           (self.clear_small, "_clear_small"),
+                           (self.bed_bite, "_bed_bite")):
+            val = getattr(ctl, attr, None)
+            if val is None:
+                continue
+            spin.blockSignals(True)
+            spin.setValue(float(val))
+            spin.blockSignals(False)
         self.rotate.set_current(str(st.rotate % 360))
         boards = list(getattr(st, "boards", None) or [])
         panel = len(boards) > 1
@@ -716,9 +858,25 @@ class SetupPage(Page):
         self.registration_field.setVisible(full and self.double.isChecked())
         fiducial = (full and self.double.isChecked()
                     and self.registration.currentData() == "fiducial")
+        manual = self.fid_place.currentData() == "manual"
         for f in (self.fid_dia_field, self.fid_place_field,
-                  self.fid_offset_field, self.fid_count_field):
+                  self.fid_count_field, self.fid_flip_field):
             f.setVisible(fiducial)
+        # The offset places the corner schemes; a hand-placed hole has none.
+        self.fid_offset_field.setVisible(fiducial and not manual)
+        self.fid_manual_hint.setVisible(fiducial and manual)
+        dowel = (full and self.double.isChecked()
+                 and self.registration.currentData() == "dowel")
+        grid = self.dowel_mode.currentData() == "grid"
+        self.dowel_mode_field.setVisible(dowel)
+        self.dowel_edges_field.setVisible(dowel)
+        # Hidden, not greyed, per the tier rule: the grid fields mean nothing
+        # to a fresh-dowel job and the clearances nothing to a grid one.
+        self.grid_pitch_field.setVisible(dowel and grid)
+        self.grid_pin_field.setVisible(dowel and grid)
+        for f in (self.clear_large_field, self.clear_small_field,
+                  self.bed_bite_field, self.dowels_only_btn):
+            f.setVisible(dowel and not grid)
         self.screw_row.setVisible(self.screwed.isChecked())
         self.screw_file_btn.setVisible(self.screwed.isChecked())
 
@@ -919,19 +1077,63 @@ class StepPage(Page):
         job = getattr(st, op)
         fields = []
         if op == "trace":
-            fields.append(widgets.Field(
-                "Bit diameter", num(job.bit_diameter, 0.05, 6.0, 0.05, 2,
-                                    lambda v: self._set(job, "bit_diameter", v),
-                                    suffix=" mm"),
-                help="The cut width. Two nets closer than this cannot be "
-                     "separated — the checks will tell you if that happens."))
-            fields.append(widgets.Field(
-                "Cut depth", num(job.cut_depth, 0.02, 1.0, 0.01, 2,
-                                 lambda v: self._set(job, "cut_depth", v),
-                                 suffix=" mm"),
-                help="Just through the copper foil, which is 35 µm. The rest "
-                     "is margin for an uneven surface — which is what bed "
-                     "levelling removes."))
+            # The tool decides which numbers exist. A flat endmill cuts one
+            # width at any depth; a V-bit's width grows with depth, so it is
+            # driven the other way round - say the width, and the depth is
+            # worked out from the tip and the angle. Showing both sets at
+            # once, as the first interface does, leaves a flat-endmill job
+            # with three V-bit fields that do nothing.
+            tool = QComboBox()
+            tool.addItem("Flat endmill", "flat")
+            tool.addItem("V-bit engraver", "vbit")
+            tool.setToolTip(
+                "Flat endmill: the cut is as wide as the bit, whatever the "
+                "depth." + chr(10) +
+                "V-bit: the cut widens as it goes deeper, so the depth is "
+                "derived from the width you ask for. Sharper detail, but "
+                "every surface error becomes a width error - level the bed.")
+            i = tool.findData(getattr(job, "tool_type", "flat"))
+            tool.setCurrentIndex(max(i, 0))
+            tool.currentIndexChanged.connect(
+                lambda _i, w=tool: self._set_tool_type(step, job, w.currentData()))
+            fields.append(widgets.Field("Tool", tool))
+            if getattr(job, "tool_type", "flat") == "vbit":
+                fields.append(widgets.Field(
+                    "Tip width", num(job.tip_diameter, 0.0, 3.0, 0.01, 3,
+                                     lambda v: self._set(job, "tip_diameter", v),
+                                     suffix=" mm"),
+                    help="The flat at the very point of the V. Read it off "
+                         "the bit's packet; a worn bit is wider."))
+                fields.append(widgets.Field(
+                    "Included angle", num(job.included_angle, 5.0, 180.0, 1.0,
+                                          1, lambda v: self._set(
+                                              job, "included_angle", v),
+                                          suffix="°"),
+                    help="The full angle of the V, tip to tip."))
+                fields.append(widgets.Field(
+                    "Cut width", num(job.target_width, 0.05, 6.0, 0.01, 3,
+                                     lambda v: self._set(job, "target_width", v),
+                                     suffix=" mm"),
+                    help="The channel you want. Two nets closer than this "
+                         "cannot be separated — the checks will tell you if "
+                         "that happens."))
+                self.vbit_note = widgets.hint("")
+                self._sync_vbit_note(job)
+                fields.append(self.vbit_note)
+            else:
+                fields.append(widgets.Field(
+                    "Bit diameter", num(job.bit_diameter, 0.05, 6.0, 0.05, 2,
+                                        lambda v: self._set(job, "bit_diameter", v),
+                                        suffix=" mm"),
+                    help="The cut width. Two nets closer than this cannot be "
+                         "separated — the checks will tell you if that happens."))
+                fields.append(widgets.Field(
+                    "Cut depth", num(job.cut_depth, 0.02, 1.0, 0.01, 2,
+                                     lambda v: self._set(job, "cut_depth", v),
+                                     suffix=" mm"),
+                    help="Just through the copper foil, which is 35 µm. The "
+                         "rest is margin for an uneven surface — which is "
+                         "what bed levelling removes."))
             fields.append(widgets.Field(
                 "Isolation passes", count(job.offsets, -1, 12,
                                           lambda v: self._set(job, "offsets", v)),
@@ -957,6 +1159,14 @@ class StepPage(Page):
                                      lambda v: self._set(job, "cut_depth", v),
                                      suffix=" mm"),
                 help="How deep it goes before lifting to clear the chips."))
+            fields.append(widgets.Field(
+                "Lift between pecks", num(job.peck_retract, 0.05, 10.0, 0.05, 2,
+                                          lambda v: self._set(
+                                              job, "peck_retract", v),
+                                          suffix=" mm"),
+                help="How far above the surface it lifts between pecks of the "
+                     "same hole, to let the swarf out. The full lift below is "
+                     "only for moving to the next hole."))
             one = QCheckBox("One bit for every hole size")
             one.setChecked(job.single_bit)
             one.setToolTip(
@@ -1010,6 +1220,36 @@ class StepPage(Page):
     def _set(self, job, field, value):
         setattr(job, field, value)
         self.ctl.action_params_changed()
+        if field in ("tip_diameter", "included_angle", "target_width"):
+            self._sync_vbit_note(job)
+
+    def _set_tool_type(self, step, job, kind):
+        """Swap the tool, and the fields with it."""
+        job.tool_type = "vbit" if kind == "vbit" else "flat"
+        self.ctl.action_params_changed()
+        self._rebuild_params(step)
+
+    def _sync_vbit_note(self, job):
+        """What the V-bit will actually do with those numbers: the derived
+        depth, and how hard the surface has to be known for the width to
+        come out. Both are worked out by the job itself."""
+        note = getattr(self, "vbit_note", None)
+        if note is None or getattr(job, "tool_type", "flat") != "vbit":
+            return
+        depth = job.effective_cut_depth()
+        width = job.effective_diameter()
+        sens = job.width_sensitivity()
+        if depth <= 0.0:
+            note.setText(
+                f"The tip alone is {job.tip_diameter:.3f} mm, which is already "
+                f"as wide as the width you asked for, so it would not plunge "
+                f"at all. Ask for a wider cut or use a finer tip.")
+            return
+        note.setText(
+            f"Cuts {depth:.3f} mm deep to make a {width:.3f} mm channel. "
+            f"Every 0.01 mm the surface is off widens or narrows it by "
+            f"{sens * 0.01:.3f} mm, so level the bed before cutting with "
+            f"this.")
 
 
 # ---------------------------------------------------------------------------

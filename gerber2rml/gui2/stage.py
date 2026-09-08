@@ -119,6 +119,7 @@ class Stage(QWidget):
     frame_changed = Signal(str)
     region_added = Signal(float, float, float, float)   # a box dragged in mm
     board_picked = Signal(int)                   # pressed on one board of a panel
+    pin_moved = Signal(int, float, float)        # a reference pin dropped, in mm
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -165,6 +166,10 @@ class Stage(QWidget):
         self._nudge_timer.setSingleShot(True)
         self._nudge_timer.setInterval(300)
         self._nudge_timer.timeout.connect(self._commit_nudge)
+        # Hand-placed reference pins; see the pin-drag section below.
+        self._pin_drag = False
+        self._pin_drag_idx = None
+        self._pin_drag_pos = None
 
         # cached painter paths (mm space)
         self._p_copper = None
@@ -567,6 +572,8 @@ class Stage(QWidget):
             self._box_from = p
             self._box_to = p
             return
+        if self._pin_press(p):
+            return
         if self._members:
             # A panel: the press picks the board under the cursor, and only
             # that board moves. A press between boards does nothing rather
@@ -691,6 +698,9 @@ class Stage(QWidget):
             self.hovered.emit((p.x(), p.y()))
             self.update()
             return
+        if self._pin_drag_idx is not None:
+            self._pin_move(p)
+            return
         if self._dragging:
             # A drag does NOT move the geometry — it moves where the geometry
             # is drawn, and nothing is regenerated until the mouse comes up.
@@ -706,6 +716,8 @@ class Stage(QWidget):
             self.update()
             return
         self.hovered.emit((p.x(), p.y()))
+        if self._pin_hover(p):
+            return
         if self.mode == "place":
             over = (self._member_at(p) is not None if self._members
                     else self._over_work(p))
@@ -737,6 +749,9 @@ class Stage(QWidget):
                 self.region_added.emit(a.x(), a.y(), b.x(), b.y())
             self.update()
             return
+        if self._pin_drag_idx is not None:
+            self._pin_release()
+            return
         if self._dragging:
             self._dragging = False
             self._drag_member = None
@@ -759,6 +774,106 @@ class Stage(QWidget):
     def leaveEvent(self, e):
         self.hovered.emit(None)
         super().leaveEvent(e)
+
+    # ======================================================================
+    # Hand-placed reference pins (manual fiducial placement)
+    #
+    # Not a mode. The place / jog / box / screws modes are exclusive because
+    # a click means one thing in each; a pin drag is passive instead - it
+    # takes a press that lands ON a gold pin and lets every other press fall
+    # through to whatever the mode would have done with it. That is what lets
+    # the operator drag a pin and then drag the board without touching a
+    # switch, which is how the first interface's canvas did it too.
+    #
+    # The pin in flight is drawn as an overlay in device space, over the
+    # cached scene raster, so the drag costs a blit rather than a re-stroke
+    # of the whole toolpath. The drop is one signal; the controller stores the
+    # point and redraws with the layout rebuilt around it.
+    # ======================================================================
+    def set_pin_drag(self, on):
+        """Allow left-dragging the registration pins. Off drops any drag."""
+        on = bool(on)
+        if on == self._pin_drag:
+            return
+        self._pin_drag = on
+        if not on:
+            self._pin_drag_idx = None
+            self._pin_drag_pos = None
+            self.update()
+
+    def _pin_hit(self, p):
+        """Index of the pin under ``p`` (mm), within the same view-relative
+        tolerance as snap_to_feature, so a pin stays grabbable zoomed out."""
+        if not self._pin_drag or not self._align_holes:
+            return None
+        span = max(self.width(), 1) / max(self._scale, 1e-6)
+        tol = 0.025 * span
+        best, best_d = None, tol
+        for i, (px, py, _d) in enumerate(self._align_holes):
+            dist = math.hypot(p.x() - px, p.y() - py)
+            if dist < best_d:
+                best, best_d = i, dist
+        return best
+
+    def _pin_press(self, p):
+        """Start a pin drag if the press is on a pin. True when it was."""
+        if self.mode != "place":
+            return False
+        i = self._pin_hit(p)
+        if i is None:
+            return False
+        self._pin_drag_idx = i
+        self._pin_drag_pos = (p.x(), p.y())
+        self.setCursor(QCursor(Qt.ClosedHandCursor))
+        self.update()
+        return True
+
+    def _pin_move(self, p):
+        self._pin_drag_pos = (p.x(), p.y())
+        self.hovered.emit((p.x(), p.y()))
+        self.update()
+
+    def _pin_release(self):
+        i, self._pin_drag_idx = self._pin_drag_idx, None
+        pos, self._pin_drag_pos = self._pin_drag_pos, None
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+        self.update()
+        if pos is not None and 0 <= i < len(self._align_holes):
+            x, y, d = self._align_holes[i]
+            # The drawn pin follows at once, so the picture does not snap
+            # back for the moment the controller takes to rebuild.
+            self._align_holes[i] = (pos[0], pos[1], d)
+            self._invalidate()
+            self.pin_moved.emit(i, pos[0], pos[1])
+
+    def _pin_hover(self, p):
+        """An open hand over a draggable pin. True when the cursor was set."""
+        if not self._pin_drag or self.mode != "place":
+            return False
+        if self._pin_hit(p) is None:
+            return False
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+        return True
+
+    def _paint_pin_drag(self, p):
+        """The pin in flight, in device space over the frozen scene."""
+        if self._pin_drag_idx is None or self._pin_drag_pos is None:
+            return
+        if not (0 <= self._pin_drag_idx < len(self._align_holes)):
+            return
+        _x, _y, d = self._align_holes[self._pin_drag_idx]
+        c = self.to_px(*self._pin_drag_pos)
+        r = max(d / 2.0 * self._scale, 4.0)
+        p.setPen(QPen(QColor(theme.FIXTURE), 1.5))
+        p.setBrush(QBrush(theme.alpha(theme.FIXTURE, 0.35)))
+        p.drawEllipse(c, r, r)
+        p.setPen(QPen(QColor(theme.FIXTURE), 1))
+        p.drawLine(QPointF(c.x() - r - 4, c.y()), QPointF(c.x() + r + 4, c.y()))
+        p.drawLine(QPointF(c.x(), c.y() - r - 4), QPointF(c.x(), c.y() + r + 4))
+
+    # ======================================================================
+    # end of the pin-drag section
+    # ======================================================================
 
     # -- painting ----------------------------------------------------------
     def paintEvent(self, _e):
@@ -815,6 +930,7 @@ class Stage(QWidget):
             p.restore()
 
         self._paint_box(p)
+        self._paint_pin_drag(p)
         self._paint_shorts(p)
         self._paint_tags(p)
         self._paint_tool(p)
