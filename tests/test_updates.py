@@ -79,6 +79,53 @@ def test_a_tag_that_is_not_a_plain_version_is_ignored_rather_than_guessed(tag):
     assert result.status == updates.ERROR
 
 
+# --- the redirect is the source; the API is only for notes -----------------
+
+def _redirect(tag):
+    return lambda url, timeout: f"https://github.com/MadsRudolph/srm-cam/releases/tag/{tag}"
+
+
+def _quota_exceeded(url, timeout):
+    raise OSError("HTTP Error 403: rate limit exceeded")
+
+
+def test_the_version_comes_from_the_redirect_even_when_the_api_is_rate_limited():
+    """Sixty anonymous API calls an hour are shared by every laptop behind
+    the lab's NAT. The redirect has no such quota, so the answer must not
+    depend on the API."""
+    result = updates.check("0.2.7", fetch=_quota_exceeded, resolve=_redirect("v0.3.0"))
+
+    assert result.status == updates.UPDATE
+    assert result.latest == "0.3.0"
+    assert result.url.endswith("/releases/tag/v0.3.0")
+    assert result.notes == ""                       # a bonus that was not available
+
+
+def test_notes_ride_along_when_the_api_does_answer():
+    result = updates.check("0.2.7", fetch=lambda u, t: _release("v0.3.0"),
+                           resolve=_redirect("v0.3.0"))
+
+    assert result.status == updates.UPDATE
+    assert result.notes == "notes here"
+
+
+def test_the_api_is_the_fallback_when_the_redirect_cannot_be_read():
+    def no_redirect(url, timeout):
+        raise OSError("connection reset")
+    result = updates.check("0.2.7", fetch=lambda u, t: _release("v0.3.0"), resolve=no_redirect)
+
+    assert result.status == updates.UPDATE
+    assert result.latest == "0.3.0"
+
+
+def test_a_redirect_to_no_tag_is_an_error_not_an_update():
+    """A repo with no releases redirects to /releases. That is not a version."""
+    result = updates.check("0.2.7", fetch=_quota_exceeded,
+                           resolve=lambda u, t: "https://github.com/MadsRudolph/srm-cam/releases")
+
+    assert result.status == updates.ERROR
+
+
 # --- the quiet check at launch --------------------------------------------
 
 def _result(status, latest=None):
