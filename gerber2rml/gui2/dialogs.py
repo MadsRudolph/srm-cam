@@ -90,6 +90,27 @@ class Sheet(QDialog):
         self.actions.addWidget(b)
         return b
 
+    def showEvent(self, e):
+        """Give every wrapped label the height its wrapped text needs.
+
+        A word-wrapping QLabel reports the height of ONE line until it has
+        been laid out at its final width, so a sheet built from wrapped
+        paragraphs opened too short: the lessons sheet showed one line of
+        each lesson, and the KiCad sheet's text ran into its own button
+        row. Settle the heights against the width the sheet will have,
+        then let the dialog grow to fit.
+        """
+        super().showEvent(e)
+        avail = max(self.width(), self.minimumWidth()) - 2 * (theme.GAP_L + 4)
+        for lb in self.findChildren(QLabel):
+            if not lb.wordWrap():
+                continue
+            w = lb.width() if lb.width() > 40 else avail
+            h = lb.heightForWidth(min(w, avail))
+            if h > 0:
+                lb.setMinimumHeight(h)
+        self.adjustSize()
+
 
 def report_error(parent, headline, exc=None, guidance=""):
     """The only way this interface reports a failure.

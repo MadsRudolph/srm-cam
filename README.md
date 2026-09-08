@@ -11,7 +11,7 @@ replacing the mods site and FlatCAM.
 
 **📖 User guide: [madsrudolph.github.io/srm-cam](https://madsrudolph.github.io/srm-cam/)**
 
-![SRM-CAM: the run plan, the bed, the selected step, the machine bar](website/img/gui2_traces.png)
+![SRM-CAM: the run plan, the bed, the selected step, the machine bar](website/img/gui2_setup.png)
 
 ## Install
 

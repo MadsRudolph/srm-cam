@@ -68,6 +68,10 @@
 <tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
 </table></div>
 <p><strong>Staying current.</strong> The app checks GitHub for a newer release a moment after it opens and says so once, with the download link. <span class="ui">Help → Check for updates…</span> asks any time. It never installs anything by itself: you download the new file and install it the same way as the first time.</p>
+<figure class="fig mid">
+  <img src="img/gui2_update.png" alt="The update sheet saying SRM-CAM 0.5.0 is up to date">
+  <figcaption><span class="ui">Help → Check for updates…</span>. When a newer release exists, the sheet names it and opens the download page.</figcaption>
+</figure>
 <p>The first interface is still shipped: <code>SRM-CAM --original</code> from an install, <code>python -m gerber2rml.gui</code> from source. Same engine, same files.</p>
 
 <h2>Workspace folders</h2>
@@ -90,8 +94,8 @@
     <figcaption>The rail. Numbered steps are files; the rows between them are things you do by hand. The banner holds the worst finding.</figcaption>
   </figure>
   <figure class="fig">
-    <img src="img/gui2_inspector_step.png" alt="The inspector showing the drill step">
-    <figcaption>The inspector for the drill step: what it needs, the file, and the cutting parameters in the Full tier.</figcaption>
+    <img src="img/gui2_inspector_step.png" alt="The inspector showing the isolation traces step">
+    <figcaption>The inspector for the traces step: what it needs, the file, and the cutting parameters in the Full tier, with the tool switchable between a flat endmill and a V-bit.</figcaption>
   </figure>
 </div>
 <figure class="fig">
@@ -120,9 +124,35 @@
   <img src="img/gui2_tiers.png" alt="The sheet explaining the two tiers">
   <figcaption><span class="ui">Interface → What the two tiers differ by…</span></figcaption>
 </figure>
+<div class="figs">
+  <figure class="fig">
+    <img src="img/gui2_help_menu.png" alt="The Help menu">
+    <figcaption>The Help menu: the web guide on <kbd>F1</kbd>, the machine lessons, and the update check.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/gui2_basics.png" alt="The sheet titled The machine, in five minutes">
+    <figcaption><span class="ui">Help → The machine, in five minutes</span>: the coordinate systems, Z and only Z, the travel limit, the probe, STOP against Pause, where the files go.</figcaption>
+  </figure>
+</div>
 <p><span class="ui">Interface → What the two tiers differ by…</span> lists it in the app. A lab that wants the tier fixed sets <code>SRM_CAM_MODE</code> to <code>essential</code> or <code>full</code> in the environment or the shortcut.</p>
 
 <h2>Files from KiCad</h2>
+<div class="note"><span class="t">Before you route: clearance and the build area</span>
+<p>Set the net class clearance to at least the width of the bit (<span class="ui">Board Setup → Design Rules → Net Classes</span>); a 0.8&nbsp;mm endmill cannot enter a 0.8&nbsp;mm gap. The app's checks list every gap that is too narrow, but it is quicker to fix before routing. <span class="ui">KiCad → Set up the build-area plugin…</span> in SRM-CAM adds a button to KiCad's PCB editor that draws the SRM-20's build area around your board and says whether it fits.</p></div>
+<div class="figs">
+  <figure class="fig">
+    <img src="img/kicad_clearance.png" alt="KiCad Board Setup, Net Classes, with clearance and track width set">
+    <figcaption>Net Classes: clearance and track width, set before routing.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/kicad_plugin.png" alt="KiCad PCB editor with the SRM-20 build area and the recommended maximum board drawn around a board">
+    <figcaption>The build-area plugin: the machine's travel and the recommended maximum board, drawn on User.Drawings.</figcaption>
+  </figure>
+</div>
+<figure class="fig mid">
+  <img src="img/kicad_plugin_menu.png" alt="KiCad's toolbar with the Show SRM-20 build area button">
+  <figcaption>After a KiCad restart the button is on the toolbar and under <span class="ui">Tools → External Plugins</span>.</figcaption>
+</figure>
 <ol class="steps">
   <li><span class="st">Plot Gerbers</span>
     <span class="ui">File → Fabrication Outputs → Gerbers</span> — at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (+ <strong>F.Cu</strong> for double-sided).</li>
@@ -131,6 +161,16 @@
   <li><span class="st">Open</span>
     <span class="ui">File → Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) picks up the layers and the drills and names the job after the KiCad project.</li>
 </ol>
+<div class="figs">
+  <figure class="fig">
+    <img src="img/kicad_plot.png" alt="KiCad's Plot dialog with F.Cu, B.Cu and Edge.Cuts ticked and Gerber format">
+    <figcaption>Plot: Gerber format, the copper layers and Edge.Cuts, one output folder.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/kicad_drill.png" alt="KiCad's Generate Drill Files dialog with Excellon and millimetres">
+    <figcaption>Drill files: Excellon, millimetres, into the same folder.</figcaption>
+  </figure>
+</div>
 <div class="tip"><span class="t">No KiCad handy?</span>
 <p><span class="ui">Demo board</span> on the setup page loads a bundled 40×30&nbsp;mm coupon that exercises every operation.</p></div>
 
