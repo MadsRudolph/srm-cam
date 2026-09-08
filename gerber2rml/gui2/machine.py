@@ -35,12 +35,14 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, QObject, Signal, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QPainter, QColor
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                                QComboBox, QSizePolicy)
 
 from gerber2rml.gui2 import theme, widgets
 from gerber2rml.engine import spi_probe
+from gerber2rml.engine.estimate import format_duration
+from gerber2rml.engine.progress import RunProgress
 from gerber2rml import platform as plat
 
 POLL_MS = 300           # also the deadman feed: the firmware stops the spindle
@@ -103,6 +105,10 @@ class MachineLink(QObject):
         self.surface_z = None
         self.spindle_on = False
         self._spindle_ours = False
+        # When this app last moved the head itself (a jog). Run tracking
+        # auto-starts on motion, and a jog is motion we caused: the tracker
+        # reads this to tell the two apart.
+        self.last_jog_t = 0.0
 
     # -- lifecycle ---------------------------------------------------------
     def is_connected(self):
@@ -290,6 +296,7 @@ class MachineLink(QObject):
         def op(ser):
             return spi_probe.timed_move(ser, dz_um=int(round(dz_mm * 1000)),
                                         should_abort=self.should_abort)
+        self.last_jog_t = time.time()
         self.clear_abort()
         self.submit("jog_z", op)
 
@@ -297,8 +304,14 @@ class MachineLink(QObject):
         def op(ser):
             return spi_probe.jog_to(ser, int(round(x_mm * 1000)),
                                     int(round(y_mm * 1000)))
+        self.last_jog_t = time.time()
         self.clear_abort()
         self.submit("jog_xy", op)
+
+    def has_feature(self, name):
+        """Whether the connected firmware advertised ``name`` (``"zeroz"``,
+        ``"retouch"``, ...). False when nothing is connected."""
+        return name in ((self.firmware or {}).get("features") or ())
 
     def set_spindle(self, on):
         """Start or stop the tool. There is no speed argument, on purpose."""
@@ -327,6 +340,175 @@ class MachineLink(QObject):
 # ---------------------------------------------------------------------------
 
 Z_STEPS = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0]
+
+
+# ---------------------------------------------------------------------------
+
+class RunTracker:
+    """How far the run on the mill has got, read off the position poll.
+
+    The mill is driven by VPanel, so the app never knows a run has started;
+    what it has is the live position, and :class:`RunProgress` can project
+    that onto a step's toolpath. This object holds that projection and the
+    one decision around it: *when* to start. It starts by itself the moment
+    the bit has been moving for three consecutive polls — the way the first
+    interface's "Auto" box did — unless the app moved the bit itself a moment
+    ago, because a jog is motion too and must not be mistaken for a run.
+
+    Pure logic, no widgets: the window feeds it positions and paints what it
+    returns, and the tests drive it with a fake link.
+    """
+    MOVE_MM = 0.25          # a poll-to-poll shift smaller than this is jitter
+    MOVE_READS = 3          # ~0.75 s of continuous motion at POLL_MS
+    JOG_GRACE_S = 2.0       # ignore motion this soon after our own jog
+
+    def __init__(self, link, now=time.time):
+        self.link = link
+        self._now = now
+        self.auto = True
+        self.progress = None
+        self.label = ""
+        self.finished = False
+        self._motion = 0
+        self._last = None
+
+    def arm(self, toolpaths, xy_feed, plunge_feed, label=""):
+        """Start following ``toolpaths`` (machine mm) from the next position."""
+        self.progress = RunProgress(toolpaths, xy_feed, plunge_feed)
+        self.label = label
+        self.finished = False
+        self._motion = 0
+        return self.progress.total
+
+    def disarm(self):
+        self.progress = None
+        self.label = ""
+        self.finished = False
+        self._motion = 0
+
+    def is_tracking(self):
+        return self.progress is not None
+
+    @property
+    def total(self):
+        return self.progress.total if self.progress is not None else 0.0
+
+    def feed(self, x, y, z, start=None):
+        """A live position. Returns ``(fraction, elapsed_s, remaining_s)``
+        while a run is tracked, else None.
+
+        ``start`` is called with no arguments when motion is seen and nothing
+        is being tracked (or the tracked run has finished); it arms this
+        object for whatever step is current and returns True if it did.
+        """
+        if self.auto and start is not None and (
+                self.progress is None or self.finished):
+            self._maybe_start(x, y, z, start)
+        if self.progress is None:
+            return None
+        frac, elapsed, remaining = self.progress.update(x, y, z)
+        if frac >= 0.999:
+            self.finished = True
+        return frac, elapsed, remaining
+
+    def _maybe_start(self, x, y, z, start):
+        if self._now() - getattr(self.link, "last_jog_t", 0.0) < self.JOG_GRACE_S:
+            self._last = (x, y, z)          # our own motion: skip, but keep up
+            self._motion = 0
+            return
+        prev, self._last = self._last, (x, y, z)
+        if prev is None:
+            return
+        moved = ((x - prev[0]) ** 2 + (y - prev[1]) ** 2
+                 + (z - prev[2]) ** 2) ** 0.5
+        self._motion = self._motion + 1 if moved > self.MOVE_MM else 0
+        if self._motion >= self.MOVE_READS:
+            self._motion = 0
+            start()
+
+
+class RunReadout(QWidget):
+    """The run, as one compact fact on the bar: which step, how far, how long.
+
+    The first interface gave tracking a whole row — an op picker, a checkbox,
+    a button, a progress bar and a label. Here it is the width of one readout
+    and it is only there while a run is being followed, so the bar stays one
+    row and STOP stays where it is. The bar under the label is painted rather
+    than a QProgressBar: three pixels tall, it has no chrome to style.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(1)
+        self._label = QLabel("Run")
+        self._label.setFont(theme.font("label"))
+        self._label.setStyleSheet(f"color: {theme.TEXT_3};")
+        self._value = QLabel("—")
+        self._value.setFont(theme.font("head", mono=True))
+        self._value.setStyleSheet(f"color: {theme.TEXT};")
+        # Neither label may set this widget's minimum: a long step title
+        # would widen the whole bar. The title is elided to the width
+        # instead, and the tooltip carries it whole.
+        for lb in (self._label, self._value):
+            lb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        v.addWidget(self._label)
+        v.addWidget(self._value)
+        self.setFixedWidth(120)
+        self.fraction = 0.0
+        self.setToolTip(
+            "How far the run on the mill has got, read from the bit's "
+            "position, and the time left at the planned feeds. It follows the "
+            "step the rail was on when tracking started. Tracking starts by "
+            "itself when the bit begins moving; Machine ▸ Track this step's "
+            "run starts or stops it by hand.")
+        self.hide()
+
+    def _title(self, label, pct):
+        tail = f" · {pct}%"
+        fm = self._label.fontMetrics()
+        room = self.width() - fm.horizontalAdvance(tail.upper())
+        return fm.elidedText(label, Qt.ElideRight, max(room, 20)) + tail
+
+    def set_armed(self, label, total_s, linked=True):
+        self.fraction = 0.0
+        self.label = label
+        self._label.setText(self._title(label, 0))
+        self._value.setText(format_duration(total_s) + (" total" if linked
+                                                        else " · connect"))
+        self._value.setStyleSheet(f"color: {theme.TEXT_3};")
+        self.show()
+        self.update()
+
+    def set_run(self, label, frac, remaining_s):
+        self.fraction = max(0.0, min(1.0, frac))
+        self.label = label
+        done = frac >= 0.999
+        self._label.setText(self._title(label, int(round(frac * 100))))
+        self._value.setText("done" if done
+                            else f"{format_duration(remaining_s)} left")
+        self._value.setStyleSheet(
+            f"color: {theme.VERIFIED if done else theme.TEXT};")
+        self.show()
+        self.update()
+
+    def clear(self):
+        self.fraction = 0.0
+        self.hide()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        p = QPainter(self)
+        r = self.rect()
+        y = self._label.geometry().bottom() + 1
+        w = r.width()
+        p.fillRect(0, y, w, 3, QColor(theme.RULE_HI))
+        if self.fraction > 0:
+            p.fillRect(0, y, int(round(w * self.fraction)), 3,
+                       QColor(theme.VERIFIED if self.fraction >= 0.999
+                              else theme.LIVE))
+        p.end()
 
 
 class MachineBar(QWidget):
@@ -414,21 +596,27 @@ class MachineBar(QWidget):
         self.live = QWidget()
         lh = QHBoxLayout(self.live)
         lh.setContentsMargins(0, 0, 0, 0)
-        lh.setSpacing(theme.GAP_M)
+        # The related-rows gap, not the between-fields one: with two Z
+        # touches and the run readout on it, this row is the width budget of
+        # the whole window at 1400 px, and STOP must not be what gives.
+        lh.setSpacing(theme.GAP_S)
 
-        self.dro_x = widgets.Readout("X", "—", width=72)
-        self.dro_y = widgets.Readout("Y", "—", width=72)
-        self.dro_z = widgets.Readout("Z", "—", width=72)
+        self.dro_x = widgets.Readout("X", "—", width=68)
+        self.dro_y = widgets.Readout("Y", "—", width=68)
+        self.dro_z = widgets.Readout("Z", "—", width=68)
         for d in (self.dro_x, self.dro_y, self.dro_z):
             d.setToolTip("Machine position, millimetres from the machine "
                          "origin at the front-left corner of the bed.")
             lh.addWidget(d)
-
-        self.touch = widgets.Chip("Clear", "idle")
-        self.touch.setToolTip(
-            "Whether the bit is touching the copper, read from the probe "
-            "wire. Jogging down is refused while it says Touching.")
-        lh.addWidget(self.touch)
+        # Contact lives on the Z readout: the label says "Z · touching" and
+        # the number goes red while the probe wire is closed. It used to be
+        # a chip of its own beside the readouts; folding it into the number
+        # it is about is what lets this row carry two Z touches and the run
+        # readout and still fit a 1280 px window with STOP whole.
+        self.dro_z.setToolTip(
+            "Machine Z, millimetres from the machine origin. Turns red and "
+            "says Touch while the bit is on the copper, read from the "
+            "probe wire; jogging down is refused while it does.")
 
         lh.addWidget(widgets.vrule())
 
@@ -447,7 +635,7 @@ class MachineBar(QWidget):
         self.z_down = widgets.button("↓", kind="key", on=lambda: self._jog(-1),
                                      tip="Lower the bit by one step. Page "
                                          "Down does the same. Refused while "
-                                         "the probe says the bit is already "
+                                         "the Z readout says the bit is already "
                                          "touching copper.")
         for b in (self.z_up, self.z_down):
             b.setFixedSize(30, 28)
@@ -455,16 +643,35 @@ class MachineBar(QWidget):
         for s in Z_STEPS:
             self.step_combo.addItem(f"{s:g} mm", s)
         self.step_combo.setCurrentIndex(3)
-        self.step_combo.setFixedWidth(78)
+        self.step_combo.setFixedWidth(68)
         zh.addWidget(self.z_down)
         zh.addWidget(self.z_up)
         zh.addWidget(self.step_combo)
         zv.addWidget(zrow)
         lh.addWidget(zbox)
 
+        # Two touches, two different things changed. Probe Z tells the APP
+        # where the copper is; Zero Z tells the MACHINE. They were one
+        # button here for a while, and the tooltip could not say which of
+        # the two it was doing — which matters, because only one of them
+        # moves the origin VPanel shows.
+        self.probe_btn = widgets.button(
+            "Probe Z", on=self._probe_z,
+            tip="Lower the bit from here until the probe wire says it has "
+                "touched the copper, and stop there.\n\n"
+                "This changes nothing on the machine: the app records the "
+                "surface height so the pre-flight can check the Z stroke "
+                "and the level page knows where the copper is. VPanel's "
+                "origin is untouched. Start a few millimetres above the "
+                "surface with the touch clips on.")
+        lh.addWidget(self.probe_btn)
         self.zero_btn = widgets.button(
-            "Zero Z here", on=self._zero_z,
-            tip="Touch the bit down on the copper and call that Z zero.\n"
+            "Zero Z", on=self._zero_z,
+            tip="Touch off as Probe Z does, then have the FIRMWARE write the "
+                "work origin's Z at the copper surface and lift 2 mm.\n\n"
+                "This changes the origin VPanel displays — the same as "
+                "pressing its Z0 button at the surface. Check VPanel's G54 Z "
+                "once before trusting it for a job.\n"
                 "Only Z. The XY origin is never moved — the fixture, the "
                 "dowel registration and every re-run depend on it staying "
                 "where it is.")
@@ -496,6 +703,11 @@ class MachineBar(QWidget):
         self.jog_btn.setCheckable(True)
         lh.addWidget(self.jog_btn)
 
+        # The run readout takes the row's slack and is only there while a
+        # run is being followed; see RunReadout for why it is this small.
+        self.run = RunReadout()
+        lh.addWidget(self.run)
+
         lh.addStretch(1)
         self.live.hide()
         h.addWidget(self.live, 1)
@@ -518,6 +730,7 @@ class MachineBar(QWidget):
         link.unlinked.connect(self._on_unlinked)
         link.position.connect(self._on_position)
         link.status.connect(self._on_status)
+        link.op_done.connect(self._on_done)
         link.op_failed.connect(self._on_failed)
 
         self._timer = QTimer(self)
@@ -608,9 +821,37 @@ class MachineBar(QWidget):
         step = self.step_combo.currentData() or 0.1
         self.link.jog_z(step * direction)
 
+    def _touch_refused(self):
+        """Both touches descend from where the bit is. Starting them on the
+        copper would measure nothing and the firmware reports it as a failed
+        contact; better to say so before it goes."""
+        if self._touching:
+            self.message.emit(
+                "warn", "The bit is already touching the copper. Raise it a "
+                        "few millimetres with Page Up, then try again.")
+            return True
+        return False
+
+    def _probe_z(self):
+        if self._touch_refused():
+            return
+        self.link.touch_off()
+        self.message.emit("info", "Probing down to the copper… The machine's "
+                                  "origin is not changed by this.")
+
     def _zero_z(self):
+        if self._touch_refused():
+            return
+        if self.link.firmware and not self.link.has_feature("zeroz"):
+            self.message.emit(
+                "warn", "This firmware cannot write the origin (it needs v2 "
+                        "or later — reflash hardware/srm20_spi_probe). Probe "
+                        "Z still works, and VPanel's Z0 button sets the "
+                        "origin.")
+            return
         self.link.zero_z()
-        self.message.emit("info", "Touching off and setting Z zero…")
+        self.message.emit("info", "Touching off and writing Z zero to the "
+                                  "machine…")
 
     def _toggle_spindle(self):
         want = self.spindle_btn.isChecked()
@@ -624,11 +865,12 @@ class MachineBar(QWidget):
         ok = self.link.pause() if want else self.link.resume()
         if not ok:
             self.pause_btn.setChecked(False)
-            self.ctl.say("warn", "Nothing to hold: connect to the machine first.")
+            self.message.emit("warn", "Nothing to hold: connect to the "
+                                      "machine first.")
             return
         self.pause_btn.setText("Resume" if want else "Pause")
-        self.ctl.say("ok", "Held. Resume carries on from here." if want
-                     else "Resuming.")
+        self.message.emit("ok", "Held. Resume carries on from here." if want
+                          else "Resuming.")
 
     def _stop(self):
         # A stop is not a hold. The button must not claim one is in force.
@@ -654,10 +896,20 @@ class MachineBar(QWidget):
 
     # -- link events -------------------------------------------------------
     def _on_linked(self, info):
-        self.chip.set(f"Linked · firmware v{info['version']}", "live")
+        # One word on the chip; the port and the firmware version are in the
+        # tooltip and the log line. The chip's width is STOP's margin.
+        self.chip.set("Linked", "live")
+        self.chip.setToolTip(
+            f"Linked on {info['port']}, firmware v{info['version']}. Goes "
+            f"amber while the lid is open or the spindle is running.")
         self.connect_btn.setText("Disconnect")
         self.connect_btn.setEnabled(True)
+        # Put away, not greyed: a port picker that cannot pick is a dead
+        # control, and its 122 px is what the live row needs to stay one row
+        # with two Z touches and the run readout on it. The port is in the
+        # log line below and comes back with the picker on disconnect.
         self.port_combo.setEnabled(False)
+        self.port_combo.hide()
         self.offline_note.hide()
         self.live.show()
         self._timer.start(POLL_MS)
@@ -670,22 +922,28 @@ class MachineBar(QWidget):
         self.connect_btn.setText("Connect")
         self.connect_btn.setEnabled(True)
         self.port_combo.setEnabled(True)
+        self.port_combo.show()
         self.live.hide()
+        self.run.clear()
         self.offline_note.show()
         self.jog_btn.setChecked(False)
         self.jog_mode_changed.emit(False)
         for d in (self.dro_x, self.dro_y, self.dro_z):
             d.set("—", colour=theme.TEXT_3)
+        self.dro_z.set_label("Z")
+        self._touching = False
+        self.chip.setToolTip("")
         if reason and reason != "disconnected":
             self.message.emit("warn", f"Machine link closed: {reason}")
 
     def _on_position(self, x, y, z, touch):
         self.dro_x.set(f"{x:8.2f}")
         self.dro_y.set(f"{y:8.2f}")
-        self.dro_z.set(f"{z:8.2f}")
+        # "Touch", not "Z · touching": the readout is 68 px wide and the
+        # label is set in tracked caps. The red number is the signal.
+        self.dro_z.set(f"{z:8.2f}", colour=theme.DANGER if touch else None)
+        self.dro_z.set_label("Touch" if touch else "Z")
         self._touching = touch
-        self.touch.set("Touching" if touch else "Clear",
-                       "warn" if touch else "idle")
         self.z_down.setEnabled(not touch)
 
     def _on_status(self, st):
@@ -694,15 +952,40 @@ class MachineBar(QWidget):
         # available in the machine test panel, where they are labelled as
         # unverified.
         if st.get("cover"):
-            self.chip.set("Lid open — spindle inhibited", "warn")
+            self.chip.set("Lid open", "warn")   # ...and the spindle will not run
         elif self.link.is_connected():
             rpm = st.get("rpm") or 0
             if st.get("spindle"):
-                self.chip.set(f"Spindle running · {rpm} rpm", "warn")
+                self.chip.set(f"Spindle on · {rpm} rpm", "warn")
             else:
-                v = (self.link.firmware or {}).get("version", "?")
-                self.chip.set(f"Linked · firmware v{v}", "live")
+                self.chip.set("Linked", "live")
         self.spindle_btn.setChecked(bool(st.get("spindle")))
+
+    def _on_done(self, name, result):
+        """The two touches report here. The link has already recorded the
+        surface height on a good contact; this is the sentence for it."""
+        if name == "touch":
+            if not result:
+                self.message.emit(
+                    "warn", "Probe Z found no contact in its whole stroke. "
+                            "Check the touch clips, and start the bit closer "
+                            "to the copper.")
+                return
+            self.message.emit(
+                "ok", f"Surface found at machine Z {result[2]:.2f} mm. The "
+                      f"app knows where the copper is; the machine's origin "
+                      f"is unchanged.")
+        elif name == "zero_z":
+            if not result:
+                self.message.emit(
+                    "warn", "Zero Z failed: no verified contact, so the "
+                            "origin was not written. Check the touch clips "
+                            "and start closer to the copper.")
+                return
+            self.message.emit(
+                "ok", f"Origin Z written to the machine at the copper "
+                      f"(machine Z {result[2]:.2f} mm). Check VPanel's G54 Z "
+                      f"once before the first job.")
 
     def _on_failed(self, name, msg):
         if name == "connect":
