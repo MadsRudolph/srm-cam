@@ -121,6 +121,7 @@ class Stage(QWidget):
     region_added = Signal(float, float, float, float)   # a box dragged in mm
     board_picked = Signal(int)                   # pressed on one board of a panel
     pin_moved = Signal(int, float, float)        # a reference pin dropped, in mm
+    measured = Signal(object)                    # (length, dx, dy) mm, or None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -131,7 +132,12 @@ class Stage(QWidget):
 
         self.bed = (203.2, 152.4)
         self.frame = "bed"                # "bed" | "xray"
-        self.mode = "place"               # "place" | "jog" | "box" | "screws"
+        self.mode = "place"               # "place" | "jog" | "box" | "screws" | "measure"
+        # The picture mirrored left-to-right, as a VIEW: the KiCad top view
+        # of a single-sided board that is cut mirrored. Nothing in mm
+        # changes; only the world transform does, so hover, drag and the
+        # rulers all keep telling the truth in it. See set_flip_x.
+        self._flip_x = False
 
         # content
         self._copper = None
@@ -143,7 +149,12 @@ class Stage(QWidget):
         self._rapids = []
         self._cuts_far = []
         self._shorts = []
+        self._gaps = None                 # copper gaps too narrow to isolate
         self._probe = []
+        # The ruler. State only; everything that touches it is in the
+        # "Measure mode" section at the end of the class.
+        self._measure_from = None         # snapped (x, y) the drag started at
+        self._measure_line = None         # (x0, y0, x1, y1) mm, or None
         self._screws = []
         self._screw_grid = []
         self._regions = []
@@ -186,6 +197,7 @@ class Stage(QWidget):
         self._p_cuts = None
         self._p_rapids = None
         self._p_cuts_far = None
+        self._p_gaps = None
 
         # view
         self._scale = 3.0
@@ -329,6 +341,24 @@ class Stage(QWidget):
 
     def set_shorts(self, shorts):
         self._shorts = list(shorts or [])
+        self.update()
+
+    def set_gaps(self, geom):
+        """Copper-free channels narrower than the cutter, as a shapely
+        geometry in the work's frame, or None.
+
+        Drawn as filled patches WITH the work rather than as device-space
+        marks like the shorts: a sliver is a place, not a point, and what the
+        operator needs to see is which two pads it lies between. It is part of
+        the scene raster, so it follows a drag like the copper does.
+        """
+        if geom is not None and geom.is_empty:
+            geom = None
+        if geom is self._gaps:
+            return
+        self._gaps = geom
+        self._p_gaps = geom_to_path(geom) if geom is not None else None
+        self._invalidate()
         self.update()
 
     def set_probe_points(self, pts):
@@ -495,6 +525,28 @@ class Stage(QWidget):
             self.frame_changed.emit(frame)
             self.update()
 
+    def set_flip_x(self, on):
+        """Mirror the VIEW left-to-right, about the middle of what is on screen.
+
+        A single-sided board is cut mirrored, so the bed frame shows it
+        back-to-front against the KiCad layout it came from. Flipping the view
+        is the first interface's "As designed (KiCad top)": the same
+        millimetres, the picture turned over so a pad can be found by looking
+        at KiCad. Nothing here is a machine coordinate, and the badge says so.
+        """
+        on = bool(on)
+        if on == self._flip_x:
+            return
+        # Keep whatever is under the centre of the view under it: flipping
+        # about the origin would throw the work off screen.
+        mid = self.to_mm(QPointF(RULER + (self.width() - RULER) / 2.0,
+                                 (self.height() - RULER) / 2.0))
+        self._flip_x = on
+        px = self.to_px(mid.x(), mid.y()).x()
+        self._origin += QPointF(RULER + (self.width() - RULER) / 2.0 - px, 0)
+        self._invalidate()
+        self.update()
+
     def snap_to_feature(self, x, y):
         """The centre of the drawn hole nearest ``(x, y)``, or the point itself.
 
@@ -518,8 +570,11 @@ class Stage(QWidget):
 
     def set_mode(self, mode):
         self.mode = mode
-        self.setCursor(QCursor(Qt.CrossCursor if mode in ("jog", "screws")
+        self.setCursor(QCursor(Qt.CrossCursor
+                               if mode in ("jog", "screws", "measure")
                                else Qt.ArrowCursor))
+        if mode != "measure":
+            self.clear_measure()      # the ruler belongs to its mode
         self.update()
 
     def has_board(self):
@@ -529,7 +584,7 @@ class Stage(QWidget):
     def _world(self):
         t = QTransform()
         t.translate(self._origin.x(), self._origin.y())
-        t.scale(self._scale, -self._scale)
+        t.scale(-self._scale if self._flip_x else self._scale, -self._scale)
         return t
 
     def to_mm(self, pt):
@@ -567,7 +622,8 @@ class Stage(QWidget):
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
         vx = RULER + (self.width() - RULER) / 2
         vy = (self.height() - RULER) / 2
-        self._origin = QPointF(vx - cx * self._scale, vy + cy * self._scale)
+        sx = -self._scale if self._flip_x else self._scale
+        self._origin = QPointF(vx - cx * sx, vy + cy * self._scale)
         self._fitted = True
         self._invalidate()
         self.update()
@@ -632,6 +688,9 @@ class Stage(QWidget):
             return
         if self.mode == "screws":
             self.screw_picked.emit(p.x(), p.y())
+            return
+        if self.mode == "measure":
+            self._measure_press(p)
             return
         if self.mode == "box":
             self._box_from = p
@@ -773,6 +832,10 @@ class Stage(QWidget):
             self.update()
             return
         p = self.to_mm(e.position())
+        if self._measure_from is not None:
+            self._measure_move(p)
+            self.hovered.emit((p.x(), p.y()))
+            return
         if self._box_from is not None:
             self._box_to = p
             self.hovered.emit((p.x(), p.y()))
@@ -820,6 +883,9 @@ class Stage(QWidget):
             return
         if button != Qt.LeftButton:
             return
+        if self._measure_from is not None:
+            self._measure_release()
+            return
         if self._box_from is not None and self._box_to is not None:
             a, b = self._box_from, self._box_to
             self._box_from = self._box_to = None
@@ -848,7 +914,8 @@ class Stage(QWidget):
                 self.placement_changed.emit(dx, dy)
 
     def _restore_cursor(self):
-        self.setCursor(QCursor(Qt.CrossCursor if self.mode in ("jog", "screws")
+        self.setCursor(QCursor(Qt.CrossCursor
+                               if self.mode in ("jog", "screws", "measure")
                                else Qt.ArrowCursor))
 
     def leaveEvent(self, e):
@@ -985,7 +1052,11 @@ class Stage(QWidget):
                 if self._others_raster is not None:
                     # The boards NOT being dragged, frozen where they are.
                     p.drawPixmap(QPointF(0, 0), self._others_raster)
-                p.drawPixmap(QPointF(dx * self._scale, -dy * self._scale),
+                # The blit offset is in device px, so it follows the view's
+                # flip: a board dragged right in a mirrored view still goes
+                # right on screen, which is the whole point of the raster.
+                p.drawPixmap(QPointF((-dx if self._flip_x else dx) * self._scale,
+                                     -dy * self._scale),
                              self._drag_raster)
             elif dx or dy:
                 p.save()
@@ -1013,6 +1084,7 @@ class Stage(QWidget):
         self._paint_pin_drag(p)
         self._paint_photo_anchors(p)
         self._paint_shorts(p)
+        self._paint_measure(p)
         self._paint_tags(p)
         self._paint_tool(p)
         self._paint_rulers(p)
@@ -1081,6 +1153,7 @@ class Stage(QWidget):
         if self._photo_dim:
             p.setOpacity(1.0 - self._photo_dim)
         self._paint_copper(p)
+        self._paint_gaps(p)
         self._paint_paths(p)
         self._paint_holes(p)
         self._paint_fixtures(p)
@@ -1539,3 +1612,163 @@ class Stage(QWidget):
         p.setPen(QPen(QColor(theme.TEXT_2), 1))
         p.drawText(QPointF(cx - fm.horizontalAdvance(self._busy) / 2, cy),
                    self._busy)
+
+    # -- narrow copper gaps --------------------------------------------------
+    def _paint_gaps(self, p):
+        """Slivers of clearance the cutter cannot enter, filled red.
+
+        Painted between the copper and the toolpaths so the path drawn at
+        true width is seen NOT to go through them, which is the finding.
+        """
+        if self._p_gaps is None:
+            return
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(theme.alpha(theme.DANGER, 0.55)))
+        p.drawPath(self._p_gaps)
+
+    # ======================================================================
+    # Measure mode
+    #
+    # A ruler dragged over the bed. Both ends snap to what the operator would
+    # want to measure between - the board's corners, its edges, hole centres
+    # and the corners and edges of the copper sheet - so corner-to-corner
+    # reads the board's true size rather than the size of a slightly missed
+    # drag. The first interface had this on its matplotlib canvas; this is
+    # the same tool on the stage, in the stage's own mode system.
+    #
+    # Everything the ruler needs is between these two rules. The rest of the
+    # class knows only that the mode exists and where to dispatch to.
+    # ======================================================================
+    def clear_measure(self):
+        if self._measure_from is None and self._measure_line is None:
+            return
+        self._measure_from = None
+        self._measure_line = None
+        self.measured.emit(None)
+        self.update()
+
+    def measure_line(self):
+        """The finished or in-flight ruler as ``(x0, y0, x1, y1)`` mm, or None."""
+        return self._measure_line
+
+    def _snap_targets(self):
+        """``(points, segments)`` the ruler may land on, in mm."""
+        pts, segs = [], []
+
+        def ring(coords):
+            coords = [(c[0], c[1]) for c in coords]
+            if len(coords) > 1 and coords[0] == coords[-1]:
+                coords = coords[:-1]
+            n = len(coords)
+            for i, (x, y) in enumerate(coords):
+                pts.append((x, y))
+                nx, ny = coords[(i + 1) % n]
+                segs.append((x, y, nx, ny))
+
+        outline = self._outline
+        if outline is not None and not outline.is_empty:
+            polys = getattr(outline, "geoms", None) or [outline]
+            for poly in polys:
+                if poly.geom_type != "Polygon":
+                    continue
+                ring(poly.exterior.coords)
+                for hole in poly.interiors:
+                    ring(hole.coords)
+        for (hx, hy, *_r) in list(self._holes) + list(self._align_holes):
+            pts.append((hx, hy))
+        if self._stock:
+            x, y, w, h = self._stock
+            ring([(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
+        return pts, segs
+
+    @staticmethod
+    def _nearest_on_segment(px, py, ax, ay, bx, by):
+        dx, dy = bx - ax, by - ay
+        l2 = dx * dx + dy * dy
+        if l2 == 0:
+            return ax, ay
+        t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / l2))
+        return ax + t * dx, ay + t * dy
+
+    def _snap_measure(self, x, y):
+        """``(x, y)`` moved onto the nearest corner, hole or edge within the
+        same view-relative tolerance the jog snap uses. Corners and holes are
+        tried first so a corner wins over the two edges that meet there."""
+        span = max(self.width(), 1) / max(self._scale, 1e-6)
+        tol = 0.025 * span
+        pts, segs = self._snap_targets()
+        best, best_d = None, tol
+        for (qx, qy) in pts:
+            d = math.hypot(x - qx, y - qy)
+            if d < best_d:
+                best, best_d = (qx, qy), d
+        if best is not None:
+            return best
+        for (ax, ay, bx, by) in segs:
+            qx, qy = self._nearest_on_segment(x, y, ax, ay, bx, by)
+            d = math.hypot(x - qx, y - qy)
+            if d < best_d:
+                best, best_d = (qx, qy), d
+        return best if best is not None else (x, y)
+
+    def _measure_press(self, p):
+        sx, sy = self._snap_measure(p.x(), p.y())
+        self._measure_from = (sx, sy)
+        self._measure_line = (sx, sy, sx, sy)
+        self.update()
+
+    def _measure_move(self, p):
+        x0, y0 = self._measure_from
+        sx, sy = self._snap_measure(p.x(), p.y())
+        self._measure_line = (x0, y0, sx, sy)
+        self.update()
+
+    def _measure_release(self):
+        """The ruler stays on screen after the drag, so it can be read at
+        leisure; the next press starts a new one."""
+        self._measure_from = None
+        x0, y0, x1, y1 = self._measure_line
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length < 1e-6:
+            self._measure_line = None      # a click is not a measurement
+            self.measured.emit(None)
+        else:
+            self.measured.emit((length, abs(x1 - x0), abs(y1 - y0)))
+        self.update()
+
+    def _paint_measure(self, p):
+        """Device space, like the shorts: the line stays 1.4 px and the
+        readout stays legible at any zoom."""
+        if self._measure_line is None:
+            return
+        x0, y0, x1, y1 = self._measure_line
+        a, b = self.to_px(x0, y0), self.to_px(x1, y1)
+        colour = QColor(theme.LIVE)
+        p.setPen(QPen(colour, 1.4))
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(a, b)
+        p.setBrush(QBrush(colour))
+        p.setPen(QPen(QColor(theme.INK), 0.8))
+        for c in (a, b):
+            p.drawEllipse(c, 3.5, 3.5)
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length < 1e-6:
+            return
+        text = (f"{length:.2f} mm   (dx {abs(x1 - x0):.2f}, "
+                f"dy {abs(y1 - y0):.2f})")
+        f = theme.font("small", mono=True)
+        p.setFont(f)
+        fm = QFontMetricsF(f)
+        wpx, hpx = fm.horizontalAdvance(text) + 16, fm.height() + 8
+        mid = (a + b) / 2
+        r = QRectF(mid.x() - wpx / 2, mid.y() - hpx - 8, wpx, hpx)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(theme.alpha(theme.LIVE_FILL, 0.96)))
+        p.drawRoundedRect(r, theme.RADIUS_CHIP, theme.RADIUS_CHIP)
+        p.setPen(QPen(colour, 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r, theme.RADIUS_CHIP, theme.RADIUS_CHIP)
+        p.drawText(r, Qt.AlignCenter, text)
+    # ======================================================================
+    # end of Measure mode
+    # ======================================================================

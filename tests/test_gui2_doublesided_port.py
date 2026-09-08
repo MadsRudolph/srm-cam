@@ -142,8 +142,10 @@ def test_the_dowel_controls_show_for_their_own_mode_only(dowelled):
 # --- cut dowels only --------------------------------------------------------
 
 def test_dowels_only_rewrites_just_the_align_file(dowelled, tmp_path):
-    written = dowelled.export_to(tmp_path)
-    names = sorted(Path(p).name for p in written)
+    dowelled.export_to(tmp_path)
+    # Everything the export left behind, the preview image and the summary
+    # included: the dowels-only rewrite must touch exactly one of them.
+    names = sorted(p.name for p in tmp_path.iterdir())
     stamp = {n: (tmp_path / n).read_bytes() for n in names}
     # a rod would not seat: deepen the bite and re-cut only the holes
     dowelled.action_dowels("fresh", "topbottom", 14.2, 4.0, CLEAR_LARGE,

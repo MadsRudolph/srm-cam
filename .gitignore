@@ -46,3 +46,6 @@ examples/fullboard_probe_test/
 .wrangler/
 # local wrangler secrets (feedback export token)
 .dev.vars
+
+# agent worktrees (Claude Code)
+.claude/worktrees/

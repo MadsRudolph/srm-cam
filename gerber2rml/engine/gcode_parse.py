@@ -23,6 +23,27 @@ def _gvals(codes):
     return {int(float(v)) for (letter, v) in codes if letter == "G" and v}
 
 
+def _strip_comments(line):
+    """The line without its ``( ... )`` comments, nesting included.
+
+    The exporter's own header says ``( bit 0.8 mm, 1 offset(s), ... )``. A
+    non-greedy regex closed that comment at the first ``)`` and handed the
+    rest of it to the word scanner, which read ``mm`` as a word with no
+    number - so the parser could not open the very files this program
+    writes. Comments do not nest in the standard, but they do in this
+    output, and a depth counter costs nothing.
+    """
+    out, depth = [], 0
+    for ch in line:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out).strip()
+
+
 def parse_nc(text):
     """Parse RS-274 G-code into a single toolpath (list of :class:`Move`).
 
@@ -34,10 +55,13 @@ def parse_nc(text):
     motion = None            # 0 = rapid, 1 = feed
     absolute = True
     for raw in text.splitlines():
-        line = re.sub(r"\(.*?\)", "", raw).strip()      # drop ( comments )
+        line = _strip_comments(raw)
         if not line:
             continue
-        codes = [(l.upper(), v) for (l, v) in _WORD.findall(line)]
+        # findall gives '' (not None) for a word with no number, e.g. a bare
+        # "M3" or the "mm" of a comment that slipped through; neither is a
+        # coordinate.
+        codes = [(l.upper(), v or None) for (l, v) in _WORD.findall(line)]
         gset = _gvals(codes)
         if 28 in gset:                                  # homing -> not toolpath
             continue

@@ -366,13 +366,22 @@ class SetupPage(Page):
         ah2.setContentsMargins(0, 0, 0, 0)
         ah2.setSpacing(theme.GAP_S)
         self.autoplace_btn = widgets.button(
-            "Centre it on the bed", kind="primary", on=ctl.action_autoplace,
+            "Centre it on the bed", kind="primary",
+            on=lambda: ctl.action_autoplace("bed"),
             tip="Drops the whole job into the middle of the machine's travel, "
                 "with whatever room is left shared equally on all four sides.\n\n"
                 "On a double-sided board the registration pins are counted "
                 "too — they sit outside the board, and a placement that puts "
                 "the board on the bed but a dowel off it cannot be run.")
         ah2.addWidget(self.autoplace_btn)
+        self.centre_copper_btn = widgets.button(
+            "Centre it on the copper",
+            on=lambda: ctl.action_autoplace("copper"),
+            tip="Drops the job into the middle of the copper sheet set above "
+                "— not the bed. The two differ whenever the sheet is smaller "
+                "than the travel or clamped off to one side, and it is the "
+                "metal the job has to land on.")
+        ah2.addWidget(self.centre_copper_btn)
         self.arrange_btn = widgets.button(
             "Lay them side by side", on=lambda: ctl.action_arrange(),
             tip="Line the boards up left to right with a strip of waste "
