@@ -275,7 +275,9 @@ def test_the_slider_widget_sits_at_the_end_of_the_photo_group(win):
     i = texts.index("Take the photo off")
     assert texts[i + 1] == "Choose which holes anchor the photo…"
     assert acts[i + 2] is win.photo_controls_act
-    assert i + 2 == len(acts) - 1
+    # The photo group ends with the sliders; whatever follows (the measure
+    # tool and the file simulator, added later) starts after a separator.
+    assert i + 2 == len(acts) - 1 or acts[i + 3].isSeparator()
 
 
 # --- hand-picked anchor holes -----------------------------------------------------

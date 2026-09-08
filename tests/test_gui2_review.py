@@ -371,13 +371,21 @@ def test_one_stage_mode_at_a_time(loaded):
     assert not loaded.inspector.setup.pick_screws.isChecked()
 
 
-def test_the_xray_is_offered_only_where_there_is_a_far_face(loaded):
-    assert not loaded.xray_act.isEnabled()
-    loaded.action_double_sided(True)
+def test_the_xray_means_the_far_face_only_where_there_is_one(loaded):
+    """The X-ray is always offered. On a double-sided job it is the two
+    faces in the design frame; on a single-sided job it is the KiCad top
+    view - the same board, viewed flipped - which used to be withheld and
+    left most users no way to check the layout against KiCad."""
     assert loaded.xray_act.isEnabled()
     loaded._on_frame("xray")
+    assert loaded.stage._flip_x                 # single-sided: a view flip
+    loaded.action_double_sided(True)
+    assert loaded.xray_act.isEnabled()
+    assert loaded.stage.frame == "xray" and not loaded.stage._flip_x
     loaded.action_double_sided(False)
-    assert loaded.stage.frame == "bed" and not loaded.xray_act.isEnabled()
+    assert loaded.stage.frame == "xray" and loaded.stage._flip_x
+    loaded._on_frame("bed")
+    assert not loaded.stage._flip_x
 
 
 # ------------------------------------------------------- the machine link
