@@ -69,7 +69,8 @@ packaging/           how the .exe is built            -> packaging/README.md
 website/             the user guide (plain HTML, auto-published to Pages)
 relay/               Cloudflare Worker: phone photo relay      -> relay/README.md
 feedback/            Cloudflare Worker + D1: student feedback  -> feedback/README.md
-docs/                design notes and dev logs, dated
+docs/                the living docs: usage, design, the A/B write-up
+  archive/           dated dev logs, old handoffs, plans; history only
 tests/               492 tests; pytest
 ```
 

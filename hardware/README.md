@@ -55,7 +55,7 @@ folder name `SRM20SPIRemote`), then restart the Arduino IDE. Alternatively use
 The serial protocol (115200 baud, microns) is documented at the top of
 `srm20_spi_probe.ino`; the host side is `gerber2rml/engine/spi_probe.py`. Pins are
 `begin(9, 6)` (slave-select D9, ready D6); units are **microns**. See
-`docs/2026-06-25-srm20-spi-and-bed-leveling.md` for the full story, including the
+`docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md` for the full story, including the
 STOP / runaway-guard behaviour — **reflash after pulling** to get those safety
 fixes.
 
@@ -94,7 +94,7 @@ yet — several are known-dead here, e.g. `scanTo`/`readSensor`).
 
 - **The status guard.** v2's `waitForMotorStop` could not tell "finished" from
   "paused" and inferred a pause from an **8-second timeout** — the ambiguity
-  behind the near-miss in `docs/2026-06-25-srm20-spi-and-bed-leveling.md`. v3
+  behind the near-miss in `docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md`. v3
   reads the machine's own PAUSE / COVER-OPEN / FATAL bits and stops at once,
   debounced over 2 reads. `A 0` disarms it if those bits prove unreliable here.
 - **Transport commands work mid-move.** v2's abort scan ate every byte that

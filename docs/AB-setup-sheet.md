@@ -1,6 +1,6 @@
 # A/B — "the setup sheet", a second interface for SRM-CAM
 
-*Built against `docs/BRIEF-alternative-gui.md`, on `main` @ `0f771d9` (v0.4.0).
+*Built against `docs/archive/BRIEF-alternative-gui.md`, on `main` @ `0f771d9` (v0.4.0).
 Written 2026-08-22.*
 
 Two complete interfaces are now installed side by side over the same engine.

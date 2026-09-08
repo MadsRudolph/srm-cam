@@ -357,7 +357,7 @@ def zero_z(ser, timeout=60.0, should_abort=None):
 
 # --- v3: the machine remote (status, spindle, job control, calibration) -----
 # Everything below drives an SPI command the project shipped without ever
-# calling — see docs/2026-08-21-spi-command-audit.md. None of it is proven on
+# calling — see docs/archive/2026-08-21-spi-command-audit.md. None of it is proven on
 # the machine yet, so every function FAILS SOFT (None / False, never an
 # exception) and the caller decides whether the feature exists. The GUI's
 # Machine test panel is what turns "unproven" into "proven".

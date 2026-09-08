@@ -6,7 +6,7 @@
 > depth (`W = T + 2*D*tan(theta/2)`), driven **width-first** (set a target width,
 > the depth is back-solved). Because a V-bit's width is hyper-sensitive to depth,
 > the pre-flight warns if you run one without bed leveling. Full design + rationale:
-> [`docs/2026-06-30-vbit-engraving-support.md`](docs/2026-06-30-vbit-engraving-support.md).
+> [`docs/archive/2026-06-30-vbit-engraving-support.md`](2026-06-30-vbit-engraving-support.md).
 > Key entry points: `TraceJob` geometry methods in `gerber2rml/config.py`;
 > `isolate()` in `gerber2rml/engine/traces.py` (uses `effective_diameter()` /
 > `effective_cut_depth()`); V-bit check in `gerber2rml/engine/diagnostics.py`;
@@ -21,7 +21,7 @@
 > with a ramped lead-in (`gerber2rml/engine/leadin.py`, `apply_lead_in`) instead
 > of a vertical plunge; drills stay vertical. Both on by default
 > (`build_jobs(..., lead_in=)`, `gcode.render(..., spinup_s=)`). Full rationale:
-> [`docs/2026-06-30-spindle-spinup-and-lead-in.md`](docs/2026-06-30-spindle-spinup-and-lead-in.md).
+> [`docs/archive/2026-06-30-spindle-spinup-and-lead-in.md`](2026-06-30-spindle-spinup-and-lead-in.md).
 > Suite: 334 passing.
 
 Branch: `feature/3d-toolpath-viewer-and-rework`
@@ -34,7 +34,7 @@ working.
 
 > Scope note: this branch intentionally contains **only** the files for these
 > features. A separate concurrent work stream was touching `backends/srm20.py`,
-> `docs/*`, `legacy/*`, and a couple of other tests; those were deliberately
+> `docs/*`, `docs/archive/legacy/*`, and a couple of other tests; those were deliberately
 > left out of this commit.
 
 ---

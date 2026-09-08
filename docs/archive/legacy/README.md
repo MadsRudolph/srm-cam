@@ -5,7 +5,7 @@ Migrated verbatim from the team repo (`hardware/roland-cnc/`) on branch
 as a working tool.
 
 - `gcode_to_rml.py` — the original minimal G-code→RML converter. Known bugs are
-  documented in [`../docs/design.md`](../docs/design.md) §6; the corrected
+  documented in [`../docs/design.md`](../../design.md) §6; the corrected
   emitter lives in `gerber2rml/backends/srm20.py`.
 - `test_square.nc` — synthetic 20 mm square G-code used to verify the RML scale
   (20 mm → 800 RML units, confirming 40 units/mm).

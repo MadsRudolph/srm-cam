@@ -15,7 +15,7 @@ just a changelog. Persistent machine facts live in the project memory
 
 ## 1. Faster grid probing — two-phase approach (firmware)
 
-**File:** [`hardware/srm20_spi_probe/srm20_spi_probe.ino`](../hardware/srm20_spi_probe/srm20_spi_probe.ino)
+**File:** [`hardware/srm20_spi_probe/srm20_spi_probe.ino`](../../hardware/srm20_spi_probe/srm20_spi_probe.ino)
 
 The probe descent was the whole cost. Every point fine-stepped **25 µm at a
 time** from the datum lift all the way down to the copper — ~120 stop-and-go
@@ -46,7 +46,7 @@ you're on first.
 
 ## 2. Height-map overlay was drawn in the wrong frame (preview-only)
 
-**File:** [`gerber2rml/gui/app.py`](../gerber2rml/gui/app.py) — `_update_level_overlay`, `_on_bed_3d`
+**File:** [`gerber2rml/gui/app.py`](../../gerber2rml/gui/app.py) — `_update_level_overlay`, `_on_bed_3d`
 
 On a **double-sided bottom (mirrored)** run the colored heat-map overlay sat
 *offset* from the board. The cause was purely cosmetic: the overlay sampled the
@@ -67,7 +67,7 @@ the leveling in the NC was correct all along — only the *picture* was misplace
 
 ## 3. Hover read-out on the 3D bed view
 
-**File:** [`gerber2rml/gui/bedviz.py`](../gerber2rml/gui/bedviz.py)
+**File:** [`gerber2rml/gui/bedviz.py`](../../gerber2rml/gui/bedviz.py)
 
 Move the mouse over any white probe marker and a tooltip shows everything about
 that point: its index, exact X/Y (mm), Z deviation (µm and mm), and where it sits
@@ -89,7 +89,7 @@ guards the math.
 
 ## 4. Breadcrumb trail of the bit's path
 
-**Files:** [`gerber2rml/gui/canvas.py`](../gerber2rml/gui/canvas.py), `gerber2rml/gui/app.py`
+**Files:** [`gerber2rml/gui/canvas.py`](../../gerber2rml/gui/canvas.py), `gerber2rml/gui/app.py`
 
 While the machine is connected, every live DRO sample extends a **fading amber
 trail** on the preview, so during a rework pass you can follow where the bit has
@@ -102,7 +102,7 @@ trail** button live on the machine bar.
 
 ## 5. Rework: settable depth that follows the height map
 
-**Files:** [`gerber2rml/engine/select.py`](../gerber2rml/engine/select.py), `gerber2rml/gui/app.py`
+**Files:** [`gerber2rml/engine/select.py`](../../gerber2rml/engine/select.py), `gerber2rml/gui/app.py`
 
 The box-select rework used to re-cut at the original pass's flat depth, ignoring
 the probed surface. Two additions, in the **Rework (2nd pass)** panel:
@@ -128,7 +128,7 @@ falls back cleanly to the old flat behaviour.
 
 ## 6. Live run-progress bar (DRO-driven) + auto-start
 
-**Files:** [`gerber2rml/engine/progress.py`](../gerber2rml/engine/progress.py) (new), `gerber2rml/gui/app.py`
+**Files:** [`gerber2rml/engine/progress.py`](../../gerber2rml/engine/progress.py) (new), `gerber2rml/gui/app.py`
 
 A **"Run"** bar across the top shows how far the mill has got through a job and
 how much time is left. The mill is driven by VPanel — we don't run the cut — but

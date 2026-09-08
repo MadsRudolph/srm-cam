@@ -187,7 +187,7 @@ with a touch probe, so it needs a small board fitted inside the SRM-20:
 1. **Open the SRM-20's back panel** and seat an **Arduino Uno**, on its SPI
    shield, on the controller's **SPI remote header** — the connector Roland put
    there for exactly this (full wiring in
-   [2026-06-25-srm20-spi-and-bed-leveling.md](2026-06-25-srm20-spi-and-bed-leveling.md)).
+   [2026-06-25-srm20-spi-and-bed-leveling.md](archive/2026-06-25-srm20-spi-and-bed-leveling.md)).
    Nothing is drilled, cut or soldered: the shield plugs in, and unplugging it
    returns the machine to stock.
 2. **Flash the provided firmware:** `hardware/srm20_spi_probe/srm20_spi_probe.ino`
@@ -340,7 +340,7 @@ keeps tracking the design if you move it later.
 
 With the Arduino fitted and **Connect** on, the machine dock drives the mill
 directly. Every control here uses an SRM-20 SPI command verified on the machine
-([audit](2026-08-21-spi-command-audit.md)).
+([audit](archive/2026-08-21-spi-command-audit.md)).
 
 The **dock** keeps what you reach for with a hand on the machine:
 
@@ -394,7 +394,7 @@ and the rest — spindle control, the full status word, pause/resume/stop, View 
 are what a VPanel-free workflow would be built on. Some Roland commands are
 already known not to work on this machine, so each one gets tested before
 anything relies on it. See
-[2026-08-21-spi-command-audit.md](2026-08-21-spi-command-audit.md).
+[2026-08-21-spi-command-audit.md](archive/2026-08-21-spi-command-audit.md).
 
 | Arming | What runs |
 |---|---|
@@ -443,7 +443,7 @@ Mark **all** spots to re-cut and export them as **one** G-code file. On the
 row). Each row has its **own depth** (the **New-box depth** spin sets the next
 box's default) and a height-map-follow toggle. **Export rework NC** writes one
 `<name>_<side>_<op>_rework.nc`. See
-[2026-06-26-multi-region-rework.md](2026-06-26-multi-region-rework.md).
+[2026-06-26-multi-region-rework.md](archive/2026-06-26-multi-region-rework.md).
 
 ## Double-sided boards
 
@@ -456,7 +456,7 @@ Top/bottom passes align off machine-located holes, never the board edge. Tick
 - **Fiducial holes** — the mill drills 2–4 *stock-only* corner holes; flip and
   re-place freely (no pins), probe where they landed, and the top traces warp to
   the best-fit transform. See
-  [2026-06-26-fiducial-registration.md](2026-06-26-fiducial-registration.md).
+  [2026-06-26-fiducial-registration.md](archive/2026-06-26-fiducial-registration.md).
 
 ### How the flip works (dowel)
 

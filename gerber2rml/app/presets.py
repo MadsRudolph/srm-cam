@@ -38,7 +38,7 @@ BUILTIN_PRESETS = {
     # V-bit (engraving) profile for tight SMD traces. Width-first: the 0.2 mm
     # target width back-solves to a ~0.18 mm plunge on a 30 deg / 0.1 mm-tip bit,
     # so it is HYPER-sensitive to surface flatness — always run it over a dense
-    # auto-bed-leveling mesh (see docs/2026-06-30-vbit-engraving-support.md).
+    # auto-bed-leveling mesh (see docs/archive/2026-06-30-vbit-engraving-support.md).
     # Drill/cut-out still use the 0.8 mm flat bit (bit change between ops).
     "SRM-20 V-bit 30deg / 0.1 mm tip: 0.2 mm SMD traces (LEVEL FIRST)": {
         "trace":  {"tool_type": "vbit", "tip_diameter": 0.1, "included_angle": 30.0,

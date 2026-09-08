@@ -152,8 +152,8 @@ You can also do **perfect double-sided PCBs** with srm-cam — both layers regis
 
 <table>
 <tr>
-<td width="50%"><img src="docs/Readme_photos/doublesided_bcu.jpg" alt="Bottom copper (B.Cu)"><br><sub><b>Bottom — B.Cu</b></sub></td>
-<td width="50%"><img src="docs/Readme_photos/doublesided_fcu.jpg" alt="Top copper (F.Cu)"><br><sub><b>Top — F.Cu</b></sub></td>
+<td width="50%"><img src="website/img/doublesided_bcu.jpg" alt="Bottom copper (B.Cu)"><br><sub><b>Bottom — B.Cu</b></sub></td>
+<td width="50%"><img src="website/img/doublesided_fcu.jpg" alt="Top copper (F.Cu)"><br><sub><b>Top — F.Cu</b></sub></td>
 </tr>
 </table>
 
@@ -187,4 +187,4 @@ maintainer, a cold copy on lab storage — is in
 **[`MAINTAINING.md`](MAINTAINING.md)**, along with the runbook for when CI goes
 red and how to rebuild the installer with no GitHub at all.
 
-Older per-branch handover notes: [`HANDOFF.md`](HANDOFF.md).
+Older handover notes and dev logs: [`docs/archive/`](docs/archive/).

@@ -39,5 +39,5 @@ python -m gerber2rml           # or the `gerber2rml` launcher after install
 - Outcome: PASS / FAIL —
 - Visual issues / notes:
 
-> Reminder: passing this is NOT hardware verification. `docs/parity-mosfet_test.md`
+> Reminder: passing this is NOT hardware verification. `docs/archive/parity-mosfet_test.md`
 > (compare against mods on a real board) is still the gate before cutting copper.

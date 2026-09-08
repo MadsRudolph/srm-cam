@@ -19,7 +19,7 @@ Three things make it more than a file converter, and any interface has to carry 
 2. **Mistakes are physical.** A wrong depth is a hole in the spoilboard. A wrong order frees the board from its own registration and scraps it. A short between two nets is a board that cannot work.
 3. **The users are split.** Most are students who have never used CAM and will use it twice. A few are doing double-sided boards with probed height maps and need every control. The current app handles this with a Novice/Professional mode flag.
 
-Read [`docs/usage.md`](usage.md) end to end before you design anything. Then load the app and use it — `python -m gerber2rml` from the repo root. You cannot redesign a workflow you have not performed.
+Read [`docs/usage.md`](../usage.md) end to end before you design anything. Then load the app and use it — `python -m gerber2rml` from the repo root. You cannot redesign a workflow you have not performed.
 
 ---
 
@@ -66,7 +66,7 @@ These are not style preferences. Every one of them is either a safety property o
 
 ### Machine truths that constrain the UI
 
-- **The spindle speed is NOT settable over the link.** `turnSpindle`'s RPM argument is ignored by this machine — 500, 1000, 2000 and 3000 all settle on whatever VPanel's slider says. The link gives you `M3`/`M5`, nothing more. Never build UI implying otherwise. ([`docs/2026-08-21-spi-command-audit.md`](2026-08-21-spi-command-audit.md))
+- **The spindle speed is NOT settable over the link.** `turnSpindle`'s RPM argument is ignored by this machine — 500, 1000, 2000 and 3000 all settle on whatever VPanel's slider says. The link gives you `M3`/`M5`, nothing more. Never build UI implying otherwise. ([`docs/archive/2026-08-21-spi-command-audit.md`](2026-08-21-spi-command-audit.md))
 - **Streaming a job over SPI is EXPERIMENTAL** and gated on uncalibrated speed units. The normal path is export → VPanel. Do not promote streaming to the happy path.
 - **Only one status bit is proven** (`0x20000`, cover/lid). The bit Roland labels "paused" demonstrably does not mean paused here. Do not display an unproven bit as a machine state.
 - **XY work origin stays at the machine origin; only Z is zeroed.** The screw-fixture file is emitted in machine coordinates and depends on this.
