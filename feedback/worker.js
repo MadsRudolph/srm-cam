@@ -6,9 +6,12 @@
  *                     -> every response as JSON, newest first
  *   GET  /export.csv  same, as CSV with one column per answer key
  *   GET  /health      -> "ok"
+ *   GET  /dashboard   the maintainer's view (asks for EXPORT_TOKEN in the browser)
  *
  * Bindings: DB (D1), ALLOWED_ORIGINS (var), EXPORT_TOKEN (secret).
  */
+
+import { DASHBOARD_HTML } from "./dashboard.js";
 
 const MAX_BODY = 32 * 1024;         // a full form is ~3 KB
 const MAX_PER_DAY_PER_IP = 20;      // students resubmit; bots do not stop at 20
@@ -24,6 +27,7 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     if (url.pathname === "/health") return text("ok", 200, cors);
     if (request.method === "GET" && url.pathname === "/") return landing();
+    if (request.method === "GET" && url.pathname === "/dashboard") return new Response(DASHBOARD_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 
     if (request.method === "POST" && url.pathname === "/") return submit(request, env, cors);
     if (request.method === "GET" && url.pathname === "/export") return exportJson(request, env);

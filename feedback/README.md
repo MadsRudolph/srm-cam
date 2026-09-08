@@ -9,6 +9,7 @@ emailed.
 | Piece | Where |
 |---|---|
 | Worker | `srm-cam-feedback`, served at https://srm-cam-feedback.madsrudolph.dev |
+| Dashboard | https://srm-cam-feedback.madsrudolph.dev/dashboard, source in `dashboard.js` |
 | Database | D1 `srm-cam-feedback`, table `responses` (see `schema.sql`) |
 | Form | `website/feedback.html`, the `API` constant at the top of its script |
 
@@ -17,6 +18,12 @@ The link `feedback.html?for=<name>` shows a tailored intro (if the page has a
 link handed to one student can be told apart from the general page.
 
 ## Reading the answers
+
+The dashboard at https://srm-cam-feedback.madsrudolph.dev/dashboard shows
+totals, per-step ease, outcomes, and every response with its free text. It
+asks for the export token once and keeps it in that browser; "Lock" forgets
+it. Filter by `?for=` link, switch to a table view, or download the CSV from
+there. `/dashboard#demo` shows the layout with made-up rows.
 
 The export routes need the `EXPORT_TOKEN` secret as a bearer token. The
 token is not in the repo; it lives in the Worker's secrets and wherever you
