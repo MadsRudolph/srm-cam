@@ -849,6 +849,9 @@ class MainWindow(QMainWindow):
             {s.key for s in self.plan if s.file and s.file in self._exported})
         self._sync_job_header()
         self._sync_window_title()
+        # The first rebuild runs before the pages exist.
+        if getattr(self, "level_page", None) is not None:
+            self.level_page.sync_job()      # tier, sidedness, registration
         self.traveller.set_export_enabled(
             self.state.board is not None,
             "" if self.state.board is not None

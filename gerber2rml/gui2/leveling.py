@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QHeaderView, QFileDialog, QProgressBar,
                                QAbstractItemView)
 
-from gerber2rml.gui2 import dialogs, theme, widgets, inspector
+from gerber2rml.gui2 import dialogs, theme, widgets, inspector, tier
 from gerber2rml.engine import leveling as lv
 
 
@@ -44,12 +44,19 @@ class ProbeRun(QObject):
     not through the serial port.
     """
     point = Signal(dict)
+    # The drift check re-touches the reference every few points and corrects
+    # the whole set afterwards, so what ``point`` showed live was raw. These
+    # two arrive before ``finished``, and only when a correction was made.
+    corrected = Signal(list)            # the corrected results, every point
+    drift = Signal(float)               # how far the reference moved, in um
     finished = Signal(str)              # "" = clean, else a sentence to show
 
-    def __init__(self, port, points, should_abort, parent=None):
+    def __init__(self, port, points, should_abort, parent=None,
+                 retouch_every=0):
         super().__init__(parent)
         self._port, self._points = port, points
         self._should_abort = should_abort
+        self._retouch_every = int(retouch_every or 0)
 
     def start(self):
         threading.Thread(target=self._run, name="srm-probe", daemon=True).start()
@@ -57,9 +64,18 @@ class ProbeRun(QObject):
     def _run(self):
         from gerber2rml.engine.spi_probe import probe_grid
         try:
+            log = []
             res = probe_grid(self._port, self._points,
                              on_result=self.point.emit,
-                             should_abort=self._should_abort)
+                             should_abort=self._should_abort,
+                             retouch_every=self._retouch_every,
+                             drift_log=log)
+            if any("z_raw" in r for r in res):
+                # Published even for a run that stopped early: the points it
+                # did measure were corrected too, and they are being kept.
+                zs = [e["z"] for e in log]
+                self.drift.emit(float(max(zs) - min(zs)))
+                self.corrected.emit(res)
             if self._should_abort():
                 self.finished.emit("Stopped. Motion is off and the points "
                                    "already measured have been kept. Raise "
@@ -115,6 +131,8 @@ class LevelPage(inspector.Page):
         # the bottom's numbers.
         self._maps = {"bottom": None, "top": None}
         self._run = None
+        self._z0 = None                # the run's datum, in raw microns
+        self._drift_um = None          # how far the reference moved, if checked
 
         self.add(widgets.body(
             "Isolation cuts 0.15 mm deep into copper that is 0.035 mm thick. "
@@ -186,6 +204,23 @@ class LevelPage(inspector.Page):
         ph.addWidget(self.probe_btn)
         ph.addStretch(1)
         probe.add(prow)
+        # The drift check. Spindle warm-up and a board settling under its
+        # clamps move the reference by tens of microns over a long grid, and
+        # a row probed minutes after the others then reads low as one piece.
+        # Re-touching the first point every N points measures that movement,
+        # and the whole set is corrected for it when the run ends. Full tier:
+        # it needs the v2 firmware, and the number is one more thing to
+        # explain to someone probing for the first time.
+        self.retouch = inspector.count(6, 0, 20, lambda _v: None)
+        self.retouch.setSpecialValueText("off")
+        self.retouch.setSuffix(" points")
+        self.retouch_field = widgets.Field(
+            "Drift check", self.retouch,
+            help="Re-touch the first point after every so many points and "
+                 "correct the whole grid for how far the reference has moved "
+                 "since the start. Set it to off if the Arduino runs the "
+                 "first firmware.")
+        probe.add(self.retouch_field)
         self.progress = QProgressBar()
         self.progress.hide()
         probe.add(self.progress)
@@ -225,7 +260,22 @@ class LevelPage(inspector.Page):
                 "depth needs. This says what shape it is - a bow, a dish and "
                 "a tipped corner look alike from above and want different "
                 "fixtures.")
-        table.add(self.solid_btn)
+        self.check_btn = widgets.button(
+            "Check the mesh…", on=self._mesh_check,
+            tip="Looks for a point no smooth board surface can explain - a "
+                "flaky touch - and for places where the surface changes more "
+                "between two probe lines than the map can follow, with one "
+                "click to add the missing lines." + chr(10)*2 +
+                "Also says how deep the traces need to go to survive what "
+                "the mesh cannot see between points.")
+        trow = QWidget()
+        th = QHBoxLayout(trow)
+        th.setContentsMargins(0, 0, 0, 0)
+        th.setSpacing(theme.GAP_S)
+        th.addWidget(self.solid_btn)
+        th.addWidget(self.check_btn)
+        th.addStretch(1)
+        table.add(trow)
         table.add(widgets.hint(
             "Height is relative to the first point, not an absolute machine Z. "
             "Positive means that spot sits higher than the reference."))
@@ -253,9 +303,40 @@ class LevelPage(inspector.Page):
         use.add(self.use_chk)
         self.advice = widgets.body("")
         use.add(self.advice)
+        # The top face of a dowel-registered job. The export writes the top
+        # traces flat, because that face cannot be probed until the board is
+        # flipped; this is the second half of it. A fiducial job does the
+        # same thing from the flip-fit page, with the measured fit folded in,
+        # so the button belongs to dowel jobs only.
+        self.top_btn = widgets.button(
+            "Write the top traces to this surface…", on=self._export_top_traces,
+            tip="Re-writes the top traces file warped to the TOP face's "
+                "measurement. Do it after milling the bottom, flipping the "
+                "board onto the pins, re-zeroing Z on the new face and "
+                "probing the top from this page.")
+        self.top_hint = widgets.hint(
+            "After the flip, switch to Top above, probe the flipped board and "
+            "write the file. The first export's top traces are flat: that "
+            "face did not exist yet when they were written.")
+        use.add(self.top_btn)
+        use.add(self.top_hint)
         self.add(use)
         self.finish()
         self._sync_enabled()
+        self.sync_job()
+
+    def sync_job(self):
+        """Match the page to the job and to the tier.
+
+        Called by the window whenever the plan is rebuilt - which is what a
+        change of tier, of sidedness or of registration does - so the page
+        has no listeners of its own to keep in step.
+        """
+        self.retouch_field.setVisible(tier.is_full())
+        dowel = (bool(getattr(self.ctl, "_double", False))
+                 and getattr(self.ctl, "_registration", "dowel") == "dowel")
+        self.top_btn.setVisible(dowel)
+        self.top_hint.setVisible(dowel)
 
     # -- grid --------------------------------------------------------------
     def _build(self):
@@ -546,6 +627,7 @@ class LevelPage(inspector.Page):
         maps = dict(self._maps)
         maps[self._side] = self._table_state()
         return {"side": self._side, "maps": maps,
+                "retouch": int(self.retouch.value()),
                 # The visible face, flat, so a setup written here still opens
                 # in a build that predates two-sided maps.
                 "nx": int(self.nx.value()), "ny": int(self.ny.value()),
@@ -559,6 +641,11 @@ class LevelPage(inspector.Page):
             return
         self.nx.setValue(int(data.get("nx", 3)))
         self.ny.setValue(int(data.get("ny", 3)))
+        if "retouch" in data:
+            try:
+                self.retouch.setValue(int(data["retouch"]))
+            except (TypeError, ValueError):
+                pass
         rows = data.get("rows") or []
         self.table.blockSignals(True)
         self.table.setRowCount(len(rows))
@@ -654,6 +741,7 @@ class LevelPage(inspector.Page):
             if choice == "resume":
                 which = resume_selection(measured)
         port = (link.firmware or {}).get("port")
+        every = self._retouch_every(link)
         # probe_grid opens the port itself, so the live link has to release it.
         link.mark_external(True)
         link.disconnect_from("handing the port to the probe run")
@@ -670,13 +758,37 @@ class LevelPage(inspector.Page):
             % (dx, dy))
         self._z0 = None
         self._failed = []
+        self._drift_um = None
         # The switch, not the step. The operator picked a face; a step that
         # cuts nothing has no opinion, and taking one from it is how a top
         # probe ended up stored as the bottom.
-        self._run = ProbeRun(port, pts, link.should_abort, self)
+        self._run = ProbeRun(port, pts, link.should_abort, self,
+                             retouch_every=every)
         self._run.point.connect(self._on_point)
+        self._run.corrected.connect(self._on_corrected)
+        self._run.drift.connect(self._on_drift)
         self._run.finished.connect(lambda msg, p=port: self._on_done(msg, p))
         self._run.start()
+
+    def _retouch_every(self, link):
+        """How often this run re-touches the reference: the setting, or 0
+        when the firmware cannot do it.
+
+        The re-touch is a v2 command. The first firmware does not refuse it,
+        it ignores it - and the run would then sit out the whole point
+        timeout at every checkpoint, waiting for a reply that never comes.
+        """
+        every = int(self.retouch.value())
+        if not every:
+            return 0
+        feats = (link.firmware or {}).get("features") or ()
+        if "retouch" not in feats:
+            self.ctl.say("warn", "This Arduino's firmware cannot re-touch the "
+                                 "reference, so the drift check is off for "
+                                 "this run. Reflash hardware/srm20_spi_probe "
+                                 "to get it.")
+            return 0
+        return every
 
     def _measured(self):
         """One flag per grid point: does the table hold a number for it?"""
@@ -710,7 +822,7 @@ class LevelPage(inspector.Page):
         d.exec()
         return out["c"]
 
-    def _on_point(self, d):
+    def _on_point(self, d, draw=True):
         row = d["id"]
         z = d.get("z")
         if z is None:
@@ -741,7 +853,24 @@ class LevelPage(inspector.Page):
                                QTableWidgetItem(f"{(z - self._z0) / 1000.0:.4f}"))
             self.table.blockSignals(False)
         self.progress.setValue(row + 1)
+        if draw:
+            self._draw_mesh()
+
+    def _on_corrected(self, res):
+        """The drift-corrected set: put every point back, corrected.
+
+        The reference resets first so the heights are relative to the
+        CORRECTED first point; the failures are rebuilt from the same set so
+        a point is not reported twice.
+        """
+        self._z0 = None
+        self._failed = []
+        for d in res:
+            self._on_point(d, draw=False)
         self._draw_mesh()
+
+    def _on_drift(self, um):
+        self._drift_um = float(um)
 
     def _show_solid(self):
         """Open the measured surface as a turnable mesh."""
@@ -809,8 +938,17 @@ class LevelPage(inspector.Page):
         if len(self.points()) >= 3 and not self.use_chk.isChecked():
             self.use_chk.setChecked(True)
             used = " It will warp the exported cut."
+        drifted = ""
+        if getattr(self, "_drift_um", None) is not None:
+            # Said out loud: a reference that moved 60 um over the run is a
+            # board still settling or a spindle still warming, and the
+            # correction that hid it is worth knowing about.
+            drifted = (" The reference moved %.0f µm during the run; every "
+                       "point has been corrected for it." % self._drift_um)
+            self.probe_state.setText(self.probe_state.text() + drifted)
         self.ctl.say("warn" if msg else "ok",
-                     (msg or "Bed probed — the height map is ready.") + used)
+                     (msg or "Bed probed — the height map is ready.") + used
+                     + drifted)
         self._report_failures()
         self._advise()
         # Take the port back so the readout and STOP are live again.
@@ -931,11 +1069,249 @@ class LevelPage(inspector.Page):
         except Exception:
             self.advice.setText("")
             return
-        self.advice.setText(
-            f"The surface varies by {rec['range']:.3f} mm across the board. "
-            f"With this grid, a trace depth of at least {rec['depth']:.2f} mm "
-            f"survives what the mesh cannot see between points.")
+        text = (f"The surface varies by {rec['range']:.3f} mm across the board. "
+                f"With this grid, a trace depth of at least {rec['depth']:.2f} mm "
+                f"survives what the mesh cannot see between points.")
+        # The two findings a person cannot see in a column of numbers, said
+        # here so the check is not something you have to think to run.
+        try:
+            odd = self._mesh_findings(pts)
+        except Exception:
+            odd = ""
+        self.advice.setText(text + (" " + odd if odd else ""))
         self._sync_enabled()
+
+    def _mesh_findings(self, pts):
+        """One sentence pointing at 'Check the mesh', or "" when it is clean."""
+        if len(pts) < 5:
+            return ""
+        n_odd = len(lv.flag_outliers(pts))
+        sug = lv.suggest_refinement_rows(pts, self.nx.value(), self.ny.value())
+        n_lines = len(sug["rows"]) + len(sug["cols"])
+        bits = []
+        if n_odd:
+            bits.append("%d point%s no smooth surface can explain"
+                        % (n_odd, "" if n_odd == 1 else "s"))
+        if n_lines:
+            bits.append("%d place%s where the grid is too coarse"
+                        % (n_lines, "" if n_lines == 1 else "s"))
+        if not bits:
+            return ""
+        one = len(bits) == 1 and (n_odd or n_lines) == 1
+        return ("There is " if one else "There are ") + " and ".join(bits) \
+            + " — check the mesh."
+
+    # -- mesh check ----------------------------------------------------------
+    def _mesh_check(self):
+        """Three questions about the measurement, on one sheet.
+
+        Is any point wrong? Is the grid fine enough? How deep does the cut
+        have to be to survive what the map cannot see? The depth advice is
+        already on the page; the other two need the table read as a surface,
+        which is exactly what a person cannot do by eye.
+        """
+        pts = self.points()
+        if len(pts) < 5:
+            self.ctl.say("warn", "Probe or type in at least five points first "
+                                 "— with fewer there is nothing to compare a "
+                                 "point against.")
+            return
+        nx, ny = self.nx.value(), self.ny.value()
+        try:
+            flags = lv.flag_outliers(pts)
+            rec = lv.recommend_depth(pts, nx, ny)
+            sug = lv.suggest_refinement_rows(pts, nx, ny)
+        except Exception as e:
+            self.ctl.report_error(
+                "The mesh could not be checked", e,
+                "Every height has to be a number. Fill in or clear the cells "
+                "that say 'no touch' or 'unstable', then try again.")
+            return
+        # points() skips blank rows, so its indices are not table rows.
+        rows = [r for r in range(self.table.rowCount())
+                if self.table.item(r, 2) and self.table.item(r, 2).text().strip()]
+        d = dialogs.Sheet(self, "How good is this measurement?",
+                          level="warn" if flags else "info", width=560)
+        if flags:
+            many = len(flags) != 1
+            d.say("%d point%s sit%s where no smooth board surface can put "
+                  "%s — usually a flaky touch. Re-probe %s:"
+                  % (len(flags), "s" if many else "", "" if many else "s",
+                     "them" if many else "it", "them" if many else "it"))
+            lines = []
+            for k, resid in flags[:6]:
+                x, y, z = pts[k]
+                lines.append("row %d   X %.1f  Y %.1f   height %+.3f mm, "
+                             "%.0f µm off the fit"
+                             % (rows[k] + 1, x, y, z, resid * 1000))
+            d.say(chr(10).join(lines), mono=True, small=True)
+            self._mark_suspicious([(rows[k], resid) for k, resid in flags])
+        else:
+            d.say("Every point agrees with a smooth surface through the "
+                  "others.")
+            self._mark_suspicious([])
+        depth = ("The surface varies by %.3f mm; the worst cell spreads "
+                 "%.0f µm between its corners. Cut the traces at least "
+                 "%.2f mm deep for the copper between the probe points to "
+                 "come away."
+                 % (rec["range"], rec["worst_spread"] * 1000, rec["depth"]))
+        try:
+            t = self.ctl.cutting_trace()
+            cur = float(t.effective_cut_depth() if t.tool_type == "vbit"
+                        else t.cut_depth)
+            if rec["depth"] > cur + 1e-9:
+                depth += (" They are set to go %.2f mm deep — raise that "
+                          "to %.2f mm in the trace step." % (cur, rec["depth"]))
+        except Exception:
+            pass
+        d.say(depth)
+        lines = []
+        if sug["rows"]:
+            lines.append("a row at Y = " + ", ".join(
+                "%.1f" % y for y in sug["rows"]))
+        if sug["cols"]:
+            lines.append("a column at X = " + ", ".join(
+                "%.1f" % x for x in sug["cols"]))
+        if lines:
+            d.say("The surface changes by more than 80 µm between "
+                  "neighbouring probe lines, which is more than the map can "
+                  "follow between them. Add " + " and ".join(lines) +
+                  ", then probe again and choose 'Only the missing' — the "
+                  "points already measured are kept.")
+        else:
+            d.say("The grid is fine enough: no two neighbouring probe lines "
+                  "differ by more than 80 µm.", small=True)
+        out = {"insert": False}
+
+        def insert():
+            out["insert"] = True
+            d.accept()
+        if lines:
+            d.act("Close", on=d.reject)
+            d.act("Add the missing lines", kind="primary", on=insert,
+                  default=True)
+        else:
+            d.act("Close", kind="primary", on=d.accept, default=True)
+        d.exec()
+        if out["insert"]:
+            self._insert_probe_lines(sug["rows"], sug["cols"])
+
+    def _mark_suspicious(self, flagged):
+        """Colour the flagged heights so they can be found in the table."""
+        self.table.blockSignals(True)
+        try:
+            for r in range(self.table.rowCount()):
+                it = self.table.item(r, 2)
+                if it and it.text().strip():
+                    it.setForeground(QColor(theme.TEXT))
+                    it.setToolTip("")
+            for r, resid in flagged:
+                it = self.table.item(r, 2)
+                if it:
+                    it.setForeground(QColor(theme.CAUTION))
+                    it.setToolTip("%.0f µm off a smooth surface through the "
+                                  "other points — re-probe it."
+                                  % (resid * 1000))
+        finally:
+            self.table.blockSignals(False)
+
+    def _insert_probe_lines(self, new_ys, new_xs=()):
+        """Add whole probe rows and columns, blank, keeping the grid whole.
+
+        Whole lines and not single points: half a row leaves a grid that
+        only a plane can be fitted to, which throws away the warp the extra
+        points were meant to capture. The heights already measured stay, so
+        the next probe run offers to measure only the new ones.
+        """
+        rows = []
+        for r in range(self.table.rowCount()):
+            xi, yi, zi = (self.table.item(r, c) for c in range(3))
+            if xi is None or yi is None:
+                continue
+            try:
+                rows.append((float(xi.text()), float(yi.text()),
+                             zi.text().strip() if zi else ""))
+            except ValueError:
+                continue
+        rows, nx, ny = lv.refine_grid(rows, new_ys, new_xs)
+        if nx > self.nx.maximum() or ny > self.ny.maximum():
+            self.ctl.say("warn", "That would make the grid %d × %d, more than "
+                                 "the %d a side this table holds. Build a "
+                                 "denser grid instead."
+                         % (nx, ny, self.nx.maximum()))
+            return
+        added = len(rows) - self.table.rowCount()
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(rows))
+        for r, (x, y, z) in enumerate(rows):
+            for c, val in ((0, f"{x:.3f}"), (1, f"{y:.3f}"), (2, str(z))):
+                it = QTableWidgetItem(val)
+                if c < 2:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(r, c, it)
+        self.table.blockSignals(False)
+        self._points = [(x, y) for x, y, _z in rows]
+        self.nx.setValue(nx)
+        self.ny.setValue(ny)
+        self.ctl.stage.set_probe_points(self._points)
+        self.ctl.refresh_preview()
+        self._advise()
+        self._sync_enabled()
+        self.ctl.say("ok", "%d probe point%s added. Probe over the link and "
+                           "choose 'Only the missing' to measure just those."
+                     % (added, "" if added == 1 else "s"))
+
+    # -- the top face of a dowel job -----------------------------------------
+    def _export_top_traces(self):
+        """Re-write the top traces warped to the TOP face's measurement.
+
+        Explicitly the top's map, whichever face is on screen: a bottom map
+        describes a surface that was unclamped and turned over, and cutting
+        the top by it is worse than cutting flat.
+        """
+        from gerber2rml.gui2 import workspace
+        st = self.ctl.state
+        if st.gerber_dir is None:
+            self.ctl.say("warn", "Load a board first.")
+            return
+        level = self.height_map(side="top")
+        if level is None:
+            if self._side != "top":
+                self.ctl.say("warn", "Switch to Top above and probe the flipped "
+                                     "board first. The top is a different "
+                                     "surface with its own zero, so the "
+                                     "bottom's map does not describe it.")
+            else:
+                self.ctl.say("warn", "Probe at least three points on the top "
+                                     "face first, and leave 'Warp the exported "
+                                     "cut' ticked.")
+            return
+        out = self.ctl.export_dir()
+        if out is None:
+            out = QFileDialog.getExistingDirectory(
+                self, "Which folder holds this job's files?",
+                workspace.remembered_dir("out", "exports"))
+            if not out:
+                return
+        from gerber2rml.doublesided import build_top_traces
+        try:
+            # cutting_trace, not st.trace: the same board, held the same
+            # way, wants the same flex margin the bottom got.
+            path = build_top_traces(
+                st.gerber_dir, out, st.name, trace=self.ctl.cutting_trace(),
+                machine=st.machine, offset=(st.place_x, st.place_y),
+                rotate=st.rotate, registration="dowel", level=level)
+        except Exception as e:
+            self.ctl.report_error(
+                "The top traces could not be re-written", e,
+                "Nothing has been changed. Check that the folder still holds "
+                "this job's files and that they are not open in another "
+                "program.")
+            return
+        workspace.remember_dir("out", str(path))
+        self.ctl.say("ok", f"{path.name} rewritten, warped to the top face "
+                           f"you measured. Send that file, not the one from "
+                           f"the first export.")
 
     def _sync_enabled(self):
         has = len(self.points()) >= 3
