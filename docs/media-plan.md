@@ -1,235 +1,251 @@
-# Media plan: screenshots, photos and video for the setup sheet
+# Media plan: screenshots, screen captures, photos and video
 
-*Written 2026-09-08, the evening the port audit closed. Every screenshot
-on the guide site predates today's changes, and the CNC section of the
+*Written 2026-09-08, the evening the port audit closed. Every picture on
+the guide site predates today's changes, and the CNC section of the
 shared lab README (DTU-EKB/DTU-PCB-prototyping) still describes the
 original interface: a Guide button, Traces/Drill/Cut-out tabs, a
-"Simulate 3D" page, a "Bed Leveling" page. Both need new pictures and, for
-the README, new words. This is the plan for getting them in one lab day
-and one desk day.*
+"Simulate 3D" page, a "Bed Leveling" page. Mads shoots all of it by hand:
+screenshots of every step in the app and in KiCad, screen captures of
+SRM-CAM and VPanel, and real-life video of operating the machine. This is
+the shot list and the settings, so nothing is forgotten on the day.*
 
 ## What comes out of it
 
-| Output | Where it goes | What it needs |
-|---|---|---|
-| A fresh set of app screenshots, rendered the same way every time | `website/img/`, and `images-for-guides/cnc-images/` in the lab repo | the screenshot script, the fixture board, no camera |
-| Photos of the machine, the setup and finished boards | guide pages, README, the site's front page | one lab visit |
-| Short clips of each hands-on step, and one 60 to 90 s cut of the whole workflow | guide pages (mp4 in `website/video/`), README (GIFs), the front page | the same lab visit |
-| The lab README's CNC section rewritten for the setup sheet | a branch and pull request on DTU-EKB/DTU-PCB-prototyping | the pictures above |
+| Output | Where it goes |
+|---|---|
+| Screenshots: the app at every step, KiCad export and the plugin | `website/img/` and the lab repo's `images-for-guides/cnc-images/` |
+| Screen captures: the app walked through a job, VPanel set up and run | `website/video/` as mp4; GIFs of the key moments for the README |
+| Photos: the machine, the setup, finished boards | guide pages, README, the site's front page |
+| Video: placing the copper, Z zero, probing, cutting, the flip | guide pages, README, one 60 to 90 s workflow cut on the front page |
+| The lab README's CNC section rewritten for the setup sheet | a branch and pull request on DTU-EKB/DTU-PCB-prototyping |
 
-## Part 1: screenshots, by script
+## Part 1: screenshots
 
-The current set was grabbed as whole widgets at a device scale of 2 by an
-ad-hoc script that was never committed. Today's port changed the bar
-(Pause, Probe Z, Zero Z, the run readout), the header (four chips), the
-menus (KiCad, F1, the machine lessons, Measure, Simulate a file) and
-several pages, so every one of the twenty images is stale. Rather than
-grab them by hand again, the next step is a committed script,
-`scripts/shoot_screens.py`, that opens the app offscreen, loads
-`tests/fixtures/mosfet_test`, drives it into each state, and writes every
-PNG at 2x. Then a screenshot is a `git pull` and one command, and the
-pictures can never drift from the app again.
+### Settings, once
 
-**Rules for every shot.** Window 1400 × 900 logical, device scale 2,
-the app's own dark theme, the fixture board "buck" (a real design with
-27 holes, and no student's name on it), the workspace path shown as
-`Documents\SRM-CAM\…` rather than a checkout path, Essential tier unless
-the picture is about a Full-only control, English UI, nothing selected
-that would not be selected at that moment in a real job.
+- **Scale.** Every picture at 2 device pixels per logical pixel, so it
+  stays sharp on a HiDPI screen and in a 600 px figure. On Windows, set
+  display scaling to 200 % for the session, or run the app with
+  `QT_SCALE_FACTOR=2`. On Linux, `QT_SCALE_FACTOR=2 SRM-CAM`. Check one
+  screenshot: the window title bar text should be about 30 px tall.
+- **Window.** 1400 × 900 logical for whole-window shots. Panels (the rail,
+  the inspector, the bar) are cropped from that at the panel's edge, no
+  slack around them.
+- **Theme.** The app's own dark theme, which the guide site wears too.
+- **Tier.** Essential unless the picture is about a Full-only control;
+  then say so in the caption.
+- **The board.** `tests/fixtures/mosfet_test` ("buck"): a real design,
+  27 holes, no student's name. Copy it to `Documents\SRM-CAM\buck` first,
+  so every path on screen reads `Documents\SRM-CAM\…` and not a checkout.
+- **Tool.** Snipping Tool (Win+Shift+S) or ShareX on Windows;
+  `grim -g "$(slurp)"` on Hyprland. PNG, never JPEG, for screens.
+- **Names.** Keep the existing file names so the pages need no edits;
+  new pictures get `gui2_<what>.png`, KiCad pictures `kicad_<what>.png`,
+  VPanel pictures `vpanel_<what>.png`.
 
-**The list.** Name, state to drive, what the picture must show, where it
-is used. Names keep the existing ones so the pages need no edits.
+### The app, step by step
 
-| File | State | Must show | Used on |
+Load `buck`, then go through the list in this order; each row says the
+state to reach, what must be in the frame, and where the picture is used.
+
+| File | How to get there | Must show | Used on |
 |---|---|---|---|
-| `gui2_setup.png` | board loaded, "Set up the job" selected | rail, stage with the board on the bed, inspector's setup page | getting-started, README |
-| `gui2_rail.png` | same, rail only | the plan with the dry run, the numbered steps, the export button | getting-started |
-| `gui2_inspector_step.png` | "Isolation traces" selected, inspector only | cutting parameters, the tool combo with flat / V-bit | getting-started |
-| `gui2_inspector_copper.png` | setup page, copper section | sheet size, corner, "Centre it on the copper" | holding-the-copper |
-| `gui2_bar.png` | linked to a fake port is not possible offscreen: grab the bar unlinked, and once with a stub link if the script can stand one up | ports, Connect, Z jog, Probe Z, Zero Z, Pause, Spindle, Click to jog, STOP | getting-started, machine-control |
+| `gui2_setup.png` | Open Gerber folder…, rail on "Set up the job" | whole window: rail, board on the bed, setup page | getting-started, README |
+| `gui2_rail.png` | same, crop the rail | dry run, numbered steps, the export button, the total | getting-started |
+| `gui2_inspector_copper.png` | setup page, scroll to The copper, crop the inspector | sheet size, corner, "Set the corner from the tool", "Centre it on the copper" | holding-the-copper |
+| `gui2_inspector_step.png` | rail on "Isolation traces", crop the inspector | cutting parameters, the Tool combo (flat / V-bit) | getting-started |
+| `gui2_traces.png` | "Isolation traces", View → Fit the work, crop the stage | the isolation paths, any ✕ shorts | index, README |
+| `gui2_checks.png` | rail on "Check before cutting" | the findings list, including narrow gaps and screws | milling-a-board |
+| `gui2_drill.png` | rail on "Drill" | drill paths and the single-bit note | milling-a-board |
+| `gui2_measure.png` (new) | View → Measure (Ctrl+M), drag corner to corner | the ruler and its readout chip | reference |
+| `gui2_bar.png` | laptop plugged into the Arduino, Connect | crop the bar: ports, Linked, DRO, Z jog, Probe Z, Zero Z, Pause, Spindle, Click to jog, STOP | getting-started, machine-control |
+| `gui2_tracking.png` (new) | Machine → Track this step's run, while the traces run | the readout on the bar with the percentage and time left | machine-control |
+| `gui2_runsheet.png` | Export the job | the run sheet with Open the folder, Copy the plan, Give feedback, Back to the board | milling-a-board, README |
+| `gui2_level.png` | Interface → Full; Level the bed; probe or load a CSV | the grid, the drift check, "Check the mesh…", the surface overlay | bed-leveling |
+| `gui2_mesh.png` (new) | Check the mesh… on that map | the sheet with flagged points and the depth advice | bed-leveling |
 | `gui2_tiers.png` | Interface → What the two tiers differ by… | the tier sheet | getting-started |
-| `gui2_traces.png` | "Isolation traces" selected, stage only, Fit the work | the isolation paths on the copper, the ✕ shorts if any | index, README |
-| `gui2_checks.png` | "Check before cutting" selected | the findings list including the narrow-gap and screw entries | milling-a-board |
-| `gui2_drill.png` | "Drill" selected | drill paths and the single-bit interpolation note | milling-a-board |
-| `gui2_runsheet.png` | after export | the run sheet with Open the folder, Copy the plan, **Give feedback**, Back to the board | milling-a-board, README |
-| `gui2_level.png` | Level the bed, a loaded height map CSV, Full tier | the grid, the drift check, "Check the mesh…", the surface overlay | bed-leveling |
-| `gui2_xray.png` | double-sided, Design X-ray frame | both faces, the flip axis | double-sided |
-| `gui2_rail_double.png` | double-sided rail | align, bottom, flip, top, cut-out last | double-sided |
-| `gui2_flipfit.png` | fiducial registration, flip-fit page | the flip direction control and the fit | double-sided |
-| `gui2_panel_setup.png`, `gui2_panel_cutout.png` | two boards on one sheet | the arrangement, the shared cut-out | panels |
-| `gui2_rework.png` | rework page with two boxes, one with Level ticked | the table with the Level column, Probe the boxes, Propose boxes from the photo | photo-and-rework |
-| **new** `gui2_measure.png` | Measure mode, a ruler corner to corner | the readout chip | reference |
-| **new** `gui2_photo.png` | a photo on the bed with the sliders open | opacity and fade sliders, numbered anchors | photo-and-rework |
-| **new** `gui2_basics.png` | Help → The machine, in five minutes | the six lessons | getting-started |
-| **new** `gui2_update.png` | the update sheet from a stubbed release | "SRM-CAM 0.5.1 is available" | getting-started |
-| **new** `gui2_kicad.png` | KiCad → Set up the build-area plugin… | the installed sheet | getting-started, README |
-| **new** `gui2_tracking.png` | a run followed, the readout on the bar | percentage, time left | machine-control |
+| `gui2_basics.png` (new) | Help → The machine, in five minutes | the six lessons | getting-started |
+| `gui2_kicad.png` (new) | KiCad → Set up the build-area plugin… | the "installed" sheet with the path | getting-started, README |
+| `gui2_update.png` (new) | Help → Check for updates… on a build older than the latest release | "SRM-CAM x.y.z is available" | getting-started |
+| `gui2_photo.png` (new) | View → Lay a photo of the board on the bed…, then the sliders in the View menu | photo on the bed, numbered anchors, opacity and fade sliders | photo-and-rework |
+| `gui2_rework.png` | rail → Rework, drag two boxes, tick Level on one | the table with the Level column, Probe the boxes, Propose boxes from the photo | photo-and-rework |
+| `gui2_xray.png` | Double-sided ticked, frame switch → Design X-ray | both faces, the flip axis | double-sided |
+| `gui2_rail_double.png` | same, crop the rail | align, bottom, flip, top, cut-out last | double-sided |
+| `gui2_dowels.png` (new) | Full tier, registration Dowels, setup page | Dowels, Pins sit, the clearances, Into the bed, "Re-cut the dowel holes only…" | double-sided |
+| `gui2_flipfit.png` | registration Fiducials, rail → Flip fit | the Flipped control and the fit | double-sided |
+| `gui2_panel_setup.png`, `gui2_panel_cutout.png` | File → Add another board to the sheet…, then "Cut the board out" | the arrangement, the shared cut-out | panels |
 
-Screens that need a machine or a photo (the bar while linked, the run
-readout, the photo overlay) are stubbed in the script the way the tests
-stub them; nothing here needs the mill.
+### KiCad 10
 
-**KiCad screenshots** for the README: the Plot dialog, Generate Drill
-Files, the Net Classes clearance, and the build-area plugin's rectangles
-on a board. These are taken by hand on KiCad 10 at 2x, with the fixture
-board's project if it exists, otherwise a small demo project. Name them
-`kicad_*.png`.
+Open the buck project, or any small single-sided board. Same 2x rule.
 
-## Part 2: the lab day
+| File | Where | Must show |
+|---|---|---|
+| `kicad_clearance.png` | Board Setup → Net Classes | Clearance 1.0 mm or more, Track Width 0.8 mm or more, for a 0.8 mm bit |
+| `kicad_plot.png` | File → Fabrication Outputs → Gerbers | B.Cu and Edge.Cuts ticked, millimetres, the output folder |
+| `kicad_drill.png` | Generate Drill Files… | Excellon, millimetres |
+| `kicad_plugin.png` | Tools → External Plugins → Show SRM-20 build area | the two rectangles on User.Drawings around the board, and the dialog saying whether it fits |
+| `kicad_plugin_menu.png` | the External Plugins menu open | the entry, so students know where to look |
 
-**When.** Mads is at DTU Ballerup on Wednesday 9 and Friday 11 September.
-Take Friday: it leaves Wednesday to finish the screenshot script and test
-the shot list on the demo board, so the lab day is spent shooting, not
-debugging.
+### VPanel, on the CNC PC
 
-**Who.** Two people: one operates the machine and the app, one holds the
-camera. Ask Jesús or Simon; either knows the machine well enough to
-notice a wrong step on camera. A third person is not needed.
+| File | Where | Must show |
+|---|---|---|
+| `vpanel_coords.png` | the coordinate dropdown open | Machine / User / G54 |
+| `vpanel_command_set.png` | Setup → Command Set | NC Code selected |
+| `vpanel_z_origin.png` | after the bit-drop | the Z under Set Origin Point about to be pressed |
+| `vpanel_machine_z.png` | dropdown on Machine, bit on the copper | the Z value, about −50 mm or higher |
+| `vpanel_cut.png` | Cut → Add → the .nc file → Output | the file list with the three programs in order |
 
-**What gets milled.** One single-sided board, chosen so the footage shows
-every step in under an hour: 30 to 40 holes, a simple outline with
-rounded corners, traces wide enough to be visible on video. The "buck"
-fixture board is the natural choice, since it is what every screenshot
-shows and the finished board can then be photographed beside the
-screenshots. Prepare its Gerbers on the CNC PC before the day.
+## Part 2: screen captures
 
-**Equipment.**
+Record at 1080p or the display's native size, 30 fps, cursor visible,
+no system sounds, no narration on set (captions and voice come later so
+the same clip serves the site and the README). OBS or Windows Game Bar
+(Win+G) on the CNC PC; `wf-recorder` on Linux. Keep each capture to one
+idea; a 15 s clip is easier to place than a 3 minute one.
 
-- A phone is enough, at 4K 30 fps, if it is held still: a small tripod or
-  a clamp on the bench. Lock focus and exposure before each clip, or the
-  spindle's reflections will pump the exposure.
-- A second phone for stills and for the phone-photo hand-off shot.
-- The lab's lights on, the machine's cover light on. No flash on copper:
-  it flares. For finished boards, a sheet of white paper behind the
-  board and daylight from a window, held up to the light as the existing
-  `doublesided_*.jpg` shots were.
-- A clean bench: the machine, the CNC PC, the Arduino and its two clips,
-  the endmills in their case, the sacrificial board, the copper stock,
-  callipers, tape, the finished board from last time.
-- The app updated on the CNC PC before the day, and on the operator's
-  laptop.
-
-**Pack list.** Phones charged, tripod, the copper stock, the fixture
-board's Gerbers on a USB stick as a fallback, a printed copy of this
-shot list.
-
-**Safety on camera.** Cover closed whenever the spindle runs, clips off
-the bit before any cut, hands out of the frame while it moves. The video
-will be watched by students who copy what they see.
-
-## Part 3: shot list, photos
-
-Numbered so they can be ticked off. Framing notes are for the camera
-person. Every photo also gets a plain-language alt text when it is placed.
-
-| # | Subject | Framing | Used for |
+| # | Capture | Length | What happens |
 |---|---|---|---|
-| P1 | The SRM-20 with its cover closed, the CNC PC beside it, VPanel on screen | three-quarter view from the operator's position, whole bench | README top of the CNC section, site index |
-| P2 | The bed with the sacrificial board and a piece of copper seated in the clamping brackets | from above, straight down | holding-the-copper |
-| P3 | Copper held with tape on the sacrificial board (the alternative hold) | from above | holding-the-copper |
-| P4 | The endmill in the collet, tip just touching copper, collet key in hand | close, from the side, focus on the tip | machine-control (the bit-drop Z zero) |
-| P5 | The probe clips: red on the copper, black on the bit | close, both clips readable | bed-leveling, README |
-| P6 | The Arduino and its USB cable to the laptop | medium | hardware |
-| P7 | VPanel's coordinate dropdown showing Machine / User / G54 | screen photo, or a screenshot from the CNC PC if it can be taken | README, machine-control |
-| P8 | VPanel Setup with Command Set on NC Code | same | README |
-| P9 | The dry run in progress: bit held up over the outline, spindle off | through the cover, lit | milling-a-board |
-| P10 | Isolation traces being cut, chips visible | through the cover, close | index, README |
-| P11 | The board after traces, before drilling | from above | milling-a-board |
-| P12 | Drilling | through the cover | milling-a-board |
-| P13 | The cut-out finished, board still held by its tabs | from above | milling-a-board |
-| P14 | Snapping the tabs, filing the edge | hands and board | milling-a-board |
-| P15 | The finished board held up to the light | backlit, macro | index, README, feedback page |
-| P16 | The finished board next to the setup sheet on screen showing the same design | wide | index |
-| P17 | A phone taking the board photo for the overlay, the QR on the laptop screen | over the shoulder | photo-and-rework |
-| P18 | A board with a missed spot, and the same spot after a rework pass | macro, two frames | photo-and-rework, troubleshooting |
-| P19 | A double-sided board on its dowel pins, mid-flip | from above, pins visible | double-sided |
-| P20 | A broken endmill next to a good one | macro | troubleshooting, README caution |
+| S1 | Load | 15 s | Open Gerber folder… → the board appears on the bed, the plan fills in |
+| S2 | Walk the plan | 20 s | click dry run, traces, drill, cut-out on the rail; the stage and inspector follow |
+| S3 | Checks | 15 s | the checks page, one finding opened, Copy report |
+| S4 | Export | 10 s | Export the job → the run sheet, then Open the folder |
+| S5 | Place the copper | 20 s | sheet size typed, "Set the corner from the tool", "Centre it on the copper", drag the board |
+| S6 | Level | 30 s | Full tier, Level the bed, the grid built, probing with the surface drawing itself, Check the mesh… |
+| S7 | Track a run | 20 s | the readout on the bar counting down during a real pass |
+| S8 | Pause and STOP | 15 s | Pause, Resume, then STOP and the bit raised with Page Up |
+| S9 | Photo overlay | 30 s | Take one with a phone… → the QR → the photo landing → the sliders |
+| S10 | Rework | 30 s | two boxes drawn, Level ticked, Export the rework program… |
+| S11 | Double-sided | 40 s | Double-sided ticked, Dowels, the X-ray frame, the rail with the flip step |
+| S12 | Feedback | 10 s | Give feedback on the run sheet → the form in the browser |
+| S13 | VPanel setup | 30 s | command set, coordinate dropdown, Set Origin Point Z |
+| S14 | VPanel run | 20 s | Cut → Add → Output, the job starting |
 
-## Part 4: shot list, video
+## Part 3: real-life video
 
-Each clip is one step, 10 to 40 seconds, camera still, no narration on
-set. Captions and a voice-over, if any, are added afterwards so the same
-clip serves the site and the README. Record every clip twice.
+Camera still on a tripod or clamp, phone at 4K 30 fps, focus and
+exposure locked before each clip (the spindle's reflections pump the
+exposure otherwise). Lab lights on, the machine's cover light on, no
+flash. Record every clip twice. Hands out of the frame while anything
+moves; cover closed whenever the spindle runs; clips off the bit before
+any cut. Students copy what they see.
 
-| # | Clip | Length | Notes |
+| # | Clip | Length | Framing | Used on |
+|---|---|---|---|---|
+| V1 | Seating the copper in the clamping brackets on the sacrificial board, closing the cover | 20 s | from above | holding-the-copper |
+| V2 | Taping copper down as the alternative hold | 15 s | from above | holding-the-copper |
+| V3 | Fitting the endmill: collet, key, the bit seated | 20 s | close, from the side | machine-control |
+| V4 | The bit-drop Z zero: lower to nearly touching, loosen, drop, press, tighten without lifting, Set Origin Z on screen | 40 s | close on the tip, then the screen | machine-control, README; the clip students get wrong most |
+| V5 | Reading the Machine Z for headroom, raising the work surface when it is too low | 20 s | screen then bed | machine-control, troubleshooting |
+| V6 | Probe clips on: red to copper, black to the bit; the Arduino cable to the laptop | 20 s | close, both clips readable | bed-leveling |
+| V7 | Probing: the bit tapping the grid, the map on the laptop beside it | 30 s | machine and laptop in one frame | bed-leveling |
+| V8 | Clips off, then the dry run tracing the outline with the spindle off | 20 s | through the cover | milling-a-board |
+| V9 | Traces being cut, chips flying; a time-lapse of the whole pass | 20 s + lapse | through the cover, close | index, README |
+| V10 | The bit change between passes and re-zeroing only Z | 30 s | close | milling-a-board |
+| V11 | Drilling, the cut-out, the board coming free on its tabs | 30 s | through the cover | milling-a-board |
+| V12 | Snapping the tabs, filing the edge, holding the board to the light | 20 s | hands, then backlit | milling-a-board, index |
+| V13 | Pause from the app mid-cut, Resume, then STOP | 20 s | bar and machine in one frame | machine-control |
+| V14 | Double-sided: the align pass drilling the dowel holes, pins pressed in | 30 s | from above | double-sided |
+| V15 | Double-sided: the flip. Lift the board, turn it about the pin axis, seat it back on the pins, re-zero only Z | 40 s | from above, pins visible throughout | double-sided, README |
+| V16 | Double-sided: the top traces running, then both faces held to the light | 30 s | through the cover, then backlit | double-sided |
+| V17 | Taking the board photo with the phone at the QR, the overlay landing | 30 s | over the shoulder | photo-and-rework |
+| V18 | A missed spot found in the photo, the rework pass cutting only there | 30 s | screen then through the cover | photo-and-rework |
+
+**The workflow cut.** V1, V3, V4, V8, V9, V11, V12 with S1, S2 and S4
+between them, 60 to 90 seconds, no talking, five captions: Load, Set up,
+Export, At the machine, Done. It goes at the top of the site's index as
+an mp4 and at the top of the README's CNC section as a GIF that links to
+the mp4.
+
+## Part 4: photos
+
+Stills, same lighting rules; a sheet of white paper behind a board held
+up to a window for the backlit ones.
+
+| # | Subject | Framing | Used on |
 |---|---|---|---|
-| V1 | Opening the setup sheet, loading the Gerber folder, the board appearing on the bed | 20 s | screen recording, not camera |
-| V2 | Walking the plan: dry run, traces, drill, cut-out selected in turn | 20 s | screen recording |
-| V3 | Export, the run sheet appearing | 10 s | screen recording |
-| V4 | Seating the copper in the brackets, closing the cover | 20 s | camera, from above |
-| V5 | Fitting the bit and the bit-drop Z zero, ending on VPanel's Set Origin | 40 s | camera, close; the one clip students get wrong most |
-| V6 | Clips on, probing the grid, the surface drawing itself in the app | 30 s | camera on the machine, then a screen recording of the map |
-| V7 | Clips off, the dry run | 20 s | camera through the cover |
-| V8 | Traces being cut | 20 s | camera through the cover, then a time-lapse of the whole pass |
-| V9 | The bit change and re-zeroing only Z | 30 s | camera |
-| V10 | Drilling, then the cut-out, then the board coming free | 30 s | camera |
-| V11 | Snapping the tabs, filing, holding the board to the light | 20 s | camera |
-| V12 | Pause and Resume from the app during a cut, then STOP | 20 s | camera on the bar and the machine in one frame |
-| V13 | The phone-photo hand-off and the overlay landing on the bed | 30 s | camera then screen |
-| V14 | Two boxes drawn for a rework, the rework pass running | 30 s | screen then camera |
+| P1 | The SRM-20, cover closed, the CNC PC with VPanel beside it | three-quarter, whole bench | README, index |
+| P2 | Copper seated in the brackets on the sacrificial board | from above | holding-the-copper |
+| P3 | Copper taped down | from above | holding-the-copper |
+| P4 | The bit tip on the copper, collet key in hand | close, side | machine-control |
+| P5 | The probe clips on copper and bit | close | bed-leveling, README |
+| P6 | The Arduino and its cable | medium | hardware |
+| P7 | The board after traces, before drilling | from above | milling-a-board |
+| P8 | The cut-out done, board on its tabs | from above | milling-a-board |
+| P9 | The finished board to the light | backlit, macro | index, README, feedback page |
+| P10 | The finished board beside the setup sheet showing the same design | wide | index |
+| P11 | A double-sided board on its pins mid-flip | from above | double-sided |
+| P12 | Both faces of a finished double-sided board to the light | two frames | double-sided, README |
+| P13 | A missed spot, and the same spot after rework | macro, two frames | photo-and-rework, troubleshooting |
+| P14 | A broken endmill beside a good one | macro | troubleshooting, README caution |
+| P15 | The endmill case with the sizes labelled | from above | hardware |
 
-**The workflow cut.** From V1 to V11, 60 to 90 seconds, no talking, five
-captions: Load, Set up, Export, At the machine, Done. It goes at the top
-of the site's index page as an mp4 and at the top of the README's CNC
-section as a GIF, with a link to the mp4.
+## Part 5: the day
 
-## Part 5: after the shoot
+**When.** Friday 11 September at DTU Ballerup: Wednesday is for the
+screenshots and screen captures that need no machine, so the lab day is
+only the machine work. **Who.** Mads operating, one person on camera;
+Jesús or Simon know the machine well enough to catch a wrong step in the
+frame. **What gets milled.** The buck board, single-sided, and one
+double-sided board on dowels for V14 to V16 and P11, P12. Prepare both
+Gerber folders on the CNC PC and on a USB stick beforehand. Have the
+finished board from last time along for P9 and P10 in case the day's
+board is imperfect.
 
-- **Stills.** Crop to the subject, straighten, no filters; export at
-  2000 px on the long edge as JPEG quality 85. Name them by what they show
-  (`bed_copper_seated.jpg`, `probe_clips.jpg`), never by number.
-- **Clips.** Trim to the action, 1080p, H.264, 30 fps, under 15 MB each
-  for the site. For the README, a GIF of the first 8 to 10 seconds at
-  720 px wide and 12 fps, under 8 MB, made with:
+**Pack.** Two phones charged, tripod or clamp, copper stock for two
+boards, a spare endmill, the dowel pins, white paper, callipers, tape,
+this document printed with the V and P columns to tick.
+
+**Order on the day.** Bench and machine shots first while everything is
+clean (P1, P2, P3, P6, P15). Then the single-sided job start to finish
+with the camera running for every step (V1 to V13, P4, P5, P7, P8). Then
+the double-sided job (V14 to V16, P11, P12). Then the boards to the light
+(P9, P10, P13). The broken-bit shot last (P14).
+
+## Part 6: after the shoot
+
+- **Screens.** PNG as captured, cropped to the panel edge; no scaling.
+- **Stills.** Crop, straighten, no filters; 2000 px on the long edge,
+  JPEG quality 85; named by what they show, never by number.
+- **Clips.** Trim to the action, 1080p H.264 30 fps, under 15 MB each;
+  README GIFs at 720 px wide, 12 fps, 8 to 10 s, under 8 MB:
 
 ```
 ffmpeg -i clip.mp4 -t 10 -vf "fps=12,scale=720:-1:flags=lanczos" -loop 0 clip.gif
 ```
 
-- **Where they live.** Site: `website/img/` for stills, `website/video/`
-  for mp4, both committed; Pages serves them. README: `images-for-guides/
-  cnc-images/` in the lab repo, GIFs and stills only, with the mp4 linked
-  to the site.
-- **Alt text and captions** for every picture, written from the student's
-  side: what they are looking at and what to notice.
+- **Where they live.** Site: `website/img/` and `website/video/`,
+  committed, served by Pages. README: `images-for-guides/cnc-images/` in
+  the lab repo, stills and GIFs only, mp4s linked to the site.
+- **Alt text and captions** for every picture, from the student's side:
+  what they are looking at and what to notice.
 
-## Part 6: the README rewrite
+## Part 7: the README rewrite
 
 The CNC section of DTU-EKB/DTU-PCB-prototyping is rewritten around the
-setup sheet's flow, keeping the KiCad and VPanel material that is still
-right. Mads has maintain access, so this is a branch and a pull request.
-
-Outline of the new section:
+setup sheet, keeping the KiCad and VPanel material that is still right.
+Mads has maintain access: a branch and a pull request.
 
 1. What the SRM-20 does, one paragraph, P1.
-2. Correcting your design: clearance for the bit, the KiCad build-area
-   plugin with a screenshot of its rectangles, the narrow-gap check.
-3. Exporting from KiCad: unchanged, existing screenshots.
-4. SRM-CAM: install (Windows installer, AppImage, the update check),
-   load, the plan and the steps, checks, export, the run sheet
-   (`gui2_setup`, `gui2_checks`, `gui2_runsheet`). No Guide button, no
-   tabs, no 3D Viewer page: "Help → The machine, in five minutes" and F1
-   instead.
-5. Preparing the board: brackets or tape, P2, P3.
-6. Using the SRM-20: the coordinate systems (kept), Z zero with V5 and
-   P4, the −50 mm rule (align the README's −55 with the app's −50 or
-   explain the margin), the three files in order, Pause versus STOP.
-7. Bed levelling: clips (P5), the level page (`gui2_level`), the drift
-   check, clips off before cutting.
-8. Double-sided: the new dowel controls and flip direction, P19.
-9. Rework: photo overlay and boxes, P17, P18, V14.
+2. Correcting your design: clearance for the bit (`kicad_clearance`),
+   the build-area plugin (`kicad_plugin`), the narrow-gap check.
+3. Exporting from KiCad: `kicad_plot`, `kicad_drill`.
+4. SRM-CAM: install and the update check, load, the plan, checks, export,
+   the run sheet (`gui2_setup`, `gui2_checks`, `gui2_runsheet`, S1 to S4
+   as one GIF). No Guide button, no tabs, no 3D Viewer page: F1 and
+   "Help → The machine, in five minutes" instead.
+5. Preparing the board: P2, P3, V1.
+6. Using the SRM-20: the coordinate systems (kept, `vpanel_coords`),
+   Z zero (V4, `vpanel_z_origin`), the headroom rule (align the README's
+   −55 mm with the app's −50 mm, or explain the margin), the files in
+   order (`vpanel_cut`), Pause versus STOP (V13).
+7. Bed levelling: P5, V6, V7, `gui2_level`, the drift check, clips off
+   before cutting (kept).
+8. Double-sided: the dowel controls (`gui2_dowels`), the flip direction,
+   V15, P11, P12.
+9. Rework: photo overlay and boxes, V17, V18, P13.
 10. Feedback: the form link, one line.
 
-The site gets the same pictures page by page as listed in Parts 1, 3 and
-4, plus the workflow cut on the index.
-
-## Order of work
-
-1. Wednesday: the screenshot script, run it, check every image against
-   the list, commit the new set. Tick off the KiCad screenshots.
-2. Thursday: the README rewrite drafted with the screenshots in place and
-   placeholders for the photos, on a branch in the lab repo.
-3. Friday: the lab day, this shot list printed.
-4. The following desk day: post-production, the site pages, the README
-   pull request, a release tag so the update check has something to
-   announce.
+The site gets the same material page by page as listed above, and the
+workflow cut on the index.
