@@ -313,12 +313,65 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
   });
 
   function demoRows() {
-    var mk = function (id, daysAgo, o) { var d = new Date(Date.now() - daysAgo * 864e5).toISOString(); return Object.assign({ id: id, received_at: d, _form_version: 1 }, o); };
-    return [
-      mk(3, 0, { tag: 'ahmad', experience: 'none', before: ['fiber-laser'], os: 'windows', install: 'installer', install_ok: 'yes', pages: ['getting-started', 'milling-a-board', 'bed-leveling'], guide_order: 4, guide_photos: 'mostly', tier: 'essential', step_load: 5, step_level: 3, step_drill: 5, step_traces: 4, step_cutout: 5, step_export: 5, onscreen: 'helped', app_stuck: 'Leveling. I was not sure how far the probe should travel and whether the map had been applied.', connect: 'own-laptop', connect_ok: 'fiddly', level_ok: 'retry', holding: 'enough', tools: 'clear', result: 'second', defects: ['shorts'], duration: '2-4h', counterfactual: 'no', recommend: 5, fix_one: 'Say on the leveling screen that the map is applied. I ran it twice because I could not tell.', keep: 'The plan that walks the steps in order.', followup: true, quote_ok: true, name: 'Example student' }),
-      mk(2, 6, { experience: 'watched', os: 'linux', install: 'appimage', install_ok: 'retry', install_notes: 'Had to chmod the AppImage, the guide said so but I missed it.', pages: ['getting-started', 'milling-a-board', 'troubleshooting'], guide_order: 5, guide_photos: 'yes', tier: 'essential', step_load: 5, step_level: 4, step_drill: 4, step_traces: 5, step_cutout: 3, step_export: 5, onscreen: 'helped', app_stuck: 'Cut-out: which side of the outline the bit runs on.', connect: 'lab-pc', level_ok: 'first', holding: 'moved', tools: 'guessed', result: 'first', duration: '1-2h', counterfactual: 'slower', recommend: 4, fix_one: 'The tape advice. My board lifted at one corner during the cut-out.', followup: false, quote_ok: true }),
-      mk(1, 14, { experience: 'none', os: 'windows', install: 'installer', install_ok: 'yes', pages: ['none'], guide_order: 2, guide_photos: 'na', tier: 'unaware', step_load: 4, step_level: 2, step_drill: 'skipped', step_traces: 3, step_cutout: 4, step_export: 4, onscreen: 'skimmed', app_stuck: 'Did not know I had to level at all, skipped it, traces did not cut through on one side.', connect: 'own-laptop', connect_ok: 'yes', level_ok: 'skipped', holding: 'unsure', tools: 'wrong', result: 'rework', defects: ['depth', 'broken'], duration: 'half-day', counterfactual: 'slower', recommend: 3, fix_one: 'Make it impossible to skip leveling without a warning.', followup: false, quote_ok: false })
+    // Deterministic pseudo-random rows, so the demo looks the same on every load.
+    var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    function pick(list, weights) { var r = rnd() * weights.reduce(function (a, b) { return a + b; }, 0); for (var i = 0; i < list.length; i++) { r -= weights[i]; if (r < 0) return list[i]; } return list[list.length - 1]; }
+    function some(list, p) { return list.filter(function () { return rnd() < p; }); }
+    function rate(center) { var v = Math.round(center + (rnd() - 0.5) * 2.4); return Math.max(1, Math.min(5, v)); }
+    var FIX = [
+      'Say on the leveling screen that the map is applied. I ran it twice because I could not tell.',
+      'The tape advice. My board lifted at one corner during the cut-out.',
+      'Make it impossible to skip leveling without a warning.',
+      'Which bit goes in for which step. A picture of the bits next to the step names would do.',
+      'The COM port list. Mine showed two ports and nothing said which one was the Arduino.',
+      'Re-zero Z after the bit change. The guide says it, but the app should nag me.',
+      'The drill file from KiCad was in the wrong unit and the preview looked fine. Warn about it.',
+      'Photos in the guide are of a different bed than the one in the lab.',
+      'I did not know how long the probe would take, thought it had hung.',
+      'Nothing big. A progress bar on the export would be nice.',
+      'The cut-out left tabs I did not expect and the board was hard to snap out.',
+      'VPanel. The guide covers it but I still pressed the wrong origin button once.',
+      'Explain what Essential hides. I switched to Full and got lost.',
+      'The first screen. I did not know I had to pick a folder before loading files.'
     ];
+    var STUCK = ['Leveling, not sure how far the probe should travel.', 'Cut-out, which side of the outline the bit runs on.', 'Did not know I had to level at all.', 'Choosing the COM port.', 'Bit change between drill and traces.', 'Setting the origin in VPanel.', '', '', ''];
+    var GAPS = ['The tool-change section is thin.', 'Photos did not match the lab bed.', 'Nothing missing, just long.', 'Say what the ✕ marks on traces mean earlier.', '', '', ''];
+    var KEEP = ['The plan that walks the steps in order.', 'The on-screen explanations.', 'The troubleshooting table.', 'The preview with the shorted spots marked.', '', ''];
+    var NAMES = ['Ahmad', 'Sofie', 'Jonas', 'Mikkel', 'Emma', 'Noor', 'Lucas', 'Freja', 'Oliver', 'Ida', 'Malthe', 'Clara'];
+    var rows = [];
+    for (var i = 0; i < 38; i++) {
+      var exp = pick(['none', 'watched', 'some', 'lots'], [6, 3, 2, 1]);
+      var os = pick(['windows', 'linux', 'macos', 'lab-pc'], [6, 2, 1, 3]);
+      var levelOk = pick(['first', 'retry', 'skipped', 'no'], [5, 3, 2, 1]);
+      var result = levelOk === 'skipped' ? pick(['second', 'rework', 'no', 'first'], [3, 3, 2, 1]) : pick(['first', 'second', 'third-plus', 'rework', 'no'], [6, 3, 1, 2, 1]);
+      var failed = result !== 'first';
+      var r = {
+        id: 40 - i, received_at: new Date(Date.now() - (i * 3.1 + rnd() * 2) * 864e5).toISOString(), _form_version: 1,
+        tag: i < 2 ? 'ahmad' : (rnd() < 0.25 ? 'sep-course' : undefined),
+        experience: exp, before: some(['fiber-laser', 'etching', 'ordered'], 0.35),
+        os: os, install: os === 'linux' ? 'appimage' : os === 'lab-pc' ? 'unsure' : pick(['installer', 'source'], [5, 1]),
+        install_ok: pick(['yes', 'retry', 'help', 'no'], [7, 2, 1, 0.3]),
+        pages: rnd() < 0.15 ? ['none'] : some(['getting-started', 'milling-a-board', 'holding-the-copper', 'bed-leveling', 'machine-control', 'double-sided', 'panels', 'photo-and-rework', 'hardware', 'troubleshooting', 'reference'], 0.4).concat(rnd() < 0.8 ? ['getting-started'] : []).filter(function (v, j, a) { return a.indexOf(v) === j; }),
+        guide_order: rate(4), guide_photos: pick(['yes', 'mostly', 'no', 'na'], [4, 4, 1, 2]),
+        tier: pick(['essential', 'full', 'unaware', 'original'], [7, 1, 2, 0.5]),
+        step_load: rate(4.6), step_level: levelOk === 'skipped' ? 'skipped' : rate(3.2), step_drill: rnd() < 0.1 ? 'skipped' : rate(4.3),
+        step_traces: rate(4.1), step_cutout: rate(3.7), step_export: rate(4.7),
+        onscreen: pick(['helped', 'unclear', 'skimmed', 'unseen'], [5, 2, 3, 1]),
+        app_stuck: STUCK[Math.floor(rnd() * STUCK.length)], guide_gaps: GAPS[Math.floor(rnd() * GAPS.length)],
+        connect: pick(['own-laptop', 'lab-pc', 'mixed', 'none'], [5, 3, 1, 1]), connect_ok: pick(['yes', 'fiddly', 'no'], [6, 3, 0.5]),
+        level_ok: levelOk, holding: pick(['enough', 'moved', 'unsure'], [6, 2, 2]), tools: pick(['clear', 'guessed', 'wrong', 'helped'], [4, 3, 2, 2]),
+        result: result, defects: failed ? some(['shorts', 'broken', 'depth', 'offset', 'outline', 'broke-bit'], 0.3) : ['none'],
+        duration: pick(['lt1h', '1-2h', '2-4h', 'half-day', 'multi-day'], [1, 4, 4, 2, 1]),
+        counterfactual: pick(['no', 'slower', 'yes'], [5, 4, 1]), recommend: rate(result === 'no' ? 2.8 : 4.3),
+        fix_one: FIX[Math.floor(rnd() * FIX.length)], keep: KEEP[Math.floor(rnd() * KEEP.length)],
+        followup: rnd() < 0.5, quote_ok: rnd() < 0.7
+      };
+      if (rnd() < 0.55) r.name = (i < 2 ? 'Ahmad' : NAMES[Math.floor(rnd() * NAMES.length)]) + ' (example)';
+      if (!r.app_stuck) delete r.app_stuck; if (!r.guide_gaps) delete r.guide_gaps; if (!r.keep) delete r.keep;
+      if (!r.tag) delete r.tag;
+      rows.push(r);
+    }
+    return rows;
   }
 
   load();
