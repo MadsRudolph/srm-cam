@@ -96,6 +96,9 @@ def main(argv=None):
         return 1
     # After the first paint, not before: a lab PC behind a captive portal
     # takes the whole timeout to fail, and that must never delay the window.
+    # The KiCad offer first, once per plugin version and only where KiCad
+    # is; the update probe after it, so the two never stack.
+    QTimer.singleShot(800, w.maybe_offer_kicad_plugin)
     if not os.environ.get("SRM_CAM_NO_UPDATE_CHECK"):
         QTimer.singleShot(1500, w.start_update_check)
     return app.exec()

@@ -90,9 +90,34 @@ def test_config_root_follows_the_platform(tmp_path):
     mac = kicadplugin.config_roots(platform="darwin", env=env, home=home)
     lin = kicadplugin.config_roots(platform="linux", env=env, home=home)
 
-    assert win == [tmp_path / "Roaming" / "kicad"]
-    assert mac == [home / "Library" / "Preferences" / "kicad"]
-    assert lin == [home / ".config" / "kicad"]
+    assert win == [tmp_path / "Roaming" / "kicad", home / "Documents" / "KiCad"]
+    assert mac == [home / "Documents" / "KiCad",
+                   home / "Library" / "Preferences" / "kicad"]
+    # Linux loads user plugins from the DATA tree, not the settings tree: a
+    # fresh Arch/Fedora/Ubuntu KiCad has ~/.local/share/kicad/10.0/scripting
+    # and no scripting/ under ~/.config/kicad at all. The first release
+    # looked only in ~/.config and so never found KiCad on Linux.
+    assert lin == [home / ".local" / "share" / "kicad", home / ".config" / "kicad"]
+
+
+def test_linux_honours_xdg_data_home(tmp_path):
+    home = tmp_path / "home"
+    roots = kicadplugin.config_roots(platform="linux",
+                                     env={"XDG_DATA_HOME": str(tmp_path / "xdg")},
+                                     home=home)
+    assert roots[0] == tmp_path / "xdg" / "kicad"
+
+
+def test_a_version_tree_with_scripting_but_no_plugins_dir_still_counts(tmp_path):
+    """A fresh KiCad makes scripting/ and not plugins/. That is still an
+    installed KiCad, and the install creates the missing folder."""
+    (tmp_path / "10.0" / "scripting").mkdir(parents=True)
+
+    found = kicadplugin.plugin_dirs(tmp_path)
+    assert found == [tmp_path / "10.0" / "scripting" / "plugins"]
+
+    dest = kicadplugin.install(_fake_source(tmp_path, version="1.0.0"), found[0])
+    assert (dest / "VERSION").read_text() == "1.0.0"
 
 
 def test_config_root_falls_back_when_appdata_is_unset(tmp_path):
@@ -101,7 +126,7 @@ def test_config_root_falls_back_when_appdata_is_unset(tmp_path):
 
     roots = kicadplugin.config_roots(platform="win32", env={}, home=home)
 
-    assert roots == [home / "AppData" / "Roaming" / "kicad"]
+    assert roots[0] == home / "AppData" / "Roaming" / "kicad"
 
 
 def test_bundled_source_is_a_real_plugin_folder():

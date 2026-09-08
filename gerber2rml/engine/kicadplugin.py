@@ -27,9 +27,13 @@ def _version_key(name):
 def plugin_dirs(config_root):
     """KiCad scripting-plugin directories under *config_root*, newest first.
 
-    KiCad keeps one config tree per version (``<root>/10.0/``), and a machine
-    that has been upgraded keeps the old ones. Newest first because that is
-    the one the student is running; the others are offered, not chosen.
+    KiCad keeps one tree per version (``<root>/10.0/``), and a machine that
+    has been upgraded keeps the old ones. Newest first because that is the
+    one the student is running; the others are offered, not chosen.
+
+    A version tree counts as soon as it has a ``scripting/`` folder, even
+    with no ``plugins/`` inside yet: a fresh KiCad makes the one and not the
+    other, and the install creates what is missing.
     """
     root = Path(config_root)
     if not root.is_dir():
@@ -42,9 +46,9 @@ def plugin_dirs(config_root):
             key = _version_key(child.name)
         except ValueError:
             continue                     # colors/, templates/, ... not a version
-        plugins = child / "scripting" / "plugins"
-        if plugins.is_dir():
-            found.append((key, plugins))
+        scripting = child / "scripting"
+        if scripting.is_dir():
+            found.append((key, scripting / "plugins"))
     return [path for _key, path in sorted(found, reverse=True)]
 
 
@@ -56,6 +60,7 @@ def install(source, plugins_dir):
     shadow the new one.
     """
     dest = Path(plugins_dir) / PLUGIN_DIRNAME
+    dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(source, dest,
@@ -89,10 +94,14 @@ def status(plugins_dir, bundled):
 
 
 def config_roots(platform=None, env=None, home=None):
-    """Where KiCad keeps its per-version config trees on this machine.
+    """Where KiCad keeps its per-version trees on this machine, likeliest first.
 
-    A list rather than one path so a future second location (a portable
-    install, say) can be added without changing every caller.
+    KiCad loads user plugins from its *data* tree, which is only the same
+    place as its settings on Windows. On Linux that is ``~/.local/share/kicad``
+    (``$XDG_DATA_HOME`` if set) and on a Mac ``~/Documents/KiCad``; the
+    settings trees are listed after them for installs that put ``scripting/``
+    there. Every root that exists gets the plugin, so a student opens
+    whichever KiCad they have and finds the button.
     """
     platform = sys.platform if platform is None else platform
     env = os.environ if env is None else env
@@ -101,10 +110,13 @@ def config_roots(platform=None, env=None, home=None):
     if platform.startswith("win"):
         appdata = env.get("APPDATA")
         base = Path(appdata) if appdata else home / "AppData" / "Roaming"
-        return [base / "kicad"]
+        return [base / "kicad", home / "Documents" / "KiCad"]
     if platform == "darwin":
-        return [home / "Library" / "Preferences" / "kicad"]
-    return [home / ".config" / "kicad"]
+        return [home / "Documents" / "KiCad",
+                home / "Library" / "Preferences" / "kicad"]
+    xdg = env.get("XDG_DATA_HOME")
+    data = Path(xdg) if xdg else home / ".local" / "share"
+    return [data / "kicad", home / ".config" / "kicad"]
 
 
 # The folder shipped alongside the app. Resolves both from a source checkout
