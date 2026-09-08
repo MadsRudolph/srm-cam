@@ -557,6 +557,8 @@ class MainWindow(QMainWindow):
 
         h = mb.addMenu("&Help")
         self._act(h, "How this works", self.action_help)
+        self.update_act = self._act(h, "Check for updates…",
+                                    self.action_check_updates)
         self._act(h, "About SRM-CAM", self.action_about)
 
         self._sync_tier()
@@ -3029,6 +3031,21 @@ class MainWindow(QMainWindow):
               "sheet it is registered in.")
         d.act("Close", kind="primary", on=d.accept, default=True)
         d.exec()
+
+    # ------------------------------------------------------------ updates
+    def action_check_updates(self):
+        from gerber2rml.gui2 import updatecheck
+        updatecheck.check_now(self)
+
+    def start_update_check(self):
+        """The quiet launch probe. Called by app.py once the window is up;
+        never by the tests, which must not touch the network."""
+        from gerber2rml.gui2 import updatecheck
+        try:
+            self._update_probe = updatecheck.start_probe(
+                self, lambda r: updatecheck.announce(self, r))
+        except Exception:                       # noqa: BLE001 - a nicety
+            pass
 
     def action_about(self):
         from gerber2rml import __version__ as ver

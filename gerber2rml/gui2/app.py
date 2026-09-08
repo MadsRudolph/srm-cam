@@ -58,7 +58,7 @@ def main(argv=None):
     try:
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QFont
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer
 
         from gerber2rml import glconfig
         from gerber2rml.gui2 import theme, style
@@ -94,6 +94,10 @@ def main(argv=None):
         traceback.print_exc()
         _panic("SRM-CAM could not build its window.", log)
         return 1
+    # After the first paint, not before: a lab PC behind a captive portal
+    # takes the whole timeout to fail, and that must never delay the window.
+    if not os.environ.get("SRM_CAM_NO_UPDATE_CHECK"):
+        QTimer.singleShot(1500, w.start_update_check)
     return app.exec()
 
 
