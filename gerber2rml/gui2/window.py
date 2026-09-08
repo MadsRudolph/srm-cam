@@ -192,6 +192,21 @@ def _as_gui2_setup(data):
     # dowel job, silently, which is a different board.
     if "reg_method" in data and "registration" not in data:
         out["registration"] = "fiducial" if data["reg_method"] == 1 else "dowel"
+    if "reg" in data:
+        out["dowel_mode"] = "grid" if data["reg"] == 1 else "fresh"
+    if "dowel_edge" in data:
+        out["dowel_edges"] = "leftright" if data["dowel_edge"] == 1 else "topbottom"
+    # The first interface keeps these in line edits, so they are strings.
+    # One that does not parse is left to the default rather than refused: a
+    # blank pitch box should not cost the rest of the setup.
+    for theirs, ours in (("grid_pitch", "grid_pitch"), ("grid_pin", "grid_pin"),
+                         ("clr_large", "clear_large"),
+                         ("clr_small", "clear_small"), ("bed_bite", "bed_bite")):
+        if theirs in data:
+            try:
+                out[ours] = float(data[theirs])
+            except (TypeError, ValueError):
+                out.pop(ours, None)
     fid = data.get("fid")
     if isinstance(fid, dict):
         if "fid_diameter" not in data:
@@ -207,15 +222,24 @@ def _as_gui2_setup(data):
             out["fid_offset"] = float(fid["offset"])
         except (KeyError, TypeError, ValueError):
             pass
-        # 0 on board, 1 in the waste, 2 the manual placement this interface
-        # has no equivalent for - which falls back to the corner scheme rather
-        # than silently drilling somewhere the operator did not pick.
+        # 0 on board, 1 in the waste, 2 placed by hand. Hand-placed holes
+        # only mean anything with their points; a file that has the mode but
+        # not the points falls back to the corner scheme rather than silently
+        # drilling somewhere the operator did not pick.
         place = fid.get("place")
+        points = fid.get("points")
         if place in (0, 1):
             out["fid_placement"] = "waste" if place == 1 else "onboard"
+        elif place == 2 and isinstance(points, list) and len(points) >= 2:
+            out["fid_placement"] = "manual"
+            out["fid_points"] = points
         elif place == 2:
             out["fid_placement"] = "onboard"
             unreadable.append("the hand-placed reference holes")
+        if "scale" in fid:
+            out["fid_scale"] = bool(fid["scale"])
+        if "flip" in fid:
+            out["fid_flip"] = "horizontal" if fid["flip"] == 1 else "vertical"
     return out, unreadable
 
 
@@ -273,8 +297,30 @@ class MainWindow(QMainWindow):
         # descend INSIDE it to probe it, which is a hole no bit can enter.
         self._fid_diameter = 1.6
         self._fid_count = 4
-        self._fid_placement = "onboard"    # "onboard" | "waste"
+        self._fid_placement = "onboard"    # "onboard" | "waste" | "manual"
         self._fid_offset = 4.0
+        # Which way the board is physically turned over. The fit cannot tell:
+        # a rectangle of corner holes matches equally well either way, so a
+        # wrong answer here mirrors the whole top side under a perfect RMS.
+        self._fid_flip = "vertical"        # "vertical" (left-right) | "horizontal"
+        self._fid_scale = False            # let the fit stretch the board too
+        # Hand-placed reference holes: (x, y) mm from the framed board's
+        # lower-left corner, in the design frame. Only read when the
+        # placement is "manual"; seeded from the waste corners when it is
+        # first chosen, then moved by dragging the pins on the stage.
+        self._fid_points = []
+        # The dowel registration, as the engine's DowelSpec wants it. The
+        # sub-mode used to be dropped on load and the bed bite hard-coded.
+        from gerber2rml.doublesided import (CLEAR_LARGE, CLEAR_SMALL,
+                                            DOWEL_BED_DEPTH, GRID_PITCH,
+                                            GRID_PIN)
+        self._dowel_mode = "fresh"         # "fresh" | "grid"
+        self._dowel_edges = "topbottom"    # "topbottom" | "leftright"
+        self._grid_pitch = GRID_PITCH
+        self._grid_pin = GRID_PIN
+        self._clear_large = CLEAR_LARGE
+        self._clear_small = CLEAR_SMALL
+        self._bed_bite = DOWEL_BED_DEPTH
         # Where the flipped board REALLY landed, from the measured fiducials.
         # Everything drawn for the top side goes through it, so the picture is
         # of the board in front of you and not the one you meant to put down.
@@ -349,6 +395,7 @@ class MainWindow(QMainWindow):
         self.stage.hovered.connect(self._on_hover)
         self.stage.region_added.connect(self._on_region)
         self.stage.board_picked.connect(self.action_select_board)
+        self.stage.pin_moved.connect(self._on_pin_moved)
         self.stage.set_empty(
             "No board loaded",
             "File ▸ Open Gerber folder, or try the demo board")
@@ -831,7 +878,9 @@ class MainWindow(QMainWindow):
                 holes, align = lay.holes, lay.align_holes
         self.plan = runplan.build(self.state, double_sided=self._double,
                                   registration=self._registration, holes=holes,
-                                  align_holes=align)
+                                  align_holes=align, dowels=self.dowel_spec(),
+                                  bed_bite=self._bed_bite,
+                                  flip_axis=self.flip_axis())
         if self._exported:
             self.plan.apply_estimates(
                 {n: estimate_file_seconds(p) for n, p in self._exported.items()
@@ -1070,14 +1119,13 @@ class MainWindow(QMainWindow):
         if self.state.gerber_dir is None:
             return None
         key = (str(self.state.gerber_dir), self.state.rotate,
-               self._registration, self._fid_diameter,
-               self._fid_count, self._fid_placement, self._fid_offset)
+               self._registration, self.fiducial_spec(), self.dowel_spec())
         if self._layout_base is None or self._layout_key != key:
             try:
                 self._layout_base = layout_double_sided(
                     self.state.gerber_dir, offset=(0.0, 0.0),
                     rotate=self.state.rotate, registration=self._registration,
-                    fiducials=self.fiducial_spec())
+                    dowels=self.dowel_spec(), fiducials=self.fiducial_spec())
                 self._layout_key = key
             except Exception as e:
                 self.report_error(
@@ -1125,10 +1173,11 @@ class MainWindow(QMainWindow):
                     prev = preview_layout_double_sided(
                         st.gerber_dir, offset=(st.place_x, st.place_y),
                         rotate=st.rotate, registration=self._registration,
-                        fiducials=self.fiducial_spec())
+                        dowels=self.dowel_spec(), fiducials=self.fiducial_spec())
                     self.stage.set_board(prev.bottom_copper, prev.outline,
                                          prev.holes, copper_far=prev.top_copper,
                                          align_holes=prev.align_holes)
+                    self.stage.set_pin_drag(self._pins_draggable())
                     return
                 except Exception as e:
                     # Never the machine frame under a badge that says design.
@@ -1149,10 +1198,17 @@ class MainWindow(QMainWindow):
                     self._fit_holes(
                         reflect_holes(lay.holes, lay.axis, lay.flip_pos)),
                     align_holes=self._fit_holes(lay.align_holes))
+                # The top view is the board AFTER the flip, warped to a
+                # measured fit: a pin dragged there has no single place to
+                # go back to in the design. Drag them on a bottom-side step
+                # or in the X-ray.
+                self.stage.set_pin_drag(False)
             else:
                 self.stage.set_board(lay.bottom_copper, lay.outline, lay.holes,
                                      align_holes=lay.align_holes)
+                self.stage.set_pin_drag(self._pins_draggable())
         else:
+            self.stage.set_pin_drag(False)
             self.stage.set_board(st.board.copper, st.board.outline,
                                  st.board.holes)
             self.stage.set_members(
@@ -1249,14 +1305,15 @@ class MainWindow(QMainWindow):
         except Exception:
             self._shorts = []           # a DRC that crashes must not block work
         dowel_depth = None
-        if self._double and self._registration == "dowel":
-            # The dowel holes go through the stock and on into the bed. They
+        if (self._double and self._registration == "dowel"
+                and self._dowel_mode == "fresh"):
+            # Fresh dowel holes go through the stock and on into the bed. They
             # are the deepest cut of a two-sided job, and a Z-reach check
             # that does not know about them passes a job the machine cannot
-            # finish.
-            from gerber2rml.doublesided import DOWEL_BED_DEPTH
+            # finish. Grid pins are already in the bed: those holes only
+            # clear the stock, and the drill check covers that.
             dowel_depth = (self.inspector.setup.thickness.value()
-                           + DOWEL_BED_DEPTH)
+                           + self._bed_bite)
         # The jobs as they will be CUT, margin included: the files carry the
         # deepened depth, so the reach check has to as well.
         depths = diag.cut_depths(self.cutting_trace(), self.cutting_drill(),
@@ -1415,14 +1472,14 @@ class MainWindow(QMainWindow):
         stock and, for dowels, on into the bed. Previewing and streaming them
         with the plain drill job showed a 1.7 mm hole where the file makes a
         6.6 mm one - and streamed it."""
-        from gerber2rml.doublesided import (_align_drill, _fiducial_align_drill,
-                                            DowelSpec)
+        from gerber2rml.doublesided import _align_drill, _fiducial_align_drill
         t = self.inspector.setup.thickness.value()
         if self._registration == "fiducial":
             job, _d = _fiducial_align_drill(self.cutting_drill(),
                                             self.fiducial_spec(), t)
         else:
-            job, _d = _align_drill(self.cutting_drill(), DowelSpec(), None, t)
+            job, _d = _align_drill(self.cutting_drill(), self.dowel_spec(),
+                                   None, t, self._bed_bite)
         return job
         self.refresh_preview()
 
@@ -2297,15 +2354,48 @@ class MainWindow(QMainWindow):
         board — the same four reference holes, in a different place.
         """
         from gerber2rml.doublesided import FiducialSpec
+        manual = self._fid_placement == "manual"
         return FiducialSpec(count=self._fid_count,
                             placement=self._fid_placement,
                             edge_offset=self._fid_offset,
-                            hole_diameter=self._fid_diameter)
+                            hole_diameter=self._fid_diameter,
+                            allow_scale=bool(self._fid_scale),
+                            flip_axis=self._fid_flip,
+                            points=(tuple(tuple(p) for p in self._fid_points)
+                                    if manual else ()))
+
+    def dowel_spec(self):
+        """The dowel geometry this job uses, as the engine wants it. One home,
+        for the same reason as :meth:`fiducial_spec`: the layout, the align
+        drill, the export, the dowels-only export and the plan all read it."""
+        from gerber2rml.doublesided import DowelSpec
+        return DowelSpec(mode=self._dowel_mode, placement=self._dowel_edges,
+                         pitch_x=self._grid_pitch, pitch_y=self._grid_pitch,
+                         grid_pin=self._grid_pin,
+                         clearance_large=self._clear_large,
+                         clearance_small=self._clear_small)
+
+    def flip_axis(self):
+        """Which line the board turns over about: "vertical" is a left-right
+        flip, "horizontal" a top-bottom one. Dowels fix it by which edges
+        they sit beyond; fiducials leave it to the operator's word."""
+        from gerber2rml.doublesided import _axis_of
+        if self._registration == "fiducial":
+            return self._fid_flip
+        return _axis_of(self.dowel_spec())
 
     def action_fiducial_layout(self, count, placement, offset):
         self._fid_count = int(count)
         self._fid_placement = placement
         self._fid_offset = float(offset)
+        if placement == "manual" and len(self._fid_points) != self._fid_count:
+            # Start where the waste corners would have put them, so the
+            # first thing on screen is a sensible layout to pull about
+            # rather than four pins on top of each other at the origin.
+            self._seed_fid_points()
+            self.say("info", "Drag the gold pins on the stage to where the "
+                             "holes should go — anywhere with copper under "
+                             "them. The offset is not used.")
         self._layout_base = None
         self._layout_key = None
         self._paths_cache = {}
@@ -2320,10 +2410,172 @@ class MainWindow(QMainWindow):
         self._after_params()
         self.refresh_preview()
 
+    def action_fiducial_flip(self, axis):
+        """The operator's word on which way the board was turned. It changes
+        the layout (the top face is reflected about it), the plan's flip
+        step and the fit's nominal points, so everything is rebuilt."""
+        self._fid_flip = "horizontal" if axis == "horizontal" else "vertical"
+        self._layout_base = None
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
+        page = getattr(self, "flipfit_page", None)
+        if page is not None:
+            page.sync_from_job()
+
+    def action_fiducial_scale(self, on):
+        """Whether the fit may stretch the board. Kept on the job so that a
+        saved setup reproduces the same fit, not only the same holes."""
+        self._fid_scale = bool(on)
+
+    def _seed_fid_points(self):
+        """Manual reference holes start where the waste corners would put
+        them, converted to board-relative design-frame coordinates."""
+        from gerber2rml.doublesided import (preview_layout_double_sided,
+                                            FiducialSpec)
+        st = self.state
+        if st.board is None or st.gerber_dir is None:
+            return
+        spec = FiducialSpec(count=self._fid_count, placement="waste",
+                            edge_offset=self._fid_offset,
+                            hole_diameter=self._fid_diameter,
+                            flip_axis=self._fid_flip)
+        try:
+            lay = preview_layout_double_sided(
+                st.gerber_dir, dowels=self.dowel_spec(),
+                offset=(st.place_x, st.place_y), rotate=st.rotate,
+                registration="fiducial", fiducials=spec)
+        except Exception as e:
+            self.report_error(
+                "The reference holes could not be placed", e,
+                "The corner layout they start from could not be built. "
+                "Check the board loads as double-sided first.")
+            return
+        fx0, fy0 = lay.frame0
+        self._fid_points = [[x - fx0, y - fy0] for (x, y, _d) in lay.align_holes]
+
+    def _pins_draggable(self):
+        """Whether the pins on the stage may be dragged: only hand-placed
+        reference holes move, and only in a view whose frame can be turned
+        back into a design-frame point (see :meth:`_on_pin_moved`)."""
+        return (self._double and self._registration == "fiducial"
+                and self._fid_placement == "manual"
+                and self.state.board is not None)
+
+    def _on_pin_moved(self, index, x, y):
+        """A reference hole was dragged on the stage. The stage speaks the
+        frame it is drawing in; the point is stored board-relative in the
+        design frame, which is what the engine's FiducialSpec wants.
+
+        In the X-ray that is a translation. In the bed frame the layout was
+        built from the MIRRORED board, so the point is reflected back across
+        the framed box along the flip direction - the inverse of what
+        ``_place_fiducials(mirrored=True)`` does on the way out.
+        """
+        from gerber2rml.doublesided import _frame
+        if not self._pins_draggable() or index >= len(self._fid_points):
+            return
+        st = self.state
+        if self.stage.frame == "xray":
+            from gerber2rml.doublesided import preview_layout_double_sided
+            try:
+                lay = preview_layout_double_sided(
+                    st.gerber_dir, offset=(st.place_x, st.place_y),
+                    rotate=st.rotate, registration="fiducial",
+                    dowels=self.dowel_spec(), fiducials=self.fiducial_spec())
+            except Exception:
+                return
+            fx0, fy0 = lay.frame0
+            px, py = x - fx0, y - fy0
+        else:
+            lay = self._ds_layout()
+            if lay is None:
+                return
+            fx0, fy0 = lay.frame0
+            gx0, gy0, gx1, gy1 = _frame([g for g in (lay.bottom_copper,
+                                                     lay.outline)
+                                         if g is not None and not g.is_empty])
+            w, h = gx1 - gx0, gy1 - gy0
+            rx, ry = x - fx0, y - fy0
+            if self._fid_flip == "horizontal":
+                px, py = rx, h - ry
+            else:
+                px, py = w - rx, ry
+        self._fid_points[index] = [px, py]
+        self._layout_base = None
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
+        self.say("info", f"Reference hole {index + 1} is now {px:+.2f}, "
+                         f"{py:+.2f} mm from the board's lower-left corner.")
+
     def action_registration(self, kind):
         self._registration = kind or "dowel"
         self._paths_cache = {}
         self._after_params()
+
+    def action_dowels(self, mode, edges, pitch, pin, clear_large, clear_small,
+                      bed_bite):
+        """Everything about the dowel registration, in one call, because the
+        inspector's controls all read the same DowelSpec and the layout is
+        rebuilt either way. The clearances widen the holes without moving
+        their centres (the engine promises that), so a re-cut lands back on
+        the existing holes; the bite only changes depth."""
+        self._dowel_mode = "grid" if mode == "grid" else "fresh"
+        self._dowel_edges = "leftright" if edges == "leftright" else "topbottom"
+        self._grid_pitch = float(pitch)
+        self._grid_pin = float(pin)
+        self._clear_large = float(clear_large)
+        self._clear_small = float(clear_small)
+        self._bed_bite = float(bed_bite)
+        self._layout_base = None
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
+
+    def action_export_dowels_only(self):
+        """Write only the dowel-hole program, over the top of the one a full
+        export wrote. For the test-fit loop: a pin that binds wants a touch
+        more clearance, a pin that does not seat wants a deeper bite, and
+        neither should cost re-running the traces."""
+        st = self.state
+        if st.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        if not (self._double and self._registration == "dowel"):
+            self.say("warn", "Dowels-only is for a double-sided job registered "
+                             "on dowel pins.")
+            return
+        from gerber2rml.doublesided import build_align_only
+        out = self.export_dir()
+        if out is None:
+            out = QFileDialog.getExistingDirectory(
+                self, "Which folder holds this job's files?",
+                workspace.remembered_dir("out", "exports"))
+            if not out:
+                return
+        try:
+            path = build_align_only(
+                st.gerber_dir, out, st.name, drill=self.cutting_drill(),
+                dowels=self.dowel_spec(), machine=st.machine,
+                offset=(st.place_x, st.place_y), rotate=st.rotate,
+                board_thickness=self.inspector.setup.thickness.value(),
+                bed_depth=self._bed_bite)
+        except Exception as e:
+            self.report_error(
+                "The dowel-hole program could not be written", e,
+                "Nothing has been changed. Check the folder still holds this "
+                "job's files and is not read-only.")
+            return
+        workspace.remember_dir("out", str(path))
+        self._export_dir = Path(out)
+        self._exported[path.name] = path
+        self.refresh_plan()
+        self.say("ok", f"{path.name} rewritten - the dowel holes only. Keep the "
+                       f"same XY origin so it lands on the existing holes.")
 
     def action_screws_toggled(self, on):
         self.screwed = bool(on)
@@ -2450,6 +2702,7 @@ class MainWindow(QMainWindow):
                     machine=st.machine,
                     offset=(st.place_x, st.place_y), rotate=st.rotate,
                     level=level, registration=self._registration,
+                    dowels=self.dowel_spec(), bed_depth=self._bed_bite,
                     fiducials=self.fiducial_spec(),
                     board_thickness=self.inspector.setup.thickness.value())
             else:
@@ -2646,6 +2899,12 @@ class MainWindow(QMainWindow):
             "fid_count": self._fid_count,
             "fid_placement": self._fid_placement,
             "fid_offset": self._fid_offset,
+            "fid_flip": self._fid_flip, "fid_scale": self._fid_scale,
+            "fid_points": [list(p) for p in self._fid_points],
+            "dowel_mode": self._dowel_mode, "dowel_edges": self._dowel_edges,
+            "grid_pitch": self._grid_pitch, "grid_pin": self._grid_pin,
+            "clear_large": self._clear_large, "clear_small": self._clear_small,
+            "bed_bite": self._bed_bite,
             "manual_screws": (None if self._manual_screws is None
                               else [list(p) for p in self._manual_screws]),
             "top_fit": ([self._top_fit.theta, self._top_fit.scale,
@@ -2733,6 +2992,36 @@ class MainWindow(QMainWindow):
         self._fid_count = int(data.get("fid_count", 4))
         self._fid_placement = data.get("fid_placement", "onboard")
         self._fid_offset = float(data.get("fid_offset", 4.0))
+        # Defaults for setups written before these were saved: the values
+        # the export used then, so an old job reproduces what it produced.
+        self._fid_flip = ("horizontal" if data.get("fid_flip") == "horizontal"
+                          else "vertical")
+        self._fid_scale = bool(data.get("fid_scale", False))
+        try:
+            self._fid_points = [[float(x), float(y)]
+                                for x, y in (data.get("fid_points") or [])]
+        except (TypeError, ValueError):
+            self._fid_points = []
+            foreign.append("the hand-placed reference holes")
+        if self._fid_placement == "manual" and len(self._fid_points) < 2:
+            # Hand-placed holes without their places are not a placement.
+            self._fid_placement = "onboard"
+            foreign.append("the hand-placed reference holes")
+        self._dowel_mode = "grid" if data.get("dowel_mode") == "grid" else "fresh"
+        self._dowel_edges = ("leftright" if data.get("dowel_edges") == "leftright"
+                             else "topbottom")
+        from gerber2rml.doublesided import (CLEAR_LARGE, CLEAR_SMALL,
+                                            DOWEL_BED_DEPTH, GRID_PITCH,
+                                            GRID_PIN)
+        for attr, key, default in (("_grid_pitch", "grid_pitch", GRID_PITCH),
+                                   ("_grid_pin", "grid_pin", GRID_PIN),
+                                   ("_clear_large", "clear_large", CLEAR_LARGE),
+                                   ("_clear_small", "clear_small", CLEAR_SMALL),
+                                   ("_bed_bite", "bed_bite", DOWEL_BED_DEPTH)):
+            try:
+                setattr(self, attr, float(data.get(key, default)))
+            except (TypeError, ValueError):
+                setattr(self, attr, default)
         self.screwed = bool(data.get("screwed", False))
         stock = data.get("stock", self.stock)
         try:
@@ -2807,6 +3096,10 @@ class MainWindow(QMainWindow):
         setup.double.setChecked(self._double)
         setup.screwed.setChecked(self.screwed)
         setup.sync()
+        # The measuring page reads the flip and the scale flag on show; a
+        # setup loaded while it is hidden must not leave it saying the old
+        # answer until the next show.
+        self.flipfit_page.sync_from_job()
         self._sync_frame_options()
         self._after_params()
         self._sync_stock()

@@ -226,6 +226,21 @@ class FlipFitPage(inspector.Page):
             "checking the rectangle, not the flip. If you turned the board the "
             "other way, every trace comes out mirrored and the numbers on this "
             "page will not tell you."))
+        # The choice itself, right under the warning about it. It is the
+        # same job setting as the one under Set up the job; the two always
+        # show the same answer.
+        self.flip = widgets.Segmented(
+            [("vertical", "Flipped left-right",
+              "Turned over about a vertical line, so left and right swap."),
+             ("horizontal", "Flipped top-bottom",
+              "Turned over about a horizontal line, so top and bottom swap.")],
+            "vertical")
+        self.flip.changed.connect(self._on_flip)
+        warn.box.addWidget(widgets.Field("You", self.flip))
+        warn.box.addWidget(widgets.hint(
+            "Say which way you actually turned it, then jog to a drilled hole "
+            "in the top view before cutting: the hole is either under the bit "
+            "or it is not, and that is the check the fit cannot do."))
         self.add(warn)
 
         grid = widgets.Section("The reference holes")
@@ -278,7 +293,7 @@ class FlipFitPage(inspector.Page):
             "you have a reason to think the stock moved dimensionally — "
             "otherwise it absorbs real measurement error into a fake stretch "
             "and makes a bad fit look good.")
-        self.scale_chk.toggled.connect(lambda _v: self._fit_preview())
+        self.scale_chk.toggled.connect(self._on_scale)
         fit.add(self.scale_chk)
         self.rms = widgets.Readout("Worst-case error", "—")
         fit.add(self.rms)
@@ -323,6 +338,34 @@ class FlipFitPage(inspector.Page):
         fit.add(self.fit_btn)
         self.add(fit)
         self.finish()
+
+    # -- the job's answers, read back ---------------------------------------
+    def sync_from_job(self):
+        """The flip direction and the scale flag live on the job, so that a
+        saved setup brings them back and the setup page agrees. Read, never
+        assumed: this page and that one showing different answers is exactly
+        the wrong-flip failure with an extra step."""
+        self.flip.set_current(getattr(self.ctl, "_fid_flip", "vertical"))
+        want = bool(getattr(self.ctl, "_fid_scale", False))
+        if self.scale_chk.isChecked() != want:
+            self.scale_chk.blockSignals(True)
+            self.scale_chk.setChecked(want)
+            self.scale_chk.blockSignals(False)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.sync_from_job()
+
+    def _on_flip(self, axis):
+        # The layout is rebuilt about the new line, so the nominal points
+        # in the table are stale: list them again if there is a list.
+        self.ctl.action_fiducial_flip(axis)
+        if self._nominal:
+            self._build()
+
+    def _on_scale(self, on):
+        self.ctl.action_fiducial_scale(on)
+        self._fit_preview()
 
     # -- the list ----------------------------------------------------------
     def _build(self):
