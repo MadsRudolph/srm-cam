@@ -114,6 +114,7 @@ class Stage(QWidget):
     placement_changed = Signal(float, float)     # drag finished: total (dx, dy) mm
     placement_dragging = Signal(float, float)    # live during a drag, cheap
     jog_requested = Signal(float, float)         # clicked a target while armed
+    jog_step_requested = Signal(float, float)    # arrow key while armed: (dx, dy) mm
     screw_picked = Signal(float, float)          # clicked a spoilboard hole
     hovered = Signal(object)                     # (x, y) mm, or None on leave
     frame_changed = Signal(str)
@@ -150,6 +151,11 @@ class Stage(QWidget):
         self._mesh = None                 # (QImage, rect, span) height map
         self._photo_dim = 0.0             # how far the work is faded over it
         self._tool = None                 # (x, y) mm
+        self._tool_touch = False          # the probe wire says: on the copper
+        # Where the bit has been, as the poll saw it. Drawn fading from
+        # oldest to newest so a rework pass can be followed by its tracks.
+        self._trail = []
+        self._trail_on = True
         self._cut_width = 0.8
         self._show_travel = True
         self._legend = []
@@ -393,9 +399,44 @@ class Stage(QWidget):
         self._invalidate()
         self.update()
 
-    def set_tool(self, pos):
+    # Trail tuning: a sample closer than this (mm) to the last one is jitter
+    # and is dropped, and the crumb count is capped so a long job stays a
+    # cheap repaint - the trail is outside the scene raster and is drawn on
+    # every poll.
+    TRAIL_MIN_STEP = 0.2
+    TRAIL_MAX = 4000
+
+    def set_tool(self, pos, touch=False):
+        """The live bit at ``pos`` (mm), or None to take it off. ``touch``
+        turns the marker red while the probe wire reports contact. Each new
+        position also extends the trail."""
+        if pos is not None and self._trail_on:
+            if (not self._trail
+                    or math.hypot(pos[0] - self._trail[-1][0],
+                                  pos[1] - self._trail[-1][1])
+                    >= self.TRAIL_MIN_STEP):
+                self._trail.append((pos[0], pos[1]))
+                if len(self._trail) > self.TRAIL_MAX:
+                    del self._trail[:-self.TRAIL_MAX]
         self._tool = pos
+        self._tool_touch = bool(touch)
         self.update()
+
+    def clear_trail(self):
+        """Wipe the breadcrumb trail - a fresh pass, or a frame that moved."""
+        self._trail = []
+        self.update()
+
+    def set_trail_visible(self, on):
+        """Show or hide the trail. Hiding also stops recording it, so it does
+        not pile up unseen and reappear as a wall of old tracks."""
+        self._trail_on = bool(on)
+        if not on:
+            self._trail = []
+        self.update()
+
+    def trail(self):
+        return list(self._trail)
 
     def set_travel_visible(self, on):
         if bool(on) == self._show_travel:
@@ -592,18 +633,33 @@ class Stage(QWidget):
 
     # -- the keyboard ------------------------------------------------------
     NUDGE_MM = 0.1            # one arrow tap; Shift makes it 1 mm, Ctrl 0.01
+    JOG_MM = 1.0              # one arrow tap in jog mode; Shift 10 mm, Ctrl 0.1
 
     def keyPressEvent(self, e):
-        """Arrow keys move the picked board by a small, exact amount.
+        """Arrow keys move the picked board by a small, exact amount - or,
+        while Click to jog is on, the BIT.
 
         Dragging places a board roughly; the last tenth of a millimetre is
         easier to say than to do with a mouse. The nudge is drawn at once, in
         the same way a drag in flight is drawn, and committed - rebuilding the
         toolpaths - a moment after the last tap, so a run of taps costs one
         rebuild rather than one per key.
+
+        In jog mode the same keys step the head instead: a click puts it
+        roughly at a hole, the arrows walk it the last millimetre while you
+        watch the bit. The steps are ten times the placement ones, because a
+        machine move is what they are for. The stage only reports the step;
+        the window turns it into a relative move from the live position.
         """
         step = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0),
                 Qt.Key_Up: (0, 1), Qt.Key_Down: (0, -1)}.get(e.key())
+        if step is not None and self.mode == "jog":
+            mods = e.modifiers()
+            size = (10.0 if mods & Qt.ShiftModifier else
+                    0.1 if mods & Qt.ControlModifier else self.JOG_MM)
+            self.jog_step_requested.emit(step[0] * size, step[1] * size)
+            e.accept()
+            return
         if (step is None or self.mode != "place" or not self.has_board()
                 or self._dragging or self._panning):
             super().keyPressEvent(e)
@@ -1163,14 +1219,30 @@ class Stage(QWidget):
             p.drawLine(c + QPointF(-4, -4), c + QPointF(4, 4))
             p.drawLine(c + QPointF(-4, 4), c + QPointF(4, -4))
 
+    def _paint_trail(self, p):
+        """Oldest to newest, alpha 0.15 to 0.9: the fresh tracks read clearly
+        over the toolpaths, the old ones only hint."""
+        if not self._trail_on or len(self._trail) < 2:
+            return
+        pts = [self.to_px(x, y) for (x, y) in self._trail]
+        n = len(pts) - 1
+        for i in range(n):
+            a = 0.15 + 0.75 * (i / max(n - 1, 1))
+            p.setPen(QPen(theme.alpha(theme.TOOL, a), 1.6))
+            p.drawLine(pts[i], pts[i + 1])
+
     def _paint_tool(self, p):
+        self._paint_trail(p)
         if not self._tool:
             return
         c = self.to_px(*self._tool)
+        # Red on contact: the same fact the bar's Touching chip carries, at
+        # the place you are looking while the bit goes down.
+        colour = theme.DANGER if self._tool_touch else theme.TOOL
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(theme.alpha(theme.TOOL, 0.55), 1.0))
+        p.setPen(QPen(theme.alpha(colour, 0.55), 1.0))
         p.drawEllipse(c, 11, 11)
-        p.setPen(QPen(QColor(theme.TOOL), 1.4))
+        p.setPen(QPen(QColor(colour), 1.4))
         p.drawEllipse(c, 4, 4)
         p.drawLine(c + QPointF(-9, 0), c + QPointF(-6, 0))
         p.drawLine(c + QPointF(6, 0), c + QPointF(9, 0))
