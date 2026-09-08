@@ -524,6 +524,27 @@ class MainWindow(QMainWindow):
         self.photo_clear_act = self._act(v, "Take the photo off",
                                          self.action_clear_photo)
         self.photo_clear_act.setEnabled(False)
+        self.photo_anchor_act = self._act(
+            v, "Choose which holes anchor the photo…", self.action_photo_anchors)
+        # The photo's strength and the design's fade, as sliders in the menu
+        # itself: the menu stays open while one is dragged and the bed
+        # updates underneath. Greyed until there is a photo to adjust.
+        from PySide6.QtWidgets import QWidgetAction
+        from gerber2rml.gui2.photo import PhotoControls
+        self.photo_controls = PhotoControls()
+        self.photo_controls.opacity_changed.connect(self._on_photo_opacity)
+        self.photo_controls.dim_changed.connect(self._on_photo_dim)
+        self.photo_controls_act = QWidgetAction(self)
+        self.photo_controls_act.setDefaultWidget(self.photo_controls)
+        self.photo_controls_act.setEnabled(False)
+        v.addAction(self.photo_controls_act)
+        # What the setup file keeps about the photo: the file and the anchor
+        # pairs it was fitted on (the warp is re-done from them on load),
+        # and the holes the operator chose to anchor on, if any.
+        self._photo_overlay = None      # {path, photo_pts, machine_pts}
+        self._photo_anchor_pts = None   # [(x, y)] chosen holes, machine mm
+        self._photo_opacity = 1.0
+        self._photo_dim = 0.55
 
         m = mb.addMenu("&Machine")
         self._act(m, "Rescan the serial ports", self.bar.refresh_ports)
@@ -1869,9 +1890,10 @@ class MainWindow(QMainWindow):
         self.traveller.clear_done()
         self.rework_page._clear()
         if self.stage.has_photo():
-            self.stage.set_photo(None, None)
-            self.stage.set_photo_dim(0.0)
-            self.photo_clear_act.setEnabled(False)
+            self._drop_photo()
+        # The chosen anchor holes are holes of THIS board, at its placement.
+        self._photo_anchor_pts = None
+        self.stage.set_photo_anchors(None)
 
     def action_apply_preset(self):
         name = self.inspector.setup.preset.currentText()
@@ -1981,7 +2003,82 @@ class MainWindow(QMainWindow):
         dlg = PhonePhotoDialog(self, workspace.workspace_root() / "photos")
         if dlg.exec() != _QDialog.Accepted or not dlg.photo_path:
             return
-        self.action_load_photo(photo_path=str(dlg.photo_path))
+        # A phone photographs the whole machine. Cropped to the copper, the
+        # holes are bigger on screen and the clicks land better.
+        from gerber2rml.gui2.phonephoto import autocrop_to_copper
+        path = autocrop_to_copper(str(dlg.photo_path))
+        if path != str(dlg.photo_path):
+            self.say("info", "Cropped the photo to the copper.")
+        self.action_load_photo(photo_path=path)
+
+    def decode_photo(self, path, max_dim=None):
+        """An image file as an HxWx4 uint8 array, at full size unless
+        ``max_dim`` bounds the longer side. Full size is the default because
+        the anchor clicks and the warp are made on the same array, and the
+        photo detector needs every pixel the camera took."""
+        import numpy as np
+        from PySide6.QtGui import QImage
+        img_q = QImage(str(path))
+        if img_q.isNull():
+            raise ValueError("the file is not an image this app can read")
+        if max_dim and max(img_q.width(), img_q.height()) > max_dim:
+            img_q = img_q.scaled(max_dim, max_dim, Qt.KeepAspectRatio,
+                                 Qt.SmoothTransformation)
+        conv = img_q.convertToFormat(QImage.Format_RGBA8888)
+        ptr = conv.constBits()
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape(
+            conv.height(), conv.bytesPerLine() // 4, 4)[:, :conv.width(), :]
+        # An explicit copy, not ascontiguousarray: when the rows have no
+        # padding the slice is already contiguous and comes back as a VIEW
+        # of the QImage's pixels, which are freed with it on return - the
+        # warp then read freed memory and the process went down.
+        return arr.copy()
+
+    def photo_overlay(self):
+        """The photo on the bed as the setup file sees it, or None."""
+        return dict(self._photo_overlay) if self._photo_overlay else None
+
+    def photo_anchors(self, holes):
+        """The holes the next photo is fitted on: the operator's own picks
+        while they still match holes on screen, else the automatic corners.
+        Returns ``(anchors, chosen)``."""
+        from gerber2rml.gui2 import photo as photo_mod
+        picked = photo_mod.snap_picks(self._photo_anchor_pts, holes)
+        if picked:
+            return picked, True
+        return photo_mod.pick_anchor_holes(holes), False
+
+    def action_photo_anchors(self):
+        """Choose the holes a photo is fitted on, by hand.
+
+        The automatic pick takes the corner-most holes, which is right when
+        the board has dowel or fiducial holes and wrong on a single-sided
+        board, whose corner holes may be tiny or impossible to tell apart in
+        a photo. Here any four or more holes the operator can recognise
+        again are clicked on the design, numbered on the bed, and asked for
+        in that order by the photo dialog.
+        """
+        from PySide6.QtWidgets import QDialog as _QDialog
+        from gerber2rml.gui2 import photo as photo_mod
+        if self.state.board is None:
+            self.say("warn", "Load a board first — the anchors are its "
+                             "drilled holes.")
+            return
+        holes = list(self.state.board.holes or [])
+        if len(holes) < 4:
+            self.say("warn", "This board has fewer than four drilled holes, "
+                             "so there is nothing to line a photo up on.")
+            return
+        dlg = photo_mod.HolePickDialog(
+            self, holes, outline=self.state.board.outline,
+            preset=self._photo_anchor_pts)
+        if dlg.exec() != _QDialog.Accepted:
+            return
+        self._photo_anchor_pts = dlg.anchors()
+        self.stage.set_photo_anchors(self._photo_anchor_pts)
+        n = len(self._photo_anchor_pts)
+        self.say("ok", f"{n} anchor holes chosen — they are numbered on the "
+                       f"bed. Lay the photo on and click them in that order.")
 
     def action_load_photo(self, photo_path=None):
         """Warp a photo of the real board into machine coordinates.
@@ -2011,23 +2108,21 @@ class MainWindow(QMainWindow):
             return
         workspace.remember_dir("photo", path)
         try:
-            import numpy as np
-            from PySide6.QtGui import QImage
-            img_q = QImage(path)
-            if img_q.isNull():
-                raise ValueError("the file is not an image this app can read")
-            conv = img_q.convertToFormat(QImage.Format_RGBA8888)
-            ptr = conv.constBits()
-            arr = np.frombuffer(ptr, dtype=np.uint8).reshape(
-                conv.height(), conv.bytesPerLine() // 4, 4)[:, :conv.width(), :]
-            img = np.ascontiguousarray(arr)
+            img = self.decode_photo(path)
         except Exception as e:
             self.report_error("That photo could not be opened", e,
                               "Try a JPEG or PNG straight off the camera.")
             return
 
         from gerber2rml.gui2 import photo as photo_mod
-        anchors = photo_mod.pick_anchor_holes(holes)
+        anchors, chosen = self.photo_anchors(holes)
+        if self._photo_anchor_pts and not chosen:
+            # The picks no longer sit on holes: the board was moved or
+            # swapped since. Saying so beats silently asking for corners
+            # the operator did not choose.
+            self.say("warn", "The anchor holes you chose no longer match "
+                             "this board's holes, so the corner-most ones "
+                             "are used instead.")
         dlg = photo_mod.PhotoAnchorDialog(
             self, photo_mod.to_qimage(img), anchors, holes=holes,
             outline=self.state.board.outline)
@@ -2035,7 +2130,7 @@ class MainWindow(QMainWindow):
             return
         try:
             worst = self._apply_photo(img, dlg.photo_points(),
-                                      dlg.machine_points())
+                                      dlg.machine_points(), path)
         except Exception as e:
             self.report_error(
                 "The photo could not be lined up", e,
@@ -2047,10 +2142,11 @@ class MainWindow(QMainWindow):
                         "%.2f mm out. Anything over about half a millimetre "
                         "means a click was off, or the board moved." % worst)
 
-    def _apply_photo(self, img, photo_pts, machine_pts):
+    def _apply_photo(self, img, photo_pts, machine_pts, path=""):
         """Fit, warp, and hand the result to the stage. Returns the worst
         residual in mm, which is the only honest measure of whether to trust
-        what is now on screen."""
+        what is now on screen. ``path`` is remembered so the setup file and
+        the photo detector can go back to the file."""
         from gerber2rml.engine.photofit import (fit_homography, residuals,
                                                 warp_photo)
         from gerber2rml.gui2 import photo as photo_mod
@@ -2068,15 +2164,97 @@ class MainWindow(QMainWindow):
         # no width and the photo never appeared.
         px0, px1, py0, py1 = extent
         self.stage.set_photo(photo_mod.to_qimage(rgba), (px0, py0, px1, py1))
-        self.stage.set_photo_dim(0.55)
+        self.stage.set_photo_opacity(self._photo_opacity)
+        self.stage.set_photo_dim(self._photo_dim)
+        self.photo_controls.set_values(self._photo_opacity, self._photo_dim)
         self.photo_clear_act.setEnabled(True)
+        self.photo_controls_act.setEnabled(True)
+        self._photo_overlay = {
+            "path": str(path or ""),
+            "photo_pts": [[float(u), float(v)] for u, v in photo_pts],
+            "machine_pts": [[float(x), float(y)] for x, y in machine_pts]}
         return float(res.max())
 
-    def action_clear_photo(self):
+    def _drop_photo(self):
+        self._photo_overlay = None
         self.stage.set_photo(None, None)
         self.stage.set_photo_dim(0.0)
         self.photo_clear_act.setEnabled(False)
+        self.photo_controls_act.setEnabled(False)
+
+    def action_clear_photo(self):
+        self._drop_photo()
         self.say("ok", "Photo taken off — back to the design.")
+
+    def _on_photo_opacity(self, amount):
+        self._photo_opacity = float(amount)
+        self.stage.set_photo_opacity(amount)
+
+    def _on_photo_dim(self, amount):
+        self._photo_dim = float(amount)
+        if self.stage.has_photo():
+            self.stage.set_photo_dim(amount)
+
+    def _photo_state(self, setup_path):
+        """The photo as the setup file keeps it. The file is copied beside
+        the setup, so the setup survives the photo being moved or deleted -
+        a phone hand-off drops it in a folder nobody tidies on purpose."""
+        d = {"anchors": [list(p) for p in (self._photo_anchor_pts or [])],
+             "opacity": self._photo_opacity, "dim": self._photo_dim}
+        po = self._photo_overlay
+        if not po:
+            return d
+        d.update(po)
+        src = Path(po.get("path") or "")
+        if src.is_file():
+            copy = setup_path.with_name(
+                f"{setup_path.stem}_photo{src.suffix.lower()}")
+            try:
+                if src.resolve() != copy.resolve():
+                    import shutil
+                    shutil.copy2(src, copy)
+                d["copy"] = copy.name
+            except OSError:
+                pass                        # best effort, never blocks a save
+        return d
+
+    def _restore_photo(self, data, foreign, setup_path):
+        """Put a saved photo back: the anchors first, then the fit re-done
+        from the saved pairs on the original file or the copy beside the
+        setup. A photo that is gone is reported, not fatal."""
+        if not isinstance(data, dict):
+            return
+        pts = []
+        for p in data.get("anchors") or []:
+            try:
+                pts.append((float(p[0]), float(p[1])))
+            except (TypeError, ValueError, IndexError):
+                continue
+        self._photo_anchor_pts = pts or None
+        self.stage.set_photo_anchors(self._photo_anchor_pts)
+        try:
+            self._photo_opacity = max(0.0, min(1.0, float(
+                data.get("opacity", self._photo_opacity))))
+            self._photo_dim = max(0.0, min(1.0, float(
+                data.get("dim", self._photo_dim))))
+        except (TypeError, ValueError):
+            pass
+        self.photo_controls.set_values(self._photo_opacity, self._photo_dim)
+        if not data.get("photo_pts"):
+            return
+        src = Path(str(data.get("path") or ""))
+        if not src.is_file():
+            copy = data.get("copy")
+            src = setup_path.with_name(str(copy)) if copy else None
+            if src is None or not src.is_file():
+                foreign.append("the photo (its file is gone)")
+                return
+        try:
+            img = self.decode_photo(src)
+            self._apply_photo(img, [tuple(p) for p in data["photo_pts"]],
+                              [tuple(p) for p in data["machine_pts"]], src)
+        except Exception:
+            foreign.append("the photo")
 
     def action_sim3d(self):
         """Orbit the selected step's toolpath and play the tool along it.
@@ -2109,6 +2287,11 @@ class MainWindow(QMainWindow):
             self.say("warn", "That step's toolpath is empty — nothing to "
                              "watch.")
             return
+        self.open_sim3d(paths, f"{self.state.name or 'board'} — {step.title}")
+
+    def open_sim3d(self, paths, title):
+        """Open the 3D view on ``paths``. The rework page calls this with the
+        pass clipped to its boxes, so what plays is only the re-cut."""
         try:
             from gerber2rml.gui2.sim3d import Simulation3DWindow
         except Exception as e:
@@ -2129,7 +2312,7 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
         self._sim_window = Simulation3DWindow(
-            paths, title=f"{self.state.name or 'board'} — {step.title}",
+            paths, title=title,
             parent=self, board=bounds, bed=BACKENDS[self.state.machine].bed,
             thickness=self.inspector.setup.thickness.value())
         # LIVE follows the machine while the link is up. The window has the
@@ -2657,6 +2840,10 @@ class MainWindow(QMainWindow):
             # survive closing the app is one nobody relies on.
             "level": self.level_page.state(),
             "rework": self.rework_page.state(),
+            # The photo on the bed, and the holes it was fitted on. The
+            # boxes above were drawn against it; restored without it they
+            # are boxes on a design, with nothing to say why they are there.
+            "photo": self._photo_state(Path(path)),
             "show_stock": self.show_stock, "show_bed": self.show_bed,
             "thickness": self.inspector.setup.thickness.value(),
             "overshoot": self.inspector.setup.overshoot.value(),
@@ -2784,6 +2971,8 @@ class MainWindow(QMainWindow):
             self.rework_page.restore(data.get("rework"))
         except Exception:
             foreign.append("the height map")
+        if placed:
+            self._restore_photo(data.get("photo"), foreign, Path(path))
         if placed:
             px, py = data.get("place", [0, 0])
             st.set_rotation(data.get("rotate", 0))
