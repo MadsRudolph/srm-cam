@@ -147,3 +147,22 @@ def test_suggest_refinement_quiet_on_gentle_mesh():
     gentle = [(x, y, 0.0003 * x) for y in (0, 60, 120) for x in (0, 100, 200)]
     s = suggest_refinement_rows(gentle, nx=3, ny=3, budget=0.08)
     assert s == {"rows": [], "cols": []}
+
+
+def test_refine_grid_adds_whole_lines_and_stays_row_major():
+    from gerber2rml.engine.leveling import refine_grid, HeightMap
+    grid = [(x, y, 0.001 * x) for y in (0.0, 50.0) for x in (0.0, 100.0)]
+    rows, nx, ny = refine_grid(grid, new_ys=[25.0], new_xs=[50.0])
+    assert (nx, ny) == (3, 3) and len(rows) == 9
+    # bottom row first, left to right - the order the table and the probe use
+    assert [(x, y) for x, y, _z in rows] == [
+        (x, y) for y in (0.0, 25.0, 50.0) for x in (0.0, 50.0, 100.0)]
+    # the measured points keep their numbers; the new ones are blank
+    assert sum(1 for _x, _y, z in rows if z == "") == 5
+    assert [z for _x, _y, z in rows if z != ""] == [0.0, 0.1, 0.0, 0.1]
+    # a line already in the grid is not added twice
+    again, nx2, ny2 = refine_grid(rows, new_ys=[25.0])
+    assert (nx2, ny2) == (3, 3) and len(again) == 9
+    # filled in, the result is a complete grid that bilinear accepts
+    filled = [(x, y, 0.001 * x) for x, y, _z in rows]
+    assert abs(HeightMap.from_points(filled, nx, ny)(50.0, 25.0) - 0.05) < 1e-9

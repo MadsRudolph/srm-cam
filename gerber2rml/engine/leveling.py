@@ -323,6 +323,35 @@ def suggest_refinement_rows(points, nx, ny, budget=0.08):
     return {"rows": rows, "cols": cols}
 
 
+def refine_grid(rows, new_ys=(), new_xs=()):
+    """Add whole probe lines to a measured grid and keep it cartesian.
+
+    ``rows`` is ``[(x, y, z)]`` with ``z`` whatever the table holds - a number,
+    or ``""`` for a point not measured yet. A new row gets a point on every
+    existing column and a new column gets one on every row, new rows
+    included, so the result is still a full ``nx * ny`` grid and bilinear
+    interpolation stays available. Half a row would leave a grid that only a
+    plane can be fitted to, which throws away the warp the extra points were
+    meant to capture.
+
+    Returns ``(rows, nx, ny)`` sorted row-major, bottom row first - the order
+    :func:`probe_points` emits and the table lists, so a resumed probe run
+    fills exactly the new points.
+    """
+    have = [(round(float(x), 3), round(float(y), 3), z) for x, y, z in rows]
+    xs = sorted({x for x, _y, _z in have})
+    ys = sorted({y for _x, y, _z in have})
+    add_ys = sorted({round(float(y), 3) for y in new_ys} - set(ys))
+    add_xs = sorted({round(float(x), 3) for x in new_xs} - set(xs))
+    out = list(have)
+    for y in add_ys:
+        out.extend((x, y, "") for x in xs)
+    for x in add_xs:
+        out.extend((x, y, "") for y in ys + add_ys)
+    out.sort(key=lambda t: (t[1], t[0]))
+    return out, len(xs) + len(add_xs), len(ys) + len(add_ys)
+
+
 # ---------------------------------------------------------------------------
 # Toolpath warp
 # ---------------------------------------------------------------------------
