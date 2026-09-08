@@ -8,9 +8,11 @@
  *   GET  /health      -> "ok"
  *   GET  /dashboard   the maintainer's view (asks for EXPORT_TOKEN in the browser)
  *
- * Bindings: DB (D1), ALLOWED_ORIGINS (var), EXPORT_TOKEN (secret).
+ * Bindings: DB (D1), NOTIFY (send_email), ALLOWED_ORIGINS / NOTIFY_FROM /
+ * NOTIFY_TO (vars), EXPORT_TOKEN (secret).
  */
 
+import { EmailMessage } from "cloudflare:email";
 import { DASHBOARD_HTML } from "./dashboard.js";
 
 const MAX_BODY = 32 * 1024;         // a full form is ~3 KB
@@ -19,7 +21,7 @@ const FORM_VERSION = 1;
 const FORM_URL = "https://madsrudolph.github.io/srm-cam/feedback.html";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin");
     const cors = corsHeaders(origin, env);
@@ -29,7 +31,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return landing();
     if (request.method === "GET" && url.pathname === "/dashboard") return new Response(DASHBOARD_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 
-    if (request.method === "POST" && url.pathname === "/") return submit(request, env, cors);
+    if (request.method === "POST" && url.pathname === "/") return submit(request, env, ctx, cors);
     if (request.method === "GET" && url.pathname === "/export") return exportJson(request, env);
     if (request.method === "GET" && url.pathname === "/export.csv") return exportCsv(request, env);
 
@@ -39,7 +41,7 @@ export default {
 
 // ---- submit ---------------------------------------------------------------
 
-async function submit(request, env, cors) {
+async function submit(request, env, ctx, cors) {
   if (!cors["Access-Control-Allow-Origin"]) return text("origin not allowed", 403);
 
   const len = Number(request.headers.get("Content-Length") || 0);
@@ -80,7 +82,72 @@ async function submit(request, env, cors) {
       (request.headers.get("User-Agent") || "").slice(0, 200),
     ).first();
 
+  // The student gets their answer now; the mail goes out afterwards and
+  // its failure is nobody's problem but the log's.
+  ctx.waitUntil(notify(env, row.id, answers).catch(e => console.error("notify failed", e)));
   return json({ ok: true, id: row.id }, 200, cors);
+}
+
+// ---- notification ---------------------------------------------------------
+
+const STEPS = ["load", "level", "drill", "traces", "cutout", "export"];
+const TEXT_FIELDS = [
+  ["guide_gaps", "Where the guide fell short"], ["app_stuck", "Where they got stuck"],
+  ["app_bugs", "Surprises and bugs"], ["vpanel_notes", "VPanel"], ["install_notes", "Install"],
+  ["keep", "Keep as is"], ["other", "Anything else"],
+];
+
+async function notify(env, id, a) {
+  if (!env.NOTIFY || !env.NOTIFY_FROM || !env.NOTIFY_TO) return;
+  const tag = str(a._for);
+  const who = str(a.name) || "anonymous";
+  const bits = [];
+  if (a.result) bits.push(`board: ${a.result}`);
+  if (a.recommend) bits.push(`recommend ${a.recommend}/5`);
+  if (a.duration) bits.push(`took ${a.duration}`);
+  const subject = `SRM-CAM feedback #${id}${tag ? " (" + tag + ")" : ""} — ${who}${bits.length ? " — " + bits.join(", ") : ""}`;
+
+  const lines = [];
+  lines.push(`FIX THIS FIRST`);
+  lines.push(str(a.fix_one));
+  lines.push(``);
+  lines.push(`From: ${who}${a.email ? " <" + str(a.email) + ">" : ""}${a.followup ? " (follow-up OK)" : ""}`);
+  if (tag) lines.push(`Link: ?for=${tag}`);
+  const steps = STEPS.filter(s => a["step_" + s] != null).map(s => `${s} ${a["step_" + s]}`).join("  ");
+  if (steps) lines.push(`Steps: ${steps}`);
+  const facts = [["experience", "Experience"], ["os", "OS"], ["install", "Install"], ["install_ok", "Started"],
+    ["tier", "Tier"], ["onscreen", "On-screen help"], ["connect", "Connected"], ["level_ok", "Leveling"],
+    ["holding", "Holding"], ["tools", "Tool changes"], ["result", "Result"], ["duration", "Time"],
+    ["counterfactual", "Without the guide"], ["recommend", "Recommend"]];
+  for (const [k, label] of facts) if (a[k] != null && a[k] !== "") lines.push(`${label}: ${Array.isArray(a[k]) ? a[k].join(", ") : a[k]}`);
+  for (const k of ["pages", "defects", "before", "other_help"]) if (Array.isArray(a[k]) && a[k].length) lines.push(`${k}: ${a[k].join(", ")}`);
+  for (const [k, label] of TEXT_FIELDS) if (str(a[k])) { lines.push(``); lines.push(`${label.toUpperCase()}`); lines.push(str(a[k])); }
+  lines.push(``);
+  lines.push(`Dashboard: https://srm-cam-feedback.madsrudolph.dev/dashboard`);
+
+  const raw = mime(env.NOTIFY_FROM, env.NOTIFY_TO, subject, lines.join("\n"));
+  await env.NOTIFY.send(new EmailMessage(env.NOTIFY_FROM, env.NOTIFY_TO, raw));
+}
+
+/** A minimal RFC 5322 message: UTF-8 subject and body, base64 so nothing
+ *  a student types can break the framing. No library needed. */
+function mime(from, to, subject, body) {
+  const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+  const wrap = s => s.replace(/(.{76})/g, "$1\r\n");
+  const id = `<${crypto.randomUUID()}@${from.split("@")[1]}>`;
+  return [
+    `From: SRM-CAM feedback <${from}>`,
+    `To: <${to}>`,
+    `Subject: =?utf-8?B?${b64(subject)}?=`,
+    `Message-ID: ${id}`,
+    `Date: ${new Date().toUTCString()}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset=utf-8`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    wrap(b64(body)),
+    ``,
+  ].join("\r\n");
 }
 
 // ---- export ---------------------------------------------------------------
