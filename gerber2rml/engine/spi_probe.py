@@ -258,12 +258,39 @@ def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None,
     return ser
 
 
-def query_position(ser, timeout=1.0):
+def query_position(ser, timeout=1.0, reads=3):
     """Send ``Q`` and parse ``Q x y z [touch]`` (microns) ->
-    ``(x_mm, y_mm, z_mm, touch_bool)`` or None. A single fast read (no stable
-    filtering) so jogging shows live; the caller rejects implausible jumps
-    (garbage SPI reads). ``touch`` is the external probe contact state (the 5th
-    field; defaults False for an older sketch without it).
+    ``(x_mm, y_mm, z_mm, touch_bool)`` or None.
+
+    ``reads`` samples are taken and the per-axis MEDIAN returned. ``Q`` is the
+    one firmware command that does not validate its SPI read: everything else
+    goes through the sketch's ``readPos``, which insists on two reads agreeing
+    within 3 um "because SPI reads can be garbage". A single sample therefore
+    lands up to a millimetre off now and again, and the trail drawn from it
+    wanders off the toolpath it is tracing - measured on a live cut: nine
+    samples, no bias in either axis (medians 0.00 mm) but a 0.5 mm spread and
+    excursions to 1.05 mm.
+
+    A median throws out an odd bad read without ever blanking the readout,
+    which matters for a DRO: three reads of a tool moving at cutting feed span
+    well under a tenth of a millimetre, so the middle one is still live.
+    ``reads=1`` is the old single-shot behaviour.
+
+    ``touch`` is the external probe contact state (the 5th field; defaults
+    False for an older sketch without it) and is taken by majority.
+    """
+    got = [_query_position_once(ser, timeout) for _ in range(max(1, reads))]
+    got = [g for g in got if g is not None]
+    if not got:
+        return None
+    xs, ys, zs = (sorted(g[i] for g in got) for i in range(3))
+    mid = len(got) // 2
+    touch = sum(1 for g in got if g[3]) * 2 > len(got)
+    return (xs[mid], ys[mid], zs[mid], touch)
+
+
+def _query_position_once(ser, timeout=1.0):
+    """One ``Q`` round trip, unfiltered. See :func:`query_position`.
 
     Resyncs first (see :func:`_flush_stale`): a stale line left by an
     interrupted move would otherwise be mistaken for this query's answer and
