@@ -341,3 +341,48 @@ def test_best_port_handles_a_missing_hwid():
     assert rank_ports([("COM1", None)]) == [("COM1", "unknown device")]
     assert best_port([("COM1", None)]) is None
 
+
+
+def test_query_position_medians_out_a_garbage_read():
+    """``Q`` is the one command the sketch does not validate.
+
+    Everything else reads through ``readPos``, which requires two reads to
+    agree within 3 um "because SPI reads can be garbage". A single bad sample
+    used to reach the DRO and the trail, which then wandered off the toolpath
+    by up to a millimetre.
+    """
+    from gerber2rml.engine.spi_probe import open_link, query_position
+
+    class Flaky:
+        """Good, garbage, good — the pattern measured on a live cut."""
+        LINES = [b"Q 120000 26000 -54260 0\n",
+                 b"Q 119000 27100 -54260 0\n",     # the bad one
+                 b"Q 120000 26000 -54260 0\n"]
+
+        def __init__(self): self._n = 0; self._out = []
+        def reset_input_buffer(self): self._out.clear()
+        def write(self, data):
+            if data.decode().strip() == "Q":
+                self._out.append(self.LINES[self._n % len(self.LINES)])
+                self._n += 1
+        def readline(self): return self._out.pop(0) if self._out else b""
+        def close(self): pass
+
+    ser = open_link("COM5", startup_wait=0, serial_factory=lambda p, b, t: Flaky())
+    assert query_position(ser) == (120.0, 26.0, -54.26, False)
+
+
+def test_query_position_still_reports_from_a_single_read():
+    from gerber2rml.engine.spi_probe import open_link, query_position
+
+    class Once:
+        def __init__(self): self._out = []
+        def reset_input_buffer(self): self._out.clear()
+        def write(self, data):
+            if data.decode().strip() == "Q":
+                self._out.append(b"Q 1000 2000 -3000 1\n")
+        def readline(self): return self._out.pop(0) if self._out else b""
+        def close(self): pass
+
+    ser = open_link("COM5", startup_wait=0, serial_factory=lambda p, b, t: Once())
+    assert query_position(ser, reads=1) == (1.0, 2.0, -3.0, True)
