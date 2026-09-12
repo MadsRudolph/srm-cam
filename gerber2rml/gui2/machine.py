@@ -94,6 +94,7 @@ class MachineLink(QObject):
         self._q = queue.Queue()
         self._thread = None
         self._busy = False
+        self._current = None          # name of the op the worker is inside
         self._abort = threading.Event()
         self._external = False        # something else owns the port (a probe run)
         self.firmware = None
@@ -115,7 +116,14 @@ class MachineLink(QObject):
         return self._ser is not None
 
     def is_busy(self):
-        return self._busy
+        """Whether the worker is inside an operation the OPERATOR would call one.
+
+        The position poll is not one: it runs every ``POLL_MS`` and holds the
+        port for its two serial round-trips, so a bare ``self._busy`` shut the
+        probe gates on roughly one click in ten with "the machine is still
+        doing something" while the mill stood still. Real work queues behind a
+        poll in flight anyway, so a poll never needs to hold a gate closed."""
+        return self._busy and self._current != "poll"
 
     def connect_to(self, port):
         if self._ser is not None:
@@ -213,8 +221,10 @@ class MachineLink(QObject):
             if item is None:
                 return
             name, fn, port = item
-            self._busy = True
+            # Name first, then the flag: is_busy() reads both, and a reader
+            # that saw the flag before the name would call a poll real work.
             self._current = name
+            self._busy = True
             self.busy_changed.emit(True)
             try:
                 if port is not None:
