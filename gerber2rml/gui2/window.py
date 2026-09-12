@@ -296,6 +296,7 @@ class MainWindow(QMainWindow):
         self.plan = None
         self._checks = []
         self._shorts = []
+        self._eaten = []         # pads a cut-it-anyway pass takes most of
         self._gaps = None        # copper gaps too narrow for the cutter
         self._exported = {}
         self._export_dir = None
@@ -1686,6 +1687,13 @@ class MainWindow(QMainWindow):
                                              st.trace.effective_diameter())
         except Exception:
             self._shorts = []           # a DRC that crashes must not block work
+        self._eaten = []
+        if self._shorts and st.trace.cut_pinches:
+            try:
+                from gerber2rml.engine.pinch import pinch_losses
+                self._eaten = pinch_losses(st.board.copper, st.trace)
+            except Exception:
+                self._eaten = []        # ...and neither must this one
         try:
             from gerber2rml.analysis import find_narrow_gaps
             self._gaps = find_narrow_gaps(st.board.copper, st.board.outline,
@@ -1722,8 +1730,16 @@ class MainWindow(QMainWindow):
                 surface_z=self.link.surface_z,
                 bit_diameter=st.drill.bit_diameter, trace=st.trace,
                 leveled=self.level_page.is_active(), shorts=self._shorts,
+                eaten=self._eaten,
                 thickness=self.inspector.setup.thickness.value())
         except Exception as e:
+            # The banner is drawn from the shorts, which were worked out above
+            # and are still good. Leaving on the early return left it saying
+            # what the LAST run of these checks found - a stale headline about
+            # a setting the operator has since changed, which is worse than no
+            # headline at all.
+            self._checks = []
+            self._sync_banner()
             self.report_error("The pre-flight checks could not run", e,
                               "Reload the board and try again. Nothing has "
                               "been written.")
@@ -2260,11 +2276,22 @@ class MainWindow(QMainWindow):
     def _sync_banner(self):
         if self._shorts:
             worst = min(s["gap"] for s in self._shorts)
+            width = self.state.trace.effective_diameter()
+            if self.state.trace.cut_pinches:
+                # Cutting them anyway was asked for: the banner reports the
+                # price, not a fault.
+                self.traveller.show_finding(
+                    "warn",
+                    f"{len(self._shorts)} narrow gaps cut through",
+                    f"Worst gap {worst:.2f} mm against a {width:.2f} mm "
+                    f"cutter, so up to {(width - worst) / 2.0:.2f} mm comes "
+                    f"off the pads either side. Nothing is left shorted.",
+                    action="See the checks")
+                return
             self.traveller.show_finding(
                 "fail",
                 f"{len(self._shorts)} spots will be shorted",
-                f"Worst gap {worst:.2f} mm against a "
-                f"{self.state.trace.effective_diameter():.2f} mm cutter. "
+                f"Worst gap {worst:.2f} mm against a {width:.2f} mm cutter. "
                 f"Milling it more carefully will not fix it.",
                 action="See the checks")
             return
@@ -3411,8 +3438,12 @@ class MainWindow(QMainWindow):
             self.say("fail", f"{blocking[0].title} — {blocking[0].detail}")
             self.select_step("checks")
             return
-        if self._shorts and not dialogs.confirm_shorts(
-                self, self._shorts, st.trace.effective_diameter()):
+        # Only when they are actually going to be left shorted. With the
+        # narrow-gap passes on they are cut, and the price (pad, not nets) is
+        # on the checks page and the banner.
+        if (self._shorts and not st.trace.cut_pinches
+                and not dialogs.confirm_shorts(
+                    self, self._shorts, st.trace.effective_diameter())):
             self.select_step("checks")
             return
         if self._double and self._registration == "dowel":

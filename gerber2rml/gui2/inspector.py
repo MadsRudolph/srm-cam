@@ -1152,6 +1152,20 @@ class StepPage(Page):
                 "Pass overlap", num(job.stepover, 0.1, 1.0, 0.05, 2,
                                     lambda v: self._set(job, "stepover", v)),
                 help="Fraction of the bit width each extra pass steps across."))
+            pinch = QCheckBox("Cut gaps too narrow for the bit (trims pads)")
+            pinch.setChecked(job.cut_pinches)
+            pinch.setToolTip(
+                "Two nets closer than the cut width cannot both be separated "
+                "and left whole — the bit does not fit between them.\n"
+                "Off: the gap is left uncut and the two stay shorted; the "
+                "checks list every spot.\n"
+                "On: the cutter goes down the middle of the gap anyway, "
+                "taking a bite out of both pads. A 0.45 mm gap against a "
+                "0.80 mm bit costs 0.175 mm off each side.\n"
+                "Only the tight gaps are treated this way; everything the bit "
+                "fits in is still cut at full width.")
+            pinch.toggled.connect(lambda v: self._set(job, "cut_pinches", v))
+            fields.append(pinch)
         elif op == "drill":
             fields.append(widgets.Field(
                 "Bit diameter", num(job.bit_diameter, 0.1, 6.0, 0.05, 2,

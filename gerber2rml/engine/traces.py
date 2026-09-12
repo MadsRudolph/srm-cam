@@ -22,6 +22,16 @@ def _ring_to_toolpath(coords, cut_z, travel_z):
     return tp
 
 
+def _with_pinches(paths, copper, job):
+    """``paths`` plus a severing pass through every gap the cutter cannot
+    enter, when the job asks for it. Last, so the ordinary isolation is cut
+    first and the deliberate damage happens on copper that is already free."""
+    if not getattr(job, "cut_pinches", False):
+        return paths
+    from gerber2rml.engine.pinch import pinch_cuts
+    return paths + pinch_cuts(copper, job)
+
+
 def isolate(copper, job, outline=None):
     # Effective width/depth so a V-bit isolates by its (depth-dependent) cut
     # width while a flat endmill keeps using its diameter (see TraceJob).
@@ -46,11 +56,11 @@ def isolate(copper, job, outline=None):
             if i > 5000:                       # hard backstop
                 break
             i += 1
-        return paths
+        return _with_pinches(paths, copper, job)
     for i in range(job.offsets):
         grown = copper.buffer(r + i * step)
         if grown.is_empty:
             break
         for coords in _rings(grown):
             paths.append(_ring_to_toolpath(coords, cut_z, travel_z))
-    return paths
+    return _with_pinches(paths, copper, job)

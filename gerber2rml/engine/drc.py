@@ -15,13 +15,13 @@ from shapely.ops import nearest_points
 from shapely.strtree import STRtree
 
 
-def isolation_bridges(copper_geom, bit_d):
-    """Find pairs of separate copper polygons closer than ``bit_d`` mm.
+def isolation_pairs(copper_geom, bit_d):
+    """``[(poly_a, poly_b, gap), ...]`` for separate copper polygons closer
+    than ``bit_d`` mm.
 
-    Returns a list of dicts ``{"x", "y", "gap"}`` — the midpoint of each
-    pinch and the actual copper-to-copper distance there. Pairs are reported
-    once; polygons that TOUCH (same net / one polygon) are skipped: only a
-    genuine gap smaller than the bit is a milling short.
+    The geometry behind :func:`isolation_bridges`, kept as its own function
+    because the pinch cutter (:mod:`gerber2rml.engine.pinch`) needs the
+    polygons themselves, not just where they nearly touch.
     """
     if copper_geom is None or copper_geom.is_empty:
         return []
@@ -49,12 +49,27 @@ def isolation_bridges(copper_geom, bit_d):
             if gap <= 1e-9:              # touching = same copper, not a gap
                 continue
             if gap < bit_d:
-                a, b = nearest_points(p, q)
                 key = (i, j)
                 if key in seen:
                     continue
                 seen.add(key)
-                out.append({"x": (a.x + b.x) / 2.0, "y": (a.y + b.y) / 2.0,
-                            "gap": gap})
+                out.append((p, q, gap))
+    out.sort(key=lambda t: t[2])
+    return out
+
+
+def isolation_bridges(copper_geom, bit_d):
+    """Find pairs of separate copper polygons closer than ``bit_d`` mm.
+
+    Returns a list of dicts ``{"x", "y", "gap"}`` — the midpoint of each
+    pinch and the actual copper-to-copper distance there. Pairs are reported
+    once; polygons that TOUCH (same net / one polygon) are skipped: only a
+    genuine gap smaller than the bit is a milling short.
+    """
+    out = []
+    for p, q, gap in isolation_pairs(copper_geom, bit_d):
+        a, b = nearest_points(p, q)
+        out.append({"x": (a.x + b.x) / 2.0, "y": (a.y + b.y) / 2.0,
+                    "gap": gap})
     out.sort(key=lambda d: d["gap"])
     return out

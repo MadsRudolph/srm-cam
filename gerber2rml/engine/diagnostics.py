@@ -38,7 +38,7 @@ def cut_depths(trace, drill, cutout, dowel_depth=None):
 def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
               holes=None, bit_diameter=None, trace=None, leveled=False,
               z_floor=SRM20_Z_FLOOR, shorts=None, thickness=None,
-              bed_bite=0.2):
+              bed_bite=0.2, eaten=None):
     """Run the checks and return a list of :class:`Check`.
 
     ``depths``: {op: mm} from :func:`cut_depths`. ``design_bounds``: placed
@@ -47,7 +47,9 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
     :class:`TraceJob`) + ``leveled`` (is a bed height-map being applied?) drive
     the V-bit flatness check. ``shorts`` is the output of
     :func:`gerber2rml.engine.drc.isolation_bridges` - places the cutter
-    physically cannot separate two nets."""
+    physically cannot separate two nets. ``eaten`` is
+    :func:`gerber2rml.engine.pinch.pinch_losses` - the pads that a
+    cut-it-anyway pass takes most of."""
     checks = []
 
     # --- fits the bed -------------------------------------------------------
@@ -134,19 +136,48 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
     # setup, and it is the most expensive to discover late: a board milled
     # perfectly to a layout the bit cannot separate is scrap either way.
     if shorts is not None:
-        if shorts:
+        if shorts and getattr(trace, "cut_pinches", False):
+            # The operator has said to cut them anyway. They are no longer
+            # shorts, so saying "WILL be shorted" would be a lie - but the
+            # copper it costs is worth naming, because that part cannot be
+            # undone.
+            worst = min(s["gap"] for s in shorts)
+            bite = (trace.effective_diameter() - worst) / 2.0
+            checks.append(Check(
+                "warn", "Narrow gaps cut through",
+                f"{len(shorts)} gap(s) are narrower than the cutter (worst "
+                f"{worst:.2f} mm, marked X on the Traces preview). The pass "
+                f"goes down the middle of each anyway, so the nets come out "
+                f"separated and both pads lose up to {bite:.2f} mm. Turn "
+                f"\"Cut gaps too narrow for the bit\" off to leave them "
+                f"shorted instead."))
+        elif shorts:
             worst = min(s["gap"] for s in shorts)
             checks.append(Check(
                 "fail", "Nets closer than the bit",
                 f"{len(shorts)} spot(s) where two SEPARATE nets sit closer than "
                 f"the cutter can go (worst {worst:.2f} mm, marked X on the "
                 f"Traces preview). The copper between them cannot be removed, so "
-                f"those nets WILL be shorted on the finished board. Use a "
-                f"narrower bit (a V-bit cuts narrower at a shallower depth), or "
-                f"move the tracks apart in KiCad."))
+                f"those nets WILL be shorted on the finished board. Turn on "
+                f"\"Cut gaps too narrow for the bit\" to cut them anyway and "
+                f"lose some pad, use a narrower bit (a V-bit cuts narrower at a "
+                f"shallower depth), or move the tracks apart in KiCad."))
         else:
             checks.append(Check(
                 "ok", "Net clearance", "no two nets sit closer than the bit."))
+
+    # A pad can be narrower than the two cuts either side of it, and then
+    # there is nothing left to solder to. The cut cannot be taken back, so
+    # this has to be read before the spindle starts, not after.
+    if eaten:
+        worst = eaten[0]
+        where = ", ".join(f"({d['x']:.1f}, {d['y']:.1f})" for d in eaten[:3])
+        checks.append(Check(
+            "warn", "Pads mostly cut away",
+            f"{len(eaten)} pad(s) lose over a third of their copper to the "
+            f"narrow-gap passes, the worst {worst['lost'] * 100:.0f}% of "
+            f"{worst['area']:.2f} mm². At {where} — check there is still "
+            f"something to solder to before running it."))
 
     # --- V-bit: cut width is depth-sensitive, so the bed MUST be levelled ----
     if trace is not None and getattr(trace, "tool_type", "flat") == "vbit":
