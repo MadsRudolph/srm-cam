@@ -39,6 +39,15 @@ PLUNGE_CLEARANCE = 0.5 # mm above the work surface (Z0) to rapid down to before 
 EPS = 1e-6
 
 
+def _c(text) -> str:
+    """One ``( ... )`` comment line, with the delimiters themselves kept out of
+    the text. ``(`` and ``)`` open and close a comment, so a parenthesis inside
+    one ends it early and the remainder of the line reaches the word scanner as
+    G-code -- which is what VPanel faults on. Job names come from a folder the
+    operator chose, so this has to hold for any text."""
+    return "( " + str(text).replace("(", "[").replace(")", "]").strip() + " )"
+
+
 def _f(v: float) -> str:
     """Format a coordinate/feed: trim trailing zeros but always keep a decimal
     point (``4.0 -> '4.'``, ``11.246 -> '11.246'``, ``-1.76 -> '-1.76'``).
@@ -72,9 +81,9 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
     out = [
         "%",
         "O0001",
-        "( gerber2rml - SRM-20 NC )",
-    ] + [f"( {line} )" for line in (header or [])] + ([
-        f"( spindle {int(round(rpm))} rpm - set this in VPanel cut settings )",
+        _c("gerber2rml - SRM-20 NC"),
+    ] + [_c(line) for line in (header or [])] + ([
+        _c(f"spindle {int(round(rpm))} rpm - set this in VPanel cut settings"),
     ] if spindle else []) + [
         "G90 G17",                   # absolute, XY plane
         "G21",                       # millimetres
@@ -87,11 +96,11 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
         out.append("M3")             # spindle on, clockwise (RPM from VPanel)
     else:
         # Dry run: nothing is cut, and someone is leaning in to watch the bit.
-        out.append("( DRY RUN - spindle stays OFF, nothing is cut )")
+        out.append(_c("DRY RUN - spindle stays OFF, nothing is cut"))
     if spindle and spinup_s > 0:
         # Let the spindle reach full RPM before any motion. Dwell time is X<sec>:
         # the SRM-20 has no P word (manual R4 word list), so X carries the seconds.
-        out.append(f"( spindle spin-up settle {_f(spinup_s)} s before first cut )")
+        out.append(_c(f"spindle spin-up settle {_f(spinup_s)} s before first cut"))
         out.append(f"G04 X{_f(spinup_s)}")
 
     cx = cy = cz = None              # current machine position (work coords)
