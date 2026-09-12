@@ -543,3 +543,21 @@ def test_nothing_new_offers_to_zero_the_xy_origin(bar):
     texts = [b.text().lower() for b in bar.findChildren(QPushButton)]
     assert not [t for t in texts if "zero" in t and "xy" in t]
     assert "zero z" in texts
+
+
+def test_a_position_poll_in_flight_does_not_read_as_a_busy_machine():
+    # The poll runs every POLL_MS and owns the port for two serial round-trips.
+    # Counting it as busy refused a probe with "the machine is still doing
+    # something" while the mill stood still - one click in ten.
+    link = machine.MachineLink()
+    link._current, link._busy = "poll", True
+    assert not link.is_busy()
+    for op in ("zero_z", "touch", "jog_z", "stream"):
+        link._current, link._busy = op, True
+        assert link.is_busy(), op
+    link._current, link._busy = None, False
+    assert not link.is_busy()
+
+
+def test_is_busy_is_safe_before_any_op_has_run():
+    assert not machine.MachineLink().is_busy()
