@@ -10,6 +10,12 @@ class TraceJob:
                                  # sharp flat endmill; 0.10 left thin copper bridges)
     offsets: int = 2             # isolation passes; -1 = clear all copper
     stepover: float = 0.5        # fraction of bit diameter
+    cut_pinches: bool = False    # Sever gaps narrower than the cut width by
+                                 # driving down the middle of them, trimming
+                                 # both neighbours, instead of leaving the
+                                 # short (see engine/pinch.py). Off by default:
+                                 # it destroys pad on purpose, so it has to be
+                                 # asked for.
     xy_feed: float = 4.0         # mm/s
     plunge_feed: float = 1.0     # mm/s
     travel_z: float = 2.0        # mm
