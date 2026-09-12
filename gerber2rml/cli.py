@@ -101,7 +101,8 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
     _write(f"{name}_traces{ext}",
            _leadin(isolate(board.copper, trace, outline=board.outline)), trace,
            header=[f"{name} - step 1 of 4: ISOLATION TRACES",
-                   f"bit {trace.bit_diameter} mm, {trace.offsets} offset(s), "
+                   f"bit {trace.bit_diameter} mm, {trace.offsets} "
+                   f"offset{'' if trace.offsets == 1 else 's'}, "
                    f"{trace.cut_depth} mm per pass, feed {trace.xy_feed} mm/s",
                    "re-zero Z after any bit change; do NOT move the XY origin"])
     drill_files = drill_jobs(board.holes, drill, f"{name}_drill", ext=ext)

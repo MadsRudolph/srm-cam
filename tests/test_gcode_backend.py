@@ -36,3 +36,30 @@ def test_spinup_seconds_configurable():
 def test_zero_spinup_omits_the_dwell():
     nc = render(_ring(), xy_feed=4.0, plunge_feed=1.0, spinup_s=0.0)
     assert "G04" not in nc
+
+
+def test_header_text_never_nests_parentheses():
+    # ( and ) delimit an NC comment, so one inside the text ends the comment
+    # early and VPanel reads the rest of the line as words -> "fault". The job
+    # name comes from a folder the operator chose, so it can hold anything.
+    nc = render(_ring(), xy_feed=4.0, plunge_feed=1.0,
+                header=["buck (v2) - step 1 of 4", "2 offset(s), 0.15 mm"])
+    for line in nc.splitlines():
+        if line.startswith("("):
+            assert line.count("(") == 1 and line.count(")") == 1, line
+            assert line.endswith(")")
+    assert "( buck [v2] - step 1 of 4 )" in nc
+    assert "( 2 offset[s], 0.15 mm )" in nc
+
+
+def test_every_comment_in_a_real_traces_file_is_balanced():
+    # The regression: only the traces file carried "offset(s)", so only the
+    # traces file faulted in VPanel.
+    import tempfile, pathlib, re
+    from gerber2rml.cli import build_jobs
+    out = pathlib.Path(tempfile.mkdtemp())
+    build_jobs("tests/fixtures/mosfet_test", out, "buck (v2)")
+    for p in sorted(out.glob("*.nc")):
+        for line in p.read_text().splitlines():
+            if "(" in line or ")" in line:
+                assert re.fullmatch(r"\([^()]*\)", line.strip()), f"{p.name}: {line}"
