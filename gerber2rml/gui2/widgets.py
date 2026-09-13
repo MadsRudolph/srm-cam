@@ -64,6 +64,43 @@ def mono(text, *, strong=False):
     return _label(text, "small", "monoHi" if strong else "mono", mono=True)
 
 
+class ElidedLabel(QLabel):
+    """A one-line label that gives up characters in the middle, not width.
+
+    For text with nowhere to wrap - a file name. A two-board job is named after
+    both boards, and "feedback_circuit+feedback_circuit_2_airpass.nc" in a
+    plain label asked for more than the side panel has, which laid the whole
+    panel out too wide to show. The middle goes because both ends carry the
+    meaning: which job, and which file of it. The whole text is the tooltip.
+    """
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setText(text)
+
+    def setText(self, text):
+        self._full = text or ""
+        self.setToolTip(self._full)
+        self._fit()
+
+    def text(self):
+        return self._full
+
+    def minimumSizeHint(self):
+        return QSize(20, super().minimumSizeHint().height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self):
+        shown = self.fontMetrics().elidedText(self._full, Qt.ElideMiddle,
+                                              max(self.width(), 20))
+        QLabel.setText(self, shown)
+
+
 def value(text, *, role="head"):
     return _label(text, role, "value")
 

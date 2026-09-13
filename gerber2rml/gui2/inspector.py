@@ -23,7 +23,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QListWidget, QAbstractItemView
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
                                QScrollArea, QFrame, QLabel, QLineEdit, QComboBox,
-                               QCheckBox, QDoubleSpinBox, QSpinBox, QSizePolicy)
+                               QCheckBox, QDoubleSpinBox, QSpinBox, QSizePolicy,
+                               QGridLayout, QPushButton)
 
 from gerber2rml.backends import BACKENDS
 from gerber2rml.gui2 import theme, widgets, tier
@@ -360,11 +361,23 @@ class SetupPage(Page):
             [("0", "0°", ""), ("90", "90°", ""), ("180", "180°", ""),
              ("270", "270°", "")], "0")
         self.rotate.changed.connect(lambda k: ctl.action_rotate(int(k)))
+        # The four angles share whatever the panel has. At their natural
+        # padding they asked for 334 px beside a 94 px label, in a panel 340
+        # wide that does not scroll sideways, and the whole setup page was
+        # laid out wider than it could be shown - every hint and button past
+        # the edge cut off mid-word.
+        for b in self.rotate.findChildren(QPushButton):
+            b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
         place.add(widgets.Field("Turned", self.rotate))
         arow = QWidget()
-        ah2 = QHBoxLayout(arow)
+        # Two by two, not four abreast. With one board only the centring pair
+        # shows; a sheet adds the other two, and on one row the four needed
+        # 529 px - the reason this page broke on a two-board job and not on
+        # one.
+        ah2 = QGridLayout(arow)
         ah2.setContentsMargins(0, 0, 0, 0)
-        ah2.setSpacing(theme.GAP_S)
+        ah2.setHorizontalSpacing(theme.GAP_S)
+        ah2.setVerticalSpacing(theme.GAP_S)
         self.autoplace_btn = widgets.button(
             "Centre it on the bed", kind="primary",
             on=lambda: ctl.action_autoplace("bed"),
@@ -373,7 +386,7 @@ class SetupPage(Page):
                 "On a double-sided board the registration pins are counted "
                 "too — they sit outside the board, and a placement that puts "
                 "the board on the bed but a dowel off it cannot be run.")
-        ah2.addWidget(self.autoplace_btn)
+        ah2.addWidget(self.autoplace_btn, 0, 0)
         self.centre_copper_btn = widgets.button(
             "Centre it on the copper",
             on=lambda: ctl.action_autoplace("copper"),
@@ -381,19 +394,18 @@ class SetupPage(Page):
                 "— not the bed. The two differ whenever the sheet is smaller "
                 "than the travel or clamped off to one side, and it is the "
                 "metal the job has to land on.")
-        ah2.addWidget(self.centre_copper_btn)
+        ah2.addWidget(self.centre_copper_btn, 0, 1)
         self.arrange_btn = widgets.button(
             "Lay them side by side", on=lambda: ctl.action_arrange(),
             tip="Line the boards up left to right with a strip of waste "
                 "between each pair, the first one staying where it is.")
-        ah2.addWidget(self.arrange_btn)
+        ah2.addWidget(self.arrange_btn, 1, 0)
         self.butt_btn = widgets.button(
             "Butt them together", on=lambda: ctl.action_arrange(0.0),
             tip="Line the boards up touching. One cut runs between each pair "
                 "and separates them, so the panel needs no waste between the "
                 "boards - each loses half a cutter width along that edge.")
-        ah2.addWidget(self.butt_btn)
-        ah2.addStretch(1)
+        ah2.addWidget(self.butt_btn, 1, 1)
         place.add(arow)
         self.place_hint = widgets.hint(
             "Or drag the board on the bed. Measured from the machine origin "
@@ -1010,8 +1022,9 @@ class StepPage(Page):
         self.add(facts)
 
         self.file_section = widgets.Section("The file")
-        self.file_name = widgets.mono("not exported yet", strong=True)
-        self.file_name.setWordWrap(True)
+        self.file_name = widgets.ElidedLabel("not exported yet")
+        self.file_name.setObjectName("monoHi")
+        self.file_name.setFont(theme.font("small", mono=True))
         self.file_section.add(self.file_name)
         frow = QWidget()
         fh = QHBoxLayout(frow)
@@ -1047,7 +1060,10 @@ class StepPage(Page):
         label = f"Step {step.ordinal}" if step.numbered else "Step"
         self.set_head(label, step.title)
         self.note.setText(step.note or step.detail)
-        self.bit.set(f"{step.bit:.2f} mm" if step.bit else "none — spindle off")
+        # "none", not "none — spindle off": the page already says the spindle
+        # never starts, and in the readout's large type the long form was the
+        # widest thing on the page, pushing it past the panel's edge.
+        self.bit.set(f"{step.bit:.2f} mm" if step.bit else "none")
         self.est.set("~" + format_duration(step.seconds) if step.seconds
                      else "run the export first")
         self.file_name.setText(step.file or "—")
