@@ -282,18 +282,33 @@ class Banner(QFrame):
         self.dot = Dot("fail", 8)
         self.head = QLabel("")
         self.head.setFont(theme.font("sub"))
+        # The headline wraps, like the detail under it. Left on one line it
+        # asked for its full width as a MINIMUM, and a banner is inside the
+        # rail: "13 spots will be shorted" alone pushed the rail's minimum to
+        # 592 px, the rail was handed 316, and the steps either side of it lost
+        # half their text with no way to scroll to it.
+        self.head.setWordWrap(True)
+        self.head.setMinimumWidth(0)
         h.addWidget(self.dot)
         h.addWidget(self.head, 1)
-        self.action = QPushButton("")
-        self.action.setObjectName("ghost")
-        self.action.clicked.connect(self.acted)
-        self.action.hide()
-        h.addWidget(self.action)
         v.addWidget(top)
         self.detail = QLabel("")
         self.detail.setFont(theme.font("small"))
         self.detail.setWordWrap(True)
         v.addWidget(self.detail)
+        # Under the text, not beside it. The rail this card lives in is a fixed
+        # 316 px, and a button sharing the headline's row put a floor under the
+        # card's width that the rail could not meet - so the rail's own steps
+        # were clipped, with nothing to scroll.
+        self.action = QPushButton("")
+        self.action.setObjectName("ghost")
+        self.action.clicked.connect(self.acted)
+        self.action.hide()
+        arow = QHBoxLayout()
+        arow.setContentsMargins(0, 0, 0, 0)
+        arow.addStretch(1)
+        arow.addWidget(self.action)
+        v.addLayout(arow)
         self.hide()
 
     def show_finding(self, state, headline, detail="", action=None):
