@@ -451,15 +451,31 @@ For a board whose copper is already finished, e.g. etched on the fiber laser, an
 only needs its holes. Load its Gerber folder as usual, then open **Drill a board
 made elsewhere** on the rail (single-sided jobs only).
 
+**Gerbers for a laser board etched on F.Cu** (the copper faces up on the bed):
+
+| File | kicad-cli |
+|---|---|
+| copper | `pcb export gerbers --layers "F.Cu,Edge.Cuts"`, then rename `-F_Cu.gbr` to `-B_Cu.gbr` (the loader reads B.Cu) |
+| holes | `pcb export drill --excellon-separate-th --drill-origin absolute` |
+
+Load them with **Mirror for bottom-up milling off**. The picture then matches the
+laser preview. Proven on a 90 × 72 mm board, 120 holes, worst pad 0.034 mm.
+
 1. Clamp the board anywhere on the bed. Make the picture match the copper as it
    lies there (toggle **Mirror** under *Set up the job* if needed), and drag it to
    roughly where it sits.
 2. **Suggest three** picks three holes far apart and well out of line, or tick
    **Pick on the board** and click your own.
 3. For each pad: **Go to it**, then centre the bit over the pad by eye and
-   **Capture**. You can also type the position in. **Find it for me** locates the centre
-   electrically, but only if the laser left the drill mark bare and the probe
-   clip is on that pad's net. After two pads, **Go to it** aims by the fit.
+   **Capture**. You can also type the position in. After two pads, **Go to it**
+   aims by the fit; on a measured pad it goes to the measured centre, to check it.
+   **Find it for me** locates the centre electrically:
+   - needs a copper-free circle at the pad (a mounting hole in a pour works well)
+     and the probe clip on the copper around it;
+   - start with the bit over the circle about **2 mm above the copper**, never at
+     Z0: its first move is sideways at the starting height;
+   - where there is no copper the bit presses 0.2 mm into bare laminate, which
+     the drill removes.
 4. At three pads the fit is applied. The stage draws the board where it really
    is, and **Worst pad** says how far the pads disagree (good < 0.10 mm, too far
    out ≥ 0.25 mm).
