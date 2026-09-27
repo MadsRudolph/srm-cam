@@ -122,6 +122,7 @@ class Stage(QWidget):
     board_picked = Signal(int)                   # pressed on one board of a panel
     pin_moved = Signal(int, float, float)        # a reference pin dropped, in mm
     measured = Signal(object)                    # (length, dx, dy) mm, or None
+    pad_picked = Signal(float, float)            # clicked a pad to measure, mm
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -571,7 +572,7 @@ class Stage(QWidget):
     def set_mode(self, mode):
         self.mode = mode
         self.setCursor(QCursor(Qt.CrossCursor
-                               if mode in ("jog", "screws", "measure")
+                               if mode in ("jog", "screws", "measure", "pad")
                                else Qt.ArrowCursor))
         if mode != "measure":
             self.clear_measure()      # the ruler belongs to its mode
@@ -688,6 +689,9 @@ class Stage(QWidget):
             return
         if self.mode == "screws":
             self.screw_picked.emit(p.x(), p.y())
+            return
+        if self.mode == "pad":
+            self.pad_picked.emit(p.x(), p.y())
             return
         if self.mode == "measure":
             self._measure_press(p)
