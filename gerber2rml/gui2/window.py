@@ -127,6 +127,7 @@ from gerber2rml.gui2.machine import MachineLink, MachineBar, RunTracker
 from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
 from gerber2rml.gui2.fiducial import FlipFitPage
+from gerber2rml.gui2.boardfit import BoardFitPage
 from gerber2rml.gui2.sheet import RunSheet, FEEDBACK_URL
 
 USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/"
@@ -336,6 +337,9 @@ class MainWindow(QMainWindow):
         # of the board in front of you and not the one you meant to put down.
         self._top_fit = None
         self._fid_measured = []
+        # Where a board made elsewhere (laser-etched, say) really sits, from
+        # its measured pads: design -> bed. Only the drill-only step uses it.
+        self._board_fit = None
         self._layout_base = None       # the layout at offset (0, 0)
         self._layout_key = None        # what that base was built from
         self._layout_placed = None     # ...translated to the placement
@@ -408,6 +412,8 @@ class MainWindow(QMainWindow):
         self.stage.board_picked.connect(self.action_select_board)
         self.stage.pin_moved.connect(self._on_pin_moved)
         self.stage.measured.connect(self._on_measured)
+        self.stage.pad_picked.connect(
+            lambda x, y: self.boardfit_page.add_pad_near(x, y))
         self.stage.set_empty(
             "No board loaded",
             "File ▸ Open Gerber folder, or try the demo board")
@@ -427,6 +433,8 @@ class MainWindow(QMainWindow):
         self.level_page = self.inspector.add_page("level", LevelPage(self))
         self.rework_page = self.inspector.add_page("rework", ReworkPage(self))
         self.flipfit_page = self.inspector.add_page("fitflip", FlipFitPage(self))
+        self.boardfit_page = self.inspector.add_page("fitdrill",
+                                                     BoardFitPage(self))
         h.addWidget(self.inspector)
         v.addWidget(middle, 1)
 
@@ -1217,7 +1225,9 @@ class MainWindow(QMainWindow):
         for box, owns in ((self.rework_page.add_chk, "box"),
                           (self.inspector.setup.pick_screws, "screws"),
                           (getattr(self.bar, "jog_btn", None), "jog"),
-                          (getattr(self, "measure_act", None), "measure")):
+                          (getattr(self, "measure_act", None), "measure"),
+                          (getattr(getattr(self, "boardfit_page", None),
+                                   "pick_chk", None), "pad")):
             if box is not None and mode != owns and box.isChecked():
                 box.blockSignals(True)
                 box.setChecked(False)
@@ -1368,7 +1378,7 @@ class MainWindow(QMainWindow):
         cuts, rapids, far = [], [], []
         width = st.trace.effective_diameter()
         if step.op in ("traces", "drill", "cutout", "airpass", "align",
-                       "top_traces"):
+                       "top_traces", "fitdrill"):
             cached = self._paths_cache.get(step.key)
             if cached is not None:
                 # The SAME list objects go back to the stage, which lets it
@@ -1442,6 +1452,14 @@ class MainWindow(QMainWindow):
         if not self._double:
             if step.op == "airpass":
                 return air_path(st.board.outline), None, 0.4
+            if step.op == "fitdrill":
+                from gerber2rml.engine.boardfit import warp_holes
+                holes = st.board.holes
+                if self._board_fit is not None:
+                    holes = warp_holes(holes, self._board_fit)
+                dj = self.cutting_drill()
+                return (drill_single_bit(holes, dj) if st.drill.single_bit
+                        else drill_holes(holes, dj), None, st.drill.bit_diameter)
             if step.op == "drill":
                 return (drill_single_bit(st.board.holes, self.cutting_drill())
                         if st.drill.single_bit
@@ -1585,6 +1603,18 @@ class MainWindow(QMainWindow):
                 self.stage.set_board(lay.bottom_copper, lay.outline, lay.holes,
                                      align_holes=lay.align_holes)
                 self.stage.set_pin_drag(self._pins_draggable())
+        elif (step is not None and step.op == "fitdrill"
+              and self._board_fit is not None):
+            # The board where its pads were measured, not where the design
+            # put it: the holes drawn, the drill path and a click-to-jog all
+            # have to agree with the copper on the bed.
+            from gerber2rml.engine.boardfit import warp_holes
+            t = self._board_fit
+            self.stage.set_pin_drag(False)
+            self.stage.set_members([], 0)
+            self.stage.set_board(self._warp_geom(st.board.copper, t),
+                                 self._warp_geom(st.board.outline, t),
+                                 warp_holes(st.board.holes, t))
         else:
             self.stage.set_pin_drag(False)
             self.stage.set_board(st.board.copper, st.board.outline,
@@ -1645,7 +1675,7 @@ class MainWindow(QMainWindow):
         reader that the key is decoration, and then they stop reading it.
         """
         cutting = step.op in ("traces", "drill", "cutout", "airpass", "align",
-                              "top_traces")
+                              "top_traces", "fitdrill")
         legend = []
         if cutting:
             legend.append((theme.PATH, "cutting"))
@@ -2490,6 +2520,8 @@ class MainWindow(QMainWindow):
         self._export_dir = None
         self.traveller.clear_done()
         self.rework_page._clear()
+        # Pads of the last board, measured on the last piece of copper.
+        self.boardfit_page.set_pads([])
         if self.stage.has_photo():
             self._drop_photo()
         # The chosen anchor holes are holes of THIS board, at its placement.
@@ -3109,10 +3141,21 @@ class MainWindow(QMainWindow):
         return [(*self._top_fit.apply(x, y), d) for (x, y, d) in holes]
 
     def _fit_geom(self, g):
-        if self._top_fit is None or g is None:
+        return self._warp_geom(g, self._top_fit)
+
+    def set_board_fit(self, transform):
+        """Adopt (or clear) the fit of a board made elsewhere, and redraw."""
+        if transform == self._board_fit:
+            return
+        self._board_fit = transform
+        self._paths_cache.pop("fitdrill", None)
+        self.refresh_preview()
+
+    @staticmethod
+    def _warp_geom(g, t):
+        if t is None or g is None:
             return g
         from shapely import affinity
-        t = self._top_fit
         import math
         c, s_ = math.cos(t.theta) * t.scale, math.sin(t.theta) * t.scale
         return affinity.affine_transform(g, [c, -s_, s_, c, t.tx, t.ty])
