@@ -60,6 +60,16 @@ def test_measured_pads_fit_and_the_file_lands_on_them(win, tmp_path):
         assert any(math.dist(c, (mx, my)) <= reach for c in cuts)
 
 
+def test_go_to_it_aims_at_the_measured_centre_once_there_is_one(win):
+    win.select_step("fitdrill")
+    page = win.boardfit_page
+    page.suggest()
+    assert page.aim(1) == page.predicted(1)
+    page._set_measured(1, 42.125, 17.5)
+    assert page.aim(1) == (42.125, 17.5)
+    assert page.aim(0) == page.predicted(0)
+
+
 def test_a_mirrored_board_is_called_out(win):
     win.select_step("fitdrill")
     page = win.boardfit_page

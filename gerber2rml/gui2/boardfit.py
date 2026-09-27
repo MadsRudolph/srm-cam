@@ -95,9 +95,10 @@ class BoardFitPage(inspector.Page):
         h.setSpacing(theme.GAP_S)
         h.addWidget(widgets.button(
             "Go to it", on=self._goto,
-            tip="Jogs the bit over the selected pad: where the fit says it is "
-                "once two pads are measured, otherwise where the picture has "
-                "it."))
+            tip="Jogs the bit over the selected pad. A measured pad: to the "
+                "centre it was measured at, to check it by eye. Otherwise "
+                "where the fit says it is once two pads are measured, else "
+                "where the picture has it."))
         h.addWidget(widgets.button(
             "Capture", on=self._capture,
             tip="Takes the machine's current X and Y for the selected row. "
@@ -272,9 +273,18 @@ class BoardFitPage(inspector.Page):
         if not self.ctl.link.is_connected():
             self.ctl.say("warn", "Not connected - there is nothing to jog.")
             return
-        x, y = self.predicted(r)
+        x, y = self.aim(r)
+        where = ("its measured centre" if self._measured_rows()[r] is not None
+                 else "where it should be")
         self.ctl.link.jog_to(x, y)
-        self.ctl.say("info", f"Jogging to pad {r + 1} at X{x:.2f} Y{y:.2f}.")
+        self.ctl.say("info", f"Jogging to pad {r + 1}, {where}: "
+                             f"X{x:.3f} Y{y:.3f}.")
+
+    def aim(self, row):
+        """Where Go to it sends the bit: a measured pad's own measurement, so
+        it can be checked by eye, else the prediction."""
+        m = self._measured_rows()[row]
+        return m if m is not None else self.predicted(row)
 
     def _auto(self):
         from gerber2rml.gui2.fiducial import FidFindRun
