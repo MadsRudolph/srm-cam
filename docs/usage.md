@@ -445,6 +445,33 @@ box's default) and a height-map-follow toggle. **Export rework NC** writes one
 `<name>_<side>_<op>_rework.nc`. See
 [2026-06-26-multi-region-rework.md](archive/2026-06-26-multi-region-rework.md).
 
+## Drilling a board made elsewhere (laser-etched traces)
+
+For a board whose copper is already finished, e.g. etched on the fiber laser, and
+only needs its holes. Load its Gerber folder as usual, then open **Drill a board
+made elsewhere** on the rail (single-sided jobs only).
+
+1. Clamp the board anywhere on the bed. Make the picture match the copper as it
+   lies there (toggle **Mirror** under *Set up the job* if needed), and drag it to
+   roughly where it sits.
+2. **Suggest three** picks three holes far apart and well out of line, or tick
+   **Pick on the board** and click your own.
+3. For each pad: **Go to it**, then centre the bit over the pad by eye and
+   **Capture**. You can also type the position in. **Find it for me** locates the centre
+   electrically, but only if the laser left the drill mark bare and the probe
+   clip is on that pad's net. After two pads, **Go to it** aims by the fit.
+4. At three pads the fit is applied. The stage draws the board where it really
+   is, and **Worst pad** says how far the pads disagree (good < 0.10 mm, too far
+   out ≥ 0.25 mm).
+5. **Write the drill file** writes `<name>_drill_fitted.nc`: every hole moved onto
+   the measured board. Zero Z with the drill bit and run it. Do not move the
+   board or reset XY after measuring.
+
+Three pads are required because two fit a mirrored board just as well as the
+right one. The third catches it, but only if each pad is found by **which pin it
+is**, not by where it sits in the picture. Engine: `engine/boardfit.py`, reusing
+the rigid fit from `engine/fiducial.py`.
+
 ## Double-sided boards
 
 Top/bottom passes align off machine-located holes, never the board edge. Tick

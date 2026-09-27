@@ -452,6 +452,13 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     seq.add(Step("rework", "tool", "Rework",
                  detail="Box up spots on a cut board and machine them again",
                  op="rework"))
+    if not double_sided:
+        # Not part of this job's run: a different job on the same Gerbers,
+        # for a board whose copper was made elsewhere (etched on the laser)
+        # and only needs its holes. It writes its own file when asked.
+        seq.add(Step("fitdrill", "tool", "Drill a board made elsewhere",
+                     detail="Measure three pads; the holes move onto the board",
+                     op="fitdrill"))
 
     plan = Plan(steps=seq.steps, double_sided=double_sided,
                 registration=registration, ext=ext)
