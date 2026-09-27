@@ -1,5 +1,6 @@
 """Automatic fiducial center finding against a simulated hole."""
 import math
+import random
 
 import pytest
 
@@ -36,6 +37,22 @@ def test_finds_center_within_50um():
     assert abs(cx - 50.437) < 0.05
     assert abs(cy - 40.181) < 0.05
     assert s.tests < 80                           # bounded number of touches
+
+
+def test_any_start_in_any_hole_is_found_in_few_touches():
+    rng = random.Random(1)
+    counts = []
+    for _ in range(200):
+        r = rng.uniform(0.6, 1.9)
+        cx, cy = rng.uniform(10, 90), rng.uniform(10, 70)
+        a, off = rng.uniform(0, 2 * math.pi), rng.uniform(0, 0.85) * r
+        s = HoleSerial(cx, cy, r_mm=r)
+        fx, fy = find_hole_center(s, cx + off * math.cos(a),
+                                  cy + off * math.sin(a))
+        assert math.hypot(fx - cx, fy - cy) < 0.05
+        counts.append(s.tests)
+    counts.sort()
+    assert counts[len(counts) // 2] <= 30         # was 39 with three passes
 
 
 def test_start_on_copper_refuses():
