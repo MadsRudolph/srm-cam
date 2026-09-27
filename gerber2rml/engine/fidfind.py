@@ -5,11 +5,12 @@ drilled fiducial hole there is nothing to touch, so a shallow descend
 distinguishes hole from copper — the firmware's ``H x y`` test (v2). Center
 finding is classic edge bisection: from a start point inside the hole, walk
 outward until copper, bisect the edge to ~50 um, do the same on the other
-side, midpoint = center; repeat in Y at the found X (and a second X pass at
-the found Y for good measure).
+side, midpoint = center; repeat in Y at the found X, and a second X pass at
+the found Y only when the first chord ran far from the middle.
 
-Total ~25-35 touch tests per fiducial (~1 min) instead of jogging around by
-eye and copying VPanel numbers per hole.
+Every touch test is a physical descent, so the count is the run time. Edges
+after the first are bracketed where the earlier ones say they are, instead of
+marched out to from the start point.
 """
 import time
 
@@ -33,14 +34,32 @@ def hole_test(ser, x_um, y_um, timeout=30.0, should_abort=None):
 
 
 def _find_edge(ser, x0, y0, dx, dy, coarse_um=400, span_um=4000, tol_um=50,
-               should_abort=None):
+               should_abort=None, guess_um=None, bracket_um=150):
     """From (x0, y0) (inside the hole), march along (dx, dy) until copper,
-    then bisect the hole->copper edge to ``tol_um``. Returns distance (um)."""
+    then bisect the hole->copper edge to ``tol_um``. Returns distance (um).
+
+    ``guess_um`` is where an earlier edge says this one should be: two tests
+    either side of it replace the march when they bracket the edge."""
+    def test(d):
+        return hole_test(ser, x0 + dx * d, y0 + dy * d,
+                         should_abort=should_abort)
+
     lo = 0
     hi = None
     d = coarse_um
-    while d <= span_um:
-        if hole_test(ser, x0 + dx * d, y0 + dy * d, should_abort=should_abort):
+    if guess_um is not None and guess_um - bracket_um > 0:
+        g_lo, g_hi = int(guess_um - bracket_um), int(guess_um + bracket_um)
+        if not test(g_lo):
+            lo = g_lo
+            if test(g_hi):
+                hi = g_hi
+            else:
+                lo = g_hi
+                d = g_hi + coarse_um
+        else:
+            hi = g_lo
+    while hi is None and d <= span_um:
+        if test(d):
             hi = d
             break
         lo = d
@@ -58,7 +77,7 @@ def _find_edge(ser, x0, y0, dx, dy, coarse_um=400, span_um=4000, tol_um=50,
     return (lo + hi) / 2.0
 
 
-def find_hole_center(ser, x_mm, y_mm, should_abort=None):
+def find_hole_center(ser, x_mm, y_mm, should_abort=None, near_um=400):
     """Locate the hole center starting from (x_mm, y_mm), which must be over
     the hole (jog roughly over it first). Returns (cx_mm, cy_mm).
 
@@ -72,13 +91,20 @@ def find_hole_center(ser, x_mm, y_mm, should_abort=None):
     right = _find_edge(ser, x0, y0, 1, 0, should_abort=should_abort)
     left = _find_edge(ser, x0, y0, -1, 0, should_abort=should_abort)
     cx = x0 + (right - left) / 2.0
-    up = _find_edge(ser, round(cx), y0, 0, 1, should_abort=should_abort)
-    down = _find_edge(ser, round(cx), y0, 0, -1, should_abort=should_abort)
+    half = (right + left) / 2.0          # the radius, if y0 is near the centre
+    up = _find_edge(ser, round(cx), y0, 0, 1, should_abort=should_abort,
+                    guess_um=half)
+    down = _find_edge(ser, round(cx), y0, 0, -1, should_abort=should_abort,
+                      guess_um=2 * half - up)
     cy = y0 + (up - down) / 2.0
-    # second X pass at the true Y: kills the chord error of the first pass
-    right = _find_edge(ser, round(cx), round(cy), 1, 0,
-                       should_abort=should_abort)
-    left = _find_edge(ser, round(cx), round(cy), -1, 0,
-                      should_abort=should_abort)
-    cx = cx + (right - left) / 2.0
+    # A chord's midpoint is the centre whatever its height, but a chord far
+    # from the middle crosses the rim at a slant and blurs both edges. Only
+    # then is a second X pass at the true Y worth its touches.
+    if abs(cy - y0) > near_um:
+        radius = (up + down) / 2.0
+        right = _find_edge(ser, round(cx), round(cy), 1, 0,
+                           should_abort=should_abort, guess_um=radius)
+        left = _find_edge(ser, round(cx), round(cy), -1, 0,
+                          should_abort=should_abort, guess_um=radius)
+        cx = cx + (right - left) / 2.0
     return cx / 1000.0, cy / 1000.0

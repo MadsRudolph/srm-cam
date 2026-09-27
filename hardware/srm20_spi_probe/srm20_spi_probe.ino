@@ -130,6 +130,10 @@ const long COARSE_STEP_UM = 150;     // fast descent step, used ONLY above the
 const long COARSE_KEEP_UM = 100;     // stop stepping coarsely this far above
                                      // that surface and hand over to the fine
                                      // step, so contact is always made gently
+const long HOLE_CLEAR_UM = 400;      // hole test: travel this far above the
+                                     // reference touch, not the approach plane
+const long HOLE_STEP_UM = 50;        // hole test: step near the surface - a
+                                     // yes/no answer, not a height
 const long MOVE_SPEED = -1;          // library default
 
 // ---- v3: machine status bits. Decoded from Roland's own getStatus example
@@ -439,7 +443,8 @@ int descendUntilTouch(long mx, long my, long &z, long step, long floorZ) {
 //
 // Returns 1 on contact, 0 if the floor is reached, -1 on abort - the same
 // contract as descendUntilTouch.
-int descendFast(long mx, long my, long &z, long floorZ, long expectZ) {
+int descendFast(long mx, long my, long &z, long floorZ, long expectZ,
+                long fineStep) {
   long handover = (haveRef ? expectZ + COARSE_KEEP_UM : floorZ);
   if (handover < floorZ) handover = floorZ;
   while (z > handover) {
@@ -451,7 +456,7 @@ int descendFast(long mx, long my, long &z, long floorZ, long expectZ) {
     if (!waitForMotorStop()) return -1;
     if (probeTouched()) return 1;                   // copper above where any
   }                                                 // has been seen: believe it
-  return descendUntilTouch(mx, my, z, PROBE_STEP_UM, floorZ);
+  return descendUntilTouch(mx, my, z, fineStep, floorZ);
 }
 
 // Verified touch at the CURRENT contact: the coarse touch at *coarseZ* is
@@ -502,7 +507,7 @@ int probeAt(long mx, long my, long &touchZ) {
   long z = startZ;
   // The grid goes anywhere on the board, so the only safe expectation is the
   // highest copper seen so far.
-  int r = descendFast(mx, my, z, floorZ, maxSurfaceZ);
+  int r = descendFast(mx, my, z, floorZ, maxSurfaceZ, PROBE_STEP_UM);
   if (r == -1) { liftSafe(mx, my); return -1; }
   if (r == 0)  { liftSafe(mx, my); return refLimited ? -2 : 0; }
   long cx, cy, cz;
@@ -792,16 +797,21 @@ void handleLine(char *s) {
     char *p = s + 1;
     long x = strtol(p, &p, 10);
     long y = strtol(p, &p, 10);
-    long startZ = approachZ();
+    // Travel and start just above the surface the reference touch measured,
+    // not the general approach plane: every hole test sits within a couple
+    // of millimetres of that touch, and the descent from the approach plane
+    // was most of each test's time. Never above the approach plane.
+    long startZ = refSurfaceZ + HOLE_CLEAR_UM;
+    if (startZ > approachZ()) startZ = approachZ();
     srm20.jumpTo(x, y, startZ, MOVE_SPEED);
     if (!waitForMotorStop()) { liftSafe(x, y); Serial.println(F("E H ABORT")); return; }
     long z = startZ;
-    // Expect the surface where the datum found it: every hole test in a run
-    // sits within a millimetre or two of it, and this test's own floor
-    // already assumes as much.
-    int r = descendFast(x, y, z, refSurfaceZ - 200, refSurfaceZ);
+    // The answer is only copper or not, so the step near the surface can be
+    // coarser than a height probe's; it still stops at the first contact.
+    int r = descendFast(x, y, z, refSurfaceZ - 200, refSurfaceZ, HOLE_STEP_UM);
     if (r == -1) { liftSafe(x, y); Serial.println(F("E H ABORT")); return; }
-    liftToApproach(x, y);
+    srm20.jumpTo(x, y, startZ, MOVE_SPEED);
+    waitForMotorStop();
     Serial.println(r == 1 ? F("H 1") : F("H 0"));
   } else if (s[0] == 'V') {        // version + feature flags for the host
 #ifdef SRM20SPIREMOTE_LOCAL_PATCH
