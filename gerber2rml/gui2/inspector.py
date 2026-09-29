@@ -450,9 +450,9 @@ class SetupPage(Page):
         self.double.toggled.connect(ctl.action_double_sided)
         self.ds_section.add(self.double)
         self.registration = QComboBox()
+        self.registration.addItem("Fiducial holes — measured after the flip "
+                                  "(the lab standard)", "fiducial")
         self.registration.addItem("Dowel pins — the mill drills its own", "dowel")
-        self.registration.addItem("Fiducial holes — measured after the flip",
-                                  "fiducial")
         self.registration.setToolTip(
             "Dowels: the mill drills two holes through the stock into the bed, "
             "you seat two pins of different sizes, and the board can only go "
@@ -865,7 +865,7 @@ class SetupPage(Page):
             box.setChecked(val)
             box.blockSignals(False)
         self.registration.blockSignals(True)
-        i = self.registration.findData(getattr(ctl, "_registration", "dowel"))
+        i = self.registration.findData(getattr(ctl, "_registration", "fiducial"))
         if i >= 0:
             self.registration.setCurrentIndex(i)
         self.registration.blockSignals(False)
