@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
         self._manual_screws = None   # None = let the app choose them
         # How the copper is held down, which decides whether the probed
         # surface is the surface that gets CUT. See _flex_margin.
-        self._hold = "points"        # "bonded" | "points"
+        self._hold = "bonded"        # "bonded" | "points"; tape is the lab standard
         # The extra depth for a board held at points: worked out from the
         # probe map, or typed. A number the operator has cut with beats any
         # estimate, and a board that keeps coming out deep is the case for it.
@@ -1911,7 +1911,7 @@ class MainWindow(QMainWindow):
         self._after_params()
 
     def action_hold(self, how):
-        self._hold = how or "points"
+        self._hold = how or "bonded"
         self._paths_cache = {}
         self._after_params()
 
