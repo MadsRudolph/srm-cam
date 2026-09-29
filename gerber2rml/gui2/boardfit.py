@@ -106,11 +106,13 @@ class BoardFitPage(inspector.Page):
                 "loupe helps - then press this."))
         self.auto_btn = widgets.button(
             "Find it for me", on=self._auto,
-            tip="Finds the centre electrically, to about 50 um - but only if "
-                "the laser left the drill mark in the pad as bare laminate, "
-                "and only with the probe clip on THAT pad's net (a laser "
-                "board's pads are isolated from each other; ground pads are "
-                "the easy choice). Put the bit over the pad first.")
+            tip="Finds the centre electrically, to about 50 um. It needs a "
+                "copper-free circle at the pad (the laser's drill mark, or a "
+                "mounting hole in a pour) and the probe clip on the copper "
+                "around it - on a laser board the pads are isolated, so that "
+                "is THAT pad's net; ground pads are the easy choice. Start "
+                "with the bit over the circle about 2 mm above the copper, "
+                "never at Z0: its first move is sideways.")
         h.addStretch(1)
         pads.add(row)
         # Two rows: four buttons side by side are wider than the inspector

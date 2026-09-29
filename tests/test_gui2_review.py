@@ -224,6 +224,7 @@ def test_a_panel_setup_claiming_double_sided_loads_single_sided(
 def test_a_dowel_off_the_bed_fails_the_fit_check(loaded):
     """The bed-fit check saw the plain board; the dowels sit outside it."""
     loaded.action_double_sided(True)
+    loaded.action_registration("dowel")
     loaded.action_place(0.0, 30.0)
     loaded.refresh_checks()
     _x0, _y0, _x1, y1 = loaded.job_extent()

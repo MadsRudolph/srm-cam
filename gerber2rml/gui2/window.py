@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
         self._exported = {}
         self._export_dir = None
         self._double = False
-        self._registration = "dowel"
+        self._registration = "fiducial"     # the lab standard; dowels drill the bed
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
         # descend INSIDE it to probe it, which is a hole no bit can enter.
@@ -3331,7 +3331,7 @@ class MainWindow(QMainWindow):
                          f"{py:+.2f} mm from the board's lower-left corner.")
 
     def action_registration(self, kind):
-        self._registration = kind or "dowel"
+        self._registration = kind or "fiducial"
         self._paths_cache = {}
         self._after_params()
 

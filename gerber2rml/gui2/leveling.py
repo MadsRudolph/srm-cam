@@ -335,7 +335,7 @@ class LevelPage(inspector.Page):
         """
         self.retouch_field.setVisible(tier.is_full())
         dowel = (bool(getattr(self.ctl, "_double", False))
-                 and getattr(self.ctl, "_registration", "dowel") == "dowel")
+                 and getattr(self.ctl, "_registration", "fiducial") == "dowel")
         self.top_btn.setVisible(dowel)
         self.top_hint.setVisible(dowel)
 

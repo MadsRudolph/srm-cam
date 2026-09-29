@@ -277,6 +277,8 @@ def test_the_top_traces_button_belongs_to_dowel_jobs(loaded):
     page = loaded.level_page
     assert page.top_btn.isHidden()
     loaded.action_double_sided(True)
+    assert page.top_btn.isHidden(), "fiducials are the default"
+    loaded.action_registration("dowel")
     assert not page.top_btn.isHidden()
     loaded.action_registration("fiducial")
     assert page.top_btn.isHidden(), "the flip-fit page owns the fiducial case"
