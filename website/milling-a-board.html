@@ -4,12 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Milling a board — SRM-CAM guide</title>
-<meta name="description" content="The single-sided workflow in the setup sheet: set up, check, export, run in VPanel.">
+<meta name="description" content="Milling a single-sided board on the Roland SRM-20 with SRM-CAM, start to finish: KiCad export, zeroing Z, finding the copper corner, bed levelling, checks, export, VPanel and clean-up, with interactive explainers.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/laptop.js?v=20260930a"></script>
+<script defer src="js/anim/roadmap.js?v=20260930a"></script>
+<script defer src="js/anim/origin.js?v=20260930a"></script>
+<script defer src="js/anim/zlimit.js?v=20260930a"></script>
+<script defer src="js/anim/zeroz.js?v=20260930a"></script>
+<script defer src="js/anim/corner.js?v=20260930a"></script>
+<script defer src="js/anim/butt.js?v=20260930a"></script>
+<script defer src="js/anim/bow.js?v=20260930a"></script>
+<script defer src="js/anim/probe.js?v=20260930a"></script>
+<script defer src="js/anim/gaps.js?v=20260930a"></script>
+<script defer src="js/anim/joblist.js?v=20260930a"></script>
+<script defer src="js/anim/cutting.js?v=20260930a"></script>
+<script defer src="js/anim/continuity.js?v=20260930a"></script>
 </head>
 <body>
 <div class="layout">
@@ -58,83 +72,154 @@
 <div class="content">
 
 <h1>Milling a board</h1>
-<p class="lead">The single-sided workflow, start to finish.</p>
+<p class="lead">A single-sided board on the Roland SRM-20, start to finish, in the order the job happens at the mill: from KiCad to a board that is ready to solder. The drawings are live: press the buttons and drag the sliders.</p>
 
-<div class="pill-flow">
-  <span class="pf">Set up</span><span class="arr">→</span>
-  <span class="pf">Check</span><span class="arr">→</span>
-  <span class="pf">Export</span><span class="arr">→</span>
-  <span class="pf">Run in VPanel</span>
-</div>
-
-<h2>1. Set up the job</h2>
-<p>The first step on the rail. Everything about the job is on this one page.</p>
-<div class="tbl-wrap"><table>
-<tr><th>Section</th><th>What to do</th></tr>
-<tr><td><strong>The board</strong></td><td><span class="ui">Open Gerber folder…</span> or <span class="ui">Demo board</span>. The job name is the KiCad project's; it is what the files are called. <span class="ui">Add another board…</span> starts a <a href="panels.html">panel</a>.</td></tr>
-<tr><td><strong>The tool</strong></td><td>Pick a profile and <span class="ui">Apply profile</span> — a complete set of bits, depths and feeds for all three operations. The lab's <em>SRM-20 0.8 mm flat</em> opens applied. The summary underneath says what will be cut, and by how much deeper if the board is held at points.</td></tr>
-<tr><td><strong>The copper</strong></td><td>Board thickness from calipers. <span class="ui">Cut through by</span> derives the drill and cut-out depth from it. Sheet width and height, and its front-left corner — <span class="ui">Set the corner from the tool</span> reads it off the machine. <span class="ui">Held down with M4 screws</span> and <span class="ui">Held down by</span> are on <a href="holding-the-copper.html">Holding the copper</a>.</td></tr>
-<tr><td><strong>Where it sits</strong></td><td>Type X and Y, turn it in 90° steps, or <span class="ui">Centre it on the bed</span>. Or drag it on the stage and nudge with the arrow keys.</td></tr>
-</table></div>
-
-<div class="tbl-wrap"><table>
-<tr><th>Operation</th><th>Layer</th><th>Does</th></tr>
-<tr><td><strong>Isolation traces</strong></td><td>B.Cu, mirrored</td><td>Channels around every copper feature; <code>-1</code> passes clears all the background copper</td></tr>
-<tr><td><strong>Drill</strong></td><td>Excellon</td><td>One bit for every hole, larger ones milled as circles — or one file per diameter</td></tr>
-<tr><td><strong>Cut the board out</strong></td><td>Edge.Cuts</td><td>The outline with holding tabs — always last</td></tr>
-</table></div>
-
-<h2>2. Check before cutting</h2>
-<figure class="fig">
-  <img src="img/gui2_checks.png" alt="The checks page">
-  <figcaption>The checks live on a page, not in a message box, and re-run whenever the job changes.</figcaption>
+<figure class="anim" data-anim="roadmap">
+  <figcaption><span class="k">The whole job</span>Five stages; tap one to jump to it.</figcaption>
 </figure>
+
+<h2 id="need">What you need</h2>
 <ul>
-  <li><strong>Fits the bed</strong> — the whole job, dowels included, inside the 203 × 152&nbsp;mm travel.</li>
-  <li><strong>Z reach</strong> — the deepest cut against the 60&nbsp;mm stroke, measured from the surface once <span class="ui">Zero Z here</span> has touched it.</li>
-  <li><strong>Nets closer than the bit</strong> — spots the cutter physically cannot separate, marked ✕ on the traces. These will short whatever the depth: fix the clearance in KiCad or use a narrower bit.</li>
-  <li><strong>The job is on the copper</strong> — against the sheet you declared, not the bed.</li>
-  <li><strong>Holes fit the bit</strong>, the screw heads clear the lift height, the boards of a panel keep clear of each other.</li>
+  <li>Your board, drawn in <strong>KiCad</strong>, routed on the bottom copper.</li>
+  <li><strong>SRM-CAM</strong>, on the PC next to the mill.</li>
+  <li>Roland's <strong>VPanel</strong>, which sends the files to the machine.</li>
+  <li>A <strong>0.8&nbsp;mm flat end mill</strong> in the spindle.</li>
+  <li>For zeroing and bed levelling, the <strong>probe link</strong>: a small Arduino in the machine, and a clip on the copper. See <a href="hardware.html">Hardware</a>.</li>
 </ul>
-<p>The worst finding is on the rail's red banner as well, and stays there. <span class="ui">Copy report</span> puts the list on the clipboard.</p>
-
-<h2>3. Walk the plan</h2>
-<p>Select a numbered step and the stage draws its toolpath; the inspector shows the bit, the depth, the estimated time and — in the Full tier — the cutting parameters, editable. <span class="ui">View → Watch this step in 3D…</span> (<kbd>Ctrl</kbd>+<kbd>3</kbd>) plays it.</p>
-<figure class="fig">
-  <img src="img/gui2_drill.png" alt="The drill step's toolpath on the bed">
-  <figcaption>Step 2, the drill: every hole plunged with one 0.8&nbsp;mm bit, the larger ones milled as circles.</figcaption>
+<figure class="anim" data-anim="laptop">
+  <figcaption><span class="k">No PC at the mill?</span>Install SRM-CAM and VPanel on your own laptop and plug in both cables: the white USB is the mill (VPanel), the black USB is the Arduino probe link (SRM-CAM).</figcaption>
 </figure>
 
-<h2>4. Export the job</h2>
-<p><span class="ui">Export the job</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes every file in the plan and puts the run sheet in front of you.</p>
-<pre><code>&lt;name&gt;_airpass.nc           step 0 · DRY RUN — spindle off, bit 5 mm up
-&lt;name&gt;_traces.nc            step 1 · isolation, mirrored
-&lt;name&gt;_drill.nc             step 2 · one bit, larger holes milled as circles
-&lt;name&gt;_drill_&lt;dia&gt;mm.nc     step 2 · one file per diameter instead
-&lt;name&gt;_cutout.nc            step 3 · outline with tabs — LAST
-&lt;name&gt;_runplan.txt          the same plan as text</code></pre>
-<figure class="fig">
-  <img src="img/gui2_runsheet.png" alt="The run sheet after an export">
-  <figcaption>The run sheet: every step with its bit, depth and time, and the one rule. <span class="ui">Copy the plan</span>, <span class="ui">Open the folder</span>, or go <span class="ui">Back to the board</span>.</figcaption>
-</figure>
-
-<h2>5. Run in VPanel</h2>
+<h2 id="export">1 · Export from KiCad</h2>
 <ol class="steps">
-  <li><span class="st">Fit the bit, set the origin</span>
-    X, Y and Z, once. From here on only Z is ever re-zeroed. NC jobs obey <strong>G54</strong>: XY at the machine origin, zero only Z.</li>
-  <li><span class="st">Watch the dry run</span>
-    Send <code>&lt;name&gt;_airpass.nc</code> first. Spindle off, bit 5&nbsp;mm up, tracing the outline slowly enough to follow. If it leaves the copper, stop and re-place the stock — nothing has been cut.</li>
-  <li><span class="st">NC-code mode</span>
-    <span class="ui">Cut → Add → Output</span>; the <code>.nc</code> streams like RML.</li>
-  <li><span class="st">In order</span>
-    Traces, drill, cut-out last. Re-zero Z after a bit change; <span class="ui">Mark as run</span> on each step ticks it off on the rail.</li>
+  <li><span class="st">Stay inside the build area</span>
+    SRM-CAM's KiCad plugin draws the SRM-20's travel on the canvas: the whole build area, and the biggest board it recommends. Keep your board inside both. Install it from SRM-CAM: <span class="menu-path">KiCad › Set up the build-area plugin…</span></li>
+  <li><span class="st">Clearance at least the bit</span>
+    <span class="menu-path">Board Setup › Net Classes</span>: clearance at least 0.8&nbsp;mm, the width of the bit. Closer than that, two nets cannot be separated (<a href="#check">see the check</a>).</li>
+  <li><span class="st">Plot the Gerbers</span>
+    <span class="menu-path">File › Fabrication Outputs › Gerbers</span>: <strong>B.Cu</strong> and <strong>Edge.Cuts</strong>, into one folder. If KiCad asks to refill the zones, say yes.</li>
+  <li><span class="st">Drill files</span>
+    <span class="menu-path">Generate Drill Files…</span>: Excellon, millimetres, into the same folder. That folder is all SRM-CAM needs.</li>
 </ol>
 
-<div class="danger"><span class="t">Z travel</span>
-<p>About 60&nbsp;mm of usable Z. If the surface sits too low the head tops out and cuts air or shallow. <strong>Raise the work surface</strong> (add spoilboard). The Z-reach check knows, once the surface has been touched.</p></div>
+<h2 id="setup">2 · Set up the job in SRM-CAM</h2>
+<h3>Load the Gerber folder</h3>
+<p><span class="menu-path">File › Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) and pick the folder you plotted. The board lands on the bed, and the rail on the left becomes the plan: dry run, traces, drill and cut-out. The red banner is the worst thing the checks found; <a href="#check">more on that below</a>.</p>
 
-<h2>When the board is out</h2>
-<p>Two minutes of <a href="feedback.html?for=guide">feedback</a> on what was unclear, while it is fresh, is what changes this page for the next student. No account, nothing to install.</p>
+<h3>Tell it about the copper</h3>
+<figure class="fig mid">
+  <img src="img/copper-clamped-on-the-bed.jpg" alt="A copper sheet clamped on the SRM-20's spoilboard" loading="lazy">
+  <figcaption>The copper sheet clamped to the spoilboard.</figcaption>
+</figure>
+<p>Clamp the copper sheet to the spoilboard. On <span class="menu-path">Set up the job › The copper</span>, type the board thickness, measured with calipers, then the sheet's width and height (here 150 × 100&nbsp;mm). <span class="ui">Held down by</span> says how the sheet is fixed; this one is clamped at points. More on <a href="holding-the-copper.html">Holding the copper</a>.</p>
+
+<h3>Connect and jog</h3>
+<p>Plug in the probe link and press <span class="ui">Connect</span>. The bar at the bottom now shows where the head is, and whether the bit is touching the copper. Turn on <span class="ui">Click to jog</span> and click near the copper's front-left corner: the head lifts and travels there.</p>
+
+<h2 id="zero">3 · Zero and level, at the machine</h2>
+<h3>Zero Z, and only Z</h3>
+<figure class="anim" data-anim="origin">
+  <figcaption><span class="k">The one rule</span>You only ever zero Z, on the copper surface. X and Y stay at the machine origin, because the files assume it; the copper's corner is found with the probe and told to SRM-CAM instead.</figcaption>
+</figure>
+
+<h3>Mind the Z travel</h3>
+<p>Whenever you fit a bit, check how far down the head has to go. The mill's Z ends at <strong>−55&nbsp;mm in machine coordinates</strong>. Touch the copper near that, and the drill and the cut-out keep hitting the limit and stopping, again and again, and the job takes far longer.</p>
+<figure class="anim" data-anim="zlimit">
+  <figcaption><span class="k">Keep machine Z above −50</span>With the bit on the copper, machine Z must stay above −50&nbsp;mm. Check it by switching VPanel's coordinates from G54 to Machine, or read the Z in SRM-CAM's bottom bar, which always shows machine Z. Too low? Refit the bit so it sticks out further.</figcaption>
+</figure>
+
+<h3>Zero Z on the copper</h3>
+<ol class="steps">
+  <li><span class="st">Probe on, spindle off</span>Clip the probe onto the copper and open VPanel. Send Z to the old origin to get close, lift 5&nbsp;mm, and jog X and Y over the front-left corner.</li>
+  <li><span class="st">G54, not Machine or User</span>VPanel's coordinate list has Machine, User and G54. The files are NC code and obey <strong>G54</strong>, so that is the one you set. Setting the origin under Machine or User does nothing for the job.</li>
+  <li><span class="st">Creep down</span>Lower Z again, set the cursor step to ×10 (0.1&nbsp;mm per press), and lower one press at a time, watching SRM-CAM's touch indicator. When it turns red and says <em>Touch</em>, the bit is on the copper; SRM-CAM refuses to jog further down while it does.</li>
+  <li><span class="st">Set Origin Point › Z</span>Zero is now the copper surface. Leave X and Y alone.</li>
+</ol>
+<figure class="anim" data-anim="zeroz">
+  <figcaption><span class="k">Try it</span>Put VPanel on G54, lower Z a press at a time until SRM-CAM reads Touch, then Set Origin Point › Z.</figcaption>
+</figure>
+
+<h3>Find the copper corner</h3>
+<p>With the bit touching, step towards the front edge: ×100 is 1&nbsp;mm per press. When the touch goes out, step back one, switch to ×10, and creep up to the edge again until the touch goes out; step back one. Do the same in X. The last points that still touch, in Y and in X, are the corner. Back in SRM-CAM, <span class="menu-path">Set up the job › The copper › Set the corner from the tool</span> reads the machine's X and Y, and the sheet on the stage moves to where the copper really is.</p>
+<figure class="anim" data-anim="corner">
+  <figcaption><span class="k">Find it yourself, or play the demo</span>Step towards each edge until the touch goes out, step back one, and creep in 0.1&nbsp;mm steps. The demo is the walk from the recording, and ends on X&nbsp;60.52, Y&nbsp;24.42.</figcaption>
+</figure>
+
+<h3>Two boards on one sheet</h3>
+<p>If there's room, <span class="menu-path">File › Add another board to the sheet…</span> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>) and pick the same folder: a second copy lands beside the first. Then <span class="menu-path">Set up the job › Where it sits on the bed › Butt them together</span>. Touching boards share one cut, and each loses just 0.4&nbsp;mm along that edge. More on <a href="panels.html">Several boards on one sheet</a>.</p>
+<figure class="anim" data-anim="butt">
+  <figcaption><span class="k">Side by side, or butted</span>Butted, one cut down the seam separates both boards: 0.4&nbsp;mm off each instead of a 4&nbsp;mm strip of waste between them.</figcaption>
+</figure>
+
+<h3>Why level the bed</h3>
+<p>The copper foil is only 35&nbsp;µm thick, and the cut goes 150&nbsp;µm deep. A clamped sheet bows by almost that much. Without levelling, part of the board is cut too shallow, and those traces stay shorted. So measure the surface, and let every cut follow it.</p>
+<figure class="anim" data-anim="bow">
+  <figcaption><span class="k">0.13&nbsp;mm is almost a whole cutting depth</span>A flat cut leaves copper in the dip and shorts the traces; a levelled cut follows the surface.</figcaption>
+</figure>
+
+<h3>Level the bed</h3>
+<ol class="steps">
+  <li><span class="st">Build the grid</span>Select <span class="menu-path">Level the bed</span> on the rail. Pick a grid, 3 × 3 to start, and press <span class="ui">Build the grid over the board</span>.</li>
+  <li><span class="st">Point 1 is the datum</span>Jog the bit over the <strong>first marked probe point</strong>. Every height in the map is measured from it, so this is also where you set your <strong>final Z zero</strong> (on G54, as above).</li>
+  <li><span class="st">Probe over the link</span>Lift a couple of millimetres, then press <span class="ui">Probe over the link</span>. SRM-CAM drives the head to each point and touches down twice, to be sure; the table fills as it goes. <span class="ui">STOP</span> or <kbd>Esc</kbd> stops it at any time.</li>
+  <li><span class="st">The warp switches on</span>A finished probe switches on <span class="ui">Warp the exported cut to this surface</span>, so every cutting depth follows the map. The sheet in the recording varied by 0.13&nbsp;mm.</li>
+</ol>
+<figure class="anim" data-anim="probe">
+  <figcaption><span class="k">Probing</span>Jog to point 1 and set the final Z zero there; SRM-CAM then touches every point twice. The heights shown are illustrative. Details on <a href="bed-leveling.html">Bed levelling</a>.</figcaption>
+</figure>
+
+<h2 id="check">4 · Check and export</h2>
+<h3>Check every step</h3>
+<p>Before exporting, select <span class="ui">Isolation traces</span> on the rail: SRM-CAM marks every problem on the stage. Red marks are spots where two nets sit closer than the 0.8&nbsp;mm bit can pass. They stay shorted, whatever the depth. The proper fix is more clearance in KiCad.</p>
+<p>If you can't change the design: <span class="menu-path">Interface › Full</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>. The cutter goes through anyway, trimming a little off the pads.</p>
+<figure class="anim" data-anim="gaps">
+  <figcaption><span class="k">Narrow gaps</span>A gap narrower than the bit is left uncut and stays shorted, unless the cutter is sent down the middle, trimming both pads. A 0.45&nbsp;mm gap costs 0.175&nbsp;mm off each side.</figcaption>
+</figure>
+
+<h3>Export the job</h3>
+<p><span class="ui">Export the job</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) and pick a folder: SRM-CAM writes every file in the plan, and the run sheet shows each step with its bit, depth and time. The one rule stands: zero Z once, and never re-zero X and Y. A worn bit? Fit a fresh one, check the Z travel again, and zero Z again.</p>
+
+<h2 id="cut">5 · Cut in VPanel</h2>
+<h3>Run order</h3>
+<ol class="steps">
+  <li><span class="st">Dry run</span>Spindle off, bit 5&nbsp;mm up, tracing the outline, so you can see the job is on the copper.</li>
+  <li><span class="st">Drill and traces</span>Either order works, but <strong>we prefer the drill first</strong>.</li>
+  <li><span class="st">Cut-out, always last</span>It frees the boards.</li>
+</ol>
+
+<h3>Send the files</h3>
+<p>In VPanel, press <span class="ui">Cut</span>, then <span class="ui">Add</span>, and pick the files from the export folder. Now <strong>look at the job list</strong>. VPanel lists the files alphabetically, so the cut-out lands first, and it runs the list from the top. Move the cut-out down with the arrows: the list must start with the drill or the traces, never the cut-out, and we prefer the drill first. Then press <span class="ui">Output</span>.</p>
+<figure class="anim" data-anim="joblist">
+  <figcaption><span class="k">Fix the order</span>The files land alphabetically, cut-out first. Move it to the bottom, drill first if you can, then Output.</figcaption>
+</figure>
+
+<h3>Watch it cut</h3>
+<p>With the link connected, SRM-CAM draws where the head actually is, so you can follow the job on screen. The traces take about eighteen minutes for two boards. Keep the cover closed while the spindle runs.</p>
+<figure class="anim" data-anim="cutting">
+  <figcaption><span class="k">The run</span>Dry run, drill, isolation traces, and the cut-out last, leaving four tabs. Schematic, not to scale.</figcaption>
+</figure>
+
+<h2 id="finish">Finish the board</h2>
+<p>Before the cut-out, vacuum the chips and look at the traces: every channel should be clean and continuous. After the cut-out, hold the sheet up to the light, and you should see every channel.</p>
+<div class="figs even">
+  <figure class="fig"><img src="img/boards-held-to-the-light.jpg" alt="Two milled boards in the sheet held up to the light, every channel visible" loading="lazy"><figcaption>Held to the light: every channel shows.</figcaption></figure>
+  <figure class="fig"><img src="img/boards-sanded-and-not.jpg" alt="Two cut-out boards side by side, one sanded, one not yet" loading="lazy"><figcaption>One board sanded, the other not yet.</figcaption></figure>
+</div>
+<p>Snap the tabs and sand the board. Then <strong>inspect it for loose hairs or strands of copper</strong> the mill didn't clear, and <strong>check with a multimeter</strong>: continuity where you want it, and none where you don't.</p>
+<figure class="anim" data-anim="continuity">
+  <figcaption><span class="k">Check with a multimeter</span>Continuity along each net, none between nets. A strand the mill didn't clear shows up as a short.</figcaption>
+</figure>
+
+<h2 id="tidy">Leave it as you found it</h2>
+<p>Vacuum the chips, close the cover, clear the bench, and put your offcuts in the scrap box. The people who use this mill are the only ones who maintain it; DesignBuildLab doesn't. A clean, tidy area is how we keep being able to use it.</p>
+<div class="photos3">
+  <figure><img src="img/machine-left-tidy.jpg" alt="The SRM-20 with its cover closed and the bench around it tidy" loading="lazy"><figcaption>Machine closed, bed vacuumed.</figcaption></figure>
+  <figure><img src="img/bench-cleared.jpg" alt="The cleared bench with its cutting mat" loading="lazy"><figcaption>Bench cleared, tools put back.</figcaption></figure>
+  <figure><img src="img/scrap-box.jpg" alt="The scrap box with copper offcuts" loading="lazy"><figcaption>Offcuts in the scrap box.</figcaption></figure>
+</div>
+
+<div class="tip"><span class="t">Need help?</span>
+<p>Reach out to Mads Rudolph, or to the TAs of the course, if you need guidance with the milling. And two minutes of <a href="feedback.html?for=guide">feedback</a> on what was unclear, while it is fresh, is what changes this page for the next student.</p></div>
 
 <div class="page-nav">
   <a href="getting-started.html"><span class="lbl">Previous</span><span class="ttl">← Getting started</span></a>
