@@ -102,3 +102,16 @@ class CutoutJob:
 @dataclass
 class BoardConfig:
     thickness: float = 1.6       # mm
+
+
+def drill_first(trace, drill):
+    """Whether the drill runs before the isolation traces.
+
+    The lab drills first when one bit does both: the holes are in before the
+    fine pass and nothing changes in the collet. With a different bit for the
+    traces (a V-bit, another diameter) or one drill file per diameter, the
+    traces stay first, because drilling first would add bit changes. The
+    cut-out is last either way.
+    """
+    return (getattr(trace, "tool_type", "flat") == "flat" and drill.single_bit
+            and round(trace.bit_diameter, 3) == round(drill.bit_diameter, 3))

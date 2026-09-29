@@ -27,6 +27,7 @@ it:
 from dataclasses import dataclass, field
 
 from gerber2rml.backends import BACKENDS
+from gerber2rml.config import drill_first
 
 
 @dataclass
@@ -190,12 +191,13 @@ class _Sequence:
 
 
 ORIGIN_NOTE = (
-    "This is the one time XY is set, and after it XY is never touched again — "
-    "the traces, the holes and the outline only land on top of each other "
-    "because every pass was cut from the same origin.\n\n"
-    "Zero Z on the copper with the bit you are about to cut with. The dry run "
-    "that follows holds the bit 5 mm above THIS zero, so it only means "
-    "anything once the zero is set.")
+    "Only Z is ever zeroed. X and Y stay at the machine origin, which is what "
+    "the files assume: find the copper's corner with the probe and use Set the "
+    "corner from the tool instead. The traces, the holes and the outline only "
+    "land on top of each other because every pass shares that one origin.\n\n"
+    "Zero Z on the copper with the bit you are about to cut with, with VPanel "
+    "on G54 (not Machine or User). The dry run that follows holds the bit 5 mm "
+    "above THIS zero, so it only means anything once the zero is set.")
 
 ONE_BIT_NOTE = (
     "One bit does this whole job — traces, holes and outline — so it never "
@@ -320,8 +322,9 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     # origin either. This step was missing entirely: the plan opened with the
     # dry run and told you to fit a bit afterwards.
     first_tool = drill_tool if double_sided else trace_tool
-    seq.hand("origin", f"Fit the {tool_label(first_tool)}, set the origin",
-             "X, Y and Z, once. From here on only Z is ever re-zeroed.",
+    seq.hand("origin", f"Fit the {tool_label(first_tool)}, set the Z origin",
+             "Z on the copper, in G54. Never re-zero XY: it stays at the "
+             "machine origin.",
              tool=first_tool, note=ORIGIN_NOTE)
 
     # -- step 0 is the same on both paths, and it is deliberately first -----
@@ -331,23 +334,38 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
             note=AIRPASS_NOTE)
 
     if not double_sided:
-        seq.run("traces_run", "Isolation traces", ordinal=1, op="traces",
-                file=f"{name}_traces{ext}", tool=trace_tool,
-                bit=trace.effective_diameter(), detail=_trace_detail(trace),
-                note="Cuts a channel around every copper feature so the nets "
-                     "stop touching. This is the pass that decides whether the "
-                     "board works, and the one bed levelling exists for.")
+        # One bit for traces and holes: the lab drills first (config.drill_first,
+        # which the engine follows too, so the files and this plan agree).
+        first = drill_first(trace, drill)
+        t_no, d_no = (2, 1) if first else (1, 2)
 
-        dfiles = _drill_files(holes, drill, f"{name}_drill", ext)
-        for i, (fn, dia) in enumerate(dfiles):
-            seq.run(f"drill_run{i}" if i else "drill_run",
-                    "Drill" if len(dfiles) == 1 else f"Drill {dia:.2f} mm holes",
-                    ordinal=2 if i == 0 else None, op="drill", file=fn,
-                    tool=("flat", round(dia, 3)), bit=dia,
-                    detail=_drill_detail(drill, dfiles) if i == 0
-                           else f"{dia:.2f} mm bit",
-                    note="Holes are drilled after the traces so the copper is "
-                         "still one flat sheet while the fine work happens.")
+        def _drill():
+            dfiles = _drill_files(holes, drill, f"{name}_drill", ext)
+            for i, (fn, dia) in enumerate(dfiles):
+                seq.run(f"drill_run{i}" if i else "drill_run",
+                        "Drill" if len(dfiles) == 1 else f"Drill {dia:.2f} mm holes",
+                        ordinal=d_no if i == 0 else None, op="drill", file=fn,
+                        tool=("flat", round(dia, 3)), bit=dia,
+                        detail=_drill_detail(drill, dfiles) if i == 0
+                               else f"{dia:.2f} mm bit",
+                        note=("The lab drills first when one bit does both: "
+                              "the holes are in before the fine isolation pass. "
+                              "Either order works; the cut-out is the one that "
+                              "has to be last." if first else
+                              "Holes are drilled after the traces so the copper "
+                              "is still one flat sheet while the fine work "
+                              "happens."))
+
+        def _traces():
+            seq.run("traces_run", "Isolation traces", ordinal=t_no, op="traces",
+                    file=f"{name}_traces{ext}", tool=trace_tool,
+                    bit=trace.effective_diameter(), detail=_trace_detail(trace),
+                    note="Cuts a channel around every copper feature so the nets "
+                         "stop touching. This is the pass that decides whether the "
+                         "board works, and the one bed levelling exists for.")
+
+        for part in ((_drill, _traces) if first else (_traces, _drill)):
+            part()
 
         seq.run("cutout_run", "Cut the board out", ordinal=3, op="cutout",
                 file=f"{name}_cutout{ext}", tool=cutout_tool,
@@ -467,7 +485,7 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
         # a bit-change instruction that does not apply to this job.
         origin = plan.by_key("origin")
         origin.detail = (f"One {plan.tool_label} for the whole job. "
-                         f"X, Y and Z, once.")
+                         f"Z origin once, in G54. Never re-zero XY.")
         origin.note = ORIGIN_NOTE + "\n\n" + ONE_BIT_NOTE
     return plan
 
