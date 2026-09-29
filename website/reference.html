@@ -9,7 +9,37 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930b"></script>
+<script defer src="js/anim/rf-files.js?v=20260930b"></script>
+<script defer src="js/anim/rf-feeds.js?v=20260930b"></script>
+<style>
+/* rf-files: the exported-file explorer (this page only) */
+.rf-files { display: grid; grid-template-columns: 240px 1fr; min-height: 380px; }
+.rf-list { border-right: 1px solid var(--rule); padding: 8px; display: flex; flex-direction: column; gap: 4px; background: var(--panel); }
+.rf-file { text-align: left; background: transparent; border: 1px solid transparent; border-radius: var(--radius); padding: 7px 9px; cursor: pointer; color: var(--text-2); }
+.rf-file:hover { background: var(--panel-hi); }
+.rf-file.on { background: var(--select); border-color: var(--select-edge); color: var(--text); }
+.rf-file.bad .fn { color: var(--danger); }
+.rf-file .fn { display: block; font: 500 0.8rem/1.3 var(--mono); color: var(--text); overflow-wrap: anywhere; }
+.rf-file .fd { display: block; font-size: 0.76rem; color: var(--text-3); margin-top: 2px; }
+.rf-right { display: flex; flex-direction: column; min-width: 0; }
+.rf-code { padding: 8px 0; flex: 1; overflow-x: auto; }
+.rf-title { font: 600 0.78rem/1 var(--mono); color: var(--copper-hi); padding: 4px 12px 8px; }
+.rf-line { display: flex; gap: 10px; width: 100%; text-align: left; background: transparent; border: 0; padding: 2px 12px; cursor: pointer; font: 0.8rem/1.55 var(--mono); color: var(--text); }
+.rf-line .no { color: var(--text-4); min-width: 2ch; text-align: right; flex: none; }
+.rf-line .tx { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rf-line.cm .tx { color: var(--verified); }
+.rf-line:hover { background: var(--panel-hi); }
+.rf-line.on { background: var(--select); box-shadow: inset 2px 0 0 var(--live); }
+.rf-line:focus-visible, .rf-file:focus-visible { outline: 2px solid var(--live); outline-offset: -2px; }
+.rf-note { border-top: 1px solid var(--rule); padding: 10px 14px; font-size: 0.86rem; color: var(--text); background: var(--panel); min-height: 3.4em; }
+@media (max-width: 640px) {
+  .rf-files { grid-template-columns: 1fr; }
+  .rf-list { border-right: 0; border-bottom: 1px solid var(--rule); flex-direction: row; flex-wrap: wrap; }
+  .rf-file { flex: 1 1 45%; }
+}
+</style>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +70,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,76 +89,107 @@
 <div class="content">
 
 <h1>Files &amp; reference</h1>
-<p class="lead">Everything SRM-CAM reads and writes, plus profiles, parameters, the command line and the keys.</p>
+<p class="lead">Everything SRM-CAM reads and writes, what is inside the files it sends to the mill, the tool profiles and their numbers, the command line and the keys.</p>
 
-<h2>Input files</h2>
+<h2>What goes in</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Type</th><th>Files</th><th>Notes</th></tr>
-<tr><td>Gerber</td><td><code>.gbr</code> / <code>.gbl</code> / <code>.gm1</code></td><td>KiCad's plot. B.Cu and Edge.Cuts at least; F.Cu for double-sided.</td></tr>
-<tr><td>Excellon drill</td><td><code>.drl</code></td><td>KiCad's drill files; PTH and NPTH are merged.</td></tr>
-<tr><td>Setup</td><td><code>.srmcam</code></td><td>The whole job, from <span class="ui">Save the setup…</span>. The first interface's <code>.json</code> setups load too.</td></tr>
-<tr><td>Height map</td><td><code>.csv</code></td><td>X, Y, dz, with the face it was probed on.</td></tr>
-<tr><td>Photo</td><td><code>.png</code> / <code>.jpg</code></td><td>For the overlay.</td></tr>
+<tr><td>Gerber</td><td><code>*-B_Cu.gbr</code>, <code>*-Edge_Cuts.gbr</code> (or <code>.gbl</code>, <code>.gm1</code>)</td><td>KiCad's plot: <span class="menu-path">File › Fabrication Outputs › Gerbers</span>. B.Cu and Edge.Cuts at least; F.Cu (<code>.gtl</code>) for double-sided.</td></tr>
+<tr><td>Excellon drill</td><td><code>.drl</code></td><td><span class="menu-path">Generate Drill Files…</span>, millimetres, into the same folder. Split PTH and NPTH files are merged, and a stale combined file beside them is ignored.</td></tr>
+<tr><td>Setup</td><td><code>.srmcam</code></td><td>The whole job, from <span class="menu-path">File › Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>); back with <span class="menu-path">File › Load a setup…</span>. The first interface's <code>.json</code> setups load too.</td></tr>
+<tr><td>Height map</td><td><code>.csv</code></td><td><code>x_mm, y_mm, dz_mm</code>, with a <code>#&nbsp;face:</code> line saying which face it was probed on. <span class="ui">Save…</span> and <span class="ui">Load…</span> on <span class="menu-path">Level the bed</span>.</td></tr>
+<tr><td>Photo</td><td><code>.png</code> / <code>.jpg</code></td><td>For the overlay: <span class="menu-path">View › Lay a photo of the board on the bed…</span></td></tr>
 </table></div>
 
-<h2>Output files</h2>
+<h2>What comes out</h2>
+<p><span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one program per step, in the machine's format, and the run plan beside them. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>dry run, drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
+<figure class="anim" data-anim="rf-files">
+  <figcaption><span class="k">Inside the files</span>Click a file, then a line, to see what it does. The lines are real output from the test board. Switch to <em>As VPanel lists them</em> to see why the cut-out has to be moved down.</figcaption>
+</figure>
+
 <div class="tbl-wrap"><table>
 <tr><th>File</th><th>Contents</th></tr>
+<tr><td><code>&lt;name&gt;_airpass.nc</code></td><td>Step 0, the dry run: spindle off, bit 5&nbsp;mm up, tracing the outline. Single-sided jobs.</td></tr>
+<tr><td><code>&lt;name&gt;_drill.nc</code> or <code>&lt;name&gt;_drill_&lt;dia&gt;mm.nc</code></td><td>One bit for every hole (the ones that fit are plunged, larger ones milled as circles), or one file per diameter.</td></tr>
+<tr><td><code>&lt;name&gt;_traces.nc</code></td><td>Isolation, mirrored for the bottom copper; warped to the height map when one is applied.</td></tr>
+<tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>The outline with four tabs. Always last.</td></tr>
 <tr><td><code>&lt;name&gt;_runplan.txt</code></td><td>The run sheet as text: order, bit per step, depths, times, where each board of a panel sits.</td></tr>
-<tr><td><code>&lt;name&gt;_airpass.nc</code></td><td>Step 0, the dry run. Single-sided jobs.</td></tr>
-<tr><td><code>&lt;name&gt;_traces.nc</code></td><td>Isolation, mirrored; warped to the height map when one is applied.</td></tr>
-<tr><td><code>&lt;name&gt;_drill.nc</code> / <code>&lt;name&gt;_drill_&lt;dia&gt;mm.nc</code></td><td>One bit for everything, or one file per diameter.</td></tr>
-<tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>The outline with tabs. Last.</td></tr>
-<tr><td><code>&lt;name&gt;_align.nc</code>, <code>_bottom_drill.nc</code>, <code>_bottom_traces.nc</code>, <code>_top_traces.nc</code></td><td>Double-sided, in that order, with the cut-out after the top traces.</td></tr>
+<tr><td><code>&lt;name&gt;_align.nc</code>, <code>_bottom_drill.nc</code>, <code>_bottom_traces.nc</code>, <code>_top_traces.nc</code></td><td>Double-sided, in that order, with the cut-out after the top traces. See <a href="double-sided.html">Double-sided boards</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_top_drill.nc</code></td><td>The blind holes finished from the top, on the measured flip.</td></tr>
-<tr><td><code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code></td><td>A rework program: the pass clipped to your boxes, each at its own depth.</td></tr>
-<tr><td><code>&lt;name&gt;_screws.nc</code> + <code>.txt</code></td><td>The hold-down clearance holes and the procedure.</td></tr>
-<tr><td><code>&lt;W&gt;x&lt;H&gt;_bedfixture.nc</code> + <code>.txt</code></td><td>The three dowel-pin holes in the spoilboard, named after the stock size.</td></tr>
+<tr><td><code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code></td><td>A rework program: the pass clipped to your boxes, each at its own depth. <a href="photo-and-rework.html">Rework</a>.</td></tr>
+<tr><td><code>&lt;name&gt;_screws.nc</code> + <code>.txt</code></td><td>The hold-down clearance holes and the procedure: <span class="menu-path">Machine › Export the hold-down screw file…</span></td></tr>
+<tr><td><code>bed_fixture.nc</code> + <code>.txt</code></td><td>The three dowel-pin holes in the spoilboard, cut once per spoilboard: <span class="menu-path">Machine › Export the bed fixture (pin holes)…</span></td></tr>
 </table></div>
-<p>G-code (<code>.nc</code>, mm, G54, plain G0/G1) by default; the <em>Roland SRM-20</em> file format writes RML.</p>
 
-<h2>What a setup contains</h2>
-<p>The boards and where each sits, the job name, the tool profile's numbers, the copper sheet, the screws, how the copper is held and the extra depth, both faces' height maps, the double-sided settings, the measured flip. The Gerber folders are referenced by path — bring them along to another PC.</p>
+<h3>G-code or RML</h3>
+<p>Picked under <span class="menu-path">Set up the job › Output format and mirroring › File format</span>, in the Full tier. Keep G-code unless you have a reason not to: the files explain themselves in VPanel.</p>
+<div class="tbl-wrap"><table>
+<tr><th></th><th>G-code (default)</th><th>RML</th></tr>
+<tr><td>File format</td><td><em>Roland SRM-20 (G-code)</em></td><td><em>Roland SRM-20</em></td></tr>
+<tr><td>Extension</td><td><code>.nc</code></td><td><code>.rml</code></td></tr>
+<tr><td>VPanel command set</td><td>NC Code</td><td>RML-1</td></tr>
+<tr><td>Units</td><td>millimetres; feeds in mm/min</td><td>0.01&nbsp;mm; speeds in mm/s</td></tr>
+<tr><td>Origin</td><td>G54: X, Y at the machine origin, Z zeroed on the copper</td><td>the User origin</td></tr>
+<tr><td>Comments</td><td>each file says which step it is</td><td>none: only the file name says</td></tr>
+</table></div>
+<p>The G-code uses only words on the SRM-20's NC list: plain <code>G0</code>/<code>G1</code> moves, no arcs or canned cycles, <code>M3</code>/<code>M5</code> for the spindle and a 2&nbsp;s <code>G04</code> pause after <code>M3</code> so the spindle is up to speed before the bit touches copper. The spindle speed is set in VPanel: the SRM-20 has no <code>S</code> word.</p>
 
 <h2>Tool profiles</h2>
-<p>A profile is the whole set of numbers for all three operations; applying one replaces them all. Built-in: <em>SRM-20 0.8 mm flat</em> (opens applied) and a 30° V-bit profile for fine traces. <span class="ui">Save as…</span> (Full tier) keeps your own in <code>~/.gerber2rml/presets.json</code>; a lab can put shared ones in <code>examples/presets.json</code>.</p>
+<p>A profile is the whole set of numbers for all three operations; <span class="ui">Apply profile</span> on <span class="menu-path">Set up the job › The tool</span> replaces them all. Built in:</p>
+<ul>
+  <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (1.7&nbsp;mm through, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
+  <li><strong>SRM-20 V-bit 30°, 0.1&nbsp;mm tip</strong>: 0.2&nbsp;mm traces for fine SMD work, with the 0.8&nbsp;mm bit for holes and outline. Level the bed first: a V-bit's width depends on its depth.</li>
+</ul>
+<p><span class="ui">Save as…</span> (Full tier) keeps your own in <code>~/.gerber2rml/presets.json</code>. A lab can share profiles in a <code>presets.json</code> beside the installed program (in a source checkout, <code>examples/presets.json</code>).</p>
 
 <h2>Cutting parameters</h2>
+<p>On each step's page under <span class="menu-path">Cutting parameters</span>, in the Full tier (<span class="menu-path">Interface › Full</span>). In Essential, the profile sets them.</p>
 <div class="tbl-wrap"><table>
 <tr><th>Parameter</th><th>Applies to</th><th>Meaning</th></tr>
 <tr><td>Bit diameter</td><td>all</td><td>The cutter's width, and what the shorts check measures against.</td></tr>
-<tr><td>Cut depth</td><td>traces</td><td>Just through the 35&nbsp;µm foil; the rest is margin.</td></tr>
-<tr><td>Isolation passes, pass overlap</td><td>traces</td><td>Channels per track (<code>-1</code> clears all copper); how far each extra pass steps across.</td></tr>
-<tr><td>V-bit tip, angle, target width</td><td>traces</td><td>A V-bit's depth is worked out from the width it is asked for.</td></tr>
-<tr><td>Total depth, peck</td><td>drill, cut-out</td><td>Through the board plus the overshoot; how much per plunge.</td></tr>
-<tr><td>One bit for every hole size</td><td>drill</td><td>Plunge the ones that fit, mill the larger ones as circles.</td></tr>
-<tr><td>Tabs, tab width</td><td>cut-out</td><td>What holds the board until the end.</td></tr>
-<tr><td>Feeds, lift height</td><td>all</td><td>Cutting and plunge speed in mm/s; how high the bit lifts between cuts.</td></tr>
+<tr><td>Cut depth</td><td>traces</td><td>Just through the 35&nbsp;µm foil; the rest is margin for an uneven surface.</td></tr>
+<tr><td>Isolation passes, pass overlap</td><td>traces</td><td>Channels per track (<code>-1</code> clears all the background copper); how far each extra pass steps across.</td></tr>
+<tr><td>Cut gaps too narrow for the bit</td><td>traces</td><td>Send the cutter down gaps narrower than the bit anyway, trimming both pads, instead of leaving them shorted.</td></tr>
+<tr><td>Tip width, included angle, cut width</td><td>traces</td><td>A V-bit's depth is worked out from the width asked for.</td></tr>
+<tr><td>Depth through, bite per peck</td><td>drill, cut-out</td><td>Through the board plus the overshoot into the spoilboard; how much per plunge.</td></tr>
+<tr><td>One bit for every hole size</td><td>drill</td><td>Plunge the holes that fit, mill the larger ones as circles. Off: one file per diameter.</td></tr>
+<tr><td>Holding tabs, tab width</td><td>cut-out</td><td>What holds the board in the sheet until the end.</td></tr>
+<tr><td><span class="menu-path">Feeds and lift height</span>: across the copper, straight down, lift between cuts</td><td>all</td><td>Cutting and plunge speed in mm/s; how high the bit lifts between cuts.</td></tr>
 </table></div>
+<figure class="anim" data-anim="rf-feeds">
+  <figcaption><span class="k">From numbers to files</span>SRM-CAM keeps feeds in mm/s. The G-code writes them ×60, in mm/min; RML keeps mm/s but writes every coordinate in 0.01&nbsp;mm. The bit runs the channel in real time.</figcaption>
+</figure>
+
+<h2>What a setup contains</h2>
+<p>The boards and where each sits, the job name, the tool profile's numbers, the copper sheet, the screws, how the copper is held and the extra depth, both faces' height maps, the double-sided settings and the measured flip. The Gerber folders are referenced by path: bring them along to another PC. Setups and exports live in <code>Documents\SRM-CAM\sessions</code> and <code>…\exports</code>.</p>
 
 <h2>Command line</h2>
-<pre><code>python -m gerber2rml                                          # the app
-python -m gerber2rml.gui                                      # the first interface
-python -m gerber2rml.cli &lt;gerber-folder&gt; -o &lt;out&gt; -n &lt;name&gt;   # headless export
-python -m gerber2rml.doctor                                   # fix dependencies after a pull</code></pre>
+<pre><code>python -m gerber2rml                                  # the app
+python -m gerber2rml.gui                              # the first interface
+python -m gerber2rml.cli &lt;gerber-folder&gt; -o &lt;out&gt; -n &lt;name&gt;
+                        [--gcode | -m "Roland SRM-20"] [--multi-bit] [--no-mirror]
+python -m gerber2rml.doctor                           # fix dependencies after a pull</code></pre>
+<p>The command line exports with its own defaults, not the lab profile: pass the numbers you want, or export from the app.</p>
 
 <h2>Keys</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Key</th><th>Effect</th></tr>
-<tr><td><kbd>Esc</kbd></td><td>Stop the machine, from anywhere</td></tr>
-<tr><td><kbd>Page Up</kbd> / <kbd>Page Down</kbd></td><td>Jog Z by the step</td></tr>
-<tr><td>Arrow keys</td><td>Nudge the picked board 0.1&nbsp;mm; <kbd>Shift</kbd> 1&nbsp;mm; <kbd>Ctrl</kbd> 0.01&nbsp;mm</td></tr>
-<tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Open a Gerber folder / add another board</td></tr>
-<tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Save the setup / export the job</td></tr>
-<tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Fit the work / fit the bed / centre the job</td></tr>
-<tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>3</kbd> / <kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Design X-ray / screw grid / 3D view / connect</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>STOP the machine, from anywhere</td></tr>
+<tr><td><kbd>Page Up</kbd> / <kbd>Page Down</kbd></td><td>Raise / lower Z by the step. Lowering is refused while the bit reads Touch.</td></tr>
+<tr><td>Arrow keys, board picked</td><td>Nudge the board 0.1&nbsp;mm; <kbd>Shift</kbd> 1&nbsp;mm; <kbd>Ctrl</kbd> 0.01&nbsp;mm</td></tr>
+<tr><td>Arrow keys, <span class="ui">Click to jog</span> on</td><td>Jog the head 1&nbsp;mm; <kbd>Shift</kbd> 10&nbsp;mm; <kbd>Ctrl</kbd> 0.1&nbsp;mm</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Open a Gerber folder / add another board to the sheet</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>E</kbd> / <kbd>Ctrl</kbd>+<kbd>Q</kbd></td><td>Save the setup / export the job / quit</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Fit the work / fit the whole bed / centre the job on the bed</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>3</kbd> / <kbd>Ctrl</kbd>+<kbd>M</kbd></td><td>Design X-ray / spoilboard screw grid / watch this step in 3D / measure</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Connect / disconnect the machine link</td></tr>
 <tr><td>Scroll / right-drag on the stage</td><td>Zoom / pan</td></tr>
 </table></div>
 
 <h2>Measure</h2>
-<p><span class="ui">View → Measure</span> (<kbd>Ctrl</kbd>+<kbd>M</kbd>): drag a line on the bed. Both ends snap to the board's corners, edges and hole centres and to the copper sheet's corners, so corner to corner reads the board's true size.</p>
+<p><span class="menu-path">View › Measure — drag a ruler on the bed</span> (<kbd>Ctrl</kbd>+<kbd>M</kbd>): drag a line on the bed. Both ends snap to the board's corners, edges and hole centres and to the copper sheet's corners, so corner to corner reads the board's true size. <kbd>Ctrl</kbd>+<kbd>M</kbd> again puts the ruler away.</p>
 <figure class="fig mid">
-  <img src="img/gui2_measure.png" alt="A ruler dragged across the board reading 100.00 mm">
+  <img src="img/gui2_measure.png" alt="A ruler dragged across the board reading 100.00 mm" loading="lazy">
   <figcaption>The ruler: length, and the X and Y parts of it.</figcaption>
 </figure>
 

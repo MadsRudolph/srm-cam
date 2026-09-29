@@ -4,12 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Several boards on one sheet — SRM-CAM guide</title>
-<meta name="description" content="Two or more Gerber folders on one piece of copper, cut in one run.">
+<meta name="description" content="Several boards on one piece of copper, cut in one run: adding and arranging them, how close they may sit, the shared cut, the sheet-edge rule and the file names, with interactive explainers.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/pn-sheet.js?v=20260930b"></script>
+<script defer src="js/anim/pn-gap.js?v=20260930b"></script>
+<script defer src="js/anim/pn-edge.js?v=20260930b"></script>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +44,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,45 +63,56 @@
 <div class="content">
 
 <h1>Several boards on one sheet</h1>
-<p class="lead">Two or more designs on one piece of copper, cut in one run: one trace file, one drill file, one cut-out.</p>
+<p class="lead">Two or more designs on one piece of copper, cut in one run: one trace file, one drill file, one cut-out. The drawings are live: add boards, drag them, and watch the checks.</p>
 
-<figure class="fig">
-  <img src="img/gui2_panel_cutout.png" alt="Two boards butted together on one sheet, with the shared cut between them">
-  <figcaption>Two boards butted together. One channel between them separates both; the outer edges on the sheet's edge are not cut.</figcaption>
+<figure class="anim" data-anim="pn-sheet">
+  <figcaption><span class="k">Try it</span>Three boards fit side by side on the 150 × 100&nbsp;mm sheet. Add a fourth and it runs off the copper; butt them together and all four fit, because touching boards share one cut instead of 4&nbsp;mm of waste.</figcaption>
 </figure>
 
-<h2>Add and place</h2>
+<h2 id="add">Add and place</h2>
 <ol class="steps">
   <li><span class="st">Add</span>
-    <span class="ui">File → Add another board to the sheet…</span> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>), or <span class="ui">Add another board…</span> on the setup page. It lands to the right of what is there. The same folder twice makes two of the board (<em>buck</em>, <em>buck 2</em>).</li>
+    <span class="menu-path">File › Add another board to the sheet…</span> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>), or <span class="menu-path">Set up the job › The board › Add another board…</span>. It lands to the right of what is there, 4&nbsp;mm clear, its front edge level with the others. The same folder twice makes two of the board: <em>buck</em>, <em>buck 2</em>.</li>
   <li><span class="st">Pick</span>
-    Click a board on the bed, or in the list on the setup page. The placement fields, the rotation and the arrow keys act on the picked board; the others stay put.</li>
+    Click a board on the bed, or in the list under <span class="menu-path">Set up the job › The board</span>. The placement fields, the rotation and the arrow keys act on the picked board; the others stay put.</li>
+  <li><span class="st">Move</span>
+    Drag it, or nudge it with the arrow keys: 0.1&nbsp;mm a press, <kbd>Shift</kbd> for 1&nbsp;mm, <kbd>Ctrl</kbd> for 0.01&nbsp;mm.</li>
   <li><span class="st">Arrange</span>
-    <span class="ui">Lay them side by side</span> lines them up 4&nbsp;mm apart. <span class="ui">Butt them together</span> lines them up touching. <span class="ui">Centre it on the bed</span> moves the whole sheet's worth together.</li>
+    <span class="menu-path">Set up the job › Where it sits on the bed</span>: <span class="ui">Lay them side by side</span> lines them up left to right, 4&nbsp;mm apart; <span class="ui">Butt them together</span> lines them up touching. The first board stays where it is. <span class="ui">Centre it on the copper</span> then moves the whole panel onto the middle of the sheet (see <a href="holding-the-copper.html#where">where the copper is</a>).</li>
   <li><span class="st">Take off</span>
-    <span class="ui">Take this board off</span> removes the picked one.</li>
+    <span class="menu-path">Set up the job › The board › Take this board off</span> removes the picked one.</li>
 </ol>
 
-<figure class="fig">
-  <img src="img/gui2_panel_setup.png" alt="Two boards side by side on one sheet, each named above its outline">
-  <figcaption>Two boards laid side by side on one sheet, each named. The picked one is outlined; the setup page lists them and moves the picked one.</figcaption>
+<h2 id="gap">How close may they sit?</h2>
+<p>Each cut-out runs one cutter width, 0.8&nbsp;mm, just outside its board. How close two boards sit decides what happens between them, and the checks say so:</p>
+<figure class="anim" data-anim="pn-gap">
+  <figcaption><span class="k">The seam, to scale</span>Closer than the cutter, one channel runs down the middle of the gap and each board gives up the difference. A little further apart, a thin strip is left between two channels, and that strip can break loose.</figcaption>
+</figure>
+<div class="tbl-wrap"><table>
+<tr><th>Gap</th><th>What the cut-out does</th><th>The check</th></tr>
+<tr><td>Overlapping</td><td>Nothing: the boards are one shape</td><td><strong>Two boards overlap</strong>: the export refuses</td></tr>
+<tr><td>0 to 0.8&nbsp;mm</td><td>One channel, centred in the gap; each board loses (0.8&nbsp;− gap)&nbsp;/&nbsp;2, so 0.4&nbsp;mm when butted</td><td><strong>Two boards share one cut</strong>, a warning once each loses 0.2&nbsp;mm or more</td></tr>
+<tr><td>0.8 to 2.6&nbsp;mm</td><td>Two channels, with a strip of stock (gap&nbsp;− 1.6&nbsp;mm) between them</td><td><strong>Nearly touching</strong>: the strip can break loose and jam the cutter</td></tr>
+<tr><td>2.6&nbsp;mm or more</td><td>Two channels, waste that stays put</td><td><strong>The boards keep clear of each other</strong></td></tr>
+</table></div>
+
+<h2 id="edge">The sheet's edge</h2>
+<p>Once the copper's size and corner are set under <span class="menu-path">Set up the job › The copper</span>, a board edge within 0.5&nbsp;mm of the sheet's edge <em>is</em> the sheet's edge, and the cut-out leaves that side out: a cutter running along it would be mostly in the air. Hanging that little off the copper is a warning (the board comes out short by that much); any more is a failure.</p>
+<figure class="anim" data-anim="pn-edge">
+  <figcaption><span class="k">The 0.5&nbsp;mm rule</span>Slide the board towards the sheet's edge and past it. Without the sheet set, the app only knows the bed and cuts the whole ring.</figcaption>
 </figure>
 
-<h2>The cut-out</h2>
+<h2 id="files">The files, and the rest of the job</h2>
 <ul>
-  <li><strong>Boards closer than the cutter share one cut</strong>, centred in the gap. Each loses half of what the cutter takes beyond the gap — 0.4&nbsp;mm a side for touching boards and a 0.8&nbsp;mm bit. The check says the number.</li>
-  <li><strong>An edge on the sheet's edge is not cut.</strong> Once the copper's size and corner are set, a board edge within 0.5&nbsp;mm of the sheet's edge is the sheet's edge, and the cut-out leaves that side out. A board hanging that little off the copper is a warning, not a failure.</li>
-  <li>Boards between one and two bit widths apart get two rings that overlap harmlessly. A strip of waste under a millimetre between them is a warning: it can break loose and jam the cutter.</li>
-  <li>Boards that overlap cannot be cut, and the export refuses.</li>
+  <li><strong>File names</strong> join every board's name: <code>buck+buck_2_traces.nc</code>, unless you type a <span class="ui">Job name</span> under <span class="menu-path">Set up the job › The board</span>.</li>
+  <li><strong>VPanel still lists them alphabetically</strong>, so the cut-out lands first. Move it to the bottom, drill first if you can: see <a href="milling-a-board.html#cut">Cut in VPanel</a>.</li>
+  <li>The <strong>dry run</strong> traces every outline. Isolation sees all the copper at once, so two boards placed close enough to short each other show up in the checks like any other short.</li>
+  <li>The probe grid, the screws and the checks see the whole sheet's worth. Setups save every board with its own placement and rotation.</li>
 </ul>
-
-<h2>Everything else</h2>
-<ul>
-  <li>The files are named after every board (<code>buck+buck_2_traces.nc</code>) unless you type a job name.</li>
-  <li>The dry run traces every outline. Isolation sees all the copper at once, so two boards placed close enough to short each other show up in the checks like any other short.</li>
-  <li>The probe grid, the screws and the checks see the whole sheet's worth.</li>
-  <li>Setups save every board with its own placement and rotation.</li>
-</ul>
+<figure class="fig">
+  <img src="img/gui2_panel_setup.png" alt="Two boards side by side on one sheet, each named above its outline" loading="lazy">
+  <figcaption>In the app: two boards side by side, each named. The picked one is outlined; the setup page lists them and moves the picked one.</figcaption>
+</figure>
 <div class="note"><span class="t">Single-sided only</span>
 <p>A double-sided job is one board registered to its holes. Add boards to a single-sided job.</p></div>
 

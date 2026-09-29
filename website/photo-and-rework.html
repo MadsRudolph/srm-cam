@@ -9,7 +9,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/continuity.js?v=20260930b"></script>
+<script defer src="js/anim/pr-overlay.js?v=20260930b"></script>
+<script defer src="js/anim/pr-rework.js?v=20260930b"></script>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +44,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link active" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,35 +63,57 @@
 <div class="content">
 
 <h1>Photo check &amp; rework</h1>
-<p class="lead">Did every channel cut through? Box the spots that did not and re-cut them deeper, in one program. The board stays on the machine — never re-zero XY.</p>
+<p class="lead">Did every channel cut through? Find the spots that didn't, box them, and re-cut only there, deeper, in one program. The board stays on the machine, and the XY origin is never touched. The drawings are live: press the buttons, and drag on the board.</p>
 
-<h2>Rework</h2>
-<p><span class="ui">Rework</span> is on the rail under <em>When you need it</em> (Full tier).</p>
-<figure class="fig">
-  <img src="img/gui2_rework.png" alt="Two rework boxes drawn on the board, each with its own depth">
-  <figcaption>Two boxes, each with its own depth. The program repeats the pass inside them and nothing else.</figcaption>
+<div class="pill-flow">
+  <span class="pf">Find the spots</span><span class="arr">→</span>
+  <span class="pf">Box them</span><span class="arr">→</span>
+  <span class="pf">Check the depth</span><span class="arr">→</span>
+  <span class="pf">Export one program</span>
+</div>
+
+<h2 id="find">Find the spots</h2>
+<p>Look at the board under a light first: a channel that was <strong>never cut</strong> shows as copper across it. A channel that was cut <strong>too shallow</strong> looks like any other channel but still joins the two nets, so check with a multimeter: continuity along each net, none between nets. A beep where there shouldn't be one says where to box.</p>
+<figure class="anim" data-anim="continuity">
+  <figcaption><span class="k">The multimeter</span>Continuity along each net, none between nets. A strand the mill didn't clear shows up as a short.</figcaption>
 </figure>
-<ol class="steps">
-  <li><span class="st">Repeat from</span>
-    <span class="ui">Isolation traces</span> or <span class="ui">Board cut-out</span> — on a double-sided job, <span class="ui">Bottom traces</span> or <span class="ui">Top traces</span>. The geometry is the pass as it was cut, clipped to your boxes, so it follows the same route.</li>
-  <li><span class="st">Mark the spots</span>
-    Tick <span class="ui">Drag boxes on the bed</span> and drag a box over each spot. Each box keeps its own depth; set <span class="ui">Depth for the next box</span> before drawing, or edit it in the table. Go a little deeper than the pass that missed.</li>
-  <li><span class="st">Export the rework program…</span>
-    One <code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code>. It is warped to the face's height map if one is applied, and a cut-out rework is taken down in passes rather than one deep plunge.</li>
-</ol>
 
-<h2>A photo of the board</h2>
-<p>A board that has been cut differs from its design: it sits a degree off, a trace lifted. A photo warped into machine coordinates puts the two in one frame, so a box drawn on the photo lands where the damage is.</p>
+<h2 id="photo">A photo of the board on the bed</h2>
+<p>A board that has been cut differs from its design: it sits a degree off square, a pad tore, a strand stayed. A photo warped into machine coordinates puts the two in one frame, so a box drawn on the photo lands where the damage actually is, not where the Gerbers say it should be.</p>
 <ol class="steps">
-  <li><span class="st">Shoot</span>
-    Straight down, evenly lit, sharp. <span class="ui">View → Take one with a phone…</span> shows a QR code; scan it, take the photo on the phone, and it arrives in the app.</li>
+  <li><span class="st">Take the photo</span>
+    Straight down, evenly lit, sharp. <span class="menu-path">View › Take one with a phone…</span> shows a QR code: scan it, take the photo on the phone, and it arrives in the app. By default it goes through a small hosted relay, so it works on any network (eduroam and mobile data included); set the dialog's <span class="ui">Relay</span> field to <code>lan</code> to send it direct instead, if the phone and the PC can reach each other (client-isolating wifi forbids that). The shot is cropped to the copper for you.</li>
   <li><span class="st">Lay it on the bed</span>
-    <span class="ui">View → Lay a photo of the board on the bed…</span>. Click the four anchor holes in the photo in the order the design map beside it asks for. Scroll to zoom, drag to pan, undo the last click. The note says how well the fit lands.</li>
+    <span class="menu-path">View › Lay a photo of the board on the bed…</span> Click the anchor holes in the photo in the order the design map beside it asks for. Scroll to zoom, drag to pan, and undo the last click if you miss. The note says how well the fit lands. Four holes fit a homography, which straightens a photo that leans as well as one that's turned.</li>
+  <li><span class="st">Choose the anchors, if you need to</span>
+    By default the app picks four well-spread holes near the corners. On a single-sided board the corner holes can be tiny or hard to tell apart in a photo: <span class="menu-path">View › Choose which holes anchor the photo…</span> lets you pick your own.</li>
   <li><span class="st">Look</span>
-    The photo is drawn under the work and the work is faded so the photo reads. <span class="ui">View → Take the photo off</span> when done.</li>
+    The photo is drawn under the work. Two sliders in the <span class="menu-path">View</span> menu set <span class="ui">Photo</span> (how strongly it shows) and <span class="ui">Fade the design</span> (how far the copper and toolpaths fade over it): checking a placement and finding a torn pad want them set differently. <span class="menu-path">View › Take the photo off</span> when you're done.</li>
 </ol>
-<div class="note"><span class="t">Not in this interface</span>
-<p>Automatic detection of uncut channels from the photo, probing the rework boxes, and choosing your own anchor holes are in the first interface (<code>SRM-CAM --original</code>).</p></div>
+<figure class="anim" data-anim="pr-overlay">
+  <figcaption><span class="k">Anchor the photo</span>Click the holes in the order the map asks for; once it is fitted, the photo and the design share one frame, and the damage shows where it really is. Schematic: this photo is only turned, a real one also leans.</figcaption>
+</figure>
+
+<h2 id="rework">Rework</h2>
+<p>Select <span class="menu-path">Rework</span> on the rail (under <em>When you need it</em>).</p>
+<ol class="steps">
+  <li><span class="st">What to repeat</span>
+    <span class="ui">Repeat from</span>: <span class="ui">Isolation traces</span> or <span class="ui">Board cut-out</span> (on a double-sided job, <span class="ui">Bottom traces</span> or <span class="ui">Top traces</span>). The re-cut is that pass as it was cut, clipped to your boxes, so it follows the same route. Set <span class="ui">Depth for the next box</span> (0.25&nbsp;mm to start) deeper than the pass that missed.</li>
+  <li><span class="st">Mark the spots</span>
+    Tick <span class="ui">Drag boxes on the bed</span> and drag a box over each spot; while it's ticked, dragging adds a box instead of moving the board. Each box keeps its own depth; edit it in the table. <span class="ui">Level</span> is ticked whenever a height map is on, so that box's cut follows the map; untick it to cut flat.</li>
+  <li><span class="st">Full tier: let the photo find them</span>
+    <span class="ui">Propose boxes from the photo</span> walks every channel of the pass and boxes each stretch with no cut in it at all. It needs a photo on the bed, and it can't see a cut that is only too shallow: in any photo that still looks like a channel.</li>
+  <li><span class="st">Full tier: check the depth</span>
+    <span class="ui">Probe the boxes over the link</span> taps the map's first point for a datum, then the middle of each box. Where the copper sits lower than the map believed, that box is deepened by exactly the difference: the way to find a cut that is too shallow rather than missing. Tool a couple of millimetres up, spindle off, the clip on the copper; <span class="ui">STOP</span> stops it at the next point.</li>
+  <li><span class="st">Write the file</span>
+    <span class="ui">Watch the boxes in 3D…</span> plays only the re-cut. <span class="ui">Export the rework program…</span> writes one <code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code> with every box in it, so you send one program. A cut-out rework is taken down in passes, the way the cut-out was cut, not in one deep plunge.</li>
+</ol>
+<figure class="anim" data-anim="pr-rework">
+  <figcaption><span class="k">Box it, check it, re-cut it</span>The photo finds spots 1 and 2, which were never cut; spot 3, cut too shallow, needs a box of your own, and the probe says how much deeper it has to go. Only the boxes are cut again.</figcaption>
+</figure>
+
+<div class="danger"><span class="t">Same origin</span>
+<p>Re-zero Z on the copper (on G54) before you send the rework program, and don't touch X and Y. The boxes only land on the spots because the board, the photo and the first pass share one XY origin.</p></div>
 
 <div class="page-nav">
   <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>

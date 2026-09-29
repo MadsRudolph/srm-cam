@@ -9,7 +9,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/bow.js?v=20260930b"></script>
+<script defer src="js/anim/probe.js?v=20260930b"></script>
+<script defer src="js/anim/bl-drift.js?v=20260930b"></script>
+<script defer src="js/anim/bl-density.js?v=20260930b"></script>
+<script defer src="js/anim/bl-mesh.js?v=20260930b"></script>
+<script defer src="js/anim/bl-warp.js?v=20260930b"></script>
+<script defer src="js/anim/bl-hand.js?v=20260930b"></script>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +48,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link active" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,50 +67,81 @@
 <div class="content">
 
 <h1>Bed levelling &amp; probing</h1>
-<p class="lead">Isolation cuts 0.15&nbsp;mm into copper that is 0.035&nbsp;mm thick; FR-4 bows more than that. Measure the surface, and every cut follows it.</p>
+<p class="lead">Isolation cuts 0.15&nbsp;mm into copper that is 0.035&nbsp;mm thick, and a clamped sheet of FR-4 bows by about as much. Measure the surface once, and every cut follows it. The drawings are live: press the buttons and drag the sliders.</p>
 
-<figure class="fig">
-  <img src="img/gui2_level.png" alt="The levelling page with a probed surface drawn on the board">
-  <figcaption><span class="ui">Level the bed</span>: the grid on the stage, the measured surface drawn over the board, the heights in the table.</figcaption>
+<figure class="anim" data-anim="bow">
+  <figcaption><span class="k">Why level at all</span>A 0.13&nbsp;mm bow is almost a whole cutting depth: a flat cut leaves copper in the dip and shorts the traces, while a levelled cut follows the surface.</figcaption>
 </figure>
 
-<div class="note"><span class="t">Before you probe</span>
-<p>Set the Z origin on the copper in VPanel and leave X and Y alone. The red clip on the copper; spindle <strong>off</strong>. Leave the tool a couple of millimetres above the copper — that is the height it lifts back to between points.</p></div>
-
-<div class="note"><span class="t">Three coordinate systems, one that matters</span>
-<p>VPanel lists several. <strong>MACHINE</strong> is the mill's own: its origin is fixed and its Z stroke is 60.5&nbsp;mm. <strong>USER</strong> is what Roland's RML software uses. <strong>G54</strong> is the work system NC code uses, and NC code is what SRM-CAM exports, so the origin is set in G54 with the Command Set on NC&nbsp;Code. Only Z is ever set: X and Y are already at the machine origin, which the files assume. Keep the MACHINE Z above −50&nbsp;mm when the bit touches the copper; lower than that, raise the work surface instead of pushing on. The same lesson is in the app under <span class="ui">Help → The machine, in five minutes</span>.</p></div>
-
-<h2>Measure</h2>
+<h2 id="before">Before you probe</h2>
 <ol class="steps">
-  <li><span class="st">Build the grid</span>
-    Set <span class="ui">across</span> × <span class="ui">up</span> (3×3 to start, denser for a warped board) and <span class="ui">Build the grid over the board</span>. It is laid over the part of the job the machine can reach and that is on the copper; if part of the job is past either, it says so — and so do the checks.</li>
-  <li><span class="st">Probe over the link</span>
-    Start from wherever the tool is: the grid is in machine coordinates and the run is measured from the live position. Each point is a two-stage verified touch; the table fills as it goes. <span class="ui">STOP</span> stops it at the next point.</li>
-  <li><span class="st">No Arduino?</span>
-    <span class="ui">Write one file per point…</span> gives you a program per grid point for VPanel. Run each, read Z at contact, type it into the table.</li>
+  <li><span class="st">One clip, spindle off</span>
+    Clip the red alligator clip onto the copper. That is the only wire: the bit is already wired to the probe inside the machine, so when it touches the copper the circuit closes. Spindle <strong>off</strong>. The Arduino's serial monitor must be closed, because only one program can hold the port.</li>
+  <li><span class="st">Z on G54, and only Z</span>
+    VPanel lists Machine, User and G54. The files are NC code and obey <strong>G54</strong>, so that is where Z is set. X and Y stay at the machine origin, which the files assume. With the bit on the copper, <strong>machine Z must stay above −50&nbsp;mm</strong> (−55 is the end of the travel); lower than that, refit the bit so it sticks out further. The same lessons are in the app under <span class="menu-path">Help › The machine, in five minutes</span>.</li>
+  <li><span class="st">A couple of millimetres up</span>
+    Leave the tool a couple of millimetres above the copper when you start. That is the height it lifts back to between points: too low and it drags, too high and it's slow.</li>
 </ol>
-<p>A finished probe switches <span class="ui">Warp the exported cut to this surface</span> on by itself. The advice underneath says the shallowest depth this map supports.</p>
 
+<h2 id="grid">Build the grid</h2>
+<p>Select <span class="menu-path">Level the bed</span> on the rail (under <em>When you need it</em>). In <span class="menu-path">The grid</span>, set <span class="ui">across</span> × <span class="ui">up</span> — 3 × 3 to start, up to 21 a side — and press <span class="ui">Build the grid over the board</span>. The points are laid over the board, 2&nbsp;mm in from its edge so each one lands on copper, and only over the part of the job the machine can reach and that is on the copper; if part of it is past either, it says so, and so do the checks.</p>
+<p>The points are numbered row by row, from the bottom left. <strong>Point 1 is the datum</strong>: every height in the map is measured from it. Jog the bit over point 1 and set your <strong>final Z zero</strong> there, on the copper, on G54.</p>
+
+<h2 id="probe">Probe over the link</h2>
+<p>Press <span class="ui">Probe over the link</span>. The grid is measured from wherever the tool is standing, so you can start anywhere; the readout only has to be live. SRM-CAM drives the head to each point in order and touches down twice — a coarse touch, then a lift and a fine re-descend — and the table fills as it goes. <span class="ui">STOP</span> or <kbd>Esc</kbd> stops it at the next point.</p>
+<figure class="anim" data-anim="probe">
+  <figcaption><span class="k">A probe run</span>Jog to point 1 and set the final Z zero there; SRM-CAM then touches every point twice, and a finished probe switches the warp on. The heights are illustrative, spread over the 0.13&nbsp;mm measured in the recording.</figcaption>
+</figure>
+<p>A run that stopped part-way, or that left a few points unread, is resumed rather than started over: <span class="ui">Only the missing N</span> probes just those, and re-touches point 1 as well so the new numbers share the old datum.</p>
 <div class="tbl-wrap"><table>
-<tr><th>In the table</th><th>Meaning</th></tr>
-<tr><td><em>no touch</em></td><td>The bit reached the floor without contact: no copper there, clip off, or started too high.</td></tr>
-<tr><td><em>unstable</em></td><td>The two touches disagreed — a dirty contact. Clean the copper, reseat the clip, probe again.</td></tr>
-<tr><td><em>failed</em></td><td>The firmware refused the point. A point outside the travel used to end up here; the grid no longer goes there.</td></tr>
+<tr><th>In the table</th><th>What happened</th><th>What to do</th></tr>
+<tr><td><em>no touch</em></td><td>The bit went down its whole approach without contact.</td><td>It started too high, or the point is not over copper, or the clip is off.</td></tr>
+<tr><td><em>unstable</em></td><td>The two touches at that point disagreed.</td><td>Usually a dirty contact or electrical noise: clean the copper there, reseat the clip, probe again.</td></tr>
+<tr><td><em>failed</em></td><td>The firmware refused the point.</td><td>Check the point is on the bed; build the grid again.</td></tr>
 </table></div>
 
-<h2>Use it</h2>
+<h3>The drift check</h3>
+<p>In the Full tier, <span class="menu-path">Measure it › Drift check</span> re-touches point 1 before the first point, every so many points (6 by default) and at the end, and corrects every height for how far the reference moved in between: a warming spindle and a board settling in its clamps move it by tens of microns over a long grid. It needs the second Arduino firmware; with the first one the run turns it off and says so.</p>
+<figure class="anim" data-anim="bl-drift">
+  <figcaption><span class="k">Drift</span>Heights are measured against point 1, so a reference that creeps makes every late point read low. The re-touches measure the creep, and each point is corrected by the amount interpolated to the moment it was probed. The drift curve is illustrative.</figcaption>
+</figure>
+
+<h2 id="check">Is the measurement good enough?</h2>
+<p>Under the table, the page states the range the surface covers and the shallowest trace depth this map supports, and points at <span class="ui">Check the mesh…</span> when something is off. The check answers three questions:</p>
 <ul>
-  <li><span class="ui">Warp the exported cut to this surface</span> — every cutting Z in the files follows the map. The dry run is left alone; it is in the air.</li>
-  <li><span class="ui">Draw the measured surface on the board</span> and <span class="ui">See the surface in 3D…</span> show what was measured. A real board is smooth; a lone spike is a flaky touch.</li>
-  <li><span class="ui">Save…</span> / <span class="ui">Load…</span> keep the map as a CSV that carries which face it was probed on. <span class="ui">Clear</span> discards this face's heights only.</li>
-  <li>A board held at points gets a little extra depth worked out from the map — see <a href="holding-the-copper.html">Holding the copper</a>.</li>
+  <li><strong>Is any point wrong?</strong> Each point is compared with a smooth surface fitted through all the others; one more than 0.10&nbsp;mm off is flagged, usually a flaky touch.</li>
+  <li><strong>Is the grid fine enough?</strong> Where two neighbouring probe lines differ by more than 80&nbsp;µm, the map can't follow the surface between them. <span class="ui">Add the missing lines</span> inserts whole rows or columns and keeps every point already measured; probe again and choose <span class="ui">Only the missing</span>.</li>
+  <li><strong>How deep must the traces go?</strong> Deep enough to survive what the map can't see between points; if the traces are set shallower, it says what to raise them to.</li>
+</ul>
+<figure class="anim" data-anim="bl-density">
+  <figcaption><span class="k">Grid density</span>Between probe lines the map is a straight line. Add lines until no two neighbours differ by more than 80&nbsp;µm, and the depth the mesh needs comes down with them. The surface is illustrative: a bow, plus a clamp lifting one side.</figcaption>
+</figure>
+<figure class="anim" data-anim="bl-mesh">
+  <figcaption><span class="k">Check the mesh…</span>A flaky touch sits where no smooth board can put it and gets flagged. A whole row read late does not; that is what the drift check is for.</figcaption>
+</figure>
+
+<h2 id="use">Use it</h2>
+<p>A finished probe switches on <span class="ui">Warp the exported cut to this surface</span> by itself. Every cutting Z in the files then follows the map, with a point at least every millimetre along each cut so the depth ramps with the surface. The dry run is left alone: it is in the air. A complete grid is followed point to point; an incomplete one (at least three points) is fitted with a flat, tilted plane instead.</p>
+<figure class="anim" data-anim="bl-warp">
+  <figcaption><span class="k">The warp</span>Flat, the bit stops cutting through where the sheet sags more than 0.115&nbsp;mm below point 1; warped, it stays 0.15&nbsp;mm below the copper it is actually over.</figcaption>
+</figure>
+<ul>
+  <li><span class="ui">Draw the measured surface on the board</span> shades the board amber where it's high and blue where it's low. <span class="ui">See the surface in 3D…</span> shows its shape: a bow, a dish and a tipped corner look alike from above and want different fixtures. A real board is smooth; a lone spike is a flaky touch.</li>
+  <li><span class="ui">Save…</span> and <span class="ui">Load…</span> keep the map as a CSV that records which face it was probed on. <span class="ui">Clear</span> discards this face's heights; the grid and the other face stay.</li>
+  <li>A board held at points gets a little extra depth worked out from the map: see <a href="holding-the-copper.html">Holding the copper</a>.</li>
 </ul>
 
-<h2>Two faces</h2>
-<p>On a double-sided job the page has a <span class="ui">Bottom</span> / <span class="ui">Top</span> switch, and each face keeps its own measurement. Selecting a step that cuts a face shows that face's map; after the flip, switch to the top, build and probe again — the board sits on new terrain — and the top files use the top's map, never the bottom's.</p>
+<h2 id="by-hand">No Arduino? Probe by hand</h2>
+<p><span class="menu-path">Measure it › No Arduino? Write one file per point…</span> writes <code>&lt;name&gt;_probe_01.nc</code> and onwards, one per point, plus a checklist. Queue them in VPanel. Each file goes to its point with the spindle off and stops 2&nbsp;mm above Z&nbsp;0. Zero Z on the copper at point 1, then at each point lower Z until the bit just touches, read Z off VPanel, and write it down. Typed into the table, the heights give the same map a probe run does.</p>
+<figure class="anim" data-anim="bl-hand">
+  <figcaption><span class="k">By hand</span>Point 1 first: Set Origin Point › Z there. Then each file, lowered to the copper and written down.</figcaption>
+</figure>
+
+<h2 id="faces">Two faces</h2>
+<p>On a double-sided job the page has a <span class="ui">Bottom</span> / <span class="ui">Top</span> switch, and each face keeps its own measurement. The map on show follows the step you are on, and probing writes into whichever face is selected. After the flip, switch to Top, build and probe again (the board sits on new terrain), and the top files use the top's map, never the bottom's. On a dowel job, <span class="ui">Write the top traces to this surface…</span> re-writes the top traces file to the top's map; the first export's top traces are flat, because that face did not exist yet.</p>
 
 <div class="warn"><span class="t">Save the setup</span>
-<p>The maps of both faces are saved in the setup file. Save it right after probing.</p></div>
+<p>The maps of both faces are saved in the setup file. Save it right after probing: a map is minutes of machine time.</p></div>
 
 <div class="page-nav">
   <a href="holding-the-copper.html"><span class="lbl">Previous</span><span class="ttl">← Holding the copper</span></a>

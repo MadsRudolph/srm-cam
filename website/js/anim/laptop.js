@@ -18,7 +18,7 @@
     var winB = A.el(s, "rect", { x: lx + 26, y: ly + 86, width: 198, height: 44, rx: 4, fill: C.panel, stroke: C.ruleHi });
     A.text(s, lx + 125, ly + 115, "VPanel", { anchor: "middle", size: 23, weight: 600, font: "label" });
     A.el(s, "path", { d: "M" + (lx - 26) + " " + (ly + 170) + " h302 l18 22 h-338 z", fill: C.steelDim });
-    A.text(s, lx + 125, ly + 232, "your laptop: install both", { anchor: "middle", size: 20, fill: C.text2 });
+    A.text(s, lx + 125, ly + 232, "your Windows laptop: install both", { anchor: "middle", size: 20, fill: C.text2 });
 
     // the machine, and the Arduino inside it
     var mx = 560, my = 40;
