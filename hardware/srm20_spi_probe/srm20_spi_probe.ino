@@ -55,9 +55,10 @@
  * rapids straight down to ~1 mm above the highest copper seen (APPROACH_CLEAR_UM)
  * in a single move, then fine-steps only that last millimetre.
  *
- * PROBE WIRING (proven): copper board ISOLATED from the bed (paper/tape under it),
- *   D7 -> copper (floats HIGH via pull-up), GND -> collet/tool (grounded). Tool
- *   touching copper pulls D7 LOW. Spindle stays OFF the whole time.
+ * PROBE WIRING (proven): one wire, the red clip from D7 to the copper (floats
+ *   HIGH via pull-up). The tool is on machine ground, the Arduino's GND through
+ *   the SPI header, so it needs no clip; the wooden spoilboard isolates the
+ *   copper. Tool touching copper pulls D7 LOW. Spindle stays OFF the whole time.
  *
  * FRAME: the host (gerber2rml) sends probe points as LOCAL offsets (um) from a
  * datum. Operator jogs the tool ~2-3 mm above the job origin, sends 'D' to latch

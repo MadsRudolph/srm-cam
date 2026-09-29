@@ -46,9 +46,11 @@ folder name `SRM20SPIRemote`), then restart the Arduino IDE. Alternatively use
 1. Open [`srm20_spi_probe/srm20_spi_probe.ino`](srm20_spi_probe/srm20_spi_probe.ino),
    select **Arduino Uno**, and upload. The Uno plugs into the SPI shield on the
    SRM-20's back header; VPanel can stay connected (they coexist).
-2. **External touch probe:** copper board **isolated from the bed** (paper/tape
-   under it) → **D7** (floats HIGH via the internal pull-up); tool/collet → **GND**.
-   Tool touches copper → D7 LOW. Spindle stays **OFF** while probing.
+2. **External touch probe:** one wire. The red alligator clip on **D7** goes on
+   the copper (floats HIGH via the internal pull-up). The tool needs no clip: it is
+   on machine ground, which is the Arduino's GND through the SPI header. The
+   spoilboard is wood, so nothing goes under the copper. Tool touches copper → D7
+   LOW. Spindle stays **OFF** while probing.
 3. Close the Arduino **Serial Monitor** before the GUI opens the port — only one
    program can hold the COM port.
 
