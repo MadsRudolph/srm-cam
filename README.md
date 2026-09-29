@@ -15,6 +15,14 @@ replacing the mods site and FlatCAM.
 
 ![SRM-CAM: the run plan, the bed, the selected step, the machine bar](website/img/gui2_setup.png)
 
+### Video guide
+
+[![Milling a PCB on the Roland SRM-20 with SRM-CAM: the 13-minute video guide](https://img.youtube.com/vi/aab9ItDjwt0/maxresdefault.jpg)](https://youtu.be/aab9ItDjwt0)
+
+The whole job, KiCad to a finished board, in 13 minutes with chapters:
+**[watch on YouTube](https://youtu.be/aab9ItDjwt0)**. The written version, with interactive
+explainers, is [Milling a board](https://madsrudolph.github.io/srm-cam/milling-a-board.html).
+
 ## Install
 
 **Just run it (Windows):** download the latest installer from
