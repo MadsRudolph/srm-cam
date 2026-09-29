@@ -556,3 +556,62 @@ footer.site a { color: var(--text-3); }
 .led { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
 .led.on  { background: var(--verified); }
 .led.off { background: var(--text-4); }
+
+/* ---- Explainer animations (js/anim/) ---------------------------------- */
+.anim {
+  margin: 8px 0 26px;
+  border: 1px solid var(--rule-hi);
+  border-radius: var(--radius);
+  background: var(--sunk);
+  overflow: hidden;
+}
+.anim-stage svg { display: block; width: 100%; height: auto; }
+.anim-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 12px; border-top: 1px solid var(--rule); background: var(--panel);
+}
+.anim-btn {
+  font: 500 0.82rem/1 var(--sans); color: var(--text); background: var(--raised);
+  border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  padding: 7px 11px; cursor: pointer; min-height: 32px;
+}
+.anim-btn:hover { background: var(--raised-hi); }
+.anim-btn:focus-visible, .anim-seg button:focus-visible, .anim-slider input:focus-visible {
+  outline: 2px solid var(--live); outline-offset: 1px;
+}
+.anim-btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-light); }
+.anim-btn.primary:hover { background: var(--primary-hi); }
+.anim-btn.key { font-family: var(--mono); min-width: 36px; padding: 7px 8px; }
+.anim-btn:disabled { opacity: 0.4; cursor: default; }
+.anim-seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; }
+.anim-seg button {
+  font: 500 0.8rem/1 var(--sans); color: var(--text-2); background: var(--panel-hi);
+  border: 0; border-right: 1px solid var(--rule-strong); padding: 8px 11px; cursor: pointer; min-height: 32px;
+}
+.anim-seg button:last-child { border-right: 0; }
+.anim-seg button.on { background: var(--select); color: var(--text); box-shadow: inset 0 -2px 0 var(--live); }
+.anim-slider { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-2); flex: 1 1 260px; }
+.anim-slider input { flex: 1; accent-color: var(--copper-hi); min-width: 110px; }
+.anim-slider .v { font-family: var(--mono); color: var(--text); min-width: 5.5em; text-align: right; }
+.anim-status { font-size: 0.82rem; color: var(--text-2); flex: 1 1 100%; min-height: 1.3em; }
+.anim-status.ok { color: var(--verified); }
+.anim-status.bad { color: var(--danger); }
+.anim-status.caution { color: var(--caution); }
+.anim > figcaption { padding: 10px 14px 12px; border-top: 1px solid var(--rule); font-size: 0.86rem; color: var(--text-2); }
+.anim > figcaption .k { color: var(--copper-hi); margin-right: 6px; }
+
+/* A chapter of the walkthrough, numbered like the video's chips */
+.chapter { display: flex; align-items: baseline; gap: 12px; }
+.chapter .n { font: 600 0.8rem/1 var(--mono); color: var(--copper-hi); min-width: 2ch; }
+.menu-path { font-family: var(--mono); font-size: 0.86em; color: var(--text); background: var(--panel-hi);
+  border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 1px 6px; white-space: normal; }
+.photos3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 6px 0 22px; }
+.photos3 figure { margin: 0; border: 1px solid var(--rule-hi); border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+.photos3 img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
+.photos3 figcaption { font-size: 0.82rem; color: var(--text-2); padding: 8px 10px; }
+@media (max-width: 640px) {
+  .photos3 { grid-template-columns: 1fr; }
+  .photos3 img { aspect-ratio: 4 / 3; }
+  .anim-controls { padding: 8px; }
+}
+.figs.even img { aspect-ratio: 4 / 3; object-fit: cover; }
