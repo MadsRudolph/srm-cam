@@ -280,8 +280,8 @@ class SetupPage(Page):
         self.screwed.toggled.connect(ctl.action_screws_toggled)
         stock.add(self.screwed)
         self.hold = QComboBox()
-        self.hold.addItem("Screwed or clamped at points", "points")
         self.hold.addItem("Bonded across the whole back (tape)", "bonded")
+        self.hold.addItem("Screwed or clamped at points", "points")
         self.hold.setToolTip(
             "How the copper is held to the bed, which decides whether the "
             "probed surface is the surface that gets cut." + chr(10)*2 +
@@ -807,7 +807,7 @@ class SetupPage(Page):
         except Exception:
             self.bit_profile.setVisible(False)
         self.hold.blockSignals(True)
-        i = self.hold.findData(getattr(ctl, "_hold", "points"))
+        i = self.hold.findData(getattr(ctl, "_hold", "bonded"))
         if i >= 0:
             self.hold.setCurrentIndex(i)
         self.hold.blockSignals(False)

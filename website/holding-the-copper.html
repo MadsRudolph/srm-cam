@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Holding the copper — SRM-CAM guide</title>
-<meta name="description" content="Holding the copper on the SRM-20: clamping it to the spoilboard, telling SRM-CAM where it is, screwing it down through the grid, the extra depth a board held at points needs, and the dry run, with interactive explainers.">
+<meta name="description" content="Holding the copper on the SRM-20: double-sided tape or four disc clamps, telling SRM-CAM where it is, the extra depth a board held at points needs, and the dry run, with interactive explainers.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/site.css?v=20260930a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/hc-hold.js?v=20260930b"></script>
 <script defer src="js/anim/hc-place.js?v=20260930b"></script>
-<script defer src="js/anim/hc-screws.js?v=20260930b"></script>
 <script defer src="js/anim/hc-flex.js?v=20260930b"></script>
 <script defer src="js/anim/hc-dryrun.js?v=20260930b"></script>
 </head>
@@ -68,12 +68,24 @@
   <p class="lead">Almost every ruined board comes down to one question: <strong>does the machine know where the copper is, and will it still be there in ten minutes?</strong> The drawings are live: press the buttons and drag the sliders.</p>
 </div>
 
-<h2 id="clamp">1 · Clamp it to the spoilboard</h2>
-<figure class="fig mid">
-  <img src="img/copper-clamped-on-the-bed.jpg" alt="A copper sheet clamped on the SRM-20's spoilboard" loading="lazy">
-  <figcaption>The lab's way: the sheet clamped at points, straight onto the spoilboard.</figcaption>
+<h2 id="hold">1 · Hold it down</h2>
+<p>The lab uses two holds. Pick one, then tell SRM-CAM which, under <span class="menu-path">Set up the job › The copper › Held down by</span>: it decides whether the cut is deepened (<a href="#points">section 3</a>).</p>
+<figure class="anim" data-anim="hc-hold">
+  <figcaption><span class="k">Tape, or four disc clamps</span>Tape holds the whole back flat. The discs press the edges in from all four sides; take one away and the board can slide and lift.</figcaption>
 </figure>
-<p>Clamp the copper sheet straight onto the spoilboard; nothing goes underneath it. Then tell SRM-CAM how it is held: <span class="menu-path">Set up the job › The copper › Held down by</span> › <span class="ui">Screwed or clamped at points</span>. That setting matters for the cut depth (<a href="#points">section 4</a>).</p>
+<h3>Best: double-sided tape</h3>
+<p>Lay double-sided tape across the whole back of the board and press it flat onto the spoilboard. It is the easiest to set up, and because the whole back is held, nothing can arch: the probed surface is the surface that gets cut. In SRM-CAM: <span class="menu-path">Held down by › Bonded across the whole back (tape)</span>, which adds no extra depth. It is the default.</p>
+<h3>Second best: four disc clamps</h3>
+<ol class="steps">
+  <li><span class="st">Beside the board, not through it</span>Each clamp is a plastic disc with a chamfer round its side. Put its screw through a spoilboard grid hole just beside the board's edge, into the threads of the metal plate underneath.</li>
+  <li><span class="st">Turn it in</span>Turn the disc until its chamfered side presses on the board's edge, pushing it down and in.</li>
+  <li><span class="st">One on every side</span>Use all four: the clamping force has to come from all sides, or the board slides away from the open side.</li>
+  <li><span class="st">Tell SRM-CAM</span><span class="menu-path">Held down by › Screwed or clamped at points</span>. A board held at its edges can arch in the middle, so the cut is deepened a little (<a href="#points">section 3</a>).</li>
+</ol>
+<figure class="fig mid">
+  <img src="img/copper-clamped-on-the-bed.jpg" alt="A copper sheet on the SRM-20's spoilboard, with black disc clamps at its edges" loading="lazy">
+  <figcaption>Disc clamps at the edges of a sheet on the spoilboard.</figcaption>
+</figure>
 
 <h2 id="where">2 · Tell SRM-CAM where the copper is</h2>
 <p>Under <span class="menu-path">Set up the job › The copper</span>: the board thickness from calipers, then the sheet's width and height. Then its front-left corner. Find the corner with the probe (the walk is on <a href="milling-a-board.html#zero">Milling a board</a>), leave the bit there, and press <span class="ui">Set the corner from the tool</span>. It only reads the machine's X and Y: nothing moves, and the work origin is not touched. Then <span class="menu-path">Where it sits on the bed › Centre it on the copper</span> puts the job in the middle of the part of the sheet the spindle can reach.</p>
@@ -83,32 +95,19 @@
 <div class="warn"><span class="t">Centre on the copper, not the bed</span>
 <p><span class="ui">Centre it on the bed</span> puts the job in the middle of the machine's travel, which on a sheet clamped off to one side is bare spoilboard. <span class="ui">Centre it on the copper</span> is refused until the sheet's size and corner are set, because centring on a rectangle nobody measured means nothing.</p></div>
 
-<h2 id="screws">3 · Or screw it down through the grid</h2>
-<p>The spoilboard has a grid of holes on a 10&nbsp;mm pitch, each over a thread in the metal plate underneath, so the copper can be held with M4 screws, with no clamp in the cutter's way. Tick <span class="menu-path">Set up the job › The copper › Held down with M4 screws</span>. SRM-CAM picks four holes, spread towards the corners, where the whole 8&nbsp;mm screw head lands on copper and clear of the design; <span class="ui">Choose the screw holes myself</span> lets you click them on the bed instead.</p>
-<figure class="anim" data-anim="hc-screws">
-  <figcaption><span class="k">The grid, the heads and the lift</span>The heads stand 3&nbsp;mm above the copper and the default lift between cuts is 2&nbsp;mm, so ticking the box raises the lift to 4&nbsp;mm on all three operations. Switch the lift back to 2&nbsp;mm to see why.</figcaption>
-</figure>
-<ol class="steps">
-  <li><span class="st">Write the screw file</span><span class="ui">Write the screw file…</span> writes <code>&lt;name&gt;_screws.nc</code>: 4.5&nbsp;mm clearance holes through the copper only, with the procedure beside it.</li>
-  <li><span class="st">Run it first</span>Zero Z on the copper (G54), run the screw file, drop an M4 screw through each hole and tighten into the plate: snug, not hard.</li>
-  <li><span class="st">Re-zero Z</span>The board pulls down as you tighten.</li>
-</ol>
-<div class="danger"><span class="t">The screw file is in machine coordinates</span>
-<p>The grid is modelled from a position measured on the machine, and the file is written at those absolute coordinates. It only lands on the threads if the <strong>XY work origin is the machine origin</strong>, which is the standing rule anyway: zero only Z, leave X and Y at the machine origin.</p></div>
-
-<h2 id="points">4 · A board held at points gives under the cutter</h2>
-<p>Screwed or clamped, the board can arch over air between the fixings. The probe measures that arch with a static tool at almost no force; the cutter arrives spinning and pushing down, and the unsupported part gives a little instead of being cut. So, held at points, SRM-CAM deepens the cut:</p>
+<h2 id="points">3 · A board held at points gives under the cutter</h2>
+<p>Clamped at its edges, the board can arch over air between the clamps. The probe measures that arch with a static tool at almost no force; the cutter arrives spinning and pushing down, and the unsupported part gives a little instead of being cut. So, held at points, SRM-CAM deepens the cut:</p>
 <ul>
   <li><strong>Screwed or clamped at points</strong>, with the probe map applied: a quarter of the arch the map shows (what a flat, tilted plane cannot explain), capped at 0.12&nbsp;mm, plus the 0.035&nbsp;mm copper foil. The number is on the setup page.</li>
   <li><strong>The map not applied</strong>: nothing cancels the tilt, so the whole range of the map is charged, plus the foil. Apply the map.</li>
-  <li><strong>Bonded across the whole back</strong> (tape): there is nowhere for it to go, so nothing is added.</li>
+  <li><strong>Bonded across the whole back</strong> (tape, the lab's best hold): there is nowhere for it to go, so nothing is added.</li>
 </ul>
 <figure class="anim" data-anim="hc-flex">
-  <figcaption><span class="k">The give, and what it costs</span>Drag the arch and press Play. A board that arches more than the cap wants re-fixing, not a deeper cut.</figcaption>
+  <figcaption><span class="k">The give, and what it costs</span>Drag the arch and press Play, then switch to tape. A board that arches more than the cap wants re-fixing, not a deeper cut.</figcaption>
 </figure>
 <p>Untick <span class="menu-path">Set up the job › The copper › Work the extra depth out from the probe map</span> to set <span class="ui">Cut deeper by</span> yourself, down to nothing, if the board keeps coming out too deep or too shallow. How to measure the map is on <a href="bed-leveling.html">Bed levelling</a>.</p>
 
-<h2 id="dryrun">5 · Prove it before you cut</h2>
+<h2 id="dryrun">4 · Prove it before you cut</h2>
 <p>Every single-sided export writes <code>&lt;name&gt;_airpass.nc</code>, step 0 of the plan: spindle off, bit held 5&nbsp;mm up, tracing the outline slowly enough to follow. If it wanders off the copper, stop and re-place the stock. Twenty seconds, before every job.</p>
 <figure class="anim" data-anim="hc-dryrun">
   <figcaption><span class="k">Step 0</span>With the copper where SRM-CAM thinks it is, the trace stays on it. With a sheet that shifted when it was clamped, the trace leaves the copper, and nothing has been cut yet.</figcaption>
@@ -117,13 +116,13 @@
 <h2 id="which">Which one do I need?</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Situation</th><th>Use</th></tr>
-<tr><td>Any single board (the lab's routine)</td><td>Clamp it to the spoilboard, set the corner from the tool, probe the bed, and run the dry run</td></tr>
-<tr><td>Deep cut-out, thin stock, or the board chatters</td><td>Screws through the grid, and probe the bed, so the extra depth is measured rather than guessed</td></tr>
+<tr><td>Any board (the lab's routine)</td><td>Double-sided tape across the back; set the corner from the tool, probe the bed, run the dry run</td></tr>
+<tr><td>No tape to hand, or the board won't stay taped</td><td>Four disc clamps, one per side, and probe the bed so the extra depth is measured rather than guessed</td></tr>
 <tr><td>Double-sided</td><td>Dowel registration: see <a href="double-sided.html">Double-sided boards</a></td></tr>
 </table></div>
 
-<div class="note"><span class="t">The bed fixture is not the lab routine</span>
-<p><span class="menu-path">Machine › Export the bed fixture (pin holes)…</span> drills three Ø3&nbsp;mm dowel-pin holes into the spoilboard, once per spoilboard, so stock pushed against the pins lands in the same place every time. Its procedure sets the XY work origin 10&nbsp;mm in from the front-left, which the lab's rule (XY stays at the machine origin) does not allow. Don't run it on the lab's machine.</p></div>
+<div class="note"><span class="t">The app can also… (not the lab routine)</span>
+<p><span class="menu-path">Set up the job › The copper › Held down with M4 screws</span> screws the copper down <em>through</em> the board: <span class="ui">Write the screw file…</span> drills clearance holes in the copper over the spoilboard grid, and raises the lift to 4&nbsp;mm to clear the screw heads. <span class="menu-path">Machine › Export the bed fixture (pin holes)…</span> drills dowel-pin holes into the spoilboard. Both procedures have you set the XY work origin, which the lab rule (X and Y stay at the machine origin) does not allow. Use tape or the disc clamps instead.</p></div>
 
 <p>When you are done, leave the machine as you found it: <a href="milling-a-board.html#tidy">Leave it as you found it</a>.</p>
 
