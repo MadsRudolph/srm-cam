@@ -9,7 +9,43 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930b"></script>
+<script defer src="js/anim/ts-finder.js?v=20260930b"></script>
+<script defer src="js/anim/zlimit.js?v=20260930b"></script>
+<script defer src="js/anim/joblist.js?v=20260930b"></script>
+<script defer src="js/anim/ts-coords.js?v=20260930b"></script>
+<script defer src="js/anim/bow.js?v=20260930b"></script>
+<script defer src="js/anim/gaps.js?v=20260930b"></script>
+<script defer src="js/anim/continuity.js?v=20260930b"></script>
+<style>
+/* troubleshooting: the finder and the symptom entries (this page only) */
+.ts-finder { padding: 14px; background: var(--panel); }
+.ts-search { width: 100%; font: 0.95rem var(--sans); color: var(--text); background: var(--sunk); border: 1px solid var(--rule-strong); border-radius: var(--radius); padding: 10px 12px; }
+.ts-search:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
+.ts-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.ts-chips button { font: 500 0.8rem/1 var(--sans); color: var(--text-2); background: var(--panel-hi); border: 1px solid var(--rule-strong); border-radius: 999px; padding: 7px 12px; cursor: pointer; min-height: 32px; }
+.ts-chips button.on { background: var(--select); color: var(--text); border-color: var(--select-edge); }
+.ts-results { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--rule); border-radius: var(--radius); }
+.ts-results li { border-bottom: 1px solid var(--rule); }
+.ts-results li:last-child { border-bottom: 0; }
+.ts-hit { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; background: var(--sunk); color: var(--text); border: 0; padding: 9px 12px; cursor: pointer; font: 0.88rem/1.35 var(--sans); }
+.ts-hit:hover, .ts-hit:focus-visible { background: var(--panel-hi); outline: none; box-shadow: inset 2px 0 0 var(--live); }
+.ts-hit .c { color: var(--text-3); font-size: 0.78rem; white-space: nowrap; }
+.ts-count { font-size: 0.8rem; color: var(--text-3); margin-top: 8px; }
+details.ts-item { border: 1px solid var(--rule-hi); border-radius: var(--radius); background: var(--panel); margin: 0 0 10px; scroll-margin-top: 16px; transition: box-shadow .4s; }
+details.ts-item.flash { box-shadow: 0 0 0 2px var(--live); }
+details.ts-item > summary { cursor: pointer; padding: 11px 14px; font-weight: 600; color: var(--text); list-style: none; display: flex; gap: 10px; align-items: baseline; }
+details.ts-item > summary::-webkit-details-marker { display: none; }
+details.ts-item > summary::before { content: "▸"; color: var(--copper-hi); flex: none; transition: transform .15s; }
+details.ts-item[open] > summary::before { transform: rotate(90deg); }
+details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outline-offset: -2px; }
+.ts-body { padding: 0 14px 12px 34px; }
+.ts-body p { margin-bottom: 8px; }
+.ts-body .k { font: 600 0.72rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); margin-right: 6px; }
+.ts-body .anim { margin: 10px 0 4px; }
+@media (max-width: 640px) { .ts-body { padding: 0 10px 10px 12px; } .ts-hit { flex-direction: column; gap: 2px; } }
+</style>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +76,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,58 +95,193 @@
 <div class="content">
 
 <h1>Troubleshooting</h1>
-<p class="lead">Symptom → fix. Learned on real boards.</p>
+<p class="lead">Symptom → cause → fix, learned on real boards. Search for what you saw, or open the six that cost the most boards: they come with a live explainer.</p>
 
-<h2>Cutting</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Cut far deeper than the trace depth on a screwed-down board</td><td>The extra depth for a board held at points. It is a quarter of the arch the map shows, capped; if that is still too much, untick <span class="ui">Work the extra depth out from the probe map</span> and set <span class="ui">Cut deeper by</span> yourself. Make sure the map is applied — with the warp off the whole range is charged.</td></tr>
-<tr><td>Head lifts to the top, cuts air or shallow</td><td>Depth outside the 60&nbsp;mm Z stroke → raise the work surface. <span class="ui">Zero Z here</span> gives the check the real surface.</td></tr>
-<tr><td>Cuts through in some areas, not others</td><td>The surface is not flat against a 0.15&nbsp;mm cut → <a href="bed-leveling.html">probe the bed</a>. Missed spots afterwards → <a href="photo-and-rework.html">rework</a>.</td></tr>
-<tr><td>✕ marks on the traces, "spots will be shorted"</td><td>Nets closer than the bit. Widen the clearance in KiCad or use a narrower bit; milling more carefully will not fix it.</td></tr>
-<tr><td>VPanel refuses the file with an NC error</td><td>A coordinate outside the machine's travel, or a lift above the Z ceiling. The <em>Off the bed</em> check and the Z-reach check name the cause.</td></tr>
-<tr><td>Wrong depth after a bit change</td><td>Re-zero Z after every bit change and after the flip. Never XY.</td></tr>
-</table></div>
+<figure class="anim" data-anim="ts-finder">
+  <figcaption><span class="k">Find your symptom</span>Type what happened, or filter by where it went wrong; pick one to jump to its answer.</figcaption>
+</figure>
+<h2 data-cat-title="top" data-short="The big six">The six that cost the most boards</h2>
+<details class="ts-item" id="z-limit" data-cat="top" data-q="z travel limit stops stopping aborts interrupted drill cutout −55 -55 −50 -50 machine coordinates bit short collet stick out" open>
+<summary>The drill and the cut-out keep stopping, and the job takes far longer</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The bit sits too high in the collet, so the head has to go very low to reach the copper. The mill's Z ends at <strong>−55&nbsp;mm in machine coordinates</strong>; the through-cuts of the drill and the cut-out go 1.7&nbsp;mm below the surface and keep hitting that end.</p>
+<p><span class="k">Fix</span>With the bit on the copper, machine Z must stay <strong>above −50</strong>. Check it by switching VPanel's coordinates from G54 to Machine, or read the Z in SRM-CAM's bottom bar, which always shows machine Z. Too low: loosen the collet and refit the bit so it sticks out further, then zero Z again (back on G54).</p>
+<figure class="anim" data-anim="zlimit"><figcaption><span class="k">Try it</span>Drag how far the bit sticks out, and switch VPanel between G54 and Machine.</figcaption></figure>
+</div></details>
+<details class="ts-item" id="cutout-first" data-cat="top" data-q="cutout cut-out first order vpanel list alphabetical board came loose freed early moved" open>
+<summary>The cut-out ran first, and the board came loose before the traces</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>VPanel lists the files <strong>alphabetically</strong>, so <code>_cutout.nc</code> lands above <code>_drill.nc</code> and <code>_traces.nc</code>, and VPanel runs the list from the top. Everything after the cut-out is machined on a board held by four 1.5&nbsp;mm tabs.</p>
+<p><span class="k">Fix</span>After <span class="menu-path">Cut › Add</span>, look at the list before <span class="ui">Output</span>: move the cut-out to the bottom with the arrows. The list must start with the drill or the traces (the lab prefers the drill first), never the cut-out. The dry run, if you add it, goes at the very top.</p>
+<figure class="anim" data-anim="joblist"><figcaption><span class="k">Try it</span>Add the files and fix the order, or press Show me.</figcaption></figure>
+</div></details>
+<details class="ts-item" id="wrong-system" data-cat="top" data-q="coordinate system g54 machine user origin zero z set origin cuts air too deep ignores my origin nc" open>
+<summary>Z was set, but the job cuts air, or goes far too deep</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>Z was set with VPanel on <strong>Machine</strong> or <strong>User</strong>. The exported files are NC code and move in <strong>G54</strong>, so they run from whatever G54 zero the last person left. Machine's origin cannot be moved at all; User is the RML origin, which NC files ignore.</p>
+<p><span class="k">Fix</span>Switch VPanel's coordinate list to <strong>G54</strong>, lower until SRM-CAM reads Touch, and press <span class="menu-path">Set Origin Point › Z</span>. Leave X and Y at the machine origin. See <a href="milling-a-board.html#zero">Zero Z on the copper</a>.</p>
+<figure class="anim" data-anim="ts-coords"><figcaption><span class="k">Try it</span>Set Z with VPanel on each system and run the traces. The old zeros are illustrative.</figcaption></figure>
+</div></details>
+<details class="ts-item" id="dip" data-cat="top" data-q="shorted some areas not others dip bow level levelling uneven depth shallow traces stay shorted cut through in some areas" open>
+<summary>Traces are shorted in some areas and clean in others</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The copper foil is 0.035&nbsp;mm and the cut 0.15&nbsp;mm deep, while a clamped sheet bows by about 0.13&nbsp;mm. Where the sheet dips, a flat cut never gets through the foil.</p>
+<p><span class="k">Fix</span><a href="bed-leveling.html">Level the bed</a>: jog to the first marked point, set the final Z zero there, then <span class="ui">Probe over the link</span>; the finished probe switches on <span class="ui">Warp the exported cut to this surface</span>. Spots missed on a board already cut: <a href="photo-and-rework.html">rework</a> them.</p>
+<figure class="anim" data-anim="bow"><figcaption><span class="k">Try it</span>Drag the bow, and switch between a flat and a levelled cut.</figcaption></figure>
+</div></details>
+<details class="ts-item" id="narrow" data-cat="top" data-q="nets closer than the bit shorted ✕ x marks spots will be shorted clearance narrow gap pads" open>
+<summary>✕ marks on the traces: the checks say the spots will be shorted</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>Two nets sit closer than the 0.8&nbsp;mm bit. The cutter physically cannot pass between them, so the gap stays copper whatever the depth.</p>
+<p><span class="k">Fix</span>Best: more clearance in KiCad (<span class="menu-path">Board Setup › Net Classes</span>, at least 0.8&nbsp;mm) or a narrower bit. If the design can't change: <span class="menu-path">Interface › Full</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>, which trims both pads.</p>
+<figure class="anim" data-anim="gaps"><figcaption><span class="k">Try it</span>Drag the gap, and tick the box.</figcaption></figure>
+</div></details>
+<details class="ts-item" id="strands" data-cat="top" data-q="copper strand hair sliver bridge continuity multimeter short beep clean board looks fine" open>
+<summary>The board looks clean, but two nets are shorted</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>A hair or strand of copper the mill didn't clear, lying across a channel. Burrs from the cut and the sanding do the same.</p>
+<p><span class="k">Fix</span>Inspect the board closely after sanding, and check with a multimeter on continuity: every connection you want beeps, and no two nets beep. Scrape a strand out along the channel with a knife; a real uncut gap needs <a href="photo-and-rework.html">rework</a>.</p>
+<figure class="anim" data-anim="continuity"><figcaption><span class="k">Try it</span>Click two pads to measure; find the strand.</figcaption></figure>
+</div></details>
 
-<h2>Probing and the link</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Connect fails</td><td>The Arduino Serial Monitor holds the port, wrong port, or replug and <span class="ui">Rescan the serial ports</span>.</td></tr>
-<tr><td>A whole column of probe points <em>failed</em></td><td>They were outside the machine's travel. The grid is now clipped to the reachable copper, and the job itself is off the bed — see the checks.</td></tr>
-<tr><td><em>no touch</em></td><td>Clip off, dirty copper, board not isolated from the bed, or the bit started too high.</td></tr>
-<tr><td><em>unstable</em></td><td>A flaky contact: clean the copper, reseat the clip.</td></tr>
-<tr><td>The probe will not start: "no live position"</td><td>The readout has to be alive first; wait a moment after connecting.</td></tr>
-<tr><td>A lone spike in the 3D surface</td><td>A flaky touch. Clear that row and probe again.</td></tr>
-<tr><td>Nothing jogs after a STOP</td><td>Make one Z step first (<kbd>Page Up</kbd>); the firmware holds until then.</td></tr>
-<tr><td>No machine bar, just a sentence</td><td>Linux: the link is Windows-only. Export here, send from the CNC PC.</td></tr>
-</table></div>
+<h2 data-cat-title="machine" data-short="At the machine">At the machine</h2>
+<details class="ts-item" id="deep-screwed" data-cat="machine" data-q="too deep screwed held at points extra depth cut deeper by probe map">
+<summary>Cut far deeper than the trace depth on a screwed-down board</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The extra depth for a board held at points: a quarter of the arch the map shows, capped. With the warp off, the whole range is charged.</p>
+<p><span class="k">Fix</span>Make sure the map is applied. If it is still too much, untick <span class="ui">Work the extra depth out from the probe map</span> and set <span class="ui">Cut deeper by</span> yourself, on <span class="menu-path">Set up the job › The copper</span>. See <a href="holding-the-copper.html">Holding the copper</a>.</p>
+</div></details>
+<details class="ts-item" id="nc-error" data-cat="machine" data-q="vpanel refuses nc error file command set off the bed travel">
+<summary>VPanel refuses the file with an error</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>VPanel's command set does not match the file (<code>.nc</code> needs NC Code, <code>.rml</code> needs RML-1), or a coordinate is outside the machine's travel.</p>
+<p><span class="k">Fix</span>Set the command set in VPanel's <span class="ui">Setup</span> dialog. For travel, the <em>Off the bed</em> check names the cause; move the job fully onto the bed.</p>
+</div></details>
+<details class="ts-item" id="dry-run-off" data-cat="machine" data-q="dry run airpass leaves the copper off the sheet wrong place corner">
+<summary>The dry run leaves the copper</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The job is not where the copper is: the sheet's corner on the stage is wrong, or the board was placed off the sheet.</p>
+<p><span class="k">Fix</span>Stop it: nothing has been cut. Find the copper's corner with the probe and press <span class="menu-path">Set up the job › The copper › Set the corner from the tool</span>, then place the board on the sheet (<span class="ui">Centre it on the copper</span>) and export again. Never move the XY origin in VPanel instead.</p>
+</div></details>
+<details class="ts-item" id="bit-change" data-cat="machine" data-q="wrong depth after bit change re-zero flip">
+<summary>Wrong depth after a bit change</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>A new bit sticks out by a different amount, so the old Z zero is wrong for it.</p>
+<p><span class="k">Fix</span>Re-zero Z after every bit change and after the flip, with VPanel on G54, and check the machine Z is still above −50. Never re-zero X or Y. The lab's one-bit profile has no bit change at all.</p>
+</div></details>
 
-<h2>Panels</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>"Two boards overlap" and the export refuses</td><td>Move one; <span class="ui">Lay them side by side</span> or <span class="ui">Butt them together</span>.</td></tr>
-<tr><td>A board's side is not in the cut-out</td><td>Its edge is on the sheet's edge, so there is nothing to cut there. Set the sheet's real size and corner if that is wrong.</td></tr>
-<tr><td>The panel does not fit the reachable copper</td><td>The sheet ends before the travel does, or the boards plus a gap are wider than the sheet. Move the sheet, or cut the boards one after the other.</td></tr>
-</table></div>
+<h2 data-cat-title="probe" data-short="Probing &amp; link">Probing and the link</h2>
+<details class="ts-item" id="connect" data-cat="probe" data-q="connect fails serial port arduino monitor com">
+<summary>Connect fails</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The Arduino IDE's Serial Monitor holds the port, the wrong port is picked, or the cable was replugged.</p>
+<p><span class="k">Fix</span>Close the Serial Monitor; pick the right port; replug and <span class="menu-path">Machine › Rescan the serial ports</span>. Only one program can hold the port.</p>
+</div></details>
+<details class="ts-item" id="column" data-cat="probe" data-q="column failed probe points outside travel grid">
+<summary>A whole column of probe points <em>failed</em></summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>They were outside the machine's travel.</p>
+<p><span class="k">Fix</span>The grid is clipped to the reachable copper when it is built; if points still fail, the job itself is off the bed: see the checks.</p>
+</div></details>
+<details class="ts-item" id="no-touch" data-cat="probe" data-q="no touch probe clip contact dirty copper started too high">
+<summary><em>no touch</em></summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The clip is off the copper, the copper is dirty or oxidised where the bit lands, or the bit started too high above it.</p>
+<p><span class="k">Fix</span>Reseat the red clip on the copper (it is the only wire: the bit is wired inside the machine), clean the copper, and start the bit a couple of millimetres above the surface.</p>
+</div></details>
+<details class="ts-item" id="unstable" data-cat="probe" data-q="unstable flaky contact touch">
+<summary><em>unstable</em></summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>A flaky contact.</p>
+<p><span class="k">Fix</span>Clean the copper and reseat the clip, then probe the failed points again.</p>
+</div></details>
+<details class="ts-item" id="already-touching" data-cat="probe" data-q="already touching raise page up probe z">
+<summary>“The bit is already touching the copper”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>Both touches descend from where the bit is, so they cannot start on the copper.</p>
+<p><span class="k">Fix</span>Raise it a few millimetres with <kbd>Page Up</kbd>, then try again.</p>
+</div></details>
+<details class="ts-item" id="live-pos" data-cat="probe" data-q="no live position yet probe won't start readout">
+<summary>“No live position yet”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The grid is measured from where the tool is standing, so the position readout has to be alive first.</p>
+<p><span class="k">Fix</span>Give it a moment after connecting, and try again.</p>
+</div></details>
+<details class="ts-item" id="spike" data-cat="probe" data-q="spike 3d surface lone point">
+<summary>A lone spike in the 3D surface</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>A flaky touch at that point.</p>
+<p><span class="k">Fix</span>Clear that row and probe it again.</p>
+</div></details>
+<details class="ts-item" id="after-stop" data-cat="probe" data-q="stop nothing jogs page up raise">
+<summary>Nothing moves after a STOP</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>STOP drops the move in flight and stops the spindle; the bit stays where it is.</p>
+<p><span class="k">Fix</span>Raise the bit with <kbd>Page Up</kbd> before the next move.</p>
+</div></details>
+<details class="ts-item" id="linux" data-cat="probe" data-q="linux no machine bar link windows only sentence laptop">
+<summary>No machine bar, just a sentence</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The machine link runs on Windows only.</p>
+<p><span class="k">Fix</span>Export on Linux and send the files from a Windows PC. Your own laptop at the mill works for the link and for VPanel only if it runs Windows.</p>
+</div></details>
 
-<h2>Double-sided</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>Top mirrored or offset after the flip</td><td>Physical flip ≠ expected direction. Fiducial fits cannot catch this. Jog to a distinctive board hole with the top step selected before cutting.</td></tr>
-<tr><td>"Too far out to cut"</td><td>Re-seat the board and probe again; <span class="ui">Find it for me</span> is repeatable. The files are not written under a bad fit without asking.</td></tr>
-<tr><td>NC job ignores my origin</td><td>NC obeys G54 only. XY at the machine origin, zero only Z.</td></tr>
-</table></div>
+<h2 data-cat-title="panels" data-short="Panels">Panels</h2>
+<details class="ts-item" id="overlap" data-cat="panels" data-q="two boards overlap export refuses">
+<summary>“Two boards overlap” and the export refuses</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>Overlapping boards are one shape and cannot be cut apart.</p>
+<p><span class="k">Fix</span>Move one, or <span class="menu-path">Set up the job › Where it sits on the bed › Lay them side by side</span> (4&nbsp;mm apart) or <span class="ui">Butt them together</span> (one shared cut).</p>
+</div></details>
+<details class="ts-item" id="edge-uncut" data-cat="panels" data-q="side not in the cut-out edge sheet">
+<summary>A board's side is not in the cut-out</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>Its edge is on the sheet's edge, so there is nothing to cut there.</p>
+<p><span class="k">Fix</span>If that is wrong, set the sheet's real size and corner on <span class="menu-path">Set up the job › The copper</span>.</p>
+</div></details>
+<details class="ts-item" id="panel-fit" data-cat="panels" data-q="does not fit reachable copper sheet">
+<summary>The panel does not fit the reachable copper</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The sheet ends before the travel does, or the boards plus a gap are wider than the sheet.</p>
+<p><span class="k">Fix</span>Move the sheet, butt the boards, or cut them one after the other.</p>
+</div></details>
 
-<h2>Setups</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Symptom</th><th>Cause → fix</th></tr>
-<tr><td>"Setup loaded, but … could not be read"</td><td>The Gerber folder moved, or the file is from the first interface with something this one cannot read. It says what; check the job before you cut.</td></tr>
-<tr><td>Can't find exports or setups</td><td><code>Documents\SRM-CAM\exports</code> and <code>…\sessions</code>. Dialogs reopen the last folder used.</td></tr>
-<tr><td>The window never opens</td><td>Read <code>Documents\SRM-CAM\gui2.log</code>. On Linux without a GPU driver, run with <code>GERBER2RML_GL=software</code>.</td></tr>
-</table></div>
+<h2 data-cat-title="ds" data-short="Double-sided">Double-sided</h2>
+<details class="ts-item" id="flip" data-cat="ds" data-q="top mirrored offset flip direction">
+<summary>Top mirrored or offset after the flip</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The board was turned the other way than the plan expects. A fiducial fit cannot catch this.</p>
+<p><span class="k">Fix</span>Before cutting the top, select the top step and jog to a distinctive board hole to check. See <a href="double-sided.html">Double-sided boards</a>.</p>
+</div></details>
+<details class="ts-item" id="too-far" data-cat="ds" data-q="too far out to cut fit fiducial find it for me">
+<summary>“Too far out to cut”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The measured board is too far from where the plan put it.</p>
+<p><span class="k">Fix</span>Re-seat the board and probe again; <span class="ui">Find it for me</span> is repeatable. The files are not written under a bad fit without asking.</p>
+</div></details>
+
+<h2 data-cat-title="app" data-short="Setups &amp; app">Setups and the app</h2>
+<details class="ts-item" id="setup-read" data-cat="app" data-q="setup loaded could not be read moved folder">
+<summary>“Setup loaded, but … could not be read”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The Gerber folder moved, or the file is from the first interface with something this one cannot read. It says what.</p>
+<p><span class="k">Fix</span>Check the job before you cut; point it at the folder again.</p>
+</div></details>
+<details class="ts-item" id="find-files" data-cat="app" data-q="can't find exports setups folder documents">
+<summary>Can't find the exports or setups</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>They live in your Documents.</p>
+<p><span class="k">Fix</span><code>Documents\SRM-CAM\exports</code> and <code>…\sessions</code>; <span class="menu-path">File › Open the export folder</span> opens it. Dialogs reopen the last folder used.</p>
+</div></details>
+<details class="ts-item" id="no-window" data-cat="app" data-q="window never opens crash log gpu software">
+<summary>The window never opens</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>A startup failure, often the graphics driver.</p>
+<p><span class="k">Fix</span>Read <code>Documents\SRM-CAM\gui2.log</code>. On Linux without a GPU driver, run with <code>GERBER2RML_GL=software</code>.</p>
+</div></details>
 
 <div class="tip"><span class="t">Still stuck?</span>
-<p><a href="https://github.com/MadsRudolph/srm-cam/issues">Open an issue</a> with the symptom, the step you were on, and the text of the check or the toast.</p></div>
+<p>Ask Mads Rudolph or the course TAs, or <a href="https://github.com/MadsRudolph/srm-cam/issues">open an issue</a> with the symptom, the step you were on, and the text of the check or the message.</p></div>
 
 <div class="page-nav">
   <a href="reference.html"><span class="lbl">Previous</span><span class="ttl">← Files &amp; reference</span></a>

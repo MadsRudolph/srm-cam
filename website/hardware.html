@@ -4,12 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hardware &amp; firmware — SRM-CAM guide</title>
-<meta name="description" content="The Arduino on the SRM-20's SPI bus: wiring, flashing, how a touch is measured, and the safety limits.">
+<meta name="description" content="The Arduino on the SRM-20's SPI remote header: how it talks to the machine, the one-wire touch probe, how a touch is measured, safety limits, flashing and the serial protocol.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/hw-link.js?v=20260930b"></script>
+<script defer src="js/anim/hw-probe.js?v=20260930b"></script>
+<script defer src="js/anim/hw-touch.js?v=20260930b"></script>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +44,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,58 +63,79 @@
 <div class="content">
 
 <h1>Hardware &amp; firmware</h1>
-<p class="lead">An Arduino on the SRM-20's internal SPI bus gives a live position readout, electrical touch sensing, bed probing, click-to-jog, zero Z and the fiducial finder.</p>
+<p class="lead">An Arduino Uno fitted to the SRM-20's SPI remote header lets SRM-CAM read where the head is, jog it, feel the bit touch the copper, probe the bed and zero Z. This page is what is fitted, how it talks, and how a touch is measured. The drawings are live.</p>
 
 <div class="note"><span class="t">Optional, and Windows-only</span>
-<p>Everything else — traces, drilling, cut-out, panels, double-sided registration, rework, the checks and every export — runs on a stock SRM-20 through VPanel with nothing fitted. Without the link the machine bar says so and stays out of the way. Bed levelling without the Arduino works by <a href="bed-leveling.html">measuring the grid by hand</a>.</p></div>
+<p>Everything else — traces, drilling, cut-out, panels, double-sided registration, rework, the checks and every export — runs on a stock SRM-20 through VPanel with nothing fitted. The link itself runs on Windows only: on Linux the machine bar says so instead of showing controls. A height map is a file, so you can probe on the CNC PC, <span class="menu-path">Level the bed › Save…</span> the CSV, and <span class="menu-path">Load…</span> it anywhere to export levelled toolpaths.</p></div>
 
-<h2>Install (one-time)</h2>
+<h2 id="link">What is fitted, and how it talks</h2>
+<p>The Arduino is not listening in on the machine: it is the <strong>SPI master on the SRM-20's own remote header</strong>, speaking Roland's remote protocol through Roland's <code>SRM20SPIRemote</code> library (vendored in <code>hardware/</code>, with three small marked patches). It sits on an SPI shield plugged into the header, with slave-select on D9 and the ready line on D6.</p>
+<p>Two USB cables go to the PC. The <strong>black</strong> one is the Arduino: SRM-CAM sends it one short text line at a time (115200 baud, distances in microns) and the firmware turns each line into SPI calls. The <strong>white</strong> one is the mill itself, for VPanel, which keeps playing the files. The two coexist, and both can go to your own laptop when the mill's PC is not free (<a href="milling-a-board.html#need">What you need</a>).</p>
+<figure class="anim" data-anim="hw-link">
+  <figcaption><span class="k">Follow one exchange</span>Each button sends a real command from SRM-CAM down the black cable, the SPI call it becomes, and the answer coming back. VPanel's file takes the white cable and never passes the Arduino.</figcaption>
+</figure>
+
+<h2 id="probe">The probe: one wire</h2>
+<p>There is <strong>one wire and one clip</strong>. Clip the <strong>red alligator clip</strong> to the copper: it is the Arduino's input D7, which the chip holds high through its internal pull-up. The bit needs no clip. It is on the machine's ground, which is the Arduino's ground, so when the bit touches the copper the circuit closes and D7 goes low. The spoilboard is wood and conducts nothing, so nothing needs to go under the board.</p>
 <ol class="steps">
-  <li><span class="st">Fit the Arduino</span>
-    Behind the SRM-20's back panel, wired to the controller's SPI header. Full wiring: <code>docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md</code> in the repo.</li>
-  <li><span class="st">Flash</span>
-    <code>python scripts/flash_firmware.py</code> syncs the bundled library, compiles, uploads and verifies the board came back as v3. Needs an <code>arduino-cli</code>; the Arduino IDE bundles one. 115200 baud.</li>
-  <li><span class="st">Close the Serial Monitor</span>
-    The app cannot open the port while the IDE holds it.</li>
+  <li><span class="st">Spindle off</span>Always, while the clip is on.</li>
+  <li><span class="st">Clip on the copper</span>The red alligator clip, anywhere on the sheet's copper.</li>
+  <li><span class="st">Test it</span>Touch the clip to the bit: SRM-CAM's Z readout on the machine bar turns red and says <em>Touch</em>. Let go and it goes back to <em>Z</em>.</li>
 </ol>
-<div class="danger"><span class="t">Do not flash from the Arduino IDE</span>
-<p>The sketch includes the library with angle brackets, so the IDE resolves it from <code>Documents\Arduino\libraries</code>, not from this repo. A stale copy builds cleanly and quietly lacks commands. <code>flash_firmware.py</code> syncs first, every time.</p></div>
+<figure class="anim" data-anim="hw-probe">
+  <figcaption><span class="k">A switch, read three times</span>Lower the bit onto the copper and D7 goes low. The firmware only believes it after three low reads in a row, 1&nbsp;ms apart, so a spike of stepper noise cannot fake a touch.</figcaption>
+</figure>
 
-<h2>Probe wiring (every session)</h2>
-<p><strong>One clip: red (D7) → the copper.</strong> The tool is grounded through the collet. Spindle <strong>off</strong>. Touch the clip to the bit: the touch chip on the machine bar reads <em>Touching</em>.</p>
-
-<h2>How a touch is measured</h2>
+<h2 id="touch">How a touch is measured</h2>
 <ul>
-  <li><strong>Debounced</strong> — three consecutive reads; stepper noise cannot fake a touch.</li>
-  <li><strong>Two-stage verified</strong> — a coarse descent to the surface, a lift, then a fine re-touch that must agree within 60&nbsp;µm or the point reads <em>unstable</em>.</li>
-  <li><strong>Fast above known copper</strong> — once the surface is known the descent is coarse until just above it, then fine.</li>
+  <li><strong>Debounced</strong>: three consecutive low reads, 1&nbsp;ms apart.</li>
+  <li><strong>Found twice</strong>: a coarse descent at 25&nbsp;µm a step to contact, a 150&nbsp;µm lift, then a fine re-descent at 10&nbsp;µm, the machine's own step. The two contacts must agree within 60&nbsp;µm. If they don't, the fine touch becomes the reference and it tries once more; a second disagreement reports the point <em>unstable</em> instead of putting it in the map.</li>
+  <li><strong>Fast above known copper</strong>: once copper has been found, later points rapid to 1&nbsp;mm above the highest copper seen, step 150&nbsp;µm (no copper can be up there), and switch to 25&nbsp;µm from 100&nbsp;µm above it, so the touch itself is always gentle.</li>
 </ul>
+<figure class="anim" data-anim="hw-touch">
+  <figcaption><span class="k">Z against time</span>The firmware's own step sizes; the surface heights are an example. Switch between the first point, later points and a flaky touch.</figcaption>
+</figure>
 
 <h3>Safety limits (in firmware)</h3>
 <div class="tbl-wrap"><table>
 <tr><th>Guard</th><th>Value</th><th>Prevents</th></tr>
-<tr><td>Drop floor</td><td>6&nbsp;mm below safe Z</td><td>Endless descent on dead wiring</td></tr>
-<tr><td>Runaway guard</td><td>1.2&nbsp;mm past known copper</td><td>Drilling into the bed when a point misses copper</td></tr>
-<tr><td>Abort everywhere</td><td>—</td><td>STOP is honoured between every Z step</td></tr>
+<tr><td>Drop floor</td><td>6&nbsp;mm below safe Z</td><td>Endless descent on dead wiring or a missing clip</td></tr>
+<tr><td>Runaway guard</td><td>1.2&nbsp;mm past known copper</td><td>Driving into the bed when a point misses the copper</td></tr>
+<tr><td>Fine-touch floor</td><td>0.5&nbsp;mm past the coarse touch</td><td>A re-descent that lost the surface</td></tr>
 <tr><td>Hole-test cap</td><td>0.2&nbsp;mm past the surface</td><td>The fiducial finder plunging into a hole</td></tr>
+<tr><td>Status guard</td><td>pause, lid open, fatal</td><td>Queueing moves into a paused or opened machine (v3 reads the machine's own bits)</td></tr>
+<tr><td>Spindle deadman</td><td>10&nbsp;s</td><td>A spindle started over the link running on after the app has gone quiet</td></tr>
+<tr><td>Abort everywhere</td><td>—</td><td>STOP is honoured between every Z step, and mid-move</td></tr>
 </table></div>
 
-<div class="warn"><span class="t">STOP does not lift the tool</span>
-<p>Motion and the spindle stop; the bit stays where it is. Raise it with <kbd>Page Up</kbd> before the next move. The retract in the firmware is cancelled by its own abort flag; the fix waits for a moment when the machine is idle to re-flash.</p></div>
+<div class="warn"><span class="t">STOP does not promise to lift the tool</span>
+<p>STOP drops the move and stops the spindle. The firmware tries to retract to the safe height after an abort, but SRM-CAM does not count on it: the bit may still be down. Raise it with <kbd>Page Up</kbd> before the next move. See <a href="machine-control.html#pause-stop">Pause and STOP</a>.</p></div>
 
-<h2>Serial protocol (bench reference)</h2>
-<p>115200 baud, newline-terminated, microns. The app speaks it for you.</p>
+<h2 id="install">Install (one-time, for whoever maintains the mill)</h2>
+<ol class="steps">
+  <li><span class="st">Fit the Arduino</span>An Arduino Uno on the SPI shield, plugged into the SRM-20's SPI remote header on the back. The red clip's wire goes to D7. Full story: <code>docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md</code>.</li>
+  <li><span class="st">Flash</span><code>python scripts/flash_firmware.py</code> syncs the bundled library, compiles, uploads and reads the version back to prove the board came back as v3. It uses the <code>arduino-cli</code> bundled with the Arduino IDE. <code>--port COM4</code> pins the port; <code>--compile-only</code> just checks it builds.</li>
+  <li><span class="st">Close the Serial Monitor</span>Only one program can hold the port; SRM-CAM cannot connect while the IDE has it.</li>
+  <li><span class="st">Check it</span><span class="menu-path">Machine › Machine test…</span> in SRM-CAM, or <code>python scripts/srm20_bench.py --port COM5 --features</code>, the read-only "is it flashed and talking?" check.</li>
+</ol>
+<div class="danger"><span class="t">Do not flash from the Arduino IDE</span>
+<p>The sketch includes the library with angle brackets, so the IDE builds against the copy in <code>Documents\Arduino\libraries</code>, not the one in this repo. A stale copy builds cleanly and quietly lacks commands. <code>flash_firmware.py</code> syncs first, every time.</p></div>
+
+<h2 id="protocol">Serial protocol (bench reference)</h2>
+<p>115200 baud, newline-terminated, distances in microns. SRM-CAM speaks it for you; the host side is <code>gerber2rml/engine/spi_probe.py</code>, the board side <code>hardware/srm20_spi_probe/srm20_spi_probe.ino</code>.</p>
 <div class="tbl-wrap"><table>
-<tr><th>Cmd</th><th>Meaning</th></tr>
-<tr><td><code>D</code> / <code>P id x y</code> / <code>B</code></td><td>Set datum / probe a point relative to it / re-touch the reference</td></tr>
-<tr><td><code>T</code> / <code>W</code></td><td>Touch-off / touch-off and zero the work-origin Z</td></tr>
+<tr><th>Command</th><th>Meaning</th></tr>
+<tr><td><code>D</code> / <code>P id x y</code> / <code>B</code></td><td>Set the datum and safe Z here / probe a point relative to it / re-touch the datum (drift check)</td></tr>
+<tr><td><code>T</code> / <code>W</code></td><td>Touch off from here and stop on the surface / touch off and write the work-origin Z there</td></tr>
 <tr><td><code>H x y</code></td><td>Hole test at absolute (x, y): copper or hole</td></tr>
-<tr><td><code>J x y</code> / <code>L</code></td><td>Jog (lifts first) / lift to safe Z</td></tr>
-<tr><td><code>Q</code> / <code>G</code> / <code>V</code></td><td>Position and touch / work origin / version and features</td></tr>
-<tr><td><code>X</code> / <code>S rpm</code></td><td>Status word / spindle on-off (the rpm value is ignored by the machine)</td></tr>
-<tr><td><code>~</code> <code>^</code> <code>%</code> <code>K</code></td><td>Pause / resume / stop the move / cancel the job</td></tr>
-<tr><td><code>Y</code> / <code>N dx dy dz s</code></td><td>Move to the view position / timed relative move</td></tr>
-<tr><td><code>!</code></td><td>Abort: stop the spindle and the move in flight</td></tr>
+<tr><td><code>J x y</code> / <code>L</code> / <code>Z z</code></td><td>Jog (lifts about 5&nbsp;mm first) / lift to safe Z / set safe Z</td></tr>
+<tr><td><code>Q</code> / <code>G</code> / <code>V</code> / <code>I</code></td><td>Position and touch / work origin / firmware version and features / the machine's remote-protocol version</td></tr>
+<tr><td><code>X</code> / <code>S rpm</code></td><td>Status words and spindle rpm / spindle on or off (the machine ignores the rpm: VPanel's slider sets the speed)</td></tr>
+<tr><td><code>~</code> <code>^</code> <code>%</code> <code>K</code></td><td>Pause / resume / drop the move in flight / cancel the job</td></tr>
+<tr><td><code>Y</code> / <code>N dx dy dz s</code></td><td>Move to the View position / timed relative move (the Z jog)</td></tr>
+<tr><td><code>C</code> / <code>M x y z s</code></td><td>Begin a streaming session / stream one move (experimental)</td></tr>
+<tr><td><code>A 0|1</code> / <code>F us</code></td><td>Status guard off or on / SPI framing delay (bench)</td></tr>
+<tr><td><code>!</code></td><td>Abort: stop the spindle and the move in flight, then retract</td></tr>
 </table></div>
 
 <div class="page-nav">

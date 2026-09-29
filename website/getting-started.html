@@ -9,7 +9,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/laptop.js?v=20260930b"></script>
+<script defer src="js/anim/gs-window.js?v=20260930b"></script>
+<script defer src="js/anim/gs-tiers.js?v=20260930b"></script>
+<script defer src="js/anim/gs-files.js?v=20260930b"></script>
+<style>.figs.top { align-items: start; }</style>
 </head>
 <body>
 <div class="layout">
@@ -40,6 +46,7 @@
         <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
       </div>
       <div class="nav-group">
@@ -58,23 +65,31 @@
 <div class="content">
 
 <h1>Getting started</h1>
-<p class="lead">Install, learn the window, load a board.</p>
+<p class="lead">Install SRM-CAM, learn the four regions of the window and the two tiers, and get the right files out of KiCad. Then go on to <a href="milling-a-board.html">Milling a board</a>.</p>
 
-<h2>Install</h2>
+<h2 id="install">Install</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
 <tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive.</td></tr>
-<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. <strong>The machine link is Windows-only</strong> — prepare and export on Linux, send the files from VPanel on the CNC PC, and carry a probed height map over as a CSV.</td></tr>
+<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. <strong>The machine link is Windows-only</strong>: prepare and export on Linux, send the files from VPanel on a Windows PC, and carry a probed height map over as a CSV.</td></tr>
 <tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
 </table></div>
-<p><strong>Staying current.</strong> The app checks GitHub for a newer release a moment after it opens and says so once, with the download link. <span class="ui">Help → Check for updates…</span> asks any time. It never installs anything by itself: you download the new file and install it the same way as the first time.</p>
+
+<h3>No PC at the mill?</h3>
+<p>The lab's CNC PC has SRM-CAM and VPanel on it. If it isn't free, install both on your own <strong>Windows</strong> laptop (the link and VPanel are Windows-only) and plug in the two USB cables yourself.</p>
+<figure class="anim" data-anim="laptop">
+  <figcaption><span class="k">Two cables</span>The white USB is the mill, for VPanel; the black USB is the Arduino probe link, for SRM-CAM.</figcaption>
+</figure>
+
+<h3>Staying current</h3>
+<p>The app checks GitHub for a newer release a moment after it opens and says so once, with the download link. <span class="menu-path">Help › Check for updates…</span> asks any time. It never installs anything by itself: you download the new file and install it the same way as the first time.</p>
 <figure class="fig mid">
-  <img src="img/gui2_update.png" alt="The update sheet saying SRM-CAM 0.5.0 is up to date">
-  <figcaption><span class="ui">Help → Check for updates…</span>. When a newer release exists, the sheet names it and opens the download page.</figcaption>
+  <img src="img/gui2_update.png" alt="The update sheet, saying which version is installed and whether a newer one exists" loading="lazy">
+  <figcaption><span class="menu-path">Help › Check for updates…</span> When a newer release exists, the sheet names it and opens the download page.</figcaption>
 </figure>
 <p>The first interface is still shipped: <code>SRM-CAM --original</code> from an install, <code>python -m gerber2rml.gui</code> from source. Same engine, same files.</p>
 
-<h2>Workspace folders</h2>
+<h3>Workspace folders</h3>
 <div class="tbl-wrap"><table>
 <tr><th>Folder</th><th>Contents</th></tr>
 <tr><td><code>Documents\SRM-CAM\sessions</code></td><td>Setups (<code>.srmcam</code>) and height maps (<code>.csv</code>)</td></tr>
@@ -83,101 +98,116 @@
 <tr><td><code>Documents\SRM-CAM\gui2.log</code></td><td>Where a start-up problem ends up when there is no console. Read it first if the window never opens.</td></tr>
 </table></div>
 
-<h2>The window</h2>
-<figure class="fig">
-  <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected">
-  <figcaption>Four regions that never move: the rail, the stage, the inspector, the machine bar.</figcaption>
+<h2 id="window">The window</h2>
+<p>Four regions that never move, and a header. Tap one to see what it is for; tap a step on the rail and the stage draws its toolpath, as the app does.</p>
+<figure class="anim" data-anim="gs-window">
+  <figcaption><span class="k">The four regions</span>The rail, the stage, the inspector and the machine bar. Schematic; the real window is below.</figcaption>
 </figure>
-<div class="figs">
+<figure class="fig">
+  <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected" loading="lazy">
+  <figcaption>The real window, on the setup step (a Linux screenshot, so the machine bar is a sentence: the link is Windows-only).</figcaption>
+</figure>
+<ul>
+  <li><strong>The rail</strong> (left) is the run plan: the same order, and the same files, that the export writes. Numbered steps are files you send; the rows between them (fit the bit and set the Z origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>
+  <li><strong>The stage</strong> (middle) is the bed in machine coordinates: the copper sheet, the board, the toolpaths of the selected step, the spoilboard's screw grid. Drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan, <span class="ui">Fit</span> to frame the work. <span class="ui">Bed — as cut</span> is the only frame the machine understands; <span class="ui">Design X-ray</span> is for checking that the two faces of a double-sided board register.</li>
+  <li><strong>The inspector</strong> (right) shows the selected step: the setup page, the checks, or a step's parameters, estimate and file.</li>
+  <li><strong>The machine bar</strong> (bottom) is always there: <span class="ui">Connect</span> and the port, the position readout (always machine coordinates), Z jog, <span class="ui">Probe Z</span>, <span class="ui">Zero Z</span>, <span class="ui">Spindle</span>, <span class="ui">Click to jog</span>, and <span class="ui">STOP</span>. <kbd>Esc</kbd> stops the machine from anywhere, including with a dialog open.</li>
+</ul>
+<div class="figs top">
   <figure class="fig">
-    <img src="img/gui2_rail.png" alt="The rail: the run plan with a finding on its banner">
-    <figcaption>The rail. Numbered steps are files; the rows between them are things you do by hand. The banner holds the worst finding.</figcaption>
+    <img src="img/gui2_rail.png" alt="The rail: the run plan, with the drill as step 1 and the isolation traces as step 2" loading="lazy">
+    <figcaption>The rail on a one-bit job: fit the bit and set the Z origin by hand, then the dry run, the drill, the traces, and the cut-out last.</figcaption>
   </figure>
   <figure class="fig">
-    <img src="img/gui2_inspector_step.png" alt="The inspector showing the isolation traces step">
-    <figcaption>The inspector for the traces step: what it needs, the file, and the cutting parameters in the Full tier, with the tool switchable between a flat endmill and a V-bit.</figcaption>
+    <img src="img/gui2_inspector_step.png" alt="The inspector showing the isolation traces step" loading="lazy">
+    <figcaption>The inspector on the traces step: what it needs, the file, and (in the Full tier) the cutting parameters, with the tool switchable between a flat endmill and a V-bit.</figcaption>
   </figure>
 </div>
 <figure class="fig">
-  <img src="img/gui2_bar.png" alt="The machine bar">
+  <img src="img/gui2_bar.png" alt="The machine bar" loading="lazy">
   <figcaption>The machine bar. Everything except probing works without the link; <span class="ui">STOP</span> is always there.</figcaption>
 </figure>
 
-<ul>
-  <li><strong>The rail</strong> (left) is the run plan — the same order, and the same files, that the export writes. Numbered steps are files you send; the ones between them (fit the bit, set the origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>
-  <li><strong>The stage</strong> (middle) is the bed in machine coordinates: the copper sheet, the board, the toolpaths of the selected step, the spoilboard's screw grid. Drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan, <span class="ui">Fit</span> to frame the work. <span class="ui">Bed — as cut</span> is the only frame the machine understands; <span class="ui">Design X-ray</span> exists for checking that the two faces of a double-sided board register.</li>
-  <li><strong>The inspector</strong> (right) shows the selected step: the setup page, the checks, or a step's parameters, estimate and file.</li>
-  <li><strong>The machine bar</strong> (bottom) is always there: <span class="ui">Connect</span> and the port, the position readout, Z jog, <span class="ui">Zero Z here</span>, <span class="ui">Spindle</span>, <span class="ui">Click to jog</span>, and <span class="ui">STOP</span>. <kbd>Esc</kbd> stops the machine from anywhere, including with a dialog open.</li>
-</ul>
-
 <h2 id="tiers">Essential &amp; Full</h2>
-<p>Two tiers, on the <span class="ui">Interface</span> menu. Essential is the whole single-sided job, including bed levelling; Full adds the rest. Essential is a strict subset — the same controls, the same handlers, files that come out byte for byte identical.</p>
+<p>Two tiers, on the <span class="menu-path">Interface</span> menu. Essential is the whole single-sided job, including bed levelling, and it is the default. Full adds the rest. Essential is a strict subset: the same controls, the same handlers, and files that come out byte for byte identical.</p>
+<figure class="anim" data-anim="gs-tiers">
+  <figcaption><span class="k">Flip the switch</span>What Full adds slides in, marked in blue; nothing Essential has moves.</figcaption>
+</figure>
 <div class="tbl-wrap"><table>
 <tr><th>Essential keeps</th><th>Full adds</th></tr>
-<tr><td>Bed levelling — the stop control is part of the window, so probing is safe to keep</td><td>Per-operation cutting parameters: feeds, depths, offsets, stepover, V-bit geometry (in Essential the tool profile sets these)</td></tr>
+<tr><td>Bed levelling: the stop control is part of the window, so probing is safe to keep</td><td>Per-operation cutting parameters: feeds, depths, offsets, stepover, V-bit geometry, and <span class="ui">Cut gaps too narrow for the bit</span> (in Essential the tool profile sets these)</td></tr>
 <tr><td>The dry run</td><td>Double-sided boards: registration, the flip, top traces</td></tr>
 <tr><td>The pre-flight checks</td><td>Rework</td></tr>
 <tr><td>Hold-down screws, and the raised travel height that goes with them</td><td>Output format and mirroring</td></tr>
 <tr><td>Placing the job on the bed</td><td>Streaming over the link (experimental), the machine test, saving your own tool profiles</td></tr>
 </table></div>
-<figure class="fig mid">
-  <img src="img/gui2_tiers.png" alt="The sheet explaining the two tiers">
-  <figcaption><span class="ui">Interface → What the two tiers differ by…</span></figcaption>
-</figure>
-<div class="figs">
+<p><span class="menu-path">Interface › What the two tiers differ by…</span> lists it in the app. A lab that wants the tier fixed sets <code>SRM_CAM_MODE</code> to <code>essential</code> or <code>full</code> in the environment or the shortcut.</p>
+<div class="figs top">
   <figure class="fig">
-    <img src="img/gui2_help_menu.png" alt="The Help menu">
+    <img src="img/gui2_tiers.png" alt="The sheet explaining the two tiers" loading="lazy">
+    <figcaption><span class="menu-path">Interface › What the two tiers differ by…</span></figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/gui2_help_menu.png" alt="The Help menu" loading="lazy">
     <figcaption>The Help menu: the web guide on <kbd>F1</kbd>, the machine lessons, and the update check.</figcaption>
   </figure>
-  <figure class="fig">
-    <img src="img/gui2_basics.png" alt="The sheet titled The machine, in five minutes">
-    <figcaption><span class="ui">Help → The machine, in five minutes</span>: the coordinate systems, Z and only Z, the travel limit, the probe, STOP against Pause, where the files go.</figcaption>
-  </figure>
 </div>
-<p><span class="ui">Interface → What the two tiers differ by…</span> lists it in the app. A lab that wants the tier fixed sets <code>SRM_CAM_MODE</code> to <code>essential</code> or <code>full</code> in the environment or the shortcut.</p>
 
-<h2>Files from KiCad</h2>
+<h3>The machine, in five minutes</h3>
+<p><span class="menu-path">Help › The machine, in five minutes</span> is the part that is true at every step: VPanel's three coordinate systems and why G54 is the one that matters; zero Z and leave X and Y alone; keep machine Z above −50&nbsp;mm with the bit on the copper (−55 is the end of the travel); the probe's one wire, the red clip on the copper; STOP against Pause; and where the files go.</p>
+<figure class="fig mid">
+  <img src="img/gui2_basics.png" alt="The sheet titled The machine, in five minutes" loading="lazy">
+  <figcaption><span class="menu-path">Help › The machine, in five minutes</span></figcaption>
+</figure>
+
+<h2 id="kicad">Files from KiCad</h2>
 <div class="note"><span class="t">Before you route: clearance and the build area</span>
-<p>Set the net class clearance to at least the width of the bit (<span class="ui">Board Setup → Design Rules → Net Classes</span>); a 0.8&nbsp;mm endmill cannot enter a 0.8&nbsp;mm gap. The app's checks list every gap that is too narrow, but it is quicker to fix before routing. <span class="ui">KiCad → Set up the build-area plugin…</span> in SRM-CAM adds a button to KiCad's PCB editor that draws the SRM-20's build area around your board and says whether it fits.</p></div>
+<p>Set the net class clearance to at least the width of the bit (<span class="menu-path">Board Setup › Design Rules › Net Classes</span>): a 0.8&nbsp;mm endmill cannot enter a gap narrower than 0.8&nbsp;mm. The app's checks list every gap that is too narrow, but it is quicker to fix before routing. <span class="menu-path">KiCad › Set up the build-area plugin…</span> in SRM-CAM adds a button to KiCad's PCB editor that draws the SRM-20's build area around your board and says whether it fits.</p></div>
 <div class="figs">
   <figure class="fig">
-    <img src="img/kicad_clearance.png" alt="KiCad Board Setup, Net Classes, with clearance and track width set">
+    <img src="img/kicad_clearance.png" alt="KiCad Board Setup, Net Classes, with clearance and track width set" loading="lazy">
     <figcaption>Net Classes: clearance and track width, set before routing.</figcaption>
   </figure>
   <figure class="fig">
-    <img src="img/kicad_plugin.png" alt="KiCad PCB editor with the SRM-20 build area and the recommended maximum board drawn around a board">
+    <img src="img/kicad_plugin.png" alt="KiCad PCB editor with the SRM-20 build area and the recommended maximum board drawn around a board" loading="lazy">
     <figcaption>The build-area plugin: the machine's travel and the recommended maximum board, drawn on User.Drawings.</figcaption>
   </figure>
 </div>
 <figure class="fig mid">
-  <img src="img/kicad_plugin_menu.png" alt="KiCad's toolbar with the Show SRM-20 build area button">
-  <figcaption>After a KiCad restart the button is on the toolbar and under <span class="ui">Tools → External Plugins</span>.</figcaption>
+  <img src="img/kicad_plugin_menu.png" alt="KiCad's toolbar with the Show SRM-20 build area button" loading="lazy">
+  <figcaption>After a KiCad restart the button is on the toolbar and under <span class="menu-path">Tools › External Plugins</span>.</figcaption>
 </figure>
 <ol class="steps">
   <li><span class="st">Plot Gerbers</span>
-    <span class="ui">File → Fabrication Outputs → Gerbers</span> — at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (+ <strong>F.Cu</strong> for double-sided).</li>
+    <span class="menu-path">File › Fabrication Outputs › Gerbers</span>: at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (and <strong>F.Cu</strong> for double-sided), into one folder. If KiCad asks to refill the zones, say yes.</li>
   <li><span class="st">Drill files</span>
-    Same dialog → <span class="ui">Generate Drill Files</span> (Excellon). Everything in one folder.</li>
+    Same dialog, <span class="ui">Generate Drill Files…</span>: Excellon, millimetres, into the same folder. KiCad writes the plated and unplated holes as two files; keep both.</li>
   <li><span class="st">Open</span>
-    <span class="ui">File → Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) picks up the layers and the drills and names the job after the KiCad project.</li>
+    In SRM-CAM, <span class="menu-path">File › Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) picks up the layers and the drills and names the job after the KiCad project.</li>
 </ol>
+<figure class="anim" data-anim="gs-files">
+  <figcaption><span class="k">What the folder needs</span>Tap a file to take it out and see what Open Gerber folder… makes of the rest: without B.Cu or Edge.Cuts the folder is refused; without the drill files it loads with no holes.</figcaption>
+</figure>
 <div class="figs">
   <figure class="fig">
-    <img src="img/kicad_plot.png" alt="KiCad's Plot dialog with F.Cu, B.Cu and Edge.Cuts ticked and Gerber format">
+    <img src="img/kicad_plot.png" alt="KiCad's Plot dialog with F.Cu, B.Cu and Edge.Cuts ticked and Gerber format" loading="lazy">
     <figcaption>Plot: Gerber format, the copper layers and Edge.Cuts, one output folder.</figcaption>
   </figure>
   <figure class="fig">
-    <img src="img/kicad_drill.png" alt="KiCad's Generate Drill Files dialog with Excellon and millimetres">
+    <img src="img/kicad_drill.png" alt="KiCad's Generate Drill Files dialog with Excellon and millimetres" loading="lazy">
     <figcaption>Drill files: Excellon, millimetres, into the same folder.</figcaption>
   </figure>
 </div>
 <div class="tip"><span class="t">No KiCad handy?</span>
-<p><span class="ui">Demo board</span> on the setup page loads a bundled 40×30&nbsp;mm coupon that exercises every operation.</p></div>
+<p><span class="ui">Demo board</span> on <span class="menu-path">Set up the job › The board</span> loads a bundled 40×30&nbsp;mm coupon that exercises every operation.</p></div>
 
-<h2>Setups</h2>
-<p><span class="ui">File → Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes one <code>.srmcam</code> file with everything: the boards and where they sit, the tool, the copper sheet, the screws, the height maps of both faces, the measured flip. <span class="ui">Load a setup…</span> brings it back. A setup written by the first interface loads too.</p>
+<h2 id="setups">Setups</h2>
+<p><span class="menu-path">File › Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes one <code>.srmcam</code> file with everything: the boards and where they sit, the tool, the copper sheet, the screws, the height maps of both faces, the measured flip. <span class="menu-path">File › Load a setup…</span> brings it back. A setup written by the first interface loads too.</p>
 <div class="warn"><span class="t">Save after probing</span>
 <p>A probed height map is minutes of machine time. Save the setup right after probing; the map is in it.</p></div>
+
+<div class="tip"><span class="t">Need help?</span>
+<p>Reach out to Mads Rudolph, or to the TAs of the course, if you need guidance with the milling.</p></div>
 
 <div class="page-nav">
   <a href="index.html"><span class="lbl">Previous</span><span class="ttl">← Overview</span></a>

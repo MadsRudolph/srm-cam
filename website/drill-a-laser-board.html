@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drilling a laser-etched board — SRM-CAM guide</title>
+<meta name="description" content="Drilling a board whose copper was etched on the fiber laser: measure three pads with the probe, fit, and drill every hole onto the real board with the SRM-20.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/ld-fit.js?v=20260930b"></script>
+<script defer src="js/anim/ds-findhole.js?v=20260930b"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="getting-started.html">Getting started</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Core workflow</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
+        <a class="nav-link active" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Setup &amp; reference</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<h1>Drilling a laser-etched board</h1>
+<p class="lead">A board whose copper was etched on the fiber laser, and only needs its holes. Nothing on it was cut from the mill's origin, so its drill file cannot simply be run: SRM-CAM measures where three of its holes really are, fits the whole hole pattern onto the board, and writes a drill file for the board in front of you. Proven on a 90&nbsp;×&nbsp;72&nbsp;mm board with 120 holes: worst pad 0.034&nbsp;mm.</p>
+
+<div class="pill-flow">
+  <span class="pf">Export from KiCad</span><span class="arr">→</span>
+  <span class="pf">Load, Mirror off</span><span class="arr">→</span>
+  <span class="pf">Find three holes</span><span class="arr">→</span>
+  <span class="pf">Write the drill file</span><span class="arr">→</span>
+  <span class="pf">Drill in VPanel</span>
+</div>
+
+<h2 id="export">1 · Export from KiCad</h2>
+<p>The board was etched on F.Cu, so the copper faces up on the bed. SRM-CAM's loader reads the bottom copper, so the F.Cu Gerber goes in under the B.Cu name:</p>
+<ol class="steps">
+  <li><span class="st">Plot the copper</span><span class="menu-path">File › Fabrication Outputs › Gerbers</span>: <strong>F.Cu</strong> and <strong>Edge.Cuts</strong>, into one folder. Then rename the <code>…-F_Cu.gbr</code> file to <code>…-B_Cu.gbr</code>.</li>
+  <li><span class="st">Drill files</span><span class="menu-path">Generate Drill Files…</span>: Excellon, millimetres, PTH and NPTH in separate files, drill origin <strong>Absolute</strong>, into the same folder.</li>
+</ol>
+<p>From the command line, the same: <code>kicad-cli pcb export gerbers --layers "F.Cu,Edge.Cuts"</code> (then the rename) and <code>kicad-cli pcb export drill --excellon-separate-th --drill-origin absolute</code>.</p>
+
+<h2 id="load">2 · Load it, and clamp the board</h2>
+<ol class="steps">
+  <li><span class="st">Open the folder</span><span class="menu-path">File › Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>).</li>
+  <li><span class="st">Mirror off</span>Untick <span class="menu-path">Set up the job › Mirror for bottom-up milling</span>. The picture then matches the laser preview: the copper the way it looks on the bed.</li>
+  <li><span class="st">Clamp it anywhere</span>Put the board on the bed and clamp it. Drag the picture on the stage to roughly where the board sits, so <span class="ui">Go to it</span> lands the bit near the first holes.</li>
+  <li><span class="st">Open the step</span>Select <span class="menu-path">Drill a board made elsewhere</span> at the bottom of the left rail. It is there on single-sided jobs only.</li>
+</ol>
+
+<h2 id="find">3 · Find three holes</h2>
+<p>This is the same way the lab places a flipped double-sided board: SRM-CAM knows where the holes are in the Gerbers, and finds their exact centres on the real board by touch.</p>
+<ol class="steps">
+  <li><span class="st">Choose the holes</span><span class="ui">Suggest three</span> picks three holes far apart and well out of line, or tick <span class="ui">Pick on the board</span> and click your own. The spread makes the rotation accurate; the triangle catches a mirrored board.</li>
+  <li><span class="st">Go to it</span>Select a row and press <span class="ui">Go to it</span>: the bit jogs to where the picture has that hole. After two holes are measured it aims by the fit; on a measured hole it goes to the measured centre, so you can check it by eye.</li>
+  <li><span class="st">Find it for me</span>With the bit over the hole, about <strong>2&nbsp;mm above the copper, never at Z0</strong> (its first move is sideways at the starting height), press <span class="ui">Find it for me</span>. It finds the centre through the Arduino's touch test, to about 50&nbsp;µm. The fallback: lower the bit to just above the pad, centre it by eye and <span class="ui">Capture</span>, or type the position in.</li>
+  <li><span class="st">Read the fit</span>At three holes the fit is applied: the stage draws the board where it really is, and <span class="ui">Worst pad</span> says how far the holes disagree. Under 0.10&nbsp;mm is good; 0.25&nbsp;mm or more is too far out, and the app asks before writing anything under it.</li>
+</ol>
+<div class="warn"><span class="t">What Find it for me needs here</span>
+<p>A <strong>copper-free circle</strong> at the hole for the bit to find (a mounting hole in a copper pour works well), and the <strong>probe clip on the copper around it</strong>: a laser board's pads are isolated from each other, so the clip has to be on the copper that surrounds that circle. Where there is no copper the bit presses about 0.2&nbsp;mm into bare laminate, which the drill removes anyway.</p></div>
+<figure class="anim" data-anim="ds-findhole" data-context="laser">
+  <figcaption><span class="k">How it finds a centre</span>A surface reference on the copper beside it, then short descents that touch copper or find none: march out, halve the gap to 50&nbsp;µm, both ways in X, then Y. Click in the view to aim somewhere else.</figcaption>
+</figure>
+
+<h3>Three, and by which pin</h3>
+<p>Three holes are required because two fit a mirrored board just as well as the right one. The third catches it, but only if each hole is found by <strong>which pin it is</strong>, never by where it sits in the picture. With the picture mirrored against the board, the three pins cannot be fitted by any turn and shift, and <span class="ui">Worst pad</span> comes out in millimetres: toggle <span class="ui">Mirror for bottom-up milling</span> and measure again.</p>
+<figure class="anim" data-anim="ld-fit">
+  <figcaption><span class="k">Try it</span>Suggest three, then Go to it and Find it for me for each. At three the holes move onto the real board. Then tick <em>Picture mirrored against the board</em> and do it again.</figcaption>
+</figure>
+<p><span class="ui">Let the fit stretch the board as well</span> adds a uniform scale, for a laser whose output is a fraction of a percent off size. Leave it off unless the worst pad says you need it: it can hide a mis-measured hole as a fake stretch.</p>
+
+<h2 id="drill">4 · Write the drill file, and drill</h2>
+<ol class="steps">
+  <li><span class="st">Write the drill file</span>Writes <code>&lt;name&gt;_drill_fitted.nc</code>: every hole, moved onto the measured board. Nothing else is written.</li>
+  <li><span class="st">Don't touch XY</span>Do not move the board, and do not reset X or Y, between measuring and drilling.</li>
+  <li><span class="st">Zero Z</span>With the drill bit, on the copper, with VPanel on <strong>G54</strong>; and with the bit on the copper, machine Z must stay above −50&nbsp;mm (see <a href="milling-a-board.html#zero">Milling a board</a>).</li>
+  <li><span class="st">Drill it</span>In VPanel: <span class="ui">Cut</span>, <span class="ui">Add</span> the one file, <span class="ui">Output</span>. There is no dry-run file for this job.</li>
+</ol>
+<p>Then check every hole landed inside its pad ring, and leave the machine as you found it (see <a href="milling-a-board.html#tidy">Leave it as you found it</a>).</p>
+
+<div class="page-nav">
+  <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>
+  <a class="next" href="photo-and-rework.html"><span class="lbl">Next</span><span class="ttl">Photo check &amp; rework →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

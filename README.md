@@ -11,6 +11,8 @@ replacing the mods site and FlatCAM.
 
 **📖 User guide: [madsrudolph.github.io/srm-cam](https://madsrudolph.github.io/srm-cam/)**
 
+[![SRM-CAM: KiCad Gerbers in, a milled PCB out, on the Roland SRM-20 (click for the 40-second video)](docs/media/srm-cam-showcase.webp)](https://madsrudolph.github.io/srm-cam/video/srm-cam-showcase.mp4)
+
 ![SRM-CAM: the run plan, the bed, the selected step, the machine bar](website/img/gui2_setup.png)
 
 ## Install

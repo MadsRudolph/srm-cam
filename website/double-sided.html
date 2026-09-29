@@ -9,7 +9,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260903c">
+<link rel="stylesheet" href="css/site.css?v=20260930a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/ds-order.js?v=20260930b"></script>
+<script defer src="js/anim/ds-flip.js?v=20260930b"></script>
+<script defer src="js/anim/ds-findhole.js?v=20260930b"></script>
+<script defer src="js/anim/ds-fiducial.js?v=20260930b"></script>
+<script defer src="js/anim/ds-photoalign.js?v=20260930b"></script>
 </head>
 <body>
 <div class="layout">
@@ -58,66 +64,93 @@
 <div class="content">
 
 <h1>Double-sided boards</h1>
-<p class="lead">Both sides register off machine-located holes, never the board edge. Full tier: tick <span class="ui">This board has copper on both faces</span> on the setup page (needs F.Cu).</p>
+<p class="lead">Copper on both faces, cut from both sides of the same sheet. Both faces register off reference holes the mill drills itself, never the board edge: sheared FR-4 is never truly square. At the lab that is done with <strong>fiducial holes</strong>. The drawings are live: press the buttons.</p>
 
-<figure class="fig">
-  <img src="img/gui2_xray.png" alt="The design X-ray with both copper layers overlaid">
-  <figcaption><span class="ui">Design X-ray</span> (<kbd>Ctrl</kbd>+<kbd>D</kbd>): both faces in the design frame, where they are meant to overlay. The bed frame is what gets cut.</figcaption>
+<div class="note"><span class="t">Where it is</span>
+<p>Double-sided is in the Full tier: <span class="menu-path">Interface › Full</span>, then <span class="menu-path">Set up the job › Double-sided › This board has copper on both faces</span>, and <span class="menu-path">Registration › Fiducial holes — measured after the flip</span>. It needs an <strong>F.Cu</strong> Gerber in the folder, so plot F.Cu as well as B.Cu and Edge.Cuts in KiCad.</p></div>
+
+<figure class="fig mid">
+  <img src="img/gui2_xray.png" alt="The design X-ray with both copper layers overlaid" loading="lazy">
+  <figcaption><span class="menu-path">View › Design X-ray</span> (<kbd>Ctrl</kbd>+<kbd>D</kbd>): both faces in the design frame, where they are meant to overlay, for checking that they register. It is not what gets cut: the bed frame is.</figcaption>
 </figure>
 
-<h2>The plan</h2>
-<p>Ticking the box changes the run plan: the cut-out moves to the end, because it is what frees the board from its own registration.</p>
-<figure class="fig narrow">
-  <img src="img/gui2_rail_double.png" alt="The rail for a double-sided job with fiducial registration">
-  <figcaption>A fiducial job on the rail: the flip and the measurement sit between the bottom and the top passes.</figcaption>
+<h2 id="plan">The plan</h2>
+<p>Ticking the box changes the run plan. The reference holes, the board's holes and the bottom traces are cut first. Then the board is turned over and put down again, you measure where it landed, the top traces are cut, and the cut-out moves to the very end, because it is what frees the board.</p>
+<figure class="anim" data-anim="ds-order">
+  <figcaption><span class="k">The rail, and what goes into VPanel</span>A hands-on step (a bit change, the flip, a measurement) ends one sitting at VPanel. Before the flip, VPanel's alphabetical list happens to be the right order; after it, the cut-out lands above the top traces and has to be moved down.</figcaption>
 </figure>
-<ol class="steps">
-  <li><span class="st">1 · Dowel holes / Fiducial holes</span> — <code>&lt;name&gt;_align.nc</code>. Dowels drill on into the bed and cannot be undone; the export asks first.</li>
-  <li><span class="st">2 · Drill the board</span> — <code>&lt;name&gt;_bottom_drill.nc</code>.</li>
-  <li><span class="st">3 · Bottom traces</span> — <code>&lt;name&gt;_bottom_traces.nc</code>, mirrored.</li>
-  <li><span class="st">Flip the board</span> — onto the pins, or re-place it freely with fiducials. Re-zero Z on the new face. Never XY.</li>
-  <li><span class="st">Measure where it landed</span> — fiducials only; see below.</li>
-  <li><span class="st">4 · Top traces</span> — <code>&lt;name&gt;_top_traces.nc</code>, cut as plain F.Cu.</li>
-  <li><span class="st">5 · Cut the board out</span> — <code>&lt;name&gt;_cutout.nc</code>, last.</li>
-</ol>
+<ul>
+  <li><strong>Files:</strong> <code>&lt;name&gt;_airpass</code>, <code>_align</code> (the reference holes), <code>_bottom_drill</code>, <code>_bottom_traces</code>, then after the flip <code>_top_traces</code> and <code>_cutout</code>, re-written to where the board landed. <code>_top_drill</code> is written on request, to finish blind holes from the top.</li>
+  <li><strong>Z, never XY.</strong> Zero Z on the copper with VPanel on G54; X and Y stay at the machine origin for both faces. Re-zero Z after every bit change and after the flip, because the new face is at its own height.</li>
+  <li><strong>The probe clip.</strong> The one red clip goes on the copper facing up. After the flip, move it to the copper now on top: the two faces are not connected.</li>
+  <li><strong>Z travel.</strong> The same rule as always: with the bit on the copper, machine Z must stay above −50&nbsp;mm (see <a href="milling-a-board.html#zero">Milling a board</a>).</li>
+</ul>
 
-<h2>Pick a registration</h2>
-<div class="tbl-wrap"><table>
-<tr><th></th><th>Dowel pins</th><th>Fiducial holes</th></tr>
-<tr><td>How</td><td>Two holes of different sizes through the stock and 5&nbsp;mm into the bed; flip onto seated pins</td><td>2–4 holes in the stock only; flip freely, probe where they landed, the top files warp to fit</td></tr>
-<tr><td>Measurement</td><td>None</td><td>Probe each hole after the flip</td></tr>
-<tr><td>Accuracy</td><td>Sub-0.1&nbsp;mm, proven</td><td>As good as the probing</td></tr>
-<tr><td>Needs</td><td>Waste around the board for the pins</td><td>Nothing extra with the holes on the board</td></tr>
-</table></div>
-<p>Dowels use the lab's proven geometry — 3.1 and 1.9&nbsp;mm rods, clearances dialled in on a fit-test coupon. Fiducials have their settings on the setup page: hole diameter (wider than the bit, so it can be found from inside), <span class="ui">In the waste</span> or <span class="ui">On the board</span>, the offset from the corner, how many.</p>
-
-<div class="figs">
+<h2 id="setup">Set up the reference holes</h2>
+<p>With <span class="ui">Fiducial holes</span> chosen, the section shows:</p>
+<ul>
+  <li><span class="ui">Reference hole</span>: how wide each hole is milled, 1.6&nbsp;mm by default. It has to be comfortably wider than the 0.8&nbsp;mm bit, which finds the hole by being lowered <em>inside</em> it; 1.6 leaves 0.4&nbsp;mm all round.</li>
+  <li><span class="ui">Reference holes</span>: <em>In the waste, outside the board</em> (the finished board stays clean, but the sheet must be bigger by the offset all round), <em>On the board, inside its corners</em> (when the sheet is barely bigger than the design), or <em>Where I drag them on the stage</em>.</li>
+  <li><span class="ui">Offset from the corner</span> and <span class="ui">How many</span>: use three or four. Two is the minimum a rigid fit needs, but with two a bad measurement hides inside the fit; with more it shows up.</li>
+  <li><span class="ui">Flipped</span>: which way you will physically turn the board over. See the next section: it is the one choice the fit cannot check.</li>
+</ul>
+<div class="figs" style="align-items:start">
   <figure class="fig">
-    <img src="img/gui2_inspector_fiducials.png" alt="The double-sided section of the setup page with fiducial registration chosen">
-    <figcaption>Fiducials on the setup page: hole diameter, where the holes go, how many, and <span class="ui">Flipped</span>, the direction you physically turn the board. The fit cannot tell a wrong flip from a right one.</figcaption>
+    <img src="img/gui2_inspector_fiducials.png" alt="The double-sided section of the setup page with fiducial registration chosen" loading="lazy">
+    <figcaption>Fiducials on the setup page.</figcaption>
   </figure>
   <figure class="fig">
-    <img src="img/gui2_fiducials_waste.png" alt="The board on the bed with four reference holes in the waste outside its corners">
-    <figcaption>Reference holes placed in the waste, outside the board, so nothing on the design is touched.</figcaption>
+    <img src="img/gui2_fiducials_waste.png" alt="The board on the bed with four reference holes in the waste outside its corners" loading="lazy">
+    <figcaption>Reference holes in the waste, outside the board, so nothing on the design is touched.</figcaption>
   </figure>
 </div>
-<h2>Measure where it landed</h2>
-<figure class="fig">
-  <img src="img/gui2_flipfit.png" alt="The flip-fit page">
-  <figcaption>The reference holes, where they should be and where they were found, and the verdict on the fit.</figcaption>
+
+<h2 id="flip">The flip, and why the bottom is mirrored</h2>
+<p>The bottom face is milled first, from above, so it is cut as B.Cu seen from below: <strong>mirrored</strong>, about the flip axis. Turn the board over about that same axis and the two mirrors cancel. The bottom lands the way KiCad drew it, and the top is cut as plain F.Cu, as drawn, on top of the bottom's holes.</p>
+<figure class="anim" data-anim="ds-flip">
+  <figcaption><span class="k">Which way it turns matters</span>Turned over the way <span class="ui">Flipped</span> says, every hole lands in its pad. Turned the other way, everything from side 1 lands rotated 180°, and the four corner holes still fit perfectly.</figcaption>
 </figure>
+<p>Set <span class="menu-path">Flipped › Left-right, about a vertical line</span> or <span class="ui">Top-bottom, about a horizontal line</span> to the way you will actually turn it, and turn it that way. After the flip, put the board down anywhere sensible and clamp it: there are no pins, and the next step measures where it went.</p>
+
+<h2 id="measure">Measure where it landed</h2>
+<p>Re-zero Z on the new face (on G54) and move the clip to it. Then select <span class="menu-path">Measure where it landed</span> on the rail.</p>
 <ol class="steps">
-  <li><span class="st">List the holes to probe</span> — the nominal positions after a perfect flip, and where to jog.</li>
-  <li><span class="st">Measure each one</span> — jog over the hole and <span class="ui">Capture into the selected row</span> from the position readout, or <span class="ui">Find it for me</span>: the bit is lowered inside the hole and the edge found electrically. Or type what VPanel shows.</li>
-  <li><span class="st">Read the verdict</span> — the worst hole's disagreement with the others. Under 0.05&nbsp;mm is good; up to 0.15 usable but re-probe the worst one; beyond that, re-seat the board and probe again. The fit is adopted as soon as it exists, so the stage shows the board where it really is.</li>
-  <li><span class="st">Write the top traces and the cut-out</span> — both files re-written to the measured flip, with the top face's height map if you probed it and the same extra depth the bottom got. <span class="ui">Finish the blind holes from this side</span> re-drills the holes from the top to meet the ones from below.</li>
+  <li><span class="st">List the holes to probe</span>The nominal positions: where each reference hole would be after a perfect flip.</li>
+  <li><span class="st">Let it find each hole</span>Jog the bit over a hole you can see, about 2&nbsp;mm above the copper, and press <span class="ui">Find it for me</span>: SRM-CAM finds the hole's exact centre itself, through the Arduino's touch test (continuity between the bit and the copper). By hand is the fallback: jog the bit down into the hole and <span class="ui">Capture into the selected row</span>, or type what VPanel shows.</li>
+  <li><span class="st">Read the verdict</span>The worst-case error: how far the worst hole disagrees with the others. Under 0.05&nbsp;mm is good; up to 0.15 usable, but re-probe the worst one; beyond that, re-seat the board and probe again. The fit is applied as soon as two holes are measured, so the stage shows the board where it really is.</li>
+  <li><span class="st">Level this face</span>Probe the top face on <span class="menu-path">Level the bed</span> (switch it to <span class="ui">Top</span>): the flipped board sits on new terrain, with the final Z zero at point 1 as always.</li>
+  <li><span class="st">Write the files</span><span class="ui">Write the top traces and the cut-out</span> rewrites both, warped to the measured flip and levelled to this face. <span class="ui">Finish the blind holes from this side</span> writes <code>_top_drill</code> for holes the first side did not break through.</li>
 </ol>
 
-<div class="danger"><span class="t">Verify the flip direction before cutting the top</span>
-<p>Corner fiducials <strong>cannot detect a wrong flip direction</strong> — the fit looks perfect either way. Before running the top traces, <span class="ui">Click to jog</span> to a distinctive board hole with the top step selected and confirm the bit hovers over it in reality. Ten seconds; saves the board.</p></div>
+<h3 id="find">Find it for me</h3>
+<p>This is how the lab places a flipped board, and a board etched elsewhere: SRM-CAM knows where three or more holes are in the Gerbers, and finds each one's exact centre on the real board by touch. The Arduino reads continuity between the bit and the copper, so every test answers one question: copper here, or hole? It centres to about 50&nbsp;µm, better than anyone can by eye. It needs:</p>
+<ul>
+  <li><strong>The bit over the hole, about 2&nbsp;mm above the copper, never at Z0</strong>: its first moves are sideways at the starting height. Aim by eye; it forgives a few tenths, and hunts in rings up to 1.5&nbsp;mm out. It does not hunt across the board: if the board landed millimetres away, jog to the hole you can see.</li>
+  <li><strong>Copper around the hole</strong>, with the clip on it: it first touches copper 2.5&nbsp;mm to one side for a surface reference.</li>
+</ul>
+<p>Then every test is a short descent that either touches copper or finds none. It marches out from the start in 0.4&nbsp;mm steps until it touches, and halves the gap to 50&nbsp;µm; the same the other way, and the middle is the centre in X. In Y it first tries just either side of where the X chord says the edge is. A second X pass runs only when the start was well off the middle. A hole takes a couple of dozen touches.</p>
+<figure class="anim" data-anim="ds-findhole">
+  <figcaption><span class="k">Watch it work</span>Click in the view to aim somewhere else, even onto the copper beside the hole, and press Find it for me.</figcaption>
+</figure>
 
-<div class="note"><span class="t">Not in this interface</span>
-<p>Grid-seated dowel pins, editable dowel clearances, a chosen flip axis and hand-placed fiducials are settings of the first interface only. Reach it with <code>SRM-CAM --original</code>.</p></div>
+<h3>The fit</h3>
+<figure class="anim" data-anim="ds-fiducial">
+  <figcaption><span class="k">Try it</span>Probe the holes and watch the top traces move onto the board. Then mis-probe hole 1 with two holes and with four, and tick <em>Flipped the other way</em>.</figcaption>
+</figure>
+
+<div class="danger"><span class="t">Check the flip direction before cutting the top</span>
+<p>Corner holes <strong>cannot detect a wrong flip direction</strong>: the fit looks perfect either way. Before running the top traces, select the top step, <span class="ui">Click to jog</span> to a distinctive drilled hole, and confirm the bit hovers over it on the real board. Ten seconds; it saves the board.</p></div>
+
+<h2 id="photo">After the top: a photo, for rework</h2>
+<p>Once the top traces are cut, a phone photo laid on the bed puts the real board and the design in one frame, so a spot the mill did not cut through shows where it really is. <span class="menu-path">View › Take one with a phone…</span> shows a QR code; the photo arrives cropped to the copper, and you click four anchor holes in the order the design map asks. More on <a href="photo-and-rework.html">Photo check &amp; rework</a>.</p>
+<figure class="anim" data-anim="ds-photoalign">
+  <figcaption><span class="k">Photo, then rework</span>The photo is pinned to the board's own holes: it shows what the board looks like, not where it sits on the bed, which is what probing measured.</figcaption>
+</figure>
+
+<div class="note"><span class="t">Dowel pins</span>
+<p>The app also supports dowel pins; the lab doesn't use them — they drill permanently into the spoilboard.</p></div>
+
+<p>A board whose copper was etched on the fiber laser, and only needs its holes? That uses the same finder and fit: see <a href="drill-a-laser-board.html">Drilling a laser-etched board</a>.</p>
 
 <div class="page-nav">
   <a href="bed-leveling.html"><span class="lbl">Previous</span><span class="ttl">← Bed levelling &amp; probing</span></a>
