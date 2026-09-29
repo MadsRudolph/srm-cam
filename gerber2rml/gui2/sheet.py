@@ -176,8 +176,9 @@ class RunSheet(QWidget):
         # sentence that matters — never re-zero XY — stops being read.
         one_bit = plan.single_tool
         rulebox = QLabel(
-            "Set the work origin in VPanel before the first file, then send "
-            "each program with Cut → Add → Output.\n"
+            "Zero Z in VPanel (on G54) before the first file, then send "
+            "each program with Cut → Add → Output. VPanel lists the files "
+            "alphabetically: move the cut-out to the bottom.\n"
             + (f"One {plan.tool_label} does every step below, so Z is zeroed "
                f"once and never again. "
                if one_bit else
@@ -190,8 +191,10 @@ class RunSheet(QWidget):
             f"color: {theme.SHEET_INK}; background: transparent;"
             f" border-left: 2px solid {theme.CAUTION}; padding-left: 14px;")
         v.addWidget(rulebox)
-        add_line("Set the work origin in VPanel, then send each program with "
+        add_line("Zero Z in VPanel (on G54), then send each program with "
                  "Cut -> Add -> Output.")
+        add_line("VPanel lists the files alphabetically: move the cut-out "
+                 "to the bottom.")
         add_line("One " + plan.tool_label + " for every step: Z is zeroed once."
                  if one_bit else
                  "Re-zero Z after every bit change.")

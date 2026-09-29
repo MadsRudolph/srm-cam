@@ -144,10 +144,11 @@ class LevelPage(inspector.Page):
         first = widgets.Card()
         first.box.addWidget(widgets.eyebrow("Before you probe"))
         first.box.addWidget(widgets.body(
-            "Set the Z origin on the copper in VPanel, and leave X and Y "
-            "alone. Put paper or tape under the board so it is isolated from "
-            "the bed, and clip the probe wire to the copper — the tool is "
-            "already earthed through the spindle."))
+            "Jog the bit over point 1, the first marked point: every height "
+            "is measured from it, so that is where you set the final Z "
+            "origin on the copper in VPanel (on G54). Leave X and Y alone, "
+            "and clip the probe wire to the copper — the tool is already "
+            "earthed through the spindle."))
         first.box.addWidget(widgets.body(
             "Leave the tool a couple of millimetres above the copper when you "
             "start. That height is the one it lifts back to between points, "

@@ -176,5 +176,5 @@ def test_help_carries_the_machine_lessons(win):
     assert win.basics_act.text() == "The machine, in five minutes"
     d = basics.machine_basics(win)
     text = " ".join(l.text() for l in d.findChildren(type(d.head)))
-    for must in ("G54", "MACHINE", "−50 mm", "60.5 mm", "red lead", "STOP", "Pause"):
+    for must in ("G54", "MACHINE", "−50 mm", "60.5 mm", "red alligator clip", "STOP", "Pause"):
         assert must in text, must

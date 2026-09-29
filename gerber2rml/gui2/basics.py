@@ -27,14 +27,16 @@ LESSONS = [
     ("Z has about 60 mm of travel",
      "The stroke is 60.5 mm in MACHINE coordinates. If the surface sits too "
      "low the head tops out and cuts air, or too shallow. Keep the MACHINE "
-     "Z above −50 mm when the bit touches the copper; if it is lower, raise "
-     "the work surface with more spoilboard rather than pushing on."),
+     "Z above −50 mm when the bit touches the copper: −55 is the end of the "
+     "travel, and a drill or cut-out that reaches it stops, again and again. "
+     "If it is lower, refit the bit so it sticks out further, or raise the "
+     "work surface with more spoilboard."),
     ("The probe is a circuit",
-     "Bed levelling senses height by contact: clip the red lead to the "
-     "copper and the black lead to the bit. When they touch, the circuit "
-     "closes and the point is recorded. Paper or tape under the board keeps "
-     "it isolated from the bed, and the Arduino's serial monitor must be "
-     "closed, because only one program can hold the port."),
+     "Bed levelling senses height by contact. There is one wire: clip the "
+     "red alligator clip to the copper. The bit needs no clip - it is wired "
+     "to the probe inside the machine - so when it touches the copper the "
+     "circuit closes and the point is recorded. The Arduino's serial "
+     "monitor must be closed, because only one program can hold the port."),
     ("STOP and Pause are different things",
      "STOP drops the move in flight and stops the spindle; the bit stays "
      "where it is, so raise it before jogging, and the job does not resume. "
