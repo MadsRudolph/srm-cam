@@ -44,6 +44,7 @@ from gerber2rml.engine.drill import drill_jobs, drill_single_bit
 from gerber2rml.engine.cutout import cut_outline
 from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
 from gerber2rml.config import TraceJob, DrillJob, CutoutJob
+from gerber2rml.naming import clean_name
 
 PIN_LARGE = 3.1     # fresh: bottom dowel diameter (mm) — measured metal rod
 PIN_SMALL = 1.9     # fresh: top dowel diameter (mm) — measured metal rod
@@ -474,6 +475,7 @@ def build_double_sided(folder, out_dir, name, trace=None, drill=None, cutout=Non
     but NOT the top traces, which are milled after the flip on the other face
     (that surface isn't the one we probed; it would need a second probe pass).
     """
+    name = clean_name(name)
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -584,6 +586,7 @@ def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None
     ``allow_scale``) from the nominal top-frame fiducials to the measured ones,
     then leveled. XY comes from the fit; Z from leveling. Returns the Path written.
     """
+    name = clean_name(name)
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -629,6 +632,7 @@ def build_top_cutout(folder, out_dir, name, cutout=None, dowels: DowelSpec = Non
     the outline, which needs it just as much and is the pass with the most
     invested in it by the time it runs.
     """
+    name = clean_name(name)
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -680,6 +684,7 @@ def build_top_drill(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
     they land on the ones already there rather than where the design says.
     Written as ``<name>_top_drill``, beside the rest.
     """
+    name = clean_name(name)
     from dataclasses import replace
     dowels = dowels or DowelSpec()
     out_dir = Path(out_dir)

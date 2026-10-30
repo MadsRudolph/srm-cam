@@ -80,7 +80,7 @@
  *     H <x> <y>         hole test at absolute (x,y) -> 'H 1' copper / 'H 0' hole
  *     Q                 quick position query -> 'Q x y z touch'
  *     G                 get the work origin -> 'G ox oy oz'
- *     O / R             setOrigin test / restore
+ *     O x y z           setOrigin absolute (um) -> 'O ox oy oz' (v4)
  *     V                 firmware version -> 'V 3 <feature,list>'
  *     ?                 print status (human readable)
  *   host -> board, NEW IN V3:
@@ -180,8 +180,6 @@ bool haveRef = false;
 long maxSurfaceZ = 0;
 
 // setOrigin experiment: saved origin so the test can always restore it.
-long savedOX = 0, savedOY = 0, savedOZ = 0;
-bool haveSavedOrigin = false;
 
 // Streaming session ('C'/'M'): the cached work origin all moves are relative to.
 long strOX = 0, strOY = 0, strOZ = 0;
@@ -244,6 +242,13 @@ bool gAbort = false;
 // so "stopped and lifted" is true however the abort arrived.
 bool gLiftPending = false;
 bool gPauseRequested = false;    // operator pause: an expected pause, not a fault
+// v4: true while retracting after an abort. The retract waits through
+// waitForMotorStop(), whose checkAbort() saw the STILL-LATCHED gAbort and
+// halted the lift on its first poll - so "lifted" was printed with the bit
+// still in the copper. While this is set, checkAbort() keeps recording what
+// arrives but never cancels the move: a second STOP must not undo the lift.
+bool gRetracting = false;
+void retractTo(long mx, long my, long z);
 // Stop, kill the spindle, release any hold, and retract to safe Z.
 //
 // Shared by the '!' line handler and by every abnormal exit from a streamed
@@ -263,7 +268,7 @@ void abortLift() {
   // make waitForMotorStop sit waiting for a resume that is never coming.
   if (gPauseRequested) { srm20.resumeJob(); gPauseRequested = false; }
   long x, y, z;
-  if (readPos(x, y, z)) { srm20.jumpTo(x, y, safeZ, MOVE_SPEED); waitForMotorStop(); }
+  if (readPos(x, y, z)) retractTo(x, y, safeZ);
   Serial.println(F("# ABORT lifted to safe Z, spindle off"));
   busy = false;
 }
@@ -289,6 +294,7 @@ bool checkAbort() {
     }
   }
   if (gAbort) spindleOff();       // v3: an abort also kills the spindle
+  if (gRetracting) return false;  // v4: never cancel the retract itself
   return gAbort;
 }
 
@@ -389,10 +395,20 @@ bool waitForMotorStop() {
   return true;
 }
 
+// Move straight up (or to z) at (mx, my) and wait, whatever abort is latched.
+// The abort state is kept: the sequence that called this must still stop.
+void retractTo(long mx, long my, long z) {
+  bool was = gAbort;
+  gRetracting = true;
+  srm20.jumpTo(mx, my, z, MOVE_SPEED);
+  waitForMotorStop();
+  gRetracting = false;
+  gAbort = gAbort || was;
+}
+
 // Best-effort lift to safe Z (used on abort / after a probe). Never descends.
 void liftSafe(long mx, long my) {
-  srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);
-  waitForMotorStop();
+  retractTo(mx, my, safeZ);
 }
 
 // Travel/approach height for the fast approach: full safeZ until the surface is
@@ -566,9 +582,11 @@ void handleLine(char *s) {
     Serial.print(F("# safeZ=")); Serial.println(safeZ);
   } else if (s[0] == 'L') {
     long x, y, z;
-    if (readPos(x, y, z)) { srm20.jumpTo(x, y, safeZ, MOVE_SPEED); waitForMotorStop(); }
+    clearHold();                   // v4: a new command, not the stopped one
+    if (readPos(x, y, z)) retractTo(x, y, safeZ);
     Serial.println(F("# lifted"));
   } else if (s[0] == 'J') {        // jog to absolute (x,y): lift ~5 mm, then travel XY
+    clearHold();                   // v4: after a STOP every jog was halted at once
     char *p = s + 1;
     long x = strtol(p, &p, 10);
     long y = strtol(p, &p, 10);
@@ -686,6 +704,7 @@ void handleLine(char *s) {
     Serial.println(F("K ok"));
   } else if (s[0] == 'Y') {        // v3: jumpToView — MOVES the head forward
     long sp = (s[1] == 0) ? MOVE_SPEED : atol(s + 1);
+    clearHold();
     srm20.jumpToView((int)sp);
     waitForMotorStop();
     Serial.println(F("Y ok"));
@@ -733,36 +752,19 @@ void handleLine(char *s) {
   } else if (s[0] == 'A') {        // v3: arm/disarm the status guard
     if (s[1] != 0) statusGuard = (atol(s + 1) != 0);
     Serial.print(F("A ")); Serial.println(statusGuard ? 1 : 0);
-  } else if (s[0] == 'O') {        // setOrigin TEST: shift origin Z +1 mm (no motion)
-    long ax, ay, az, ox, oy, oz;
-    if (!readPos(ax, ay, az)) { Serial.println(F("# O: pos unstable")); }
-    else {
-      srm20.getOrigin(ox, oy, oz);
-      savedOX = ox; savedOY = oy; savedOZ = oz; haveSavedOrigin = true;
-      Serial.print(F("# BEFORE actual ")); Serial.print(ax); Serial.print(' ');
-      Serial.print(ay); Serial.print(' '); Serial.print(az);
-      Serial.print(F("   origin ")); Serial.print(ox); Serial.print(' ');
-      Serial.print(oy); Serial.print(' '); Serial.println(oz);
-      srm20.setOrigin(ox, oy, oz + 1000);          // +1.000 mm in Z, keep X/Y
-      delay(150);
-      long bx, by, bz, nox, noy, noz;
-      readPos(bx, by, bz);
-      srm20.getOrigin(nox, noy, noz);
-      Serial.print(F("# AFTER  actual ")); Serial.print(bx); Serial.print(' ');
-      Serial.print(by); Serial.print(' '); Serial.print(bz);
-      Serial.print(F("   origin ")); Serial.print(nox); Serial.print(' ');
-      Serial.print(noy); Serial.print(' '); Serial.println(noz);
-      Serial.println(F("# now read VPanel's Z; then send R to restore"));
-    }
-  } else if (s[0] == 'R') {        // restore the origin saved by O
-    if (!haveSavedOrigin) { Serial.println(F("# R: no saved origin (run O first)")); }
-    else {
-      srm20.setOrigin(savedOX, savedOY, savedOZ);
-      delay(150);
-      long ox, oy, oz; srm20.getOrigin(ox, oy, oz);
-      Serial.print(F("# restored origin ")); Serial.print(ox); Serial.print(' ');
-      Serial.print(oy); Serial.print(' '); Serial.println(oz);
-    }
+  } else if (s[0] == 'O') {        // v4: setOrigin(x, y, z) absolute, no motion.
+    // The autonomous run owns the work origin: XY where the job's frame says,
+    // Z on the copper it touched. Read back so the host sees what took.
+    char *p = s + 1;
+    long x = strtol(p, &p, 10);
+    long y = strtol(p, &p, 10);
+    long z = strtol(p, &p, 10);
+    if (z > 0) { Serial.println(F("E O RANGE")); return; }
+    srm20.setOrigin(x, y, z);
+    delay(150);
+    long ox, oy, oz; srm20.getOrigin(ox, oy, oz);
+    Serial.print(F("O ")); Serial.print(ox); Serial.print(' ');
+    Serial.print(oy); Serial.print(' '); Serial.println(oz);
   } else if (s[0] == 'C') {        // begin a streaming session: cache the work
     // origin (all 'M' moves are origin-relative) and clear any stale abort
     clearHold();
@@ -816,11 +818,11 @@ void handleLine(char *s) {
     Serial.println(r == 1 ? F("H 1") : F("H 0"));
   } else if (s[0] == 'V') {        // version + feature flags for the host
 #ifdef SRM20SPIREMOTE_LOCAL_PATCH
-    Serial.println(F("V 3 probe,refine,verify,retouch,zeroz,touchbit,stream,"
-                     "holetest,status,spindle,jobctl,view,timedmove,guard,info,frame"));
+    Serial.println(F("V 4 probe,refine,verify,retouch,zeroz,touchbit,stream,"
+                     "holetest,status,spindle,jobctl,view,timedmove,guard,info,frame,origin,liftfix"));
 #else
-    Serial.println(F("V 3 probe,refine,verify,retouch,zeroz,touchbit,stream,"
-                     "holetest,status,spindle,jobctl,view,timedmove,guard"));
+    Serial.println(F("V 4 probe,refine,verify,retouch,zeroz,touchbit,stream,"
+                     "holetest,status,spindle,jobctl,view,timedmove,guard,origin,liftfix"));
 #endif
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);
