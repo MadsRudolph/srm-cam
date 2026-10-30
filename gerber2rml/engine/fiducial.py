@@ -36,6 +36,22 @@ class Transform:
                 self.scale * (s * x + c * y) + self.ty)
 
 
+def pair_measured(nominal, measured):
+    """``(nominal, measured)`` for the fiducials that were actually measured.
+
+    ``measured`` is positional, one entry per fiducial in ``nominal`` order,
+    with ``None`` for a hole not measured (it may also be shorter). Pairing by
+    prefix - ``nominal[:len(measured)]`` - meant probing holes 2, 3 and 4 fitted
+    nothing, and a compacted list paired hole 2's reading with hole 1.
+    """
+    nom, meas = [], []
+    for n, m in zip(nominal, measured or []):
+        if m is not None:
+            nom.append(tuple(n))
+            meas.append((float(m[0]), float(m[1])))
+    return nom, meas
+
+
 def _check(nominal, measured):
     if len(nominal) != len(measured):
         raise ValueError("nominal and measured must have equal length")

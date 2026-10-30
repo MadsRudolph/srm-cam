@@ -39,6 +39,18 @@ from gerber2rml.engine import fiducial as fid
 _REF_DIRS = ((-2500, 0, "west"), (2500, 0, "east"),
              (0, 2500, "north"), (0, -2500, "south"))
 
+# The firmware's 'E <id> LOW': touch already closed before the probe moved.
+_ALREADY_TOUCHING = (
+    "the probe already reads CONTACT before moving (touch shows red), so the "
+    "machine refused to probe. Red is only right at the moment the bit "
+    "touches copper - it must be off with the bit in the air."
+    + chr(10) * 2 +
+    "Lift the bit 2-3 mm clear of the board (not resting in the hole or on "
+    "the rim), then check: the board is isolated from the bed (paper/tape "
+    "under it), the board clip is not touching the spindle or the bed, and "
+    "no chips bridge them. When touch is off with the bit in the air, try "
+    "again.")
+
 
 class FidFindRun(QObject):
     """Find one reference hole's centre electrically, on its own thread.
@@ -192,6 +204,12 @@ class FidFindRun(QObject):
                                         self._should_abort)
             if line and line.startswith("R"):
                 return True
+            if line and line.rstrip().endswith("LOW"):
+                # The firmware refused before moving: the probe ALREADY reads
+                # contact. Trying the other sides would get the same answer,
+                # and calling it "no copper" sent people hunting the wrong way.
+                self.failed.emit(self._row, _ALREADY_TOUCHING)
+                return False
             last = line
         self.failed.emit(
             self._row,
@@ -229,14 +247,18 @@ class FlipFitPage(inspector.Page):
         # The choice itself, right under the warning about it. It is the
         # same job setting as the one under Set up the job; the two always
         # show the same answer.
+        # No Field label column and short segment names: "Flipped left-right"
+        # beside a 94 px label was wider than the inspector, and pushed the
+        # whole page off its right edge.
         self.flip = widgets.Segmented(
-            [("vertical", "Flipped left-right",
+            [("vertical", "Left-right",
               "Turned over about a vertical line, so left and right swap."),
-             ("horizontal", "Flipped top-bottom",
+             ("horizontal", "Top-bottom",
               "Turned over about a horizontal line, so top and bottom swap.")],
             "vertical")
         self.flip.changed.connect(self._on_flip)
-        warn.box.addWidget(widgets.Field("You", self.flip))
+        warn.box.addWidget(widgets.hint("Which way you flipped it:"))
+        warn.box.addWidget(self.flip)
         warn.box.addWidget(widgets.hint(
             "Say which way you actually turned it, then jog to a drilled hole "
             "in the top view before cutting: the hole is either under the bit "
@@ -397,14 +419,17 @@ class FlipFitPage(inspector.Page):
         # holes is the expensive part of this job; losing it to a restart, or
         # to rebuilding the list, is the kind of loss that makes people not
         # trust saving.
-        for r, (mx, my) in enumerate(self.ctl._fid_measured or []):
+        restored = 0
+        for r, p in enumerate(self.ctl._fid_measured or []):
             if r >= self.table.rowCount():
                 break
-            self.table.setItem(r, 3, QTableWidgetItem("%.3f" % mx))
-            self.table.setItem(r, 4, QTableWidgetItem("%.3f" % my))
+            if p is None:                      # a hole not measured yet
+                continue
+            self.table.setItem(r, 3, QTableWidgetItem("%.3f" % p[0]))
+            self.table.setItem(r, 4, QTableWidgetItem("%.3f" % p[1]))
+            restored += 1
         self.table.blockSignals(False)
         self.ctl.stage.set_probe_points(self._nominal)
-        restored = min(len(self.ctl._fid_measured or []), self.table.rowCount())
         self.ctl.say("info", "%d reference holes to probe.%s"
                      % (len(self._nominal),
                         "" if not restored
@@ -493,8 +518,14 @@ class FlipFitPage(inspector.Page):
         self._fit_preview()
 
     def _on_failed(self, msg, port):
-        self.ctl.say("warn", "Could not find the hole: %s" % msg)
         self._reclaim(port)
+        if msg == "stopped":
+            self.ctl.say("warn", "Hole finder stopped.")
+            return
+        # A diagnosis several sentences long, so it gets a sheet that stays
+        # until read — not a toast that is gone before the second sentence.
+        dialogs.report_error(self, "The hole finder could not find the hole",
+                             None, msg)
 
     def _reclaim(self, port):
         """Take the port back, so the readout and STOP are live again."""
@@ -505,22 +536,34 @@ class FlipFitPage(inspector.Page):
             self.ctl.link.connect_to(port)
 
     def measured(self):
-        """``[(x, y)]`` for the leading rows that have both numbers filled in."""
+        """One entry per row, in row order: ``(x, y)``, or None for a row not
+        (or not validly) filled in. Trailing blanks are dropped.
+
+        Positional, so ANY rows count - holes 2, 3 and 4 fit just as well as
+        1, 2 and 3. It used to stop at the first blank row, and probing every
+        hole but the first fitted nothing at all."""
         out = []
         for r in range(self.table.rowCount()):
             mx, my = self.table.item(r, 3), self.table.item(r, 4)
-            if not mx or not my or not mx.text().strip() or not my.text().strip():
-                break
-            try:
-                out.append((float(mx.text()), float(my.text())))
-            except ValueError:
-                break
+            p = None
+            if mx and my and mx.text().strip() and my.text().strip():
+                try:
+                    p = (float(mx.text()), float(my.text()))
+                except ValueError:
+                    p = None
+            out.append(p)
+        while out and out[-1] is None:
+            out.pop()
         return out
+
+    @staticmethod
+    def _n(m):
+        return sum(1 for p in m if p is not None)
 
     # -- the fit -----------------------------------------------------------
     def _fit_preview(self):
         m = self.measured()
-        if len(m) < 2:
+        if self._n(m) < 2:
             self.rms.set("—")
             self.verdict.setText(
                 "Two holes is the minimum, and the further apart they are the "
@@ -529,11 +572,11 @@ class FlipFitPage(inspector.Page):
             self.jog_hint.setText("")
             self.ctl.set_top_fit(None)
             return
-        nom = self._nominal[:len(m)]
+        nom, pts = fid.pair_measured(self._nominal, m)
         try:
-            t = fid.fit_transform(nom, m, allow_scale=self.scale_chk.isChecked())
-            err = fid.rms(t, nom, m)
-            worst = max(fid.residuals(t, nom, m))
+            t = fid.fit_transform(nom, pts, allow_scale=self.scale_chk.isChecked())
+            err = fid.rms(t, nom, pts)
+            worst = max(fid.residuals(t, nom, pts))
         except ValueError as e:
             self.rms.set("—")
             self.verdict.setText(str(e))
@@ -567,7 +610,7 @@ class FlipFitPage(inspector.Page):
         self.verdict.setText(note + f"  (RMS {err:.3f} mm)")
         self._sync_order()
         self.fit_btn.setEnabled(True)
-        self._show_where_to_jog(t, len(m))
+        self._show_where_to_jog(t, m)
 
     def _fit_is_usable(self, what):
         """A fit the page has called too far out is not refused - the operator
@@ -590,7 +633,7 @@ class FlipFitPage(inspector.Page):
         from gerber2rml.gui2 import workspace
         st = self.ctl.state
         m = self.measured()
-        if len(m) < 2 or st.gerber_dir is None:
+        if self._n(m) < 2 or st.gerber_dir is None:
             self.ctl.say("warn", "Measure two reference holes first — without "
                                  "the fit the new holes would not land on the "
                                  "old ones.")
@@ -665,12 +708,13 @@ class FlipFitPage(inspector.Page):
         never written into the measured columns: a predicted number that looks
         measured is how a bad fit gets believed.
         """
-        rest = self._nominal[done:]
+        rest = [(i, n) for i, n in enumerate(self._nominal)
+                if i >= len(done) or done[i] is None]
         if not rest:
             self.jog_hint.setText("")
             return
         bits = []
-        for i, (nx, ny) in enumerate(rest, start=done):
+        for i, (nx, ny) in rest:
             px, py = t.apply(nx, ny)
             label = self.table.item(i, 0).text() if self.table.item(i, 0) else str(i + 1)
             bits.append("%s  %.2f, %.2f  (nominal %.2f, %.2f)"
@@ -684,7 +728,7 @@ class FlipFitPage(inspector.Page):
         from gerber2rml.gui2 import workspace
         st = self.ctl.state
         m = self.measured()
-        if len(m) < 2 or st.gerber_dir is None:
+        if self._n(m) < 2 or st.gerber_dir is None:
             return
         out = self.ctl.export_dir()
         if out is None:

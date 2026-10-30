@@ -596,9 +596,10 @@ def build_top_traces(folder, out_dir, name, trace=None, dowels: DowelSpec = None
         from gerber2rml.engine.leadin import apply_lead_in
         paths = apply_lead_in(paths)
     if measured_fiducials:
-        from gerber2rml.engine.fiducial import fit_transform, apply_to_toolpaths
-        nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
-        t = fit_transform(nom, measured_fiducials, allow_scale=allow_scale)
+        from gerber2rml.engine.fiducial import (fit_transform, apply_to_toolpaths,
+                                               pair_measured)
+        nom, meas = pair_measured(nominal_top_fiducials(lay), measured_fiducials)
+        t = fit_transform(nom, meas, allow_scale=allow_scale)
         paths = apply_to_toolpaths(paths, t)   # warp XY to the measured flip
     if level is not None:
         from gerber2rml.engine.leveling import apply_leveling
@@ -643,9 +644,10 @@ def build_top_cutout(folder, out_dir, name, cutout=None, dowels: DowelSpec = Non
         from gerber2rml.engine.leadin import apply_lead_in
         paths = apply_lead_in(paths)
     if measured_fiducials:
-        from gerber2rml.engine.fiducial import fit_transform, apply_to_toolpaths
-        nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
-        t = fit_transform(nom, measured_fiducials, allow_scale=allow_scale)
+        from gerber2rml.engine.fiducial import (fit_transform, apply_to_toolpaths,
+                                               pair_measured)
+        nom, meas = pair_measured(nominal_top_fiducials(lay), measured_fiducials)
+        t = fit_transform(nom, meas, allow_scale=allow_scale)
         paths = apply_to_toolpaths(paths, t)
     if level is not None:
         from gerber2rml.engine.leveling import apply_leveling
@@ -690,9 +692,9 @@ def build_top_drill(folder, out_dir, name, drill=None, dowels: DowelSpec = None,
                               registration=registration, fiducials=fiducials)
     holes = reflect_holes(lay.holes, lay.axis, lay.flip_pos)
     if measured_fiducials:
-        from gerber2rml.engine.fiducial import fit_transform
-        nom = nominal_top_fiducials(lay)[:len(measured_fiducials)]
-        t = fit_transform(nom, measured_fiducials, allow_scale=allow_scale)
+        from gerber2rml.engine.fiducial import fit_transform, pair_measured
+        nom, meas = pair_measured(nominal_top_fiducials(lay), measured_fiducials)
+        t = fit_transform(nom, meas, allow_scale=allow_scale)
         holes = [(*t.apply(x, y), d) for (x, y, d) in holes]
     from gerber2rml.engine.drill import drill_holes
     paths = (drill_single_bit(holes, drill) if drill.single_bit
