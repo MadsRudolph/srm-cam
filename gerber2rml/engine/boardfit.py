@@ -28,6 +28,7 @@ import math
 
 from gerber2rml.engine.drill import drill_jobs
 from gerber2rml.engine.fiducial import fit_transform, rms
+from gerber2rml.naming import clean_name
 
 MIN_PADS = 3       # what is suggested, and what can catch a mirrored board
 MIN_FIT = 2        # what a rigid fit can be made from at all
@@ -107,6 +108,7 @@ def write_fitted_drill(holes, drill, t, out_dir, name, machine, level=None):
     can never be mistaken for, or overwrite, a normal job's drill file.
     Returns the paths written.
     """
+    name = clean_name(name)
     from pathlib import Path
     from gerber2rml.backends import BACKENDS
     backend = BACKENDS[machine]

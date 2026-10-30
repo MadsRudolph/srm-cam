@@ -39,6 +39,8 @@ from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
 from gerber2rml.app.panel import PANEL_GAP_MM
 from gerber2rml import platform as plat
+from gerber2rml.naming import clean_name
+from gerber2rml.config import checked_job
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
 from gerber2rml.engine import spoilboard
@@ -2413,7 +2415,7 @@ class MainWindow(QMainWindow):
         try:
             stem = gerber_stem(Path(folder))
             if stem:
-                self.state.name = stem
+                self.state.name = clean_name(stem)
         except Exception:
             pass
         workspace.remember_dir("gerber", folder)
@@ -2533,7 +2535,7 @@ class MainWindow(QMainWindow):
 
     def action_name(self, text):
         """The operator typed a job name: keep it, whatever boards come and go."""
-        self.state.name = text.strip() or "board"
+        self.state.name = clean_name(text.strip())
         self._custom_name = bool(text.strip())
         self.refresh_plan()
 
@@ -3887,11 +3889,13 @@ class MainWindow(QMainWindow):
         st.mirror = bool(data.get("mirror", st.mirror))
         for key, attr in (("trace", "trace"), ("drill", "drill"),
                           ("cutout", "cutout")):
-            if key in data:
-                try:
-                    setattr(st, attr, replace(getattr(st, attr), **data[key]))
-                except TypeError:
-                    pass                 # a field this version does not have
+            if isinstance(data.get(key), dict):
+                job, refused = checked_job(getattr(st, attr), data[key])
+                setattr(st, attr, job)
+                if refused:
+                    # Unknown to this version, or a value that would hurt the
+                    # machine: kept out, and said so.
+                    foreign.append("%s: %s" % (key, ", ".join(refused)))
         boards = data.get("boards") or []
         self._double = bool(data.get("double_sided", False))
         if self._double and len(boards) > 1:
@@ -3976,7 +3980,7 @@ class MainWindow(QMainWindow):
         # After load_folder, which names the job from the folder it read: the
         # name saved with the setup is the one the operator chose.
         if data.get("name") and placed:
-            st.name = data["name"]
+            st.name = clean_name(data["name"])
             self._custom_name = True
         # ...and which also cleared the measured flip, so re-apply the saved
         # one here. The AS PLACED views, jog and rework all follow it, so a

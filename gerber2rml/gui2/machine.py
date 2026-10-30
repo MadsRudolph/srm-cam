@@ -72,6 +72,27 @@ def list_ports():
     return spi_probe.rank_ports(ports), ""
 
 
+class _SerialGuard:
+    """The worker's port, with every write behind one lock.
+
+    :meth:`MachineLink.stop_now` writes from the GUI thread while the worker
+    may be writing a command of its own. pyserial on Windows gives each port
+    ONE overlapped structure for writes, so two concurrent writes share it -
+    the kind of native race that ends in a heap corruption, not an exception.
+    Reads stay unlocked: they have their own structure, and a stop must reach
+    the port while the worker sits in a long read."""
+    def __init__(self, ser):
+        self._ser = ser
+        self._lock = threading.Lock()
+
+    def write(self, data):
+        with self._lock:
+            return self._ser.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._ser, name)
+
+
 class MachineLink(QObject):
     """Owns the serial port and a single worker thread.
 
@@ -140,21 +161,26 @@ class MachineLink(QObject):
             self._thread.start()
         self.submit("connect", lambda _s: None, _connect_port=port)
 
-    def disconnect_from(self, reason=""):
+    def disconnect_from(self, reason="", wait_s=3.0):
         ser, self._ser = self._ser, None
-        # Disconnecting never stops a spindle we did not start. Someone may
-        # have started it from VPanel, and killing it because a USB cable moved
-        # would be a surprise in the wrong direction.
-        if ser is not None and self._spindle_ours:
-            spi_probe.spindle_off(ser)
-        # The worker is NOT told to exit: it is a daemon, it serialises the
-        # port for the life of the app, and the next connect reuses it.
-        # Closing the port under it is what ends an operation in flight.
-        if ser is not None:
-            try:
-                ser.close()
-            except Exception:
-                pass
+        self._drain()
+        if ser is not None and not (self._thread and self._thread.is_alive()):
+            self._close(ser, self._spindle_ours)   # no worker to hand it to
+        elif ser is not None:
+            # The WORKER closes the port, after the operation it is inside.
+            # Closing it from here, under a read in flight, freed the native
+            # buffers the read was still using: the app died minutes later in
+            # ntdll with a heap corruption and no Python trace. An operation
+            # in flight is ended by the abort event it already polls.
+            if self.is_busy():
+                self._abort.set()
+            done = threading.Event()
+            self._q.put(("__close__", (ser, self._spindle_ours, done), None))
+            # A probe run opens the port right after this returns, so wait
+            # for the close. A worker wedged past that is the old behaviour's
+            # one remaining case, and closing here is then the lesser evil.
+            if not done.wait(wait_s):
+                self._close(ser, self._spindle_ours)
         self.firmware = None
         self.surface_z = None         # a new session touches off again
         self.last_position = None     # ...and reads its position afresh
@@ -195,6 +221,9 @@ class MachineLink(QObject):
         """
         self._abort.set()
         self._paused = False
+        # Commands still waiting would run AFTER the stop - a queued spindle
+        # start included. Nothing queued before a STOP is still wanted.
+        self._drain()
         ser = self._ser
         if ser is None:
             return self._external
@@ -204,6 +233,34 @@ class MachineLink(QObject):
         self.spindle_on = False
         self._spindle_ours = False
         return True
+
+    def _drain(self):
+        """Drop every queued command; a pending close is kept."""
+        keep = []
+        while True:
+            try:
+                item = self._q.get_nowait()
+            except queue.Empty:
+                break
+            if item is None or item[0] == "__close__":
+                keep.append(item)
+        for item in keep:
+            self._q.put(item)
+
+    @staticmethod
+    def _close(ser, spindle_ours):
+        # Disconnecting never stops a spindle we did not start. Someone may
+        # have started it from VPanel, and killing it because a USB cable moved
+        # would be a surprise in the wrong direction.
+        try:
+            if spindle_ours:
+                spi_probe.spindle_off(ser)
+        except Exception:
+            pass
+        try:
+            ser.close()
+        except Exception:
+            pass
 
     def can_stop_something(self):
         return self._ser is not None or self._external
@@ -221,6 +278,11 @@ class MachineLink(QObject):
             if item is None:
                 return
             name, fn, port = item
+            if name == "__close__":
+                ser, ours, done = fn
+                self._close(ser, ours)
+                done.set()
+                continue
             # Name first, then the flag: is_busy() reads both, and a reader
             # that saw the flag before the name would call a poll real work.
             self._current = name
@@ -228,7 +290,7 @@ class MachineLink(QObject):
             self.busy_changed.emit(True)
             try:
                 if port is not None:
-                    ser = spi_probe.open_link(port)
+                    ser = _SerialGuard(spi_probe.open_link(port))
                     ver, feats = spi_probe.firmware_version(ser)
                     self._ser = ser
                     self.firmware = {"version": ver, "features": sorted(feats),
