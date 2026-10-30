@@ -50,6 +50,13 @@ def _redirect_output():
     except OSError:
         return None
     sys.stdout = sys.stderr = f
+    # A crash in Qt or a driver kills the process before Python can say
+    # anything; faulthandler still writes every thread's stack to the log.
+    import datetime
+    import faulthandler
+    f.write("\n=== SRM-CAM started %s ===\n"
+            % datetime.datetime.now().isoformat(timespec="seconds"))
+    faulthandler.enable(file=f, all_threads=True)
     return path
 
 
@@ -98,6 +105,11 @@ def main(argv=None):
     # takes the whole timeout to fail, and that must never delay the window.
     # The KiCad offer first, once per plugin version and only where KiCad
     # is; the update probe after it, so the two never stack.
+    # A setup named on the command line opens as File ▸ Load would.
+    setups = [a for a in (argv or sys.argv)[1:]
+              if a.lower().endswith(".srmcam") and os.path.isfile(a)]
+    if setups:
+        QTimer.singleShot(0, lambda: w.load_setup(setups[0]))
     QTimer.singleShot(800, w.maybe_offer_kicad_plugin)
     if not os.environ.get("SRM_CAM_NO_UPDATE_CHECK"):
         QTimer.singleShot(1500, w.start_update_check)

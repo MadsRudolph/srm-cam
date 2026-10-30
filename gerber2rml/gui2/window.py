@@ -3862,8 +3862,12 @@ class MainWindow(QMainWindow):
             self, "Load a setup",
             workspace.remembered_dir("session", "sessions"),
             "SRM-CAM setup (*.srmcam);;All files (*)")
-        if not path:
-            return
+        if path:
+            self.load_setup(path)
+
+    def load_setup(self, path):
+        """Load a .srmcam setup - from the dialog, or one the app was
+        started with (double-click, Open with)."""
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
