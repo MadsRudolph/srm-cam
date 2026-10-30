@@ -489,6 +489,14 @@ def test_fiducial_align_drill_is_stock_only(tmp_path):
     assert "1.90" in plan or "1.9" in plan       # 1.6 + 0.3, no bed bite
 
 
+def test_pair_measured_skips_gaps_and_keeps_rows_aligned():
+    from gerber2rml.engine.fiducial import pair_measured
+    nom = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    n, m = pair_measured(nom, [None, (11, 1), (11, 11)])
+    assert n == [(10, 0), (10, 10)] and m == [(11.0, 1.0), (11.0, 11.0)]
+    assert pair_measured(nom, [(1, 1), (11, 1)]) == (nom[:2], [(1.0, 1.0), (11.0, 1.0)])
+
+
 def test_fiducial_top_traces_apply_measured_transform(tmp_path):
     lay = layout_double_sided(FIXT, registration="fiducial",
                               fiducials=FiducialSpec(count=4))

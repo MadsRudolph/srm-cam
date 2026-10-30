@@ -489,6 +489,60 @@ def test_a_fiducial_flip_can_be_measured_and_fitted(loaded, tmp_path):
     assert after != before, "the fit did not change the top traces"
 
 
+def test_any_rows_fit_not_only_the_leading_ones(loaded, tmp_path):
+    """Probing holes 2, 3 and 4 and leaving 1 blank used to fit NOTHING: the
+    reading stopped at the first empty row. Each reading must also pair with
+    its own hole, not shift up into the gap."""
+    from PySide6.QtWidgets import QTableWidgetItem
+    loaded.action_double_sided(True)
+    loaded.action_registration("fiducial")
+    loaded.export_to(tmp_path)
+    before = (tmp_path / "buck_top_traces.nc").read_bytes()
+    loaded.select_step("fitflip")
+    page = loaded.flipfit_page
+    page._build()
+    assert len(page._nominal) >= 3
+    _fill_measured(page, lambda x, y: (x + 6.0, y + 0.2))
+    page.table.setItem(0, 3, QTableWidgetItem(""))
+    page.table.setItem(0, 4, QTableWidgetItem(""))
+    page._fit_preview()
+    assert page.measured()[0] is None
+    assert page.fit_btn.isEnabled()
+    assert "good" in page.verdict.text().lower()     # paired with the right holes
+    assert loaded._top_fit is not None
+    nx, ny = page._nominal[0]
+    px, py = loaded._top_fit.apply(nx, ny)
+    assert abs(px - (nx + 6.0)) < 1e-3 and abs(py - (ny + 0.2)) < 1e-3
+    # the blank hole is the one the page tells you to jog to
+    assert "Still to measure" in page.jog_hint.text()
+    page._apply()
+    assert (tmp_path / "buck_top_traces.nc").read_bytes() != before
+
+
+def test_the_measure_page_fits_the_inspector(loaded):
+    """The flip switch beside a label column was wider than the panel and
+    pushed the whole page off its right edge."""
+    # Relative, because offscreen font metrics are not the real screen's:
+    # the switch must be no wider than buttons that are known to fit.
+    loaded.action_double_sided(True)
+    loaded.action_registration("fiducial")
+    loaded.select_step("fitflip")
+    page = loaded.flipfit_page
+    sw = page.flip.minimumSizeHint().width()
+    others = [w.minimumSizeHint().width() for w in (page.fit_btn, page.drill_btn)]
+    assert sw <= max(others), "the flip switch is the widest thing on the page"
+
+
+def test_a_warning_toast_stays_until_dismissed(loaded):
+    """A nine-second warning vanished mid-sentence; warnings now stay."""
+    loaded.say("warn", "x " * 200)
+    assert not loaded.toast.isHidden() and not loaded.toast._timer.isActive()
+    loaded.toast.fit_to(400)
+    assert loaded.toast.height() >= loaded.toast.heightForWidth(loaded.toast.width())
+    loaded.say("info", "saved")
+    assert loaded.toast._timer.isActive()
+
+
 def test_a_bad_fiducial_fit_says_do_not_cut(loaded, tmp_path):
     """The residual is the answer, not the fit — a rigid fit through a few
     points always produces a transform."""

@@ -167,6 +167,13 @@ class _FidFindWorker(QThread):
             ser.write(b"P 999 -2500 0\n")
             line = spi_probe._read_line(ser, _t.monotonic() + 90.0,
                                         lambda: self._abort)
+            if line and line.rstrip().endswith("LOW"):
+                self.failed.emit(
+                    self._row,
+                    "the probe already reads contact before moving — lift "
+                    "the bit clear of the board and check the board is "
+                    "isolated from the bed and the clip is not shorting")
+                return
             if not (line and line.startswith("R")):
                 self.failed.emit(
                     self._row,
@@ -406,8 +413,9 @@ class _FiducialAlignDialog(QDialog):
                 self.table.setItem(r, c, it)
             # pre-fill this run's earlier measurements so probe-then-refit
             # doesn't mean typing (or re-jogging) everything again
-            mx = f"{initial[r][0]:.3f}" if r < len(initial) else ""
-            my = f"{initial[r][1]:.3f}" if r < len(initial) else ""
+            have = r < len(initial) and initial[r] is not None
+            mx = f"{initial[r][0]:.3f}" if have else ""
+            my = f"{initial[r][1]:.3f}" if have else ""
             self.table.setItem(r, 2, QTableWidgetItem(mx))
             self.table.setItem(r, 3, QTableWidgetItem(my))
             btn = QPushButton("Capture")
@@ -525,28 +533,34 @@ class _FiducialAlignDialog(QDialog):
             self._parent._start_dro()
 
     def measured(self):
-        """The filled-in (x, y) measured rows, in order; rows left blank are skipped."""
+        """One entry per row, in row order: (x, y), or None for a blank row.
+        Positional, so a skipped row cannot pair a reading with the wrong
+        hole; trailing blanks are dropped."""
         out = []
         for r in range(self.table.rowCount()):
             mx, my = self.table.item(r, 2), self.table.item(r, 3)
+            p = None
             if mx and my and mx.text().strip() and my.text().strip():
                 try:
-                    out.append((float(mx.text()), float(my.text())))
+                    p = (float(mx.text()), float(my.text()))
                 except ValueError:
-                    pass
+                    p = None
+            out.append(p)
+        while out and out[-1] is None:
+            out.pop()
         return out
 
     def _show_fit(self):
         import math
-        from gerber2rml.engine.fiducial import fit_transform, rms
-        m = self.measured()
+        from gerber2rml.engine.fiducial import fit_transform, rms, pair_measured
+        nom, m = pair_measured(self._nominal, self.measured())
         if len(m) < 2:
             self.fit_lbl.setText("Fit: need at least 2 measured points")
             return
         try:
             allow = self._parent.fid_scale_chk.isChecked()
-            t = fit_transform(self._nominal[:len(m)], m, allow_scale=allow)
-            err = rms(t, self._nominal[:len(m)], m)
+            t = fit_transform(nom, m, allow_scale=allow)
+            err = rms(t, nom, m)
         except ValueError as e:
             self.fit_lbl.setText(f"Fit failed: {e}")
             return
@@ -555,7 +569,7 @@ class _FiducialAlignDialog(QDialog):
             f"scale {t.scale:.5f}  (n={len(m)})")
 
     def _accept_if_valid(self):
-        if len(self.measured()) < 2:
+        if sum(p is not None for p in self.measured()) < 2:
             QMessageBox.warning(self, "Not enough points",
                                 "Enter at least 2 measured fiducials.")
             return
@@ -5063,16 +5077,16 @@ class MainWindow(QMainWindow):
         application until they do.
         """
         from gerber2rml.doublesided import build_top_traces, build_top_cutout
-        from gerber2rml.engine.fiducial import fit_transform, rms
+        from gerber2rml.engine.fiducial import fit_transform, rms, pair_measured
         measured = dlg.measured()
         self._fid_measured = measured        # pre-fill the next run of this dialog
+        nom_m, pts = pair_measured(nominal, measured)
         # Fit FIRST and remember it: from here the Top views render AS PLACED
         # (jog/snap/probe grid/rework/tracking follow the physical board) even
         # if the export below is postponed.
         try:
-            t = fit_transform(nominal[:len(measured)], measured,
-                              allow_scale=fid.allow_scale)
-            err = rms(t, nominal[:len(measured)], measured)
+            t = fit_transform(nom_m, pts, allow_scale=fid.allow_scale)
+            err = rms(t, nom_m, pts)
         except Exception as e:
             QMessageBox.critical(self, "Fit failed", str(e))
             return
@@ -5086,9 +5100,10 @@ class MainWindow(QMainWindow):
         import math as _math
         res = [((mx - px) ** 2 + (my - py) ** 2) ** 0.5 * 1000.0
                for (px, py), (mx, my) in
-               zip([t.apply(x, y) for x, y in nominal[:len(measured)]], measured)]
+               zip([t.apply(x, y) for x, y in nom_m], pts)]
+        rows = [i + 1 for i, p in enumerate(measured) if p is not None]
         detail = (chr(10)).join(
-            "  fiducial %d   %5.0f um" % (i + 1, r) for i, r in enumerate(res))
+            "  fiducial %d   %5.0f um" % (i, r) for i, r in zip(rows, res))
         msg = ("The Top view now shows the board AS PLACED: the fiducials sit "
                "on the positions you measured, and jog, snap, the probe grid "
                "and rework all follow it." + chr(10)*2 +
@@ -5216,7 +5231,7 @@ class MainWindow(QMainWindow):
                         if self._top_fit is not None else None),
             # raw fiducial measurements: prefill the align dialog and feed the
             # leveling-panel exporter across an app restart
-            "fid_measured": [list(p) for p in
+            "fid_measured": [None if p is None else list(p) for p in
                              (getattr(self, "_fid_measured", None) or [])],
             "photo_overlay": self._photo_overlay,
             "photo_anchors": [list(p) for p in (self._photo_anchor_pts or [])],
@@ -5315,7 +5330,8 @@ class MainWindow(QMainWindow):
             self._top_fit = Transform(*[float(v) for v in tf])
         fm = d.get("fid_measured")
         if fm:
-            self._fid_measured = [(float(x), float(y)) for x, y in fm]
+            self._fid_measured = [None if p is None else (float(p[0]), float(p[1]))
+                                  for p in fm]
         fd = d.get("fid", {})
         _spin(self.fid_count_spin, fd.get("count", 4))
         _combo(self.fid_place_combo, fd.get("place", 0))

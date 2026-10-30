@@ -256,10 +256,33 @@ class Toast(QLabel):
         super().__init__(parent)
         self.setFont(theme.font("small"))
         self.setWordWrap(True)
+        # Selectable, so a long warning can be copied rather than retyped.
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to dismiss")
         self.hide()
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
+        self._sticky = False
+
+    # A warning that vanished after nine seconds, mid-sentence, could not be
+    # read at all — so warnings and failures now stay until clicked away or
+    # replaced, and hovering holds a transient one where it is.
+    def enterEvent(self, e):
+        self._timer.stop()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        if self.isVisible() and not self._sticky:
+            self._timer.start(3000)
+        super().leaveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        super().mouseReleaseEvent(e)
+        if e.button() == Qt.LeftButton and not self.hasSelectedText():
+            self._timer.stop()
+            self.hide()
 
     def show_message(self, level, text):
         colours = {"ok": theme.VERIFIED, "warn": theme.CAUTION,
@@ -274,10 +297,20 @@ class Toast(QLabel):
             f" border: 1px solid {edges.get(level, theme.RULE_HI)};"
             f" border-radius: {theme.RADIUS}px; padding: 9px 13px;")
         self.setText(text)
-        self.adjustSize()
         self.show()
         self.raise_()
-        self._timer.start(9000 if level in ("warn", "fail") else 5000)
+        self._sticky = level in ("warn", "fail")
+        if self._sticky:
+            self._timer.stop()
+        else:
+            self._timer.start(5000)
+
+    def fit_to(self, max_w):
+        """Size for the wrapped text. adjustSize() on a word-wrapping label
+        guesses the height from one width and the text came out clipped."""
+        self.setMaximumWidth(max_w)
+        w = min(max_w, self.sizeHint().width())
+        self.resize(w, max(self.heightForWidth(w), self.minimumSizeHint().height()))
 
 
 class MainWindow(QMainWindow):
@@ -1247,9 +1280,8 @@ class MainWindow(QMainWindow):
     def _place_toast(self):
         if not self.toast.isVisible():
             return
-        self.toast.setMaximumWidth(max(self.width() - theme.RAIL_W
-                                       - theme.INSPECTOR_W - 60, 260))
-        self.toast.adjustSize()
+        self.toast.fit_to(max(self.width() - theme.RAIL_W
+                              - theme.INSPECTOR_W - 60, 260))
         x = theme.RAIL_W + 24
         y = self.height() - theme.BAR_H - self.toast.height() - 20
         self.toast.move(x, y)
@@ -3125,7 +3157,9 @@ class MainWindow(QMainWindow):
         """Adopt (or clear) the measured flip, and redraw with it."""
         self._top_fit = transform
         if measured is not None:
-            self._fid_measured = [tuple(p) for p in measured]
+            # positional: None marks a hole not measured
+            self._fid_measured = [None if p is None else tuple(p)
+                                  for p in measured]
         self._paths_cache = {}
         self.refresh_preview()
 
@@ -3790,7 +3824,8 @@ class MainWindow(QMainWindow):
             "top_fit": ([self._top_fit.theta, self._top_fit.scale,
                          self._top_fit.tx, self._top_fit.ty]
                         if self._top_fit is not None else None),
-            "fid_measured": [list(p) for p in (self._fid_measured or [])],
+            "fid_measured": [None if p is None else list(p)
+                             for p in (self._fid_measured or [])],
             # The probed surface. Nine points is nine physical touches and a
             # couple of minutes of machine time; a measurement that does not
             # survive closing the app is one nobody relies on.
@@ -3949,8 +3984,8 @@ class MainWindow(QMainWindow):
                 self._top_fit = Transform(*[float(v) for v in tf])
             except (TypeError, ValueError):
                 foreign.append("the measured flip")
-        self._fid_measured = [(float(x), float(y))
-                              for x, y in (data.get("fid_measured") or [])]
+        self._fid_measured = [None if p is None else (float(p[0]), float(p[1]))
+                              for p in (data.get("fid_measured") or [])]
         try:
             self.level_page.restore(data.get("level"))
             # The boxes are the work; a restart used to lose them.

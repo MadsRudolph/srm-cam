@@ -61,7 +61,9 @@ def scroller(inner):
     sa = QScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QFrame.NoFrame)
-    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    # As needed, not off: a page wider than the panel then scrolls instead of
+    # being silently cut off at the right edge, text and all.
+    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     sa.setWidget(inner)
     return sa
 
