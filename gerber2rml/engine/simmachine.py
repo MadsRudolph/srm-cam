@@ -37,8 +37,8 @@ def is_sim(port):
 class Machine:
     """The bed, the stock, the head, and what has been cut."""
 
-    def __init__(self, corner=(41300, 27800), angle_deg=1.2,
-                 size=(100000, 80000), surface_z=-43300, bow_um=40,
+    def __init__(self, corner=(24300, 19800), angle_deg=1.2,
+                 size=(150000, 110000), surface_z=-43300, bow_um=40,
                  speedup=40.0):
         self.lock = threading.RLock()
         self.pos = [0, 0, 0]
