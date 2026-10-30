@@ -90,6 +90,7 @@ class WindowSource(ar.JobSource):
             w.action_place(st.place_x + pose.x + margin_mm - b[0],
                            st.place_y + pose.y + margin_mm - b[1])
             w.action_stock(pose.w, pose.h, pose.x, pose.y, show=True)
+            w.set_stock_turn(ar.about(pose.x, pose.y, pose.angle))
         self.gui(go)
 
     def toolpaths(self, key):

@@ -376,6 +376,7 @@ class MainWindow(QMainWindow):
         # Where a board made elsewhere (laser-etched, say) really sits, from
         # its measured pads: design -> bed. Only the drill-only step uses it.
         self._board_fit = None
+        self._stock_turn = None       # the job turned to the found stock
         self._layout_base = None       # the layout at offset (0, 0)
         self._layout_key = None        # what that base was built from
         self._layout_placed = None     # ...translated to the placement
@@ -1445,6 +1446,10 @@ class MainWindow(QMainWindow):
                     "cleanly.")
                 return
             self.stage.set_busy("")
+            if (self._stock_turn is not None and step.side != "top"
+                    and step.op != "fitdrill"):
+                from gerber2rml.engine.fiducial import apply_to_toolpaths
+                paths = apply_to_toolpaths(paths, self._stock_turn)
             cuts, rapids = toolpath_segments(paths)
             rapids = rapids + traverse_segments(paths)
             if far_paths:
@@ -1640,9 +1645,21 @@ class MainWindow(QMainWindow):
                 # or in the X-ray.
                 self.stage.set_pin_drag(False)
             else:
-                self.stage.set_board(lay.bottom_copper, lay.outline, lay.holes,
-                                     align_holes=lay.align_holes)
-                self.stage.set_pin_drag(self._pins_draggable())
+                # Turned with the stock once the run has found it: the cuts
+                # are, and a design drawn square under them looks skewed.
+                t = self._stock_turn
+                if t is not None:
+                    self.stage.set_board(
+                        self._warp_geom(lay.bottom_copper, t),
+                        self._warp_geom(lay.outline, t),
+                        [(*t.apply(x, y), d) for x, y, d in lay.holes],
+                        align_holes=[(*t.apply(x, y), d)
+                                     for x, y, d in lay.align_holes])
+                    self.stage.set_pin_drag(False)
+                else:
+                    self.stage.set_board(lay.bottom_copper, lay.outline,
+                                         lay.holes, align_holes=lay.align_holes)
+                    self.stage.set_pin_drag(self._pins_draggable())
         elif (step is not None and step.op == "fitdrill"
               and self._board_fit is not None):
             # The board where its pads were measured, not where the design
@@ -1655,6 +1672,14 @@ class MainWindow(QMainWindow):
             self.stage.set_board(self._warp_geom(st.board.copper, t),
                                  self._warp_geom(st.board.outline, t),
                                  warp_holes(st.board.holes, t))
+        elif self._stock_turn is not None:
+            t = self._stock_turn
+            self.stage.set_pin_drag(False)
+            self.stage.set_members([], 0)
+            self.stage.set_board(self._warp_geom(st.board.copper, t),
+                                 self._warp_geom(st.board.outline, t),
+                                 [(*t.apply(x, y), d)
+                                  for x, y, d in st.board.holes])
         else:
             self.stage.set_pin_drag(False)
             self.stage.set_board(st.board.copper, st.board.outline,
@@ -2416,6 +2441,7 @@ class MainWindow(QMainWindow):
         # A setup restore re-applies its own saved fit after this call.
         self._top_fit = None
         self._fid_measured = []
+        self._stock_turn = None
         from gerber2rml.loader import gerber_stem
         self._custom_name = False
         try:
@@ -3184,6 +3210,14 @@ class MainWindow(QMainWindow):
 
     def _fit_geom(self, g):
         return self._warp_geom(g, self._top_fit)
+
+    def set_stock_turn(self, transform):
+        """The turn the autonomous run gave the job to match the stock it
+        found (None: square to the bed). Drawing only - the run applies it
+        to what it cuts itself."""
+        self._stock_turn = transform
+        self._paths_cache = {}
+        self.refresh_preview()
 
     def set_board_fit(self, transform):
         """Adopt (or clear) the fit of a board made elsewhere, and redraw."""
