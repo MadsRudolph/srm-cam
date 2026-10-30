@@ -477,7 +477,27 @@ class Stage(QWidget):
                                path(view.get("under") or ()))
         self.update()
 
+    def set_target(self, pt):
+        """A ring where the autonomous run will start looking, or None."""
+        self._target = pt
+        self.update()
+
+    def _paint_target(self, p):
+        pt = getattr(self, "_target", None)
+        if not pt:
+            return
+        pen = QPen(QColor(theme.CAUTION), 0)
+        pen.setCosmetic(True)
+        pen.setWidthF(2.0)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        x, y = pt
+        p.drawEllipse(QPointF(x, y), 3.0, 3.0)
+        p.drawLine(QPointF(x - 5, y), QPointF(x + 5, y))
+        p.drawLine(QPointF(x, y - 5), QPointF(x, y + 5))
+
     def _paint_sim(self, p):
+        self._paint_target(p)
         view = getattr(self, "_sim_view", None)
         if not view:
             return

@@ -201,9 +201,14 @@ class AutoRunPage(inspector.Page):
         h.addStretch(1)
         stock.add(row)
         self.pick_btn = widgets.button(
-            "Click where it is", on=self._arm_pick,
+            "Click where it is",
             tip="Then click on the stage, anywhere on the stock. The probe "
-                "goes there first and finds the edges from it.")
+                "goes there first and finds the edges from it. Click it "
+                "again to cancel.")
+        # A toggle, so it shows when the next click on the stage is for the
+        # stock - and that click can be taken back by clicking it again.
+        self.pick_btn.setCheckable(True)
+        self.pick_btn.toggled.connect(self._arm_pick)
         stock.add(self.pick_btn)
         self.click_lbl = widgets.hint("No spot clicked yet.")
         stock.add(self.click_lbl)
@@ -253,14 +258,26 @@ class AutoRunPage(inspector.Page):
         return s
 
     # -- the click ---------------------------------------------------------
-    def _arm_pick(self):
-        self.ctl.set_stage_mode("stock")
-        self.click_lbl.setText("Click on the stock, on the stage.")
+    def _arm_pick(self, on):
+        if on:
+            self.pick_btn.setText("Now click on the stock…")
+            self.ctl.set_stage_mode("stock")
+            self.click_lbl.setText("Click anywhere on the stock, on the "
+                                   "stage. Not near an edge.")
+        else:
+            self.pick_btn.setText("Click where it is")
+            if self.ctl.stage.mode == "stock":
+                self.ctl.set_stage_mode("place")
+            if self._click is None:
+                self.click_lbl.setText("No spot clicked yet.")
 
     def on_stock_click(self, x, y):
         self._click = (x, y)
-        self.ctl.set_stage_mode("place")
-        self.click_lbl.setText("Starts looking at X %.1f, Y %.1f." % (x, y))
+        self.ctl.stage.set_target((x, y))
+        self.pick_btn.setChecked(False)          # back to dragging the board
+        self.click_lbl.setText("Starts looking at X %.1f, Y %.1f (the ring on "
+                               "the stage). Click the button again to move "
+                               "it." % (x, y))
 
     # -- the checklist -------------------------------------------------------
     def _plan_rows(self):
@@ -322,6 +339,11 @@ class AutoRunPage(inspector.Page):
             self.sim_lbl.setText("")
         if self._thread is None:
             self._fill_rows()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        if self.pick_btn.isChecked():
+            self.pick_btn.setChecked(False)      # leaving the page disarms it
 
     def start(self):
         ctl = self.ctl

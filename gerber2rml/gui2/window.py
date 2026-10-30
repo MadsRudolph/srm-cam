@@ -1266,7 +1266,9 @@ class MainWindow(QMainWindow):
                           (getattr(self.bar, "jog_btn", None), "jog"),
                           (getattr(self, "measure_act", None), "measure"),
                           (getattr(getattr(self, "boardfit_page", None),
-                                   "pick_chk", None), "pad")):
+                                   "pick_chk", None), "pad"),
+                          (getattr(getattr(self, "autorun_page", None),
+                                   "pick_btn", None), "stock")):
             if box is not None and mode != owns and box.isChecked():
                 box.blockSignals(True)
                 box.setChecked(False)

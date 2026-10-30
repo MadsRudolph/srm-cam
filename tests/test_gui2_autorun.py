@@ -93,3 +93,19 @@ def test_run_it_all_flips_and_fits_a_double_sided_board(win, qt_app):
     assert done[0][0], done[0][1]
     assert win._top_fit is not None
     assert sm.machine().face == 1
+
+def test_the_click_is_armed_shown_and_taken_back(win, qt_app):
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.pick_btn.setChecked(True)
+    assert win.stage.mode == "stock"
+    win.stage.stock_picked.emit(80.0, 60.0)
+    assert page._click == (80.0, 60.0)
+    assert not page.pick_btn.isChecked() and win.stage.mode == "place"
+    assert win.stage._target == (80.0, 60.0)
+    page.pick_btn.setChecked(True)            # armed again, then cancelled
+    page.pick_btn.setChecked(False)
+    assert win.stage.mode == "place" and page._click == (80.0, 60.0)
+    page.pick_btn.setChecked(True)
+    win.set_stage_mode("jog")                 # another control takes the stage
+    assert not page.pick_btn.isChecked()
