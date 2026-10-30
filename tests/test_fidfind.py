@@ -55,6 +55,53 @@ def test_any_start_in_any_hole_is_found_in_few_touches():
     assert counts[len(counts) // 2] <= 30         # was 39 with three passes
 
 
+class PartlyConnectedSerial(HoleSerial):
+    """A hole whose copper on the probed net is `copper(dist_mm, angle_deg)`
+    around the centre - a pour that does not reach all the way round."""
+    def __init__(self, cx_mm, cy_mm, copper):
+        super().__init__(cx_mm, cy_mm)
+        self.copper = copper
+
+    def write(self, data):
+        s = data.decode().strip()
+        if s.startswith("H"):
+            _, x, y = s.split()
+            self.tests += 1
+            dx, dy = int(x) - self.c[0], int(y) - self.c[1]
+            a = math.degrees(math.atan2(dy, dx)) % 360
+            on = self.copper(math.hypot(dx, dy) / 1000.0, a)
+            self._out.append(b"H 1\n" if on else b"H 0\n")
+
+
+def _south_gap(a):
+    return 240 <= a <= 300              # other nets' traces below the hole
+
+
+@pytest.mark.parametrize("start", [(0.0, 0.0), (0.5, -0.4), (-0.6, 0.3)])
+def test_an_isolated_pad_is_centred_on_the_pour_round_it(start):
+    # Mounting pad not on the net: the probe only meets the GND pour beyond
+    # its clearance, and below the hole there is no GND at all.
+    s = PartlyConnectedSerial(
+        30.0, 20.0, lambda d, a: d >= 2.7 and not _south_gap(a))
+    fx, fy = find_hole_center(s, 30.0 + start[0], 20.0 + start[1])
+    assert math.hypot(fx - 30.0, fy - 20.0) < 0.05
+
+
+def test_copper_further_out_on_one_side_is_left_out_of_the_fit():
+    # The rim is on the net except a broken stretch to the south, where the
+    # nearest connected copper is a millimetre further out.
+    s = PartlyConnectedSerial(
+        30.0, 20.0, lambda d, a: d >= (2.6 if _south_gap(a) else 1.5))
+    fx, fy = find_hole_center(s, 30.2, 19.8)
+    assert math.hypot(fx - 30.0, fy - 20.0) < 0.05
+
+
+def test_copper_on_one_side_only_refuses():
+    s = PartlyConnectedSerial(30.0, 20.0, lambda d, a: d >= 1.5 and a < 100)
+    with pytest.raises(ProbeError):
+        find_hole_center(s, 30.0, 20.0)
+
+
 def test_start_on_copper_refuses():
     s = HoleSerial(50.0, 40.0, r_mm=1.5)
     with pytest.raises(ProbeError):

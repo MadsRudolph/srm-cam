@@ -190,13 +190,13 @@ class BoardFitPage(inspector.Page):
 
     def suggest(self):
         holes = self._holes()
-        if len(holes) < bf.MIN_PADS:
-            self.ctl.say("warn", "This board has fewer than three holes - "
+        if len(holes) < bf.MIN_FIT:
+            self.ctl.say("warn", "This board has fewer than two holes - "
                                  "there is nothing to fit it by.")
             return
         self.set_pads(bf.suggest_pads(holes))
-        self.ctl.say("info", "Three pads picked, far apart and out of line. "
-                             "Measure each one.")
+        self.ctl.say("info", "%d pads picked, far apart and out of line. "
+                             "Measure each one." % len(self._pads))
 
     def add_pad_near(self, x, y):
         """A click on the stage: add the hole nearest to it."""
@@ -258,15 +258,8 @@ class BoardFitPage(inspector.Page):
         """Where pad ``row`` should be on the bed: by the fit when there is
         one (two measured pads are enough to aim), else the design."""
         hx, hy = self._holes()[self._pads[row]][:2]
-        nom, meas = self._pairs()
-        if len(meas) >= 2:
-            try:
-                t = fid.fit_transform(nom, meas,
-                                      allow_scale=self.scale_chk.isChecked())
-                return t.apply(hx, hy)
-            except ValueError:
-                pass
-        return hx, hy
+        t = self.current_fit()
+        return t.apply(hx, hy) if t is not None else (hx, hy)
 
     def _goto(self):
         r = self._selected_row("go to")
@@ -366,15 +359,16 @@ class BoardFitPage(inspector.Page):
 
     # -- the fit -----------------------------------------------------------
     def current_fit(self):
-        """The transform design -> bed, or None until three pads agree on
-        one. Recomputed from the board every time, so dragging the picture
-        or changing the mirror can never leave a stale fit behind."""
+        """The transform design -> bed, or None until two pads give one.
+        Recomputed from the board every time, so dragging the picture or
+        changing the mirror can never leave a stale fit behind."""
         nom, meas = self._pairs()
-        if len(meas) < bf.MIN_PADS:
+        if len(meas) < bf.MIN_FIT:
             return None
+        # Two pads cannot tell a stretch from a mis-measure: rigid only.
+        stretch = self.scale_chk.isChecked() and len(meas) >= bf.MIN_PADS
         try:
-            return fid.fit_transform(nom, meas,
-                                     allow_scale=self.scale_chk.isChecked())
+            return fid.fit_transform(nom, meas, allow_scale=stretch)
         except ValueError:
             return None
 
@@ -383,12 +377,12 @@ class BoardFitPage(inspector.Page):
         self._worst = None
         self.write_btn.setEnabled(False)
         self._show_where_to_jog()
-        if len(meas) < bf.MIN_PADS:
+        if len(meas) < bf.MIN_FIT:
             self.rms.set("—")
             self.verdict.setText(
-                "%d of %d measured. Three is the minimum: two fit a mirrored "
-                "board as happily as a right one. More, spread out, is better."
-                % (len(meas), max(bf.MIN_PADS, len(self._pads))))
+                "%d of %d measured. Two is the minimum, three is better: two "
+                "fit a mirrored board as happily as a right one."
+                % (len(meas), max(bf.MIN_FIT, len(self._pads))))
             self.ctl.set_board_fit(None)
             return
         t = self.current_fit()
@@ -419,7 +413,13 @@ class BoardFitPage(inspector.Page):
                     "Set up the job.").format(worst)
         if abs(t.scale - 1.0) > 1e-9:
             note += " Stretch x{:.4f}.".format(t.scale)
-        if bf.mirror_ambiguous(nom):
+        if len(meas) < bf.MIN_PADS:
+            note = ("Two pads: the board sits turned {:+.2f}°, and they agree "
+                    "on their distance apart to within {:.3f} mm. That is all "
+                    "two can check - not the mirror, not which pad is which. "
+                    "Jog to a third hole and look before drilling."
+                    ).format(deg, worst)
+        elif bf.mirror_ambiguous(nom):
             note += (" These pads are nearly in a line, so a mirrored board "
                      "would fit them too - add one off to the side.")
         self.verdict.setText(note + "  (RMS {:.3f} mm)".format(

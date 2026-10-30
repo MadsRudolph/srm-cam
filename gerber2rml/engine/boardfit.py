@@ -19,13 +19,18 @@ mirrored board comes out millimetres wrong. That only holds while each pad is
 recognised by what it IS (which pin of which part), never by where it sits in
 the picture: measure "the top-left pad" of a mirrored picture and the numbers
 describe the picture, and fit it perfectly.
+
+Two pads are still allowed - some boards have only two holes worth trusting -
+but the fit is then taken on faith: no stretch, nothing to check the mirror
+or a mis-measure against but the distance between them.
 """
 import math
 
 from gerber2rml.engine.drill import drill_jobs
 from gerber2rml.engine.fiducial import fit_transform, rms
 
-MIN_PADS = 3
+MIN_PADS = 3       # what is suggested, and what can catch a mirrored board
+MIN_FIT = 2        # what a rigid fit can be made from at all
 
 
 def nearest_hole(holes, x, y):
