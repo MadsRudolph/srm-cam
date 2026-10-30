@@ -14,6 +14,8 @@ from gerber2rml.toolpath import Move
 
 def _sim(**kw):
     kw.setdefault("speedup", 5000)
+    kw.setdefault("size", (100000, 80000))
+    kw.setdefault("corner", (41300, 27800))
     m = sm.machine(**kw)
     return m, spi_probe.open_link("SIM")
 
