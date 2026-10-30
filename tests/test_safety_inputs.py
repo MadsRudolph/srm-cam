@@ -38,7 +38,7 @@ def test_setup_values_out_of_range_are_refused_not_kept():
 
 def test_rml_lifts_before_it_travels_and_can_set_the_speed():
     paths = [[Move(10, 10, 2, rapid=True), Move(10, 10, -0.1), Move(20, 10, -0.1)]]
-    rml = render(paths, xy_feed=4, plunge_feed=1, rpm=7000)
+    rml = render(paths, xy_feed=4, plunge_feed=1, rpm=7000, safe_start=True)
     lines = rml.splitlines()
     assert lines[0] == "^IN;!RC7000;!MC1;"
     lift = next(l for l in lines if l.startswith("!PZ"))

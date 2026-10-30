@@ -52,6 +52,9 @@ POLL_MS = 300           # also the deadman feed: the firmware stops the spindle
 
 # A machine that is always connected: the simulator (engine/simmachine.py).
 SIM_ENTRY = ("SIM", "Simulated SRM-20 - no machine needed")
+# Listed only while Automatic mode is on (the window sets this): without it
+# the port list is exactly what it always was.
+SHOW_SIM = False
 
 
 def list_ports():
@@ -70,11 +73,15 @@ def list_ports():
         ports = [(p.device, p.hwid) for p in lp.comports()]
     except Exception as e:                      # pragma: no cover - driver-specific
         return [], f"the serial ports could not be listed ({e.__class__.__name__})."
+    sim = [SIM_ENTRY] if SHOW_SIM else []
     if not ports:
-        # The simulator is always there: a machine to practise on, and the
-        # only one to try the autonomous run on with the mill switched off.
-        return [SIM_ENTRY], ""
-    return spi_probe.rank_ports(ports) + [SIM_ENTRY], ""
+        if sim:
+            # In Automatic mode the simulator is always there: a machine to
+            # practise on with the mill switched off.
+            return sim, ""
+        return [], ("no serial ports were found. Check the USB lead to the "
+                    "Arduino inside the machine.")
+    return spi_probe.rank_ports(ports) + sim, ""
 
 
 class _SerialGuard:

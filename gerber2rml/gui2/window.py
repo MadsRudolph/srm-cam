@@ -377,6 +377,11 @@ class MainWindow(QMainWindow):
         # its measured pads: design -> bed. Only the drill-only step uses it.
         self._board_fit = None
         self._stock_turn = None       # the job turned to the found stock
+        # Automatic mode: opt-in, remembered between sessions.
+        self._autorun = str(workspace.setting("autorun", "false")).lower() \
+            in ("true", "1")
+        from gerber2rml.gui2 import machine as _machine
+        _machine.SHOW_SIM = self._autorun
         self._layout_base = None       # the layout at offset (0, 0)
         self._layout_key = None        # what that base was built from
         self._layout_placed = None     # ...translated to the placement
@@ -751,6 +756,15 @@ class MainWindow(QMainWindow):
         self.mtest_act = self._act(m, "Machine test…", self.action_machine_test)
         self.stream_act = self._act(m, "Stream this step over the link "
                                        "(experimental)…", self.action_stream)
+        m.addSeparator()
+        self.autorun_act = self._act(
+            m, "Automatic mode (run it all)", self.action_autorun,
+            checkable=True, checked=self._autorun)
+        self.autorun_act.setToolTip(
+            "Adds a step that finds the stock with the probe, levels, sets "
+            "the origin and cuts the whole board - you only flip it. "
+            "Everything else works by hand exactly as before. Also lists the "
+            "simulated SRM-20 among the ports, to try it with the mill off.")
 
         i = mb.addMenu("&Interface")
         self.tier_group = QActionGroup(self)
@@ -1306,7 +1320,8 @@ class MainWindow(QMainWindow):
                                   registration=self._registration, holes=holes,
                                   align_holes=align, dowels=self.dowel_spec(),
                                   bed_bite=self._bed_bite,
-                                  flip_axis=self.flip_axis())
+                                  flip_axis=self.flip_axis(),
+                                  autorun=self._autorun)
         if self._exported:
             self.plan.apply_estimates(
                 {n: estimate_file_seconds(p) for n, p in self._exported.items()
@@ -3210,6 +3225,22 @@ class MainWindow(QMainWindow):
 
     def _fit_geom(self, g):
         return self._warp_geom(g, self._top_fit)
+
+    def action_autorun(self, on):
+        """Switch Automatic mode on or off. Off is the app as it always was."""
+        from gerber2rml.gui2 import machine as _machine
+        self._autorun = bool(on)
+        _machine.SHOW_SIM = self._autorun
+        workspace.set_setting("autorun", self._autorun)
+        if self.autorun_act.isChecked() != self._autorun:
+            self.autorun_act.setChecked(self._autorun)
+        if hasattr(self.bar, "refresh_ports"):
+            self.bar.refresh_ports()
+        self.refresh_plan()
+        if self._autorun and self.plan.by_key("autorun") is not None:
+            self.select_step("autorun")
+            self.say("info", "Automatic mode on: 'Run it all' is in the plan. "
+                             "Everything else still works by hand.")
 
     def set_stock_turn(self, transform):
         """The turn the autonomous run gave the job to match the stock it
