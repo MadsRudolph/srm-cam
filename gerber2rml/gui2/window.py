@@ -130,6 +130,7 @@ from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
 from gerber2rml.gui2.fiducial import FlipFitPage
 from gerber2rml.gui2.boardfit import BoardFitPage
+from gerber2rml.gui2.autorun import AutoRunPage
 from gerber2rml.gui2.sheet import RunSheet, FEEDBACK_URL
 
 USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/"
@@ -470,6 +471,9 @@ class MainWindow(QMainWindow):
         self.flipfit_page = self.inspector.add_page("fitflip", FlipFitPage(self))
         self.boardfit_page = self.inspector.add_page("fitdrill",
                                                      BoardFitPage(self))
+        self.autorun_page = self.inspector.add_page("autorun",
+                                                    AutoRunPage(self))
+        self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
         h.addWidget(self.inspector)
         v.addWidget(middle, 1)
 

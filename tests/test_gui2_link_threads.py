@@ -25,6 +25,11 @@ class FakeSerial:
         self.closed_by = threading.current_thread().name
 
 
+def _end(link):
+    link._q.put(None)                     # let the worker thread exit
+    link._thread.join(2)
+
+
 def _linked(qt_app, monkeypatch):
     fake = FakeSerial()
     monkeypatch.setattr(spi_probe, "open_link", lambda port, **k: fake)
@@ -42,6 +47,7 @@ def test_the_worker_closes_the_port_not_the_caller(qt_app, monkeypatch):
     link, fake = _linked(qt_app, monkeypatch)
     link.disconnect_from("test")
     assert fake.closed_by == "srm-link"
+    _end(link)
 
 
 def test_stop_drops_the_commands_still_queued(qt_app, monkeypatch):
@@ -56,3 +62,4 @@ def test_stop_drops_the_commands_still_queued(qt_app, monkeypatch):
     time.sleep(0.2)
     assert ran == []                       # the queued spindle start never ran
     link.disconnect_from("test")
+    _end(link)

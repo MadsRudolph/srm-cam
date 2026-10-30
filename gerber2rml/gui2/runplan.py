@@ -315,6 +315,11 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                  op="board"))
     seq.add(Step("checks", "tool", "Check before cutting",
                  detail="Fit, depth, reach, shorts", op="board"))
+    seq.add(Step("autorun", "tool", "Run it all, automatically",
+                 detail=("Finds the stock, probes, cuts - you only flip"
+                         if double_sided else
+                         "Finds the stock, probes, cuts the whole board"),
+                 op="board"))
 
     # -- the origin, which nothing works without ---------------------------
     # The dry run holds the bit 5 mm above the WORK Z ZERO, so it means nothing

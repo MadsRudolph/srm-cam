@@ -123,6 +123,7 @@ class Stage(QWidget):
     pin_moved = Signal(int, float, float)        # a reference pin dropped, in mm
     measured = Signal(object)                    # (length, dx, dy) mm, or None
     pad_picked = Signal(float, float)            # clicked a pad to measure, mm
+    stock_picked = Signal(float, float)          # clicked roughly on the stock
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -452,6 +453,57 @@ class Stage(QWidget):
     def has_photo(self):
         return self._photo is not None
 
+    def set_sim(self, view):
+        """What the simulated machine has on its bed, or None.
+
+        ``view`` is ``{"stock": [(x, y) * 4], "cuts": [[(x, y), ...]],
+        "under": [[...]], "width": mm, "found": [(x, y) * 4] or None}`` in
+        machine mm: the stock as it really lies, the cuts on the face that is
+        up, the ones on the face underneath (seen through), and the stock as
+        the probe found it. Drawn live over everything else, like the bit."""
+        self._sim_view = view
+        self._sim_paths = None
+        if view:
+            def path(lines):
+                pp = QPainterPath()
+                for line in lines:
+                    if len(line) < 2:
+                        continue
+                    pp.moveTo(*line[0])
+                    for pt in line[1:]:
+                        pp.lineTo(*pt)
+                return pp
+            self._sim_paths = (path(view.get("cuts") or ()),
+                               path(view.get("under") or ()))
+        self.update()
+
+    def _paint_sim(self, p):
+        view = getattr(self, "_sim_view", None)
+        if not view:
+            return
+        cuts, under = self._sim_paths
+        stock = QPolygonF([QPointF(*c) for c in view["stock"]])
+        p.setBrush(QColor(theme.alpha(theme.COPPER_FILL, 0.55)))
+        pen = QPen(QColor(theme.CAUTION), 0, Qt.DashLine)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.drawPolygon(stock)
+        w = float(view.get("width") or 0.8)
+        for path, colour, a in ((under, theme.LIVE, 0.25),
+                                (cuts, theme.INK, 0.95)):
+            pen = QPen(theme.alpha(colour, a), w, Qt.SolidLine, Qt.RoundCap,
+                       Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(path)
+        if view.get("found"):
+            pen = QPen(QColor(theme.VERIFIED), 0)
+            pen.setCosmetic(True)
+            pen.setWidthF(1.5)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawPolygon(QPolygonF([QPointF(*c) for c in view["found"]]))
+
     def set_stock(self, rect):
         if rect == self._stock:
             return
@@ -572,7 +624,7 @@ class Stage(QWidget):
     def set_mode(self, mode):
         self.mode = mode
         self.setCursor(QCursor(Qt.CrossCursor
-                               if mode in ("jog", "screws", "measure", "pad")
+                               if mode in ("jog", "screws", "measure", "pad", "stock")
                                else Qt.ArrowCursor))
         if mode != "measure":
             self.clear_measure()      # the ruler belongs to its mode
@@ -692,6 +744,9 @@ class Stage(QWidget):
             return
         if self.mode == "pad":
             self.pad_picked.emit(p.x(), p.y())
+            return
+        if self.mode == "stock":
+            self.stock_picked.emit(p.x(), p.y())
             return
         if self.mode == "measure":
             self._measure_press(p)
@@ -919,7 +974,7 @@ class Stage(QWidget):
 
     def _restore_cursor(self):
         self.setCursor(QCursor(Qt.CrossCursor
-                               if self.mode in ("jog", "screws", "measure")
+                               if self.mode in ("jog", "screws", "measure", "stock")
                                else Qt.ArrowCursor))
 
     def leaveEvent(self, e):
@@ -1082,6 +1137,7 @@ class Stage(QWidget):
             p.save()
             p.setTransform(w, True)
             self._paint_level_mesh(p)
+            self._paint_sim(p)
             p.restore()
 
         self._paint_box(p)

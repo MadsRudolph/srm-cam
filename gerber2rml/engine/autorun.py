@@ -138,6 +138,13 @@ class AutoRun:
         self._find_stock("stock")
         self.src.place(self.pose, self.margin)
         self.rotation = about(self.pose.x, self.pose.y, self.pose.angle)
+        x0, y0, x1, y1 = self.src.area("bottom")
+        need = (x1 - self.pose.x + self.margin, y1 - self.pose.y + self.margin)
+        if need[0] > self.pose.w or need[1] > self.pose.h:
+            raise RunFailed("the board needs %.1f × %.1f mm of stock with its "
+                            "margins, and this stock is %.1f × %.1f mm. Use a "
+                            "bigger piece." % (need[0], need[1],
+                                               self.pose.w, self.pose.h))
         hmap = self._level("level", "bottom", self.rotation)
         for key, label in self.src.bottom_steps():
             self._job(key, label, self.rotation, hmap)
