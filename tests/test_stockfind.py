@@ -35,8 +35,10 @@ def test_the_stock_is_found_where_it_lies(corner, angle):
 
 def test_a_wrong_size_stops_the_run():
     _m, ser = _sim()
-    with pytest.raises(stockfind.StockNotFound, match="not 120.0"):
+    with pytest.raises(stockfind.StockNotFound, match="not 120.0") as e:
         stockfind.find_stock(ser, (90, 70), (120, 80))
+    w, h = e.value.measured                  # and it says what it is
+    assert abs(w - 100) < 0.2 and abs(h - 80) < 0.2
 
 
 def test_a_click_off_the_stock_says_so():
