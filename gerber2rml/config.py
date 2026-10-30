@@ -99,6 +99,58 @@ class CutoutJob:
     travel_z: float = 2.0
 
 
+# What a job field may hold, whoever set it. The inspector clamps what is
+# typed; a setup file someone else wrote is not typed, so it is checked here.
+# Generous on purpose - these catch a value that would hurt the machine
+# (a rapid below the surface, a 3 mm trace plunge, NaN), not taste.
+LIMITS = {
+    "bit_diameter": (0.05, 6.0), "cut_depth": (0.01, 3.0),
+    "total_depth": (0.05, 12.0), "offsets": (1, 20), "stepover": (0.05, 1.0),
+    "xy_feed": (0.1, 60.0), "plunge_feed": (0.1, 30.0),
+    "travel_z": (0.2, 20.0), "tip_diameter": (0.01, 2.0),
+    "included_angle": (5.0, 120.0), "target_width": (0.01, 5.0),
+    "peck_retract": (0.0, 5.0), "tabs": (0, 20), "tab_width": (0.0, 10.0),
+}
+CHOICES = {"tool_type": ("flat", "vbit")}
+
+
+def checked_job(job, values):
+    """``job`` with every acceptable field of ``values`` applied, and the
+    names of the fields that were refused (unknown, wrong type, out of range,
+    not finite). Nothing out of range is ever kept - not even clamped,
+    because a clamped value is a value nobody chose."""
+    from dataclasses import fields, replace
+    known = {f.name: f for f in fields(job)}
+    ok, refused = {}, []
+    for k, v in (values or {}).items():
+        f = known.get(k)
+        if f is None:
+            refused.append(k)
+            continue
+        cur = getattr(job, k)
+        if isinstance(cur, bool):
+            if isinstance(v, bool):
+                ok[k] = v
+            else:
+                refused.append(k)
+        elif k in CHOICES:
+            (ok.__setitem__(k, v) if v in CHOICES[k] else refused.append(k))
+        elif isinstance(cur, (int, float)):
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                refused.append(k)
+                continue
+            lo, hi = LIMITS.get(k, (-math.inf, math.inf))
+            if not math.isfinite(x) or not lo <= x <= hi or isinstance(v, bool):
+                refused.append(k)
+                continue
+            ok[k] = int(x) if isinstance(cur, int) else x
+        else:
+            refused.append(k)
+    return replace(job, **ok), refused
+
+
 @dataclass
 class BoardConfig:
     thickness: float = 1.6       # mm
