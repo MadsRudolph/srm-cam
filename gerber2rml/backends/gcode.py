@@ -47,7 +47,7 @@ def _c(text) -> str:
     operator chose, or from a setup file someone shared, so this has to hold
     for any text: a newline would end the comment line and start real G-code,
     so every control character becomes a space, and so do ``%`` and ``;``."""
-    s = "".join(" " if (ord(ch) < 32 or ord(ch) == 127 or ch in "%;") else ch
+    s = "".join(" " if (ord(ch) < 32 or ord(ch) == 127 or ch == "%") else ch
                 for ch in str(text))
     return "( " + s.replace("(", "[").replace(")", "]").strip() + " )"
 

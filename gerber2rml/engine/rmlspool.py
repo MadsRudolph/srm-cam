@@ -17,8 +17,11 @@ A printer is anything with ``send(data, name)``, ``pending()`` and
 (:mod:`gerber2rml.engine.simmachine`) supplies a fake.
 """
 import ctypes
-import sys
 from ctypes import wintypes
+
+from gerber2rml.platform import _is_windows
+
+WINDOWS = _is_windows()
 
 PRINTER_ENUM_LOCAL = 0x2
 PRINTER_ENUM_CONNECTIONS = 0x4
@@ -30,7 +33,7 @@ class SpoolError(RuntimeError):
     pass
 
 
-if sys.platform == "win32":
+if WINDOWS:
     _ws = ctypes.WinDLL("winspool.drv", use_last_error=True)
 
     class DOC_INFO_1W(ctypes.Structure):
@@ -65,13 +68,13 @@ if sys.platform == "win32":
 
 
 def _err(what):
-    code = ctypes.get_last_error() if sys.platform == "win32" else 0
+    code = ctypes.get_last_error() if WINDOWS else 0
     return SpoolError(f"{what} failed (Windows error {code})")
 
 
 def list_printers():
     """Names of the printers this user can see, or [] off Windows."""
-    if sys.platform != "win32":
+    if not WINDOWS:
         return []
     flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
     need, got = wintypes.DWORD(0), wintypes.DWORD(0)

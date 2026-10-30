@@ -54,6 +54,10 @@ class Machine:
         self.spindle = 0
         self.halt = threading.Event()
         self.moving = False
+        self.lines = []                  # [(faces, [(bu, bv), ...])] as cut
+        self._line = None
+        self.version = 0                 # bumps on every change worth redrawing
+        self.found = None                # the stock as the probe found it
 
     # -- geometry ------------------------------------------------------------
     def to_stock(self, x, y):
@@ -118,11 +122,41 @@ class Machine:
         bu, bv = self._board(u, v)
         self.cuts.setdefault((int(bu // 200), int(bv // 200)), []).append(
             (bu, bv, BIT_R, faces))
+        if self._line is not None and self._line[0] == faces:
+            self._line[1].append((bu, bv))
+        else:
+            self._line = (faces, [(bu, bv)])
+            self.lines.append(self._line)
+        self.version += 1
+
+    def to_machine(self, u, v):
+        """Stock-from-above (u, v) um -> machine (x, y) um."""
+        c, s = math.cos(self.angle), math.sin(self.angle)
+        return (self.corner[0] + u * c - v * s, self.corner[1] + u * s + v * c)
+
+    def view(self):
+        """Everything the stage draws, in machine mm (see Stage.set_sim)."""
+        with self.lock:
+            def mm(bu, bv):
+                u = self.w - bu if self.face else bu
+                x, y = self.to_machine(u, bv)
+                return (x / 1000.0, y / 1000.0)
+            cuts, under = [], []
+            for faces, pts in self.lines:
+                line = [mm(*p) for p in pts]
+                (cuts if self.face in faces else under).append(line)
+            stock = [tuple(c / 1000.0 for c in self.to_machine(u, v))
+                     for u, v in ((0, 0), (self.w, 0), (self.w, self.h),
+                                  (0, self.h))]
+            return {"stock": stock, "cuts": cuts, "under": under,
+                    "width": BIT_R * 2 / 1000.0, "found": self.found}
 
     def flip(self, shift=(450, -300), turn_deg=0.35):
         """Turn the stock over left-right and put it back slightly off."""
         with self.lock:
             self.face ^= 1
+            self._line = None
+            self.version += 1
             self.corner[0] += shift[0]
             self.corner[1] += shift[1]
             self.angle += math.radians(turn_deg)
@@ -142,8 +176,11 @@ class Machine:
             p = (x0 + (x - x0) * t, y0 + (y - y0) * t, z0 + (z - z0) * t)
             with self.lock:
                 self.pos = [int(p[0]), int(p[1]), int(p[2])]
+                n = self.version
                 if self.spindle:
                     self.record_cut(*self.pos)
+                if self.version == n:
+                    self._line = None
             if dt > 0.0005:
                 time.sleep(dt)
         return True
