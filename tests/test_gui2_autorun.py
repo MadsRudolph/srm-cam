@@ -53,6 +53,9 @@ def test_run_it_all_cuts_a_single_sided_board_on_the_simulator(win, qt_app):
     xs = [p[0] for line in view["cuts"] for p in line]
     ys = [p[1] for line in view["cuts"] for p in line]
     assert min(xs) > 41.3 and min(ys) > 27.8
+    # The design on the stage is turned with the stock, like the cuts.
+    import math
+    assert abs(math.degrees(win._stock_turn.theta) - 1.2) < 0.05
     # And the link is back, for the next thing the operator does.
     assert _wait(qt_app, win.link.is_connected, 10)
 
