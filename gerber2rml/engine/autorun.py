@@ -105,6 +105,15 @@ class Events:
         """Block until the board has been flipped. False cancels the run."""
         return True
 
+    def level(self, side, rows, nx, ny):
+        """A face was probed: ``rows`` = [(x, y, dz)] in machine mm."""
+
+    def fit(self, nominal, measured, t):
+        """The fiducials were found and fitted."""
+
+    def job(self, key, label, rml):
+        """A job is about to be sent: its program, exactly as sent."""
+
 
 def about(cx, cy, deg):
     """The rotation by ``deg`` about (cx, cy), as a :class:`Transform`."""
@@ -119,7 +128,7 @@ class AutoRun:
     def __init__(self, ser, printer, source, events, *, click_mm, stock_mm,
                  double, bit_mm=0.8, margin_mm=3.0, rpm=None,
                  should_abort=None, should_pause=None, dry_run=False,
-                 runner_opts=None):
+                 runner_opts=None, level=True):
         self.ser, self.printer = ser, printer
         self.src, self.ev = source, events
         self.click, self.size = click_mm, stock_mm
@@ -129,6 +138,7 @@ class AutoRun:
         self.should_pause = should_pause
         self.dry_run = dry_run
         self.runner_opts = runner_opts or {}
+        self.do_level = level
         self.pose = self.pose_top = None
         self.rotation = None
         self.fit = None
@@ -200,6 +210,9 @@ class AutoRun:
 
     # -- the surface -----------------------------------------------------------
     def _level(self, key, side, t):
+        if not self.do_level:
+            return self._guard(key, lambda: self._flat(side))
+
         def go():
             x0, y0, x1, y1 = self.src.area(side)
             nx, ny = LEVEL_GRID
@@ -252,8 +265,18 @@ class AutoRun:
                                 "firmware must be v4 (Machine ▸ Flash).")
             self.ev.note("Surface probed: %.2f mm from flat. Origin set."
                          % spread)
+            self.ev.level(side, rows, nx, ny)
             return HeightMap.from_points(rows, nx, ny)
         return self._guard(key, go)
+
+    def _flat(self, side):
+        """No levelling: Z zero on the copper the stock finder touched."""
+        pose = self.pose_top if side == "top" else self.pose
+        if spi_probe.set_origin(self.ser, 0, 0, int(pose.z * 1000)) is None:
+            raise RunFailed("the machine did not take the origin - the "
+                            "firmware must be v4 (Machine ▸ Flash).")
+        self.ev.note("Not levelling: Z zero is the copper at the clicked spot.")
+        return None
 
     # -- the fiducials ---------------------------------------------------------
     def _fiducials(self):
@@ -280,6 +303,7 @@ class AutoRun:
                                 "Nothing on the top side was cut." % worst)
             self.fit = t
             self.src.set_top_fit(t)
+            self.ev.fit(top, measured, t)
             self.ev.note("Fiducials fit to within %.3f mm." % worst)
             return t
         return self._guard("fiducials", go)
@@ -330,6 +354,7 @@ class AutoRun:
             rml = render(paths, xy_feed=xy, plunge_feed=plunge,
                          spindle=not self.dry_run, rpm=self.rpm)
             self.ev.note("%s…" % label)
+            self.ev.job(key, label, rml)
             JobRunner(self.ser, self.printer, self.should_abort,
                       self.should_pause, self.ev.note,
                       **self.runner_opts).run(rml, label)

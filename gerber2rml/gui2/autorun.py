@@ -17,7 +17,7 @@ import threading
 
 from PySide6.QtCore import QObject, Qt, Signal, QTimer
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
-                               QDoubleSpinBox)
+                               QDoubleSpinBox, QCheckBox)
 
 from gerber2rml.engine import autorun as ar
 from gerber2rml.engine import simmachine
@@ -147,6 +147,9 @@ class _Events(QObject, ar.Events):
     step_sig = Signal(str, str)
     stock_sig = Signal(object)
     flip_sig = Signal()
+    level_sig = Signal(str, object, int, int)
+    fit_sig = Signal(object, object, object)
+    job_sig = Signal(str, str, str)
 
     def __init__(self):
         super().__init__()
@@ -161,6 +164,15 @@ class _Events(QObject, ar.Events):
 
     def stock(self, pose):
         self.stock_sig.emit(pose)
+
+    def level(self, side, rows, nx, ny):
+        self.level_sig.emit(side, list(rows), nx, ny)
+
+    def fit(self, nominal, measured, t):
+        self.fit_sig.emit(list(nominal), list(measured), t)
+
+    def job(self, key, label, rml):
+        self.job_sig.emit(key, label, rml)
 
     def flip(self):
         self.flipped.clear()
@@ -217,6 +229,15 @@ class AutoRunPage(inspector.Page):
         stock.add(self.sim_lbl)
         self.add(stock)
 
+        self.level_chk = QCheckBox("Probe the surface first (bed levelling)")
+        self.level_chk.setChecked(True)
+        self.level_chk.setToolTip(
+            "A grid of touches over the board, so every cut follows the "
+            "copper's real height. Off: Z zero is the copper at the clicked "
+            "spot, and the board is assumed flat - quicker, fine for a small "
+            "board on a flat bed.")
+        stock.add(self.level_chk)
+
         run = widgets.Section("Run")
         row = QWidget()
         h = QHBoxLayout(row)
@@ -241,6 +262,27 @@ class AutoRunPage(inspector.Page):
         run.add(widgets.hint("STOP on the bar stops the run at any point and "
                              "lifts the bit."))
         self.add(run)
+
+        made = widgets.Section("What the run made")
+        made.add(widgets.hint(
+            "Everything the run measures and sends is kept, to look at the "
+            "same way as when you do it by hand."))
+        self.made_btns = {}
+        for key, text, tip in (
+                ("level", "Height map", "The probed surface: the table, the "
+                 "heatmap on the stage and the 3D view, on the Level page."),
+                ("fit", "Fiducial fit", "Where every fiducial was found after "
+                 "the flip, and how well they agree."),
+                ("sim3d", "Watch a step in 3D", "The selected step's toolpath, "
+                 "played in the 3D view."),
+                ("files", "The job files", "Every program the run sent to the "
+                 "mill, exactly as sent, and the run log.")):
+            b = widgets.button(text, tip=tip,
+                               on=lambda _c=False, k=key: self._show(k))
+            b.setEnabled(key == "sim3d")
+            self.made_btns[key] = b
+            made.add(b)
+        self.add(made)
         self.finish()
 
         self._sim_timer = QTimer(self)
@@ -392,12 +434,17 @@ class AutoRunPage(inspector.Page):
         ev.step_sig.connect(self._set_row)
         ev.stock_sig.connect(self._on_stock)
         ev.flip_sig.connect(self._on_flip)
+        ev.level_sig.connect(self._on_level)
+        ev.fit_sig.connect(self._on_fit)
+        ev.job_sig.connect(self._on_job)
+        self._new_run_dir()
         src = WindowSource(ctl, self._gui)
         self.start_btn.setEnabled(False)
         self._last_port = port
         self._measured = None
         click = self._click
         bit = ctl.state.drill.bit_diameter
+        level = self.level_chk.isChecked()
 
         def work():
             from gerber2rml.engine import spi_probe
@@ -408,7 +455,8 @@ class AutoRunPage(inspector.Page):
                 run = ar.AutoRun(ser, printer, src, ev, click_mm=click,
                                  stock_mm=size, double=ctl._double,
                                  bit_mm=bit, should_abort=link.should_abort,
-                                 should_pause=link.should_pause)
+                                 should_pause=link.should_pause,
+                                 level=level)
                 ok = run.run()
                 msg = "The board is done."
             except Exception as e:
@@ -431,6 +479,73 @@ class AutoRunPage(inspector.Page):
 
     def _on_note(self, text):
         self.status.setText(text)
+        self._log(text)
+
+    # -- what the run made ---------------------------------------------------
+    def _new_run_dir(self):
+        import datetime
+        from pathlib import Path
+        from gerber2rml import platform as plat
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        self.run_dir = (Path(plat.documents_dir()) / "SRM-CAM" / "runs"
+                        / ("%s_%s" % (self.ctl.state.name or "board", stamp)))
+        try:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            self.run_dir = None
+        self._jobs_sent = 0
+        self.made_btns["files"].setEnabled(self.run_dir is not None)
+
+    def _log(self, text):
+        if getattr(self, "run_dir", None) is None:
+            return
+        import datetime
+        try:
+            with open(self.run_dir / "run.log", "a", encoding="utf-8") as f:
+                f.write("%s  %s\n" % (datetime.datetime.now().strftime(
+                    "%H:%M:%S"), text))
+        except OSError:
+            pass
+
+    def _on_level(self, side, rows, nx, ny):
+        self.ctl.level_page.adopt(side, rows, nx, ny)
+        self.made_btns["level"].setEnabled(True)
+        self._log("%s surface: %d points, %.3f mm from flat" % (
+            side, len(rows), max(r[2] for r in rows) - min(r[2] for r in rows)))
+
+    def _on_fit(self, nominal, measured, t):
+        from gerber2rml.engine.fiducial import residuals
+        self.ctl.set_top_fit(t, measured)
+        self.made_btns["fit"].setEnabled(True)
+        res = residuals(t, nominal, measured)
+        for i, (m, r) in enumerate(zip(measured, res), 1):
+            self._log("fiducial %d at %.3f, %.3f - off by %.3f mm"
+                      % (i, m[0], m[1], r))
+
+    def _on_job(self, key, label, rml):
+        if getattr(self, "run_dir", None) is None:
+            return
+        from gerber2rml.naming import clean_name
+        self._jobs_sent += 1
+        name = "%02d_%s.rml" % (self._jobs_sent, clean_name(key))
+        try:
+            (self.run_dir / name).write_text(rml, encoding="ascii")
+        except OSError:
+            pass
+        self._log("sent %s (%s)" % (name, label))
+
+    def _show(self, what):
+        ctl = self.ctl
+        if what == "level":
+            ctl.select_step("level")
+        elif what == "fit" and ctl.plan.by_key("fitflip") is not None:
+            ctl.select_step("fitflip")
+        elif what == "sim3d":
+            ctl.action_sim3d()
+        elif what == "files" and getattr(self, "run_dir", None):
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.run_dir)))
 
     def _on_stock(self, pose):
         if simmachine.is_sim(getattr(self, "_last_port", "")):
