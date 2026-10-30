@@ -7,6 +7,7 @@ from gerber2rml.engine.traces import isolate
 from gerber2rml.engine.drill import drill_jobs
 from gerber2rml.engine.cutout import cut_outline
 from gerber2rml.backends import BACKENDS, DEFAULT_MACHINE
+from gerber2rml.naming import clean_name
 
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
@@ -54,6 +55,7 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
     ``stock`` is the copper sheet as ``(x0, y0, x1, y1)`` in the same frame as
     the (placed) toolpaths, when the operator declared one: the cut-out
     leaves out any edge that lies on the sheet's edge."""
+    name = clean_name(name)
     from gerber2rml.engine.leadin import apply_lead_in
     _leadin = apply_lead_in if lead_in else (lambda p: p)
     from gerber2rml.toolpath import offset as offset_paths

@@ -39,6 +39,8 @@ from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
 from gerber2rml.app.panel import PANEL_GAP_MM
 from gerber2rml import platform as plat
+from gerber2rml.naming import clean_name
+from gerber2rml.config import checked_job
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
 from gerber2rml.engine import spoilboard
@@ -128,6 +130,7 @@ from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
 from gerber2rml.gui2.fiducial import FlipFitPage
 from gerber2rml.gui2.boardfit import BoardFitPage
+from gerber2rml.gui2.autorun import AutoRunPage
 from gerber2rml.gui2.sheet import RunSheet, FEEDBACK_URL
 
 USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/"
@@ -373,6 +376,12 @@ class MainWindow(QMainWindow):
         # Where a board made elsewhere (laser-etched, say) really sits, from
         # its measured pads: design -> bed. Only the drill-only step uses it.
         self._board_fit = None
+        self._stock_turn = None       # the job turned to the found stock
+        # Automatic mode: opt-in, remembered between sessions.
+        self._autorun = str(workspace.setting("autorun", "false")).lower() \
+            in ("true", "1")
+        from gerber2rml.gui2 import machine as _machine
+        _machine.SHOW_SIM = self._autorun
         self._layout_base = None       # the layout at offset (0, 0)
         self._layout_key = None        # what that base was built from
         self._layout_placed = None     # ...translated to the placement
@@ -468,6 +477,9 @@ class MainWindow(QMainWindow):
         self.flipfit_page = self.inspector.add_page("fitflip", FlipFitPage(self))
         self.boardfit_page = self.inspector.add_page("fitdrill",
                                                      BoardFitPage(self))
+        self.autorun_page = self.inspector.add_page("autorun",
+                                                    AutoRunPage(self))
+        self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
         h.addWidget(self.inspector)
         v.addWidget(middle, 1)
 
@@ -744,6 +756,15 @@ class MainWindow(QMainWindow):
         self.mtest_act = self._act(m, "Machine test…", self.action_machine_test)
         self.stream_act = self._act(m, "Stream this step over the link "
                                        "(experimental)…", self.action_stream)
+        m.addSeparator()
+        self.autorun_act = self._act(
+            m, "Automatic mode (run it all)", self.action_autorun,
+            checkable=True, checked=self._autorun)
+        self.autorun_act.setToolTip(
+            "Adds a step that finds the stock with the probe, levels, sets "
+            "the origin and cuts the whole board - you only flip it. "
+            "Everything else works by hand exactly as before. Also lists the "
+            "simulated SRM-20 among the ports, to try it with the mill off.")
 
         i = mb.addMenu("&Interface")
         self.tier_group = QActionGroup(self)
@@ -1260,7 +1281,9 @@ class MainWindow(QMainWindow):
                           (getattr(self.bar, "jog_btn", None), "jog"),
                           (getattr(self, "measure_act", None), "measure"),
                           (getattr(getattr(self, "boardfit_page", None),
-                                   "pick_chk", None), "pad")):
+                                   "pick_chk", None), "pad"),
+                          (getattr(getattr(self, "autorun_page", None),
+                                   "pick_btn", None), "stock")):
             if box is not None and mode != owns and box.isChecked():
                 box.blockSignals(True)
                 box.setChecked(False)
@@ -1297,7 +1320,8 @@ class MainWindow(QMainWindow):
                                   registration=self._registration, holes=holes,
                                   align_holes=align, dowels=self.dowel_spec(),
                                   bed_bite=self._bed_bite,
-                                  flip_axis=self.flip_axis())
+                                  flip_axis=self.flip_axis(),
+                                  autorun=self._autorun)
         if self._exported:
             self.plan.apply_estimates(
                 {n: estimate_file_seconds(p) for n, p in self._exported.items()
@@ -1437,6 +1461,10 @@ class MainWindow(QMainWindow):
                     "cleanly.")
                 return
             self.stage.set_busy("")
+            if (self._stock_turn is not None and step.side != "top"
+                    and step.op != "fitdrill"):
+                from gerber2rml.engine.fiducial import apply_to_toolpaths
+                paths = apply_to_toolpaths(paths, self._stock_turn)
             cuts, rapids = toolpath_segments(paths)
             rapids = rapids + traverse_segments(paths)
             if far_paths:
@@ -1632,9 +1660,21 @@ class MainWindow(QMainWindow):
                 # or in the X-ray.
                 self.stage.set_pin_drag(False)
             else:
-                self.stage.set_board(lay.bottom_copper, lay.outline, lay.holes,
-                                     align_holes=lay.align_holes)
-                self.stage.set_pin_drag(self._pins_draggable())
+                # Turned with the stock once the run has found it: the cuts
+                # are, and a design drawn square under them looks skewed.
+                t = self._stock_turn
+                if t is not None:
+                    self.stage.set_board(
+                        self._warp_geom(lay.bottom_copper, t),
+                        self._warp_geom(lay.outline, t),
+                        [(*t.apply(x, y), d) for x, y, d in lay.holes],
+                        align_holes=[(*t.apply(x, y), d)
+                                     for x, y, d in lay.align_holes])
+                    self.stage.set_pin_drag(False)
+                else:
+                    self.stage.set_board(lay.bottom_copper, lay.outline,
+                                         lay.holes, align_holes=lay.align_holes)
+                    self.stage.set_pin_drag(self._pins_draggable())
         elif (step is not None and step.op == "fitdrill"
               and self._board_fit is not None):
             # The board where its pads were measured, not where the design
@@ -1647,6 +1687,14 @@ class MainWindow(QMainWindow):
             self.stage.set_board(self._warp_geom(st.board.copper, t),
                                  self._warp_geom(st.board.outline, t),
                                  warp_holes(st.board.holes, t))
+        elif self._stock_turn is not None:
+            t = self._stock_turn
+            self.stage.set_pin_drag(False)
+            self.stage.set_members([], 0)
+            self.stage.set_board(self._warp_geom(st.board.copper, t),
+                                 self._warp_geom(st.board.outline, t),
+                                 [(*t.apply(x, y), d)
+                                  for x, y, d in st.board.holes])
         else:
             self.stage.set_pin_drag(False)
             self.stage.set_board(st.board.copper, st.board.outline,
@@ -2408,12 +2456,13 @@ class MainWindow(QMainWindow):
         # A setup restore re-applies its own saved fit after this call.
         self._top_fit = None
         self._fid_measured = []
+        self._stock_turn = None
         from gerber2rml.loader import gerber_stem
         self._custom_name = False
         try:
             stem = gerber_stem(Path(folder))
             if stem:
-                self.state.name = stem
+                self.state.name = clean_name(stem)
         except Exception:
             pass
         workspace.remember_dir("gerber", folder)
@@ -2533,7 +2582,7 @@ class MainWindow(QMainWindow):
 
     def action_name(self, text):
         """The operator typed a job name: keep it, whatever boards come and go."""
-        self.state.name = text.strip() or "board"
+        self.state.name = clean_name(text.strip())
         self._custom_name = bool(text.strip())
         self.refresh_plan()
 
@@ -3176,6 +3225,30 @@ class MainWindow(QMainWindow):
 
     def _fit_geom(self, g):
         return self._warp_geom(g, self._top_fit)
+
+    def action_autorun(self, on):
+        """Switch Automatic mode on or off. Off is the app as it always was."""
+        from gerber2rml.gui2 import machine as _machine
+        self._autorun = bool(on)
+        _machine.SHOW_SIM = self._autorun
+        workspace.set_setting("autorun", self._autorun)
+        if self.autorun_act.isChecked() != self._autorun:
+            self.autorun_act.setChecked(self._autorun)
+        if hasattr(self.bar, "refresh_ports"):
+            self.bar.refresh_ports()
+        self.refresh_plan()
+        if self._autorun and self.plan.by_key("autorun") is not None:
+            self.select_step("autorun")
+            self.say("info", "Automatic mode on: 'Run it all' is in the plan. "
+                             "Everything else still works by hand.")
+
+    def set_stock_turn(self, transform):
+        """The turn the autonomous run gave the job to match the stock it
+        found (None: square to the bed). Drawing only - the run applies it
+        to what it cuts itself."""
+        self._stock_turn = transform
+        self._paths_cache = {}
+        self.refresh_preview()
 
     def set_board_fit(self, transform):
         """Adopt (or clear) the fit of a board made elsewhere, and redraw."""
@@ -3887,11 +3960,13 @@ class MainWindow(QMainWindow):
         st.mirror = bool(data.get("mirror", st.mirror))
         for key, attr in (("trace", "trace"), ("drill", "drill"),
                           ("cutout", "cutout")):
-            if key in data:
-                try:
-                    setattr(st, attr, replace(getattr(st, attr), **data[key]))
-                except TypeError:
-                    pass                 # a field this version does not have
+            if isinstance(data.get(key), dict):
+                job, refused = checked_job(getattr(st, attr), data[key])
+                setattr(st, attr, job)
+                if refused:
+                    # Unknown to this version, or a value that would hurt the
+                    # machine: kept out, and said so.
+                    foreign.append("%s: %s" % (key, ", ".join(refused)))
         boards = data.get("boards") or []
         self._double = bool(data.get("double_sided", False))
         if self._double and len(boards) > 1:
@@ -3976,7 +4051,7 @@ class MainWindow(QMainWindow):
         # After load_folder, which names the job from the folder it read: the
         # name saved with the setup is the one the operator chose.
         if data.get("name") and placed:
-            st.name = data["name"]
+            st.name = clean_name(data["name"])
             self._custom_name = True
         # ...and which also cleared the measured flip, so re-apply the saved
         # one here. The AS PLACED views, jog and rework all follow it, so a

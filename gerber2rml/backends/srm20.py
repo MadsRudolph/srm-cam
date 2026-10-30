@@ -21,9 +21,18 @@ def _u(mm: float) -> int:
 
 def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID, spindle: bool = True,
-           header: list[str] | None = None) -> str:
+           header: list[str] | None = None, rpm: int | None = None,
+           safe_start: bool = False) -> str:
     """``spindle=False`` keeps the spindle OFF for the whole program (the
-    dry-run outline, which is watched from close up).
+    dry-run outline, which is watched from close up). ``rpm`` sets the speed
+    with ``!RC`` before the spindle starts; None leaves the machine's own.
+
+    `safe_start` (the automatic run) never starts with a diagonal. The
+    first `Z x,y,z` drives all three axes at once from wherever the bit
+    happens to be, so a bit left low drags across the stock on its way. With
+    it, the program first climbs to the highest Z it uses (`!PZ` sets that
+    as the pen-up height, and `PU` lifts before it travels). Off by default
+    until it is proven on the machine: exported files are unchanged.
 
     ``header`` is accepted and IGNORED. The G-code backend writes the
     per-operation notes there as ``( ... )`` comments; RML-1 has no comment
@@ -31,7 +40,13 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
     parsed as a command. Accepting the argument keeps the two backends
     interchangeable at the call site.
     """
-    out = ["^IN;!MC1;" if spindle else "^IN;!MC0;"]   # init + spindle on/off
+    speed = f"!RC{int(rpm)};" if spindle and rpm else ""
+    out = ["^IN;" + speed + ("!MC1;" if spindle else "!MC0;")]   # init + spindle
+    moves = [m for tp in toolpaths for m in tp]
+    if moves and safe_start:
+        top = max(m.z for m in moves)
+        out.append(f"VS{rapid_feed};!VZ{rapid_feed};")
+        out.append(f"!PZ0,{_u(top)};PU{_u(moves[0].x)},{_u(moves[0].y)};")
     mode = None                  # "cut" | "rapid"
     for tp in toolpaths:
         for m in tp:

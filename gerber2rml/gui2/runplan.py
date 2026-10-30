@@ -289,7 +289,8 @@ FIDUCIAL_FLIP_NOTE = (
 
 
 def build(state, *, double_sided=False, registration="dowel", holes=None,
-          align_holes=None, dowels=None, bed_bite=None, flip_axis="vertical"):
+          align_holes=None, dowels=None, bed_bite=None, flip_axis="vertical",
+          autorun=False):
     """The plan for the job currently in ``state``.
 
     ``holes`` overrides the hole list used to name per-diameter drill files
@@ -315,6 +316,14 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                  op="board"))
     seq.add(Step("checks", "tool", "Check before cutting",
                  detail="Fit, depth, reach, shorts", op="board"))
+    if autorun:
+        # Automatic mode, when it is switched on: everything below still
+        # works by hand, this step just does it all.
+        seq.add(Step("autorun", "tool", "Run it all, automatically",
+                     detail=("Finds the stock, probes, cuts - you only flip"
+                             if double_sided else
+                             "Finds the stock, probes, cuts the whole board"),
+                     op="board"))
 
     # -- the origin, which nothing works without ---------------------------
     # The dry run holds the bit 5 mm above the WORK Z ZERO, so it means nothing

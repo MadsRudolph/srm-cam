@@ -18,6 +18,9 @@ class ProbeError(RuntimeError):
 
 
 def _open_serial(port, baud, timeout):
+    from gerber2rml.engine import simmachine
+    if simmachine.is_sim(port):
+        return simmachine.serial_for(port)
     import serial  # lazy: pyserial only needed when actually probing
     # write_timeout: the bar's STOP writes from the GUI thread, and a
     # blocking write on a wedged port would hang the one control that must
@@ -239,7 +242,8 @@ def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None,
     nothing without it, which is the right failure — slow but correct.
     """
     ser = (serial_factory or _open_serial)(port, baud, 1.0)
-    if startup_wait:
+    from gerber2rml.engine import simmachine
+    if startup_wait and not simmachine.is_sim(port):
         time.sleep(startup_wait)
     try:
         ser.reset_input_buffer()
@@ -379,6 +383,30 @@ def zero_z(ser, timeout=60.0, should_abort=None):
                         int(parts[3]) / 1000.0)
             except ValueError:
                 return None
+    return None
+
+
+def set_origin(ser, x_um, y_um, z_um, timeout=3.0):
+    """v4 ``O x y z``: set the work origin absolutely (microns, machine
+    frame), no motion. Returns the origin the machine reports back, in mm,
+    or None - older firmware, a refused value, or no answer."""
+    parts = _ack(ser, f"O {int(x_um)} {int(y_um)} {int(z_um)}", "O", timeout)
+    if parts and len(parts) >= 4:
+        try:
+            return tuple(int(v) / 1000.0 for v in parts[1:4])
+        except ValueError:
+            return None
+    return None
+
+
+def get_origin(ser, timeout=3.0):
+    """``G`` -> the work origin in mm, or None."""
+    parts = _ack(ser, "G", "G", timeout)
+    if parts and len(parts) >= 4:
+        try:
+            return tuple(int(v) / 1000.0 for v in parts[1:4])
+        except ValueError:
+            return None
     return None
 
 
