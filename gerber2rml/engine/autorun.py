@@ -352,7 +352,8 @@ class AutoRun:
             if hmap is not None:
                 paths = apply_leveling(paths, hmap)
             rml = render(paths, xy_feed=xy, plunge_feed=plunge,
-                         spindle=not self.dry_run, rpm=self.rpm)
+                         spindle=not self.dry_run, rpm=self.rpm,
+                         safe_start=True)
             self.ev.note("%s…" % label)
             self.ev.job(key, label, rml)
             JobRunner(self.ser, self.printer, self.should_abort,

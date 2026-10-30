@@ -21,8 +21,13 @@ def win(qt_app, monkeypatch, tmp_path):
     w = MainWindow()
     w.resize(1400, 900)
     w.load_folder(str(FIXT))
+    w.action_autorun(True)
     yield w
+    w.action_autorun(False)                   # opt-in: leave it as found
     w.link.disconnect_from("test")
+    if w.link._thread is not None:            # end its worker thread
+        w.link._q.put(None)
+        w.link._thread.join(2)
     w.close()
 
 
@@ -121,3 +126,18 @@ def test_the_click_is_armed_shown_and_taken_back(win, qt_app):
     page.pick_btn.setChecked(True)
     win.set_stage_mode("jog")                 # another control takes the stage
     assert not page.pick_btn.isChecked()
+
+def test_automatic_mode_is_off_until_chosen_and_adds_only_its_step(qt_app):
+    from gerber2rml.gui2 import machine
+    w = MainWindow()
+    w.load_folder(str(FIXT))
+    assert not w.autorun_act.isChecked()
+    before = [s.key for s in w.plan.steps]
+    assert "autorun" not in before and not machine.SHOW_SIM
+    w.action_autorun(True)
+    after = [s.key for s in w.plan.steps]
+    assert [k for k in after if k != "autorun"] == before
+    assert machine.SHOW_SIM
+    w.action_autorun(False)
+    assert [s.key for s in w.plan.steps] == before and not machine.SHOW_SIM
+    w.close()
