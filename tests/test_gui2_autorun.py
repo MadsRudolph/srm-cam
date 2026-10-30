@@ -12,7 +12,9 @@ FIXT = Path(__file__).parent / "fixtures" / "mosfet_test"
 
 
 @pytest.fixture
-def win(qt_app):
+def win(qt_app, monkeypatch, tmp_path):
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "documents_dir", lambda *a, **k: tmp_path)
     # The fixture board is 104 mm square: a 150 x 120 sheet holds it.
     sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=1.2,
                size=(150000, 120000))
@@ -53,6 +55,11 @@ def test_run_it_all_cuts_a_single_sided_board_on_the_simulator(win, qt_app):
     xs = [p[0] for line in view["cuts"] for p in line]
     ys = [p[1] for line in view["cuts"] for p in line]
     assert min(xs) > 41.3 and min(ys) > 27.8
+    # Everything it measured and sent can be looked at afterwards.
+    assert len(win.level_page.points(side="bottom")) == 12
+    assert win.level_page.height_map(side="bottom") is not None
+    sent = sorted(p.name for p in page.run_dir.glob("*.rml"))
+    assert len(sent) == 3 and (page.run_dir / "run.log").exists()
     # The design on the stage is turned with the stock, like the cuts.
     import math
     assert abs(math.degrees(win._stock_turn.theta) - 1.2) < 0.05
@@ -95,6 +102,8 @@ def test_run_it_all_flips_and_fits_a_double_sided_board(win, qt_app):
     assert _wait(qt_app, lambda: bool(done), 180), "the run never finished"
     assert done[0][0], done[0][1]
     assert win._top_fit is not None
+    assert sum(m is not None for m in win._fid_measured) == 4
+    assert win.level_page.points(side="top")
     assert sm.machine().face == 1
 
 def test_the_click_is_armed_shown_and_taken_back(win, qt_app):

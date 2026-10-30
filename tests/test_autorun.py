@@ -145,3 +145,12 @@ def test_a_flip_that_is_cancelled_stops_the_run():
     with pytest.raises(RunStopped):
         run.run()
     assert ("top_traces", "running") not in log.steps
+
+
+def test_levelling_can_be_left_out():
+    m, ser, board, log, run = _run(False, level=False)
+    probed = []
+    log.level = lambda *a: probed.append(a)
+    assert run.run() is True
+    assert not probed
+    assert ("level", "done") in log.steps

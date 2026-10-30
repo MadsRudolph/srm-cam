@@ -684,6 +684,20 @@ class LevelPage(inspector.Page):
         self._advise()
         self._draw_mesh()
 
+    def adopt(self, side, rows, nx, ny):
+        """Take a face's map probed elsewhere - by the autonomous run - so
+        it can be looked at here like one probed from this page: the table,
+        the heatmap, the 3D view, and saved with the setup."""
+        data = {"nx": int(nx), "ny": int(ny), "apply": True, "show": True,
+                "rows": [["%.3f" % x, "%.3f" % y, "%.4f" % z]
+                         for x, y, z in rows]}
+        if side != self._side:
+            self._maps[self._side] = self._table_state()
+            self._side = side
+            self.side_switch.set_current(side)
+        self._maps[side] = data
+        self._load_table(data)
+
     def is_active(self):
         return self.height_map() is not None
 
