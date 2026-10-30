@@ -313,6 +313,10 @@ class AutoRunPage(inspector.Page):
             self.sim_lbl.setText(
                 "Simulator: the stock is %.0f × %.0f mm, about X %.0f, Y %.0f "
                 "- click near there." % (m.w / 1000, m.h / 1000, cx, cy))
+            if self._thread is None:
+                # Its size is known here; the operator still has to click.
+                self.w_spin.setValue(m.w / 1000.0)
+                self.h_spin.setValue(m.h / 1000.0)
             self._sim_timer.start()
         else:
             self.sim_lbl.setText("")
@@ -368,6 +372,7 @@ class AutoRunPage(inspector.Page):
         src = WindowSource(ctl, self._gui)
         self.start_btn.setEnabled(False)
         self._last_port = port
+        self._measured = None
         click = self._click
         bit = ctl.state.drill.bit_diameter
 
@@ -385,6 +390,7 @@ class AutoRunPage(inspector.Page):
                 msg = "The board is done."
             except Exception as e:
                 msg = str(e) or e.__class__.__name__
+                self._measured = getattr(e, "measured", None)
             finally:
                 try:
                     if ser is not None:
@@ -431,6 +437,9 @@ class AutoRunPage(inspector.Page):
             self._events.go_on = False
             self._events.flipped.set()
         self.status.setText(msg)
+        if getattr(self, "_measured", None):
+            self.w_spin.setValue(round(self._measured[0], 1))
+            self.h_spin.setValue(round(self._measured[1], 1))
         self.ctl.say("ok" if ok else "fail",
                      msg if ok else "The run stopped: " + msg)
         link = self.ctl.link

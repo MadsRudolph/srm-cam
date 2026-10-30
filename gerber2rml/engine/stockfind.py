@@ -219,8 +219,36 @@ def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
                             "lying against the stock?" % skew)
     pose = StockPose(lx / 1000.0, ly / 1000.0, angle, w, h, surface / 1000.0)
     note("Checking the size…")
-    _check_size(ser, pose, should_abort)
+    try:
+        _check_size(ser, pose, should_abort)
+    except StockNotFound:
+        note("That is not the size typed - measuring the stock…")
+        mw, mh = measure_size(ser, pose, (cx, cy), surface, r, span,
+                              should_abort)
+        e = StockNotFound(
+            "the stock measures %.1f × %.1f mm, not %.1f × %.1f. The size "
+            "has been filled in - check it and press Start again."
+            % (mw, mh, w, h))
+        e.measured = (mw, mh)
+        raise e
     return pose
+
+
+def measure_size(ser, pose, click_um, surface_um, r_um, span_um,
+                 should_abort=None):
+    """The stock's real (w, h) mm: from the clicked spot, walk along the
+    stock's own axes to its far edges."""
+    a = math.radians(pose.angle)
+    ux, uy = math.cos(a), math.sin(a)
+    vx, vy = -math.sin(a), math.cos(a)
+    cx, cy = click_um
+    dx, dy = cx - pose.x * 1000, cy - pose.y * 1000
+    u0, v0 = dx * ux + dy * uy, dx * vx + dy * vy
+    reference_at(ser, int(cx), int(cy), should_abort, surface_um)
+    du = find_edge(ser, cx, cy, ux, uy, span_um, should_abort, surface_um)
+    reference_at(ser, int(cx), int(cy), should_abort, surface_um)
+    dv = find_edge(ser, cx, cy, vx, vy, span_um, should_abort, surface_um)
+    return ((u0 + du - r_um) / 1000.0, (v0 + dv - r_um) / 1000.0)
 
 
 def _check_size(ser, pose, should_abort):
