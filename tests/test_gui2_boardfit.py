@@ -60,6 +60,22 @@ def test_measured_pads_fit_and_the_file_lands_on_them(win, tmp_path):
         assert any(math.dist(c, (mx, my)) <= reach for c in cuts)
 
 
+def test_two_pads_are_enough_to_fit_and_write(win, tmp_path):
+    win.select_step("fitdrill")
+    page = win.boardfit_page
+    page.suggest()
+    page.scale_chk.setChecked(True)          # two cannot stretch: ignored
+    t = Transform(math.radians(2.0), 1.0, -3.0, 7.5)
+    holes = win.state.board.holes
+    for r, i in enumerate(page.pads()[:2]):
+        page._set_measured(r, *t.apply(*holes[i][:2]))
+    fit = page.current_fit()
+    assert fit is not None and page.write_btn.isEnabled()
+    assert abs(fit.theta - t.theta) < 1e-4 and fit.scale == 1.0
+    assert "Two pads" in page.verdict.text()
+    assert page.write_to(tmp_path)
+
+
 def test_go_to_it_aims_at_the_measured_centre_once_there_is_one(win):
     win.select_step("fitdrill")
     page = win.boardfit_page
