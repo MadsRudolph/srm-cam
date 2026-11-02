@@ -4,8 +4,36 @@ The app keeps user data in Documents/SRM-CAM (dialog start dirs, the
 tool-wear ledger, ...). SRM_CAM_HOME relocates all of it; pointing it at a
 per-session temp dir means a test run never pollutes real mileage counters
 or creates folders in Documents.
+
+Nor does it reach the desktop: every window is drawn offscreen and no link
+is opened in the browser. See the two notes below.
 """
+import os
+
 import pytest
+
+# Offscreen, unconditionally. A desktop session sets QT_QPA_PLATFORM itself
+# (Hyprland: "wayland;xcb"), and a setdefault left that in force: the whole
+# suite opened and closed real windows on the developer's screen, both
+# interfaces, one test after another. Set at import, before any test module
+# makes its QApplication - the first interface's tests do that at import.
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+
+@pytest.fixture(autouse=True)
+def _no_desktop_urls(monkeypatch):
+    """No test opens a browser tab or a file manager.
+
+    The run sheet's feedback button, the update notice and Reveal all go
+    through QDesktopServices.openUrl, and on a desktop that is the feedback
+    page popping up in the developer's browser mid-run. A test that wants to
+    see the call patches it again itself; that patch comes after this one.
+    """
+    try:
+        from PySide6.QtGui import QDesktopServices
+    except ImportError:
+        return
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda *_a, **_k: True)
 
 
 @pytest.fixture(autouse=True)
@@ -88,8 +116,6 @@ def qt_app():
     it is session-scoped and never torn down. Added for the gui2 tests; the
     older GUI tests make their own at module import and are unaffected.
     """
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     return app
