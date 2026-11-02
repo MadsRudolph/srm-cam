@@ -174,6 +174,23 @@ def confirm_shorts(parent, shorts, cut_width):
     return out["go"]
 
 
+def confirm(parent, headline, body, confirm_label):
+    """Yes or no for a change that is easy to make by accident and easy to
+    undo - Cancel is the default, so a stray Enter changes nothing."""
+    d = Sheet(parent, headline, level="info", width=480)
+    d.say(body)
+    out = {"go": False}
+
+    def go():
+        out["go"] = True
+        d.accept()
+
+    d.act("Cancel", on=d.reject, default=True)
+    d.act(confirm_label, kind="primary", on=go)
+    d.exec()
+    return out["go"]
+
+
 def confirm_irreversible(parent, headline, body, confirm_label):
     """For the handful of actions that cannot be undone by trying again.
 

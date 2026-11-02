@@ -22,6 +22,11 @@ def win(qt_app, monkeypatch, tmp_path):
     w.resize(1400, 900)
     w.load_folder(str(FIXT))
     w.action_autorun(True)
+    # These runs find the stock by its edges; the bracket has its own test.
+    w.autorun_page.where.setCurrentIndex(
+        w.autorun_page.where.findData("click"))
+    # Straight through; the check before the cut-out has its own test.
+    w.autorun_page.check_chk.setChecked(False)
     yield w
     w.action_autorun(False)                   # opt-in: leave it as found
     w.link.disconnect_from("test")
@@ -63,7 +68,7 @@ def test_run_it_all_cuts_a_single_sided_board_on_the_simulator(win, qt_app):
     # Everything it measured and sent can be looked at afterwards.
     assert len(win.level_page.points(side="bottom")) == 12
     assert win.level_page.height_map(side="bottom") is not None
-    sent = sorted(p.name for p in page.run_dir.glob("*.rml"))
+    sent = sorted(p.name for p in page.run_dir.glob("*.nc"))
     assert len(sent) == 3 and (page.run_dir / "run.log").exists()
     # The design on the stage is turned with the stock, like the cuts.
     import math
@@ -141,3 +146,151 @@ def test_automatic_mode_is_off_until_chosen_and_adds_only_its_step(qt_app):
     w.action_autorun(False)
     assert [s.key for s in w.plan.steps] == before and not machine.SHOW_SIM
     w.close()
+
+def test_in_the_bracket_any_size_of_stock_needs_one_touch(win, qt_app):
+    # A 150 x 120 sheet pushed into a back-left bracket at (41.3, 147.8):
+    # the outline comes from the bracket and the size, the copper's height
+    # from one touch, and the board is cut on it.
+    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+               size=(150000, 120000))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    assert page.pick_btn.isHidden() and not page.datum_box.isHidden()
+    page.dx_spin.setValue(41.3)
+    page.dy_spin.setValue(147.8)
+    page.corner_box.setCurrentIndex(page.corner_box.findData("back-left"))
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 120), "the run never finished"
+    assert done[0][0], done[0][1]
+    m = sm.machine()
+    xs = [p[0] for line in m.view()["cuts"] for p in line]
+    ys = [p[1] for line in m.view()["cuts"] for p in line]
+    assert xs and min(xs) > 41.3 and min(ys) > 27.8
+    from gerber2rml.gui2 import workspace
+    assert workspace.setting("autorun/datum") == "41.300,147.800,back-left"
+
+
+def test_the_outline_follows_the_size_and_the_bracket(win, qt_app):
+    win.select_step("autorun")
+    page = win.autorun_page
+    qt_app.processEvents()
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.dx_spin.setValue(22.49)
+    page.dy_spin.setValue(129.47)
+    page.corner_box.setCurrentIndex(page.corner_box.findData("back-left"))
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(100)
+    assert win.stock == pytest.approx((22.49, 29.47, 160, 100))
+    page.h_spin.setValue(60)                   # a smaller sheet, same bracket
+    assert win.stock == pytest.approx((22.49, 69.47, 160, 60))
+
+
+def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
+        win, qt_app):
+    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+               size=(150000, 120000))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.dx_spin.setValue(41.3)
+    page.dy_spin.setValue(147.8)
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    page.check_chk.setChecked(True)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)
+    page.deeper_spin.setValue(0.05)
+    page.again_btn.click()                     # traces once more, deeper
+    assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)
+    assert "0.05 mm deeper" in page.check_lbl.text()
+    page.cut_btn.click()
+    assert _wait(qt_app, lambda: bool(done), 60), "the run never finished"
+    assert done[0][0], done[0][1]
+    sent = sorted(p.name for p in page.run_dir.glob("*.nc"))
+    assert len(sent) == 4                      # drill, traces x2, cut-out
+    assert not (page.run_dir / "height_map_bottom.csv").exists()
+
+
+def test_start_at_lists_the_jobs(win, qt_app):
+    win.select_step("autorun")
+    page = win.autorun_page
+    page._fill_rows()
+    keys = [page.start_box.itemData(i) for i in range(page.start_box.count())]
+    assert keys[0] is None and "cutout_run" in keys and "traces_run" in keys
+
+
+def test_a_board_placed_on_the_stock_stays_where_it_was_put(win, qt_app):
+    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+               size=(150000, 120000))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.dx_spin.setValue(41.3)
+    page.dy_spin.setValue(147.8)
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    qt_app.processEvents()
+    # Put the board in the stock's back-left corner, 4 mm in.
+    b = win.work_bounds()
+    st = win.state
+    win.action_place(st.place_x + 41.3 + 4 - b[0],
+                     st.place_y + 147.8 - 4 - b[3])
+    before = win.work_bounds()
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 120), "the run never finished"
+    assert done[0][0], done[0][1]
+    after = win.work_bounds()
+    assert after == pytest.approx(before, abs=0.01)
+
+
+def test_at_the_check_a_box_recuts_only_the_traces_inside_it(win, qt_app):
+    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+               size=(150000, 120000))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.dx_spin.setValue(41.3)
+    page.dy_spin.setValue(147.8)
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    page.check_chk.setChecked(True)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)
+    page.box_btn.setChecked(True)
+    assert win.stage.mode == "box"
+    b = win.work_bounds()
+    cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    win._on_region(cx - 10, cy - 10, cx + 10, cy + 10)   # as a drag would
+    assert page.again_btn.text() == "Recut the 1 box"
+    assert not win.rework_page._regions                   # not Rework's
+    page.again_btn.click()
+    assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)
+    page.cut_btn.click()
+    assert _wait(qt_app, lambda: bool(done), 60), "the run never finished"
+    assert done[0][0], done[0][1]
+    files = sorted(page.run_dir.glob("*.nc"))
+    full, redo = files[1].read_text(), files[2].read_text()
+    assert len(redo) < len(full) / 2                       # only the box

@@ -163,3 +163,74 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
         "%",
     ]
     return "\n".join(out) + "\n"
+
+
+def render_incremental(toolpaths: list[list[Move]], xy_feed: float,
+                       plunge_feed: float, z_surface: float,
+                       spindle: bool = True, spinup_s: float = 2.0,
+                       name: str = "") -> tuple[str, tuple[float, float]]:
+    """The automatic run's program: no work origin anywhere.
+
+    Toolpaths are in machine XY (mm) with Z relative to the copper, and
+    ``z_surface`` is that copper's machine Z (the top is 0, down is negative).
+    On the SRM-20 neither ``G92`` nor ``G10`` sets an origin a program can
+    rely on (measured 2026-11-02, scripts/autorun_lab.py), and the one that is
+    there, G54, belongs to whoever ran the machine last. So the program
+    starts from two known points instead: ``G91 G28 Z0.`` puts Z at machine
+    0, and one ``G90 G54 G00`` puts XY at the first point - G54 XY is
+    machine (0, 0) on this machine, and the run checks that before it cuts.
+    Everything after is incremental. Each step is the difference of two
+    absolute positions rounded to whole microns, so the steps add up exactly
+    and nothing drifts over thousands of moves.
+
+    Returns ``(program, end_xy_mm)``; the program ends at the top, at end_xy.
+    """
+    moves = [m for tp in toolpaths for m in tp]
+    xy_fpm, plunge_fpm = xy_feed * 60.0, plunge_feed * 60.0
+    out = ["%", "O0001", _c("gerber2rml - SRM-20 NC, automatic run"),
+           _c(name or "job"), "G90 G17", "G21", "G91", "G28 Z0."]
+    if not moves:
+        return "\n".join(out + ["M30", "%"]) + "\n", (0.0, 0.0)
+
+    def um(v):
+        return int(round(v * 1000))
+
+    def mm(v):
+        return _f(v / 1000.0)
+
+    x0, y0 = um(moves[0].x), um(moves[0].y)
+    out += ["G90", "G54", f"G0 X{mm(x0)} Y{mm(y0)}"]
+    if spindle:
+        out += ["M3", f"G04 X{_f(spinup_s)}"]
+    else:
+        out.append(_c("DRY RUN - spindle stays OFF, nothing is cut"))
+    out.append("G91")
+    cx, cy, cz = x0, y0, 0
+    feed = None
+    zs = um(z_surface)
+    for m in moves:
+        tx, ty, tz = um(m.x), um(m.y), min(0, zs + um(m.z))
+        dx, dy, dz = tx - cx, ty - cy, tz - cz
+        if not (dx or dy or dz):
+            continue
+        if m.rapid:
+            # Up first, then across, then down: never a diagonal rapid.
+            if dz > 0:
+                out.append(f"G0 Z{mm(dz)}")
+            if dx or dy:
+                out.append(f"G0 X{mm(dx)} Y{mm(dy)}")
+            if dz < 0:
+                out.append(f"G0 Z{mm(dz)}")
+        else:
+            plunge = not (dx or dy)
+            want = plunge_fpm if plunge or dz < -0.05 * math.hypot(dx, dy) \
+                else xy_fpm
+            line = (f"G1 Z{mm(dz)}" if plunge else
+                    f"G1 X{mm(dx)} Y{mm(dy)} Z{mm(dz)}")
+            if feed is None or abs(feed - want) > EPS:
+                line += f" F{_f(want)}"
+                feed = want
+            out.append(line)
+        cx, cy, cz = tx, ty, tz
+    out += ["G28 Z0.", "M5", "G90", "M30", "%"]
+    return "\n".join(out) + "\n", (cx / 1000.0, cy / 1000.0)

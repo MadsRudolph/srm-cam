@@ -16,9 +16,20 @@ where it is. From there:
    over the bed, nothing plunges. The reference is re-taken as the walk goes,
    because a bowed sheet drifts out of the test's 0.2 mm window.
 3. **The corner and the size.** The two lines cross at the front-left
-   corner. The far corners are then checked: just inside them must be
-   copper, just outside must not, or the stock is not the size the operator
-   typed and the run stops there.
+   corner. Then copper is checked just inside the right and back edges; if
+   it is not there, the stock is smaller than typed and the run stops.
+
+**Nothing on the bed is sensed but copper.** A clamp, a fixture bracket or
+the probe clip's tape is invisible to the probe, and the edge walk travels
+only 0.4 mm above the copper - so it must never be sent where one stands:
+
+* every move between probe spots goes up first - ``TRAVEL_UM`` above the
+  copper once it is known (clears the fixture's knobs), the top before;
+* a walk goes no further than the stock could reach (its typed size), and on
+  a fresh stock stops at the first spot with no copper - at most one 2 mm
+  step past the edge;
+* nothing is probed outside the stock except those walks, and ``rows``
+  places them on edges that are clear (see :func:`find_stock`).
 
 The bed must not conduct (tape hold, the default) and the clip must be on
 the stock's copper - otherwise there is no edge to find, and the walk says so.
@@ -35,7 +46,11 @@ Z_LIMIT_UM = -58000          # the deepest the head may go looking (Z travel)
 MARCH_UM = 2000
 TOL_UM = 50
 REREF_UM = 20000
-CHECK_UM = 1500              # how far inside/outside the far corners to test
+CHECK_UM = 5000              # how far inside the far edges copper is checked
+TRAVEL_UM = 10000            # lift above the copper between spots; the jog adds
+                             # 5 more: 15 mm clears the DTU fixture knobs
+HINT_ABOVE_UM = 5000         # a remembered surface: drop fast to this far above it,
+                             # inside the probe's 6 mm reach, so one probe finds it
 
 
 @dataclass
@@ -70,11 +85,39 @@ def _cmd(ser, line, should_abort, timeout=120.0):
     return reply
 
 
-def seek_surface(ser, x_um, y_um, should_abort=None, note=None):
-    """Go to (x, y) and find the copper below it. Returns its machine Z (um)."""
-    note = note or (lambda _m: None)
+def travel(ser, x_um, y_um, should_abort=None, surface_um=None):
+    """Go to (x, y) over everything: up ``TRAVEL_UM`` above the copper (or to
+    the top of Z while the copper is unknown), then across. A jog alone lifts
+    only 5 mm, which a clamp knob can be taller than."""
+    pos = spi_probe.query_position(ser)
+    if pos is None:
+        raise ProbeError("cannot read where the head is")
+    safe = 0 if surface_um is None else min(0, surface_um + TRAVEL_UM)
+    if pos[2] * 1000 < safe - 500:
+        if spi_probe.timed_move(ser, dz_um=int(safe - pos[2] * 1000),
+                                should_abort=should_abort) is None:
+            raise ProbeError("the head did not lift")
     if not spi_probe.jog_to(ser, x_um, y_um):
-        raise ProbeError("the head did not go to the clicked spot")
+        raise ProbeError("the head did not move")
+
+
+def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
+                 hint_um=None):
+    """Go to (x, y) and find the copper below it. Returns its machine Z (um).
+
+    ``hint_um`` is where the copper was last time (the bed and fixture do
+    not move): the head drops there fast, to ``HINT_ABOVE_UM`` above it,
+    instead of feeling its way down from the top. Stock that much thicker
+    than last time is still found from above; thinner is found by stepping
+    on down as usual."""
+    note = note or (lambda _m: None)
+    travel(ser, x_um, y_um, should_abort)
+    if hint_um is not None:
+        pos = spi_probe.query_position(ser)
+        target = min(0, int(hint_um) + HINT_ABOVE_UM)
+        if pos is not None and pos[2] * 1000 > target + 500:
+            spi_probe.timed_move(ser, dz_um=int(target - pos[2] * 1000),
+                                 should_abort=should_abort)
     while True:
         r = _cmd(ser, "D", should_abort, 5.0)
         if not r or not r.startswith("D "):
@@ -102,8 +145,7 @@ def reference_at(ser, x_um, y_um, should_abort=None, surface_um=None):
     ``surface_um`` is where the copper is known to be roughly: the head is
     brought down to 3 mm above it first, because a probe only reaches 6 mm
     below where it starts and a jog lifts 5 mm."""
-    if not spi_probe.jog_to(ser, x_um, y_um):
-        raise ProbeError("the head did not move")
+    travel(ser, x_um, y_um, should_abort, surface_um)
     if surface_um is not None:
         pos = spi_probe.query_position(ser)
         if pos is not None and pos[2] * 1000 - surface_um > 4000:
@@ -121,9 +163,14 @@ def reference_at(ser, x_um, y_um, should_abort=None, surface_um=None):
 
 
 def find_edge(ser, x0, y0, dx, dy, span_um, should_abort=None,
-              surface_um=None):
+              surface_um=None, holes=False):
     """Walk from (x0, y0) - on copper - along (dx, dy) to the edge of the
-    copper. Returns the distance (um) to it, bisected to ``TOL_UM``."""
+    copper. Returns the distance (um) to it, bisected to ``TOL_UM``.
+
+    ``holes``: the stock was drilled already (the flipped side), so a spot
+    with no copper may be a hole, not the edge - look 2 and 4 mm further
+    on. Off for a fresh stock: those looks are the walk's furthest reach
+    past the edge, where a clamp may stand."""
     def copper(d):
         return hole_test(ser, x0 + dx * d, y0 + dy * d,
                          should_abort=should_abort)
@@ -136,8 +183,9 @@ def find_edge(ser, x0, y0, dx, dy, span_um, should_abort=None,
         if not copper(d):
             # A hole drilled on the first side reads the same as the edge.
             # The edge is no copper from here on; a hole has copper past it.
-            past = next((d + k for k in (MARCH_UM, 2 * MARCH_UM)
-                         if d + k <= span_um and copper(d + k)), None)
+            past = None if not holes else next(
+                (d + k for k in (MARCH_UM, 2 * MARCH_UM)
+                 if d + k <= span_um and copper(d + k)), None)
             if past is None:
                 hi = d
                 break
@@ -147,9 +195,10 @@ def find_edge(ser, x0, y0, dx, dy, span_um, should_abort=None,
         since += d - lo
         lo, d = d, d + MARCH_UM
     if hi is None:
-        raise StockNotFound("copper all the way, %.0f mm - is the bed "
-                            "conducting? The stock must sit on tape or paper."
-                            % (span_um / 1000))
+        raise StockNotFound("still copper %.0f mm on, further than the "
+                            "stock reaches - is the size right, and is the "
+                            "bed conducting? The stock must sit on tape or "
+                            "paper." % (span_um / 1000))
     while hi - lo > TOL_UM:
         mid = (lo + hi) // 2
         if copper(mid):
@@ -176,12 +225,25 @@ def _cross(l1, l2):
 
 
 def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
-               note=None, bed_mm=(203.2, 152.4)):
+               note=None, bed_mm=(203.2, 152.4), rows=None, holes=False,
+               checks=None, measure=False, hint_mm=None):
     """Find the stock the operator clicked on. Returns a :class:`StockPose`.
 
     ``click_mm`` is the clicked machine (x, y); ``size_mm`` the (w, h) the
     operator typed; ``bit_mm`` the flat bit in the collet. Raises
     :class:`StockNotFound` with the reason.
+
+    ``rows`` places the four walks, for a stock held by clamps or a fixture:
+    ``{"corner": (x, y), "left": (v1, v2), "front": (u1, u2),
+    "start": (u, v)}`` - the rough front-left corner (machine mm), the
+    heights up the left edge and the distances along the front edge to cross
+    them at (mm from that corner), and the copper spot the walks start from.
+    Without it the walks start at the click and run left and forward from
+    it. ``checks`` are the (u, v) spots inside the far edges where copper
+    must be (default: 5 mm in from the right and back edges, half-way along).
+    ``measure`` walks to the right and back edges when the size is wrong -
+    off by default, because those walks cross edges nobody chose.
+    ``hint_mm`` is the copper's machine Z last time (see :func:`seek_surface`).
 
     A flat bit touches with its whole end, so it still reads copper until
     its centre is a radius past the edge: every edge is measured that much
@@ -190,25 +252,34 @@ def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
     cx, cy = int(click_mm[0] * 1000), int(click_mm[1] * 1000)
     w, h = size_mm
     r = bit_mm * 500.0
-    surface = seek_surface(ser, cx, cy, should_abort, note)
-    # The two points on an edge set the angle: 50 um of edge error over
-    # 10 mm is 0.3 degrees, over 30 mm a third of that.
-    sp = int(min(30.0, 0.4 * min(w, h)) * 1000)
-    span = int(max(bed_mm) * 1000)
+    if rows:
+        gx, gy = (int(v * 1000) for v in rows["corner"])
+        su, sv = (int(v * 1000) for v in rows["start"])
+        left_at = [(gx + su, gy + int(v * 1000)) for v in rows["left"]]
+        front_at = [(gx + int(u * 1000), gy + sv) for u in rows["front"]]
+        cx, cy = gx + su, gy + sv
+    else:
+        # The two points on an edge set the angle: 50 um of edge error over
+        # 10 mm is 0.3 degrees, over 30 mm a third of that.
+        sp = int(min(30.0, 0.4 * min(w, h)) * 1000)
+        left_at = [(cx, cy), (cx, cy + sp)]
+        front_at = [(cx, cy), (cx + sp, cy)]
+    surface = seek_surface(ser, cx, cy, should_abort, note,
+                           None if hint_mm is None else int(hint_mm * 1000))
     note("Finding the left edge…")
     left = []
-    for oy in (0, sp):
-        reference_at(ser, cx, cy + oy, should_abort, surface)
-        d = find_edge(ser, cx, cy + oy, -1, 0, span, should_abort,
-                      surface) - r
-        left.append((cx - d, cy + oy))
+    for x, y in left_at:
+        reference_at(ser, x, y, should_abort, surface)
+        d = find_edge(ser, x, y, -1, 0, int(w * 1000) + 5000, should_abort,
+                      surface, holes) - r
+        left.append((x - d, y))
     note("Finding the front edge…")
     front = []
-    for ox in (0, sp):
-        reference_at(ser, cx + ox, cy, should_abort, surface)
-        d = find_edge(ser, cx + ox, cy, 0, -1, span, should_abort,
-                      surface) - r
-        front.append((cx + ox, cy - d))
+    for x, y in front_at:
+        reference_at(ser, x, y, should_abort, surface)
+        d = find_edge(ser, x, y, 0, -1, int(h * 1000) + 5000, should_abort,
+                      surface, holes) - r
+        front.append((x, y - d))
     lx, ly = _cross(_line(*left), _line(*front))
     fd = _line(*front)[1]
     angle = math.degrees(math.atan2(fd[1], fd[0]))
@@ -220,11 +291,13 @@ def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
     pose = StockPose(lx / 1000.0, ly / 1000.0, angle, w, h, surface / 1000.0)
     note("Checking the size…")
     try:
-        _check_size(ser, pose, should_abort)
+        _check_size(ser, pose, should_abort, checks)
     except StockNotFound:
+        if not measure:
+            raise
         note("That is not the size typed - measuring the stock…")
-        mw, mh = measure_size(ser, pose, (cx, cy), surface, r, span,
-                              should_abort)
+        mw, mh = measure_size(ser, pose, (cx, cy), surface, r,
+                              int(max(bed_mm) * 1000), should_abort)
         e = StockNotFound(
             "the stock measures %.1f × %.1f mm, not %.1f × %.1f. The size "
             "has been filled in - check it and press Start again."
@@ -232,6 +305,68 @@ def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
         e.measured = (mw, mh)
         raise e
     return pose
+
+
+CORNERS = ("back-left", "front-left", "back-right", "front-right")
+
+
+def datum_outline(datum_mm, corner, size_mm):
+    """The stock's front-left corner (machine mm) when its ``corner`` sits in
+    the bracket at ``datum_mm`` - the same outline :func:`from_datum` uses."""
+    if corner not in CORNERS:
+        raise ValueError("corner must be one of %s" % (CORNERS,))
+    w, h = size_mm
+    dx, dy = datum_mm
+    return (dx if "left" in corner else dx - w,
+            dy if "front" in corner else dy - h)
+
+
+def from_datum(ser, datum_mm, corner, size_mm, should_abort=None, note=None,
+               hint_mm=None):
+    """The stock pushed into a fixed corner bracket: its outline is that
+    corner and the typed size, so only the copper's height is measured - one
+    touch, 15 mm in from the bracket corner (always copper, whatever the
+    size). The bracket holds the stock square to the bed (measured -0.10°
+    on the DTU fixture, 2026-11-02), so the turn is taken as 0.
+
+    ``datum_mm`` is the bracket's inside corner in machine mm, ``corner``
+    which corner of the stock sits in it (:data:`CORNERS`). Returns a
+    :class:`StockPose` (front-left corner, like :func:`find_stock`)."""
+    note = note or (lambda _m: None)
+    w, h = size_mm
+    dx, dy = datum_mm
+    x0, y0 = datum_outline(datum_mm, corner, size_mm)
+    left, front = "left" in corner, "front" in corner
+    inset = min(15.0, w / 2.0, h / 2.0)
+    sx = dx + (inset if left else -inset)
+    sy = dy + (inset if front else -inset)
+    note("Touching the copper at X %.1f, Y %.1f…" % (sx, sy))
+    z = seek_surface(ser, int(sx * 1000), int(sy * 1000), should_abort, note,
+                     None if hint_mm is None else int(hint_mm * 1000))
+    return StockPose(x0, y0, 0.0, w, h, z / 1000.0)
+
+
+def plan(size_mm, rows, checks=None):
+    """Where :func:`find_stock` will go with these ``rows``, if the stock
+    lies where the rows guess: ``[(kind, (x, y), (x2, y2) or None)]`` in
+    machine mm - ``"walk"`` from the start to 3 mm past the edge, ``"spot"``
+    for a straight-down touch. For a rehearsal in the air."""
+    w, h = size_mm
+    gx, gy = rows["corner"]
+    su, sv = rows["start"]
+    out = [("spot", (gx + su, gy + sv), None)]
+    for v in rows["left"]:
+        out.append(("walk", (gx + su, gy + v), (gx - 3, gy + v)))
+    for u in rows["front"]:
+        out.append(("walk", (gx + u, gy + sv), (gx + u, gy - 3)))
+    for u, v in checks or _default_checks(w, h):
+        out.append(("spot", (gx + u, gy + v), None))
+    return out
+
+
+def _default_checks(w, h):
+    c = CHECK_UM / 1000.0
+    return ((w - c, h / 2), (w / 2, h - c))
 
 
 def measure_size(ser, pose, click_um, surface_um, r_um, span_um,
@@ -251,27 +386,19 @@ def measure_size(ser, pose, click_um, surface_um, r_um, span_um,
     return ((u0 + du - r_um) / 1000.0, (v0 + dv - r_um) / 1000.0)
 
 
-def _check_size(ser, pose, should_abort):
-    c = CHECK_UM / 1000.0
-    for u, v, want, what in ((pose.w - c, pose.h / 2, True, "width"),
-                             (pose.w + c, pose.h / 2, False, "width"),
-                             (pose.w / 2, pose.h - c, True, "height"),
-                             (pose.w / 2, pose.h + c, False, "height")):
+def _check_size(ser, pose, should_abort, checks=None):
+    """Copper just inside the far edges, touched straight down (re-referenced
+    there, so a bowed sheet still reads as copper). Never outside the stock:
+    that is where clamps and fixture brackets stand."""
+    for u, v in checks or _default_checks(pose.w, pose.h):
         x, y = pose.to_machine(u, v)
-        if want:
-            # Inside: re-reference there, so a bowed sheet reads as copper.
-            try:
-                reference_at(ser, int(x * 1000), int(y * 1000), should_abort,
-                             int(pose.z * 1000))
-                got = True
-            except ProbeError as e:
-                if str(e) == "stopped":
-                    raise
-                got = False
-        else:
-            got = hole_test(ser, int(x * 1000), int(y * 1000),
-                            should_abort=should_abort)
-        if got != want:
+        try:
+            reference_at(ser, int(x * 1000), int(y * 1000), should_abort,
+                         int(pose.z * 1000))
+        except ProbeError as e:
+            if str(e) == "stopped":
+                raise
             raise StockNotFound(
-                "the stock is not %.1f × %.1f mm - its %s does not match. "
-                "Measure it and type the size again." % (pose.w, pose.h, what))
+                "no copper at %.0f, %.0f mm on the stock - it is not %.1f × "
+                "%.1f mm. Measure it and type the size again."
+                % (u, v, pose.w, pose.h))
