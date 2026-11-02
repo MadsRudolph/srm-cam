@@ -199,7 +199,9 @@ GAP_L = UNIT * 5            # 20 — between sections
 GAP_XL = UNIT * 8           # 32 — between regions
 
 RAIL_W = 316                # the traveller
-INSPECTOR_W = 352           # the inspector
+INSPECTOR_W = 352           # the inspector, at its narrowest
+INSPECTOR_DEFAULT_W = 440   # ...as it opens; drag the splitter for more
+INSPECTOR_MAX_W = 760
 BAR_H = 66                  # the machine bar
 HEADER_H = 56               # the title bar
 RADIUS = 3                  # one radius, small. Rounding everything by 8 px is
