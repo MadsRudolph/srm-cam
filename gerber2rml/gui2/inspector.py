@@ -1360,7 +1360,10 @@ class Inspector(QWidget):
     def __init__(self, ctl, parent=None):
         super().__init__(parent)
         self.setObjectName("panel")
-        self.setFixedWidth(theme.INSPECTOR_W)
+        # Resizable by the splitter beside it (the window keeps the width);
+        # never by its pages, so walking the plan does not jolt the layout.
+        self.setMinimumWidth(theme.INSPECTOR_W)
+        self.setMaximumWidth(theme.INSPECTOR_MAX_W)
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)

@@ -32,7 +32,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl, QEvent
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QStackedWidget, QFileDialog, QApplication,
-                               QInputDialog, QSizePolicy)
+                               QInputDialog, QSizePolicy, QSplitter)
 
 from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments, traverse_segments
@@ -468,9 +468,18 @@ class MainWindow(QMainWindow):
         self.centre = QStackedWidget()
         self.centre.addWidget(self.stage)
         self.centre.addWidget(self.sheet)
-        h.addWidget(self.centre, 1)
+        # The stage and the inspector share a splitter: the inspector's pages
+        # got long (Automatic mode), and a fixed 352 px meant scrolling.
+        self.split = QSplitter(Qt.Horizontal)
+        self.split.setChildrenCollapsible(False)
+        self.split.setHandleWidth(6)
+        # A 1 px rule to look at, 6 px to grab.
+        self.split.setStyleSheet(
+            "QSplitter::handle:horizontal { width: 6px; background: "
+            "transparent; border-left: 1px solid %s; }" % theme.RULE)
+        self.split.addWidget(self.centre)
+        h.addWidget(self.split, 1)
 
-        h.addWidget(widgets.vrule())
         self.inspector = Inspector(self)
         self.level_page = self.inspector.add_page("level", LevelPage(self))
         self.rework_page = self.inspector.add_page("rework", ReworkPage(self))
@@ -480,7 +489,19 @@ class MainWindow(QMainWindow):
         self.autorun_page = self.inspector.add_page("autorun",
                                                     AutoRunPage(self))
         self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
-        h.addWidget(self.inspector)
+        self.split.addWidget(self.inspector)
+        self.split.setStretchFactor(0, 1)
+        self.split.setStretchFactor(1, 0)
+        try:
+            want = int(workspace.setting("ui/inspector_w",
+                                         theme.INSPECTOR_DEFAULT_W))
+        except (TypeError, ValueError):
+            want = theme.INSPECTOR_DEFAULT_W
+        want = max(theme.INSPECTOR_W, min(theme.INSPECTOR_MAX_W, want))
+        self.split.setSizes([10000, want])
+        self.split.splitterMoved.connect(
+            lambda *_: workspace.set_setting("ui/inspector_w",
+                                             self.inspector.width()))
         v.addWidget(middle, 1)
 
         v.addWidget(widgets.rule())
@@ -1283,7 +1304,9 @@ class MainWindow(QMainWindow):
                           (getattr(getattr(self, "boardfit_page", None),
                                    "pick_chk", None), "pad"),
                           (getattr(getattr(self, "autorun_page", None),
-                                   "pick_btn", None), "stock")):
+                                   "pick_btn", None), "stock"),
+                          (getattr(getattr(self, "autorun_page", None),
+                                   "box_btn", None), "box")):
             if box is not None and mode != owns and box.isChecked():
                 box.blockSignals(True)
                 box.setChecked(False)
@@ -1304,7 +1327,7 @@ class MainWindow(QMainWindow):
         if not self.toast.isVisible():
             return
         self.toast.fit_to(max(self.width() - theme.RAIL_W
-                              - theme.INSPECTOR_W - 60, 260))
+                              - self.inspector.width() - 60, 260))
         x = theme.RAIL_W + 24
         y = self.height() - theme.BAR_H - self.toast.height() - 20
         self.toast.move(x, y)
@@ -4354,7 +4377,12 @@ class MainWindow(QMainWindow):
             self.stage.setFocus()
 
     def _on_region(self, x0, y0, x1, y1):
-        self.rework_page.add_region(x0, y0, x1, y1)
+        # The run's check before the cut-out borrows the boxes while it
+        # waits; every other time they are Rework's.
+        if self.autorun_page.box_btn.isChecked():
+            self.autorun_page.add_box(x0, y0, x1, y1)
+        else:
+            self.rework_page.add_region(x0, y0, x1, y1)
 
     def action_help(self):
         d = dialogs.Sheet(self, "How this works", width=620)
