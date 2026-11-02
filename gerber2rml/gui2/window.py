@@ -32,8 +32,11 @@ from PySide6.QtCore import Qt, QTimer, QUrl, QEvent
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QStackedWidget, QFileDialog, QApplication,
-                               QInputDialog, QSizePolicy, QSplitter)
+                               QInputDialog, QSizePolicy, QSplitter, QLineEdit,
+                               QAbstractSpinBox, QTextEdit, QPlainTextEdit,
+                               QAbstractItemView)
 
+from gerber2rml.gui2.jogpad import KEY_DIRECTIONS
 from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
@@ -509,6 +512,8 @@ class MainWindow(QMainWindow):
         self.bar.message.connect(self.say)
         self.bar.jog_mode_changed.connect(
             lambda on: self.set_stage_mode("jog" if on else "place"))
+        if not self.bar.gated:
+            self.bar.pad.xy_requested.connect(self._on_jog_step)
         self.link.position.connect(self._on_machine_position)
         self.link.op_done.connect(self._on_op_done)
         self.link.linked.connect(self._on_linked)
@@ -554,6 +559,8 @@ class MainWindow(QMainWindow):
         # at the focused widget and again as it propagates to its window, and
         # holding the key repeats it; without this the operator gets a row of
         # identical toasts for a single press.
+        if ev.type() == QEvent.KeyPress and self._jog_key(ev):
+            return True
         if ev.type() == QEvent.KeyRelease and ev.key() == Qt.Key_Escape:
             self._esc_down = False
         elif (ev.type() == QEvent.KeyPress and ev.key() == Qt.Key_Escape
@@ -567,6 +574,22 @@ class MainWindow(QMainWindow):
                 # "close this" and the guidance would just be noise.
                 self.bar._stop()
         return super().eventFilter(obj, ev)
+
+    def _jog_key(self, ev):
+        """With Keys lit on the jog pad, the arrows drive the machine wherever
+        the focus is - except in a box being typed in, or under a dialog."""
+        pad = getattr(getattr(self, "bar", None), "pad", None)
+        if pad is None or not pad.keys_on():
+            return False
+        if ev.key() not in KEY_DIRECTIONS:
+            return False
+        if QApplication.activeModalWidget() is not None:
+            return False
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QAbstractSpinBox, QTextEdit,
+                              QPlainTextEdit, QAbstractItemView)):
+            return False
+        return pad.press_key(ev.key(), ev.modifiers())
 
     def _build_header(self):
         head = QWidget()
@@ -1172,7 +1195,7 @@ class MainWindow(QMainWindow):
                        f"it; the job itself is untouched.")
 
     def _on_jog_step(self, dx, dy):
-        """An arrow key over the stage in jog mode: move the head by (dx, dy)
+        """An arrow on the jog pad, or an arrow key: move the head by (dx, dy)
         mm from where it is. Relative, so it is right whatever the overlay
         trim says - unlike a click, which names an absolute point."""
         if not self.link.is_connected():
@@ -1189,11 +1212,16 @@ class MainWindow(QMainWindow):
             self.say("warn", "That step would take the head off the "
                              "machine's travel.")
             return
-        self.link.jog_to(nx, ny)
-        # Advance the local position now, so quick taps add up to one move
-        # to the final spot instead of all reading the same stale XY.
+        # A jog does not lift, so with the bit on the copper it would drag it
+        # sideways: a still 0.8 mm bit does not survive that.
+        if getattr(self.bar, "_touching", False):
+            self.say("warn", "The bit is touching the copper. Raise it first: "
+                             "Page Up.")
+            return
+        self.link.jog_by(dx, dy)
+        # Advance the local position now, so quick taps are checked against
+        # where they are heading, not all against the same stale XY.
         self._last_xyz = (nx, ny, z)
-        self.say("info", f"Jog {dx:+.1f} {dy:+.1f} mm → X{nx:.2f} Y{ny:.2f}.")
 
     def action_trail(self, on):
         self.stage.set_trail_visible(on)
