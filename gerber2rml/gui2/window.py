@@ -137,6 +137,7 @@ from gerber2rml.gui2.fiducial import FlipFitPage
 from gerber2rml.gui2.boardfit import BoardFitPage
 from gerber2rml.gui2.autorun import AutoRunPage
 from gerber2rml.gui2.sheet import RunSheet, FEEDBACK_URL
+from gerber2rml.config import DEFAULT_STOCK_MM
 
 USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/"
 
@@ -402,7 +403,7 @@ class MainWindow(QMainWindow):
         self._drawing = False          # a toolpath is being built right now
         self._redraw_after = False     # ...and a redraw was asked for meanwhile
         self._last_pos = None
-        self.stock = (0.0, 0.0, 100.0, 80.0)
+        self.stock = (0.0, 0.0) + DEFAULT_STOCK_MM
         # Whether the operator has SAID where the copper is. The default
         # sheet above is a placeholder for the picture; nothing that cuts
         # may treat its edges as real until a size or corner has been set.
@@ -500,6 +501,7 @@ class MainWindow(QMainWindow):
         self.autorun_page = self.inspector.add_page("autorun",
                                                     AutoRunPage(self))
         self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
+        self.stage.bracket_moved.connect(self.autorun_page.on_bracket_moved)
         self.split.addWidget(self.inspector)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
@@ -520,8 +522,7 @@ class MainWindow(QMainWindow):
         self.bar.message.connect(self.say)
         self.bar.jog_mode_changed.connect(
             lambda on: self.set_stage_mode("jog" if on else "place"))
-        if not self.bar.gated:
-            self.bar.pad.xy_requested.connect(self._on_jog_step)
+        self.bar.pad.xy_requested.connect(self._on_jog_step)
         self.link.position.connect(self._on_machine_position)
         self.link.op_done.connect(self._on_op_done)
         self.link.linked.connect(self._on_linked)
@@ -908,9 +909,9 @@ class MainWindow(QMainWindow):
             a.setVisible(full)
         self.export_act.setEnabled(full)       # and its Ctrl+E with it
         self.traveller.set_novice(not full)
-        if not self.bar.gated:
-            self.bar.offline_note.setText(_machine.OFFLINE_PRO if full
-                                          else _machine.OFFLINE_NOVICE)
+        self.bar.offline_note.setText(
+            _machine.OFFLINE_SIM_ONLY if self.bar.sim_only
+            else _machine.OFFLINE_PRO if full else _machine.OFFLINE_NOVICE)
         self.autorun_page.sync_tier()
         self._sync_sim_port()
         # The fit and the boxes are Full-tier work; a chip saying "Fit —"
@@ -1191,8 +1192,7 @@ class MainWindow(QMainWindow):
             self.align_act.setChecked(False)
             return
         self._align_armed = True
-        if not getattr(self.bar, "gated", True):
-            self.bar.jog_btn.setChecked(True)
+        self.bar.jog_btn.setChecked(True)
         self.set_stage_mode("jog")
         self.say("info", "Click the design point the bit is physically at — "
                          "the hole it is in, say. Nothing moves.")

@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 
 from gerber2rml.gui2 import theme, widgets
 from gerber2rml.gui2.jogpad import JogPad
-from gerber2rml.engine import spi_probe
+from gerber2rml.engine import simmachine, spi_probe
 from gerber2rml.engine.estimate import format_duration
 from gerber2rml.engine.progress import RunProgress
 from gerber2rml import platform as plat
@@ -57,13 +57,21 @@ SIM_ENTRY = ("SIM", "Simulated SRM-20 - no machine needed")
 # the port list is exactly what it always was.
 SHOW_SIM = False
 
+# Where the real link does not run (platform.capabilities), the simulator is
+# the one machine there is - always listed, in either profile. It has no
+# hardware behind it, so the reason the link is Windows-only - an unverified
+# motion path next to a spinning tool - does not apply to it.
 
-def list_ports():
+
+def list_ports(sim_only=False):
     """``[(device, why), ...]``, most-likely-Arduino first, or [] with a reason.
 
     Returns the reason as the second element so the disconnected state can say
-    something true instead of showing an empty dropdown.
+    something true instead of showing an empty dropdown. ``sim_only`` (a host
+    without the machine link) lists the simulator and nothing else.
     """
+    if sim_only:
+        return [SIM_ENTRY], ""
     try:
         from serial.tools import list_ports as lp
     except ImportError:
@@ -643,6 +651,9 @@ class RunReadout(QWidget):
 OFFLINE_PRO = ("Everything except probing works without the link — export the "
                "files and send them from VPanel.")
 OFFLINE_NOVICE = "Connect the machine to run the board."
+# Where only the simulator can be connected (not Windows).
+OFFLINE_SIM_ONLY = ("The machine link runs on Windows only. Here the port "
+                    "list has the simulated mill, to practise a run on.")
 
 
 class MachineBar(QWidget):
@@ -670,31 +681,12 @@ class MachineBar(QWidget):
                              theme.GAP_S)
         h.setSpacing(theme.GAP_M)
 
-        # Where the link does not run, the bar says so and stops. Not a row of
-        # greyed-out controls: a dead control with no reason is exactly what
-        # this interface refuses to ship, and the honest sentence is short.
-        #
-        # Levelling is not lost with it. A height map is a file - the Level
-        # page loads a probe grid from CSV and exports through it identically -
-        # so the flow is "probe once on the CNC PC, carry the CSV", which is
-        # worth saying here because nobody would guess it.
-        self.gated = not plat.capabilities().machine_link
-        if self.gated:
-            note = QLabel(plat.NO_MACHINE_LINK_NOTE)
-            # Wrapped, or the sentence sets the window's minimum width. A
-            # QLabel that may not wrap reports its whole single line as its
-            # minimum size hint, and a layout's minimum is the sum of its
-            # children's - so 205 unwrapped characters made
-            # MainWindow.minimumSizeHint() 2488 px wide against a 1400 px
-            # default, and the window could not be narrowed below that on a
-            # 1920 px display. Wrapped it is two lines inside BAR_H.
-            note.setWordWrap(True)
-            # "hint" is a real selector in style.py (TEXT_3, small). The name
-            # this used before - "muted" - matched nothing repo-wide, so the
-            # sentence rendered in full-strength body text.
-            note.setObjectName("hint")
-            h.addWidget(note, 1)
-            return
+        # Where the real link does not run (Linux, macOS), the bar is built
+        # all the same, but the only port it will list or open is the
+        # simulator: practising a run needs no hardware, and so none of the
+        # reasons the link is Windows-only. Real serial ports stay out of the
+        # list and are refused if one is asked for anyway.
+        self.sim_only = not plat.capabilities().machine_link
 
         # -- link state --------------------------------------------------
         self.chip = widgets.Chip("Machine offline", "idle")
@@ -723,6 +715,8 @@ class MachineBar(QWidget):
         self.offline_note.setStyleSheet(f"color: {theme.TEXT_3};")
         self.offline_note.setWordWrap(True)
         h.addWidget(self.offline_note, 1)
+        if self.sim_only:
+            self.offline_note.setText(OFFLINE_SIM_ONLY)
 
         # -- live controls (hidden until there is a machine to control) ---
         self.live = QWidget()
@@ -861,42 +855,18 @@ class MachineBar(QWidget):
             act.triggered.connect(lambda _c=False, d=direction: self._jog(d))
             self.addAction(act)
 
-    # -- gated no-ops ------------------------------------------------------
-    # The Machine menu still carries "Rescan the serial ports" and
-    # "Connect / disconnect" (Ctrl+L), and window.py reads current_port() for
-    # the machine test - all three reached straight past the early return above
-    # and raised AttributeError on a gated bar. Gating the menu entries instead
-    # would leave items that silently do nothing, which is the dead control
-    # this interface refuses to ship; a no-op that SAYS WHY puts the
-    # explanation where the user clicked, in the same log line the bar already
-    # owns.
-    def _refused(self):
-        self.message.emit("warn", plat.NO_MACHINE_LINK_NOTE)
-
     def refresh_ports(self):
-        if self.gated:
-            return self._refused()
         return self._refresh_ports()
 
     def current_port(self):
-        """None where the link is gated - every caller already handles it.
-
-        window.py's machine test says "No serial port to test" and stops on a
-        falsy port, so returning None keeps that path honest rather than
-        handing a dialog a port that cannot be opened.
-        """
-        if self.gated:
-            return None
         return self.port_combo.currentData()
 
     def _toggle_connect(self):
-        if self.gated:
-            return self._refused()
         return self._do_toggle_connect()
 
     # -- ports -------------------------------------------------------------
     def _refresh_ports(self):
-        ports, why = list_ports()
+        ports, why = list_ports(self.sim_only)
         self.port_combo.clear()
         for device, chip in ports:
             self.port_combo.addItem(f"{device} · {chip}", device)
@@ -914,6 +884,9 @@ class MachineBar(QWidget):
         else:
             port = self.current_port()
             if not port:
+                return
+            if self.sim_only and not simmachine.is_sim(port):
+                self.message.emit("warn", plat.NO_MACHINE_LINK_NOTE)
                 return
             self.chip.set("Connecting…", "busy")
             self.connect_btn.setEnabled(False)
@@ -980,7 +953,6 @@ class MachineBar(QWidget):
 
     def _stop(self):
         # A stop is not a hold. The button must not claim one is in force.
-        # (Absent on a gated bar, which has no live controls at all.)
         pause = getattr(self, "pause_btn", None)
         if pause is not None:
             pause.setChecked(False)
@@ -991,8 +963,7 @@ class MachineBar(QWidget):
             pad.keys_btn.setChecked(False)
         if self.link.can_stop_something():
             self.link.stop_now()
-            if not self.gated:                # no spindle button on a gated bar
-                self.spindle_btn.setChecked(False)
+            self.spindle_btn.setChecked(False)
             self.message.emit("warn", "STOP sent: move dropped, spindle off. "
                                       "Raise the bit with Page Up before the "
                                       "next move.")
@@ -1050,8 +1021,6 @@ class MachineBar(QWidget):
     def set_held_by_run(self, on):
         """Automatic mode has taken the port. "Offline" and a Connect button
         would be wrong for as long as it has it; STOP still reaches the run."""
-        if self.gated:
-            return
         self.connect_btn.setEnabled(not on)
         self.port_combo.setEnabled(not on)
         if on:

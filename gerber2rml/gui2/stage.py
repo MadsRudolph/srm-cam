@@ -124,6 +124,7 @@ class Stage(QWidget):
     measured = Signal(object)                    # (length, dx, dy) mm, or None
     pad_picked = Signal(float, float)            # clicked a pad to measure, mm
     stock_picked = Signal(float, float)          # clicked roughly on the stock
+    bracket_moved = Signal(float, float)         # bracket dropped: its corner, mm
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -191,6 +192,10 @@ class Stage(QWidget):
         self._pin_drag = False
         self._pin_drag_idx = None
         self._pin_drag_pos = None
+        # The corner bracket; see the bracket section below.
+        self._bracket = None              # (outline, screws, inside, snap)
+        self._bracket_from = None         # where its drag started, mm
+        self._bracket_live = None         # the snapped position while dragging
 
         # cached painter paths (mm space)
         self._p_copper = None
@@ -777,6 +782,8 @@ class Stage(QWidget):
             return
         if self._pin_press(p):
             return
+        if self._bracket_press(p):
+            return
         if self._members:
             # A panel: the press picks the board under the cursor, and only
             # that board moves. A press between boards does nothing rather
@@ -923,6 +930,9 @@ class Stage(QWidget):
         if self._pin_drag_idx is not None:
             self._pin_move(p)
             return
+        if self._bracket_from is not None:
+            self._bracket_move(p)
+            return
         if self._dragging:
             # A drag does NOT move the geometry — it moves where the geometry
             # is drawn, and nothing is regenerated until the mouse comes up.
@@ -938,7 +948,7 @@ class Stage(QWidget):
             self.update()
             return
         self.hovered.emit((p.x(), p.y()))
-        if self._pin_hover(p):
+        if self._pin_hover(p) or self._bracket_hover(p):
             return
         if self.mode == "place":
             over = (self._member_at(p) is not None if self._members
@@ -976,6 +986,9 @@ class Stage(QWidget):
             return
         if self._pin_drag_idx is not None:
             self._pin_release()
+            return
+        if self._bracket_from is not None:
+            self._bracket_release()
             return
         if self._dragging:
             self._dragging = False
@@ -1101,6 +1114,84 @@ class Stage(QWidget):
     # end of the pin-drag section
     # ======================================================================
 
+    # ======================================================================
+    # The corner bracket
+    #
+    # Drawn as the part on the bed: the L and its screws. Like a pin it is
+    # not a mode - a press on it in place mode drags it, any other press does
+    # what it always did. It moves the way the real one does, hole to hole:
+    # ``snap`` turns where the cursor would put its corner into the nearest
+    # position it can be screwed into, and that is what is drawn while it
+    # moves. The drop is one signal, with the corner it was dropped at.
+    # ======================================================================
+    def set_bracket(self, outline, screws=(), inside=None, snap=None):
+        """The bracket's L (machine mm), its screw centres, its inside corner
+        and ``snap(x, y) -> (outline, screws, inside) | None``. ``outline``
+        None takes it off."""
+        self._bracket = (None if outline is None else
+                         (list(outline), list(screws), inside, snap))
+        self._bracket_from = self._bracket_live = None
+        self.update()
+
+    def _bracket_hit(self, p):
+        if self.mode != "place" or not self._bracket or not self._bracket[3]:
+            return False
+        poly = QPolygonF([QPointF(x, y) for x, y in self._bracket[0]])
+        return poly.containsPoint(p, Qt.OddEvenFill)
+
+    def _bracket_press(self, p):
+        if not self._bracket_hit(p):
+            return False
+        self._bracket_from = (p.x(), p.y())
+        self._bracket_live = None
+        self.setCursor(QCursor(Qt.ClosedHandCursor))
+        return True
+
+    def _bracket_target(self, p):
+        """Where the inside corner would go: moved with the cursor."""
+        x0, y0 = self._bracket_from
+        cx, cy = self._bracket[2]
+        return cx + p.x() - x0, cy + p.y() - y0
+
+    def _bracket_move(self, p):
+        self.hovered.emit((p.x(), p.y()))
+        live = self._bracket[3](*self._bracket_target(p))
+        if live != self._bracket_live:
+            self._bracket_live = live
+            self.update()
+
+    def _bracket_release(self):
+        live = self._bracket_live
+        self._bracket_from = self._bracket_live = None
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+        self.update()
+        if live is not None and live[2] != self._bracket[2]:
+            # Drawn there at once; the page saves it and draws it again.
+            self._bracket = (live[0], live[1], live[2], self._bracket[3])
+            self.bracket_moved.emit(*live[2])
+
+    def _bracket_hover(self, p):
+        if not self._bracket_hit(p):
+            return False
+        self.setCursor(QCursor(Qt.OpenHandCursor))
+        return True
+
+    def _paint_bracket(self, p):
+        if not self._bracket:
+            return
+        outline, screws, _inside, _snap = (self._bracket_live + (None,)
+                                           if self._bracket_live
+                                           else self._bracket)
+        pen = QPen(QColor(theme.FIXTURE), 0)
+        pen.setCosmetic(True)
+        pen.setWidthF(1.5 if self._bracket_live else 1.2)
+        p.setPen(pen)
+        p.setBrush(QBrush(theme.alpha(theme.FIXTURE, 0.22)))
+        p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in outline]))
+        p.setBrush(QBrush(QColor(theme.FIXTURE)))
+        for x, y in screws:
+            p.drawEllipse(QPointF(x, y), 2.0, 2.0)
+
     # -- painting ----------------------------------------------------------
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -1182,6 +1273,7 @@ class Stage(QWidget):
         self._paint_photo(p)
         self._paint_stock(p)
         self._paint_screw_grid(p)
+        self._paint_bracket(p)
         self._paint_regions(p)
 
     def _paint_level_mesh(self, p):

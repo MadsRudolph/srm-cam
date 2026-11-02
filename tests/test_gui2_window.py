@@ -876,92 +876,74 @@ def test_reveal_selects_the_file_where_the_file_manager_can(win, tmp_path,
 
 
 # -------------------------------------------------------------- MachineBar
-def test_machine_bar_explains_itself_where_the_link_does_not_run(qt_app, monkeypatch):
-    """Not greyed out with no reason - that is the thing this interface refuses
-    to ship. It names the platform and points at the path that still works."""
+def _sim_only_bar(monkeypatch, show_sim):
     from gerber2rml.gui2 import machine
     from gerber2rml import platform as plat
     monkeypatch.setattr(plat, "capabilities",
                         lambda p=None: plat.Capabilities(machine_link=False))
+    monkeypatch.setattr(machine, "SHOW_SIM", show_sim)
+
+    class _Port:
+        device, hwid = "/dev/ttyACM0", "USB VID:PID=2341:0043"
+    import serial.tools.list_ports as lp
+    monkeypatch.setattr(lp, "comports", lambda: [_Port()])
     bar = machine.MachineBar(machine.MachineLink())
-    text = " ".join(w.text() for w in bar.findChildren(QLabel))
-    assert "Windows" in text
-    assert "height map" in text.lower()
-    assert not hasattr(bar, "connect_btn")
+    bar.said = []
+    bar.message.connect(lambda level, text: bar.said.append((level, text)))
+    return bar
 
 
-def test_machine_bar_is_unchanged_where_the_link_does_run(qt_app, monkeypatch):
-    from gerber2rml.gui2 import machine
-    from gerber2rml import platform as plat
-    monkeypatch.setattr(plat, "capabilities",
-                        lambda p=None: plat.Capabilities(machine_link=True))
-    bar = machine.MachineBar(machine.MachineLink())
-    assert hasattr(bar, "connect_btn")
-    assert hasattr(bar, "port_combo")
+def test_machine_bar_lists_only_the_simulator_where_the_link_does_not_run(
+        qt_app, monkeypatch):
+    """Off Windows the real link stays off, but the simulator has no hardware
+    behind it: it is listed, and a real Arduino on the bus is not."""
+    from gerber2rml.engine import simmachine
+    bar = _sim_only_bar(monkeypatch, show_sim=True)
+    ports = [bar.port_combo.itemData(i) for i in range(bar.port_combo.count())]
+    assert ports == [simmachine.SIM_PORT]
+    assert bar.connect_btn.isEnabled()
+    assert bar.current_port() == simmachine.SIM_PORT
 
 
-def test_machine_bar_note_does_not_set_the_window_minimum_width(qt_app,
+def test_the_simulator_is_listed_in_either_profile_without_the_link(
+        qt_app, monkeypatch):
+    """Off Windows it is the one machine there is, so it is not kept behind
+    Pro and Automatic mode the way it is next to a real mill - and the bar
+    says why the list is that short."""
+    from gerber2rml.engine import simmachine
+    bar = _sim_only_bar(monkeypatch, show_sim=False)
+    assert bar.port_combo.itemData(0) == simmachine.SIM_PORT
+    assert bar.port_combo.count() == 1
+    assert bar.connect_btn.isEnabled()
+    assert "Windows" in bar.offline_note.text()
+
+
+def test_a_real_port_is_refused_where_the_link_does_not_run(qt_app,
+                                                           monkeypatch):
+    bar = _sim_only_bar(monkeypatch, show_sim=False)
+    opened = []
+    monkeypatch.setattr(bar.link, "connect_to", opened.append)
+    bar.port_combo.addItem("/dev/ttyACM0", "/dev/ttyACM0")
+    bar.port_combo.setCurrentIndex(bar.port_combo.count() - 1)
+    bar._toggle_connect()
+    assert opened == []
+    assert "Windows" in bar.said[-1][1]
+
+
+def test_the_sim_only_note_does_not_set_the_window_minimum_width(qt_app,
                                                                 monkeypatch):
-    """A QLabel that may not wrap reports its whole line as its minimum size,
-    and a layout's minimum is the sum of its children's. Unwrapped, the
-    205-character sentence made MainWindow.minimumSizeHint() 2488 px wide
-    against a 1400 px default - wider than a 1920 px display, so the window
-    could not be narrowed at all on Linux."""
-    from gerber2rml.gui2 import machine, theme
-    from gerber2rml import platform as plat
-    monkeypatch.setattr(plat, "capabilities",
-                        lambda p=None: plat.Capabilities(machine_link=False))
-    bar = machine.MachineBar(machine.MachineLink())
-    note = [w for w in bar.findChildren(QLabel) if w.text()][0]
-    assert note.wordWrap() is True
-    assert bar.minimumSizeHint().width() < 400
-    # and it still fits the bar it lives in, at a normal window width
-    assert note.heightForWidth(1400 - 30) <= theme.BAR_H
-
-
-def test_machine_bar_note_uses_a_selector_that_exists(qt_app, monkeypatch):
-    """setObjectName only does something if the stylesheet has a rule for it.
-    The name this used before - "muted" - was the only occurrence repo-wide,
-    so the sentence rendered as full-strength body text."""
-    from gerber2rml.gui2 import machine, style
-    from gerber2rml import platform as plat
-    monkeypatch.setattr(plat, "capabilities",
-                        lambda p=None: plat.Capabilities(machine_link=False))
-    bar = machine.MachineBar(machine.MachineLink())
-    note = [w for w in bar.findChildren(QLabel) if w.text()][0]
-    assert note.objectName()
-    assert f"QLabel#{note.objectName()}" in style.STYLESHEET
-
-
-def test_the_machine_menu_does_not_raise_on_a_gated_bar(qt_app, monkeypatch):
-    """The three reach-throughs past the bar's early return. Each raised
-    AttributeError - 'MachineBar' object has no attribute 'port_combo' - the
-    moment the Machine menu was used on Linux."""
-    from gerber2rml.gui2 import machine
-    from gerber2rml import platform as plat
-    monkeypatch.setattr(plat, "capabilities",
-                        lambda p=None: plat.Capabilities(machine_link=False))
-    bar = machine.MachineBar(machine.MachineLink())
-    said = []
-    bar.message.connect(lambda level, text: said.append((level, text)))
-
-    bar.refresh_ports()                      # Machine > Rescan the serial ports
-    bar._toggle_connect()                    # Machine > Connect / disconnect
-    assert bar.current_port() is None        # read by the machine test
-    bar._stop()                              # Escape, from anywhere
-
-    # Not silent: a menu item that does nothing is the dead control this
-    # interface refuses to ship, so each no-op says why in the window's log.
-    assert len(said) >= 2
-    for _level, text in said[:2]:
-        assert "Windows" in text
+    """A QLabel that may not wrap reports its whole line as its minimum size;
+    the long platform sentence once made the window 2488 px wide minimum."""
+    bar = _sim_only_bar(monkeypatch, show_sim=False)
+    bar.offline_note.setText("x " * 120)
+    assert bar.offline_note.wordWrap() is True
+    assert bar.offline_note.minimumSizeHint().width() < 400
 
 
 def test_the_machine_menu_actions_work_where_the_link_does_run(win):
     """The Windows path is untouched: the same three calls reach the real
     implementations and the bar still has the widgets they drive."""
-    if not win.bar.gated:
-        assert hasattr(win.bar, "port_combo")
-        win.bar.refresh_ports()
-        assert win.bar.current_port() == win.bar.port_combo.currentData()
+    assert hasattr(win.bar, "port_combo")
+    win.bar.refresh_ports()
+    assert win.bar.current_port() == win.bar.port_combo.currentData()
 

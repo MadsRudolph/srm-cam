@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget
                                QGridLayout, QPushButton)
 
 from gerber2rml.backends import BACKENDS
+from gerber2rml.config import DEFAULT_STOCK_MM
 from gerber2rml.gui2 import theme, widgets, tier
 from gerber2rml.engine.estimate import format_duration
 
@@ -228,9 +229,11 @@ class SetupPage(Page):
         ah.addWidget(self.overshoot)
         ah.addStretch(1)
         stock.add(arow)
-        self.stock_w = num(100.0, 10.0, 300.0, 5.0, 1, self._on_stock,
+        self.stock_w = num(DEFAULT_STOCK_MM[0], 10.0, 300.0, 5.0, 1,
+                           self._on_stock,
                            suffix=" mm")
-        self.stock_h = num(80.0, 10.0, 300.0, 5.0, 1, self._on_stock,
+        self.stock_h = num(DEFAULT_STOCK_MM[1], 10.0, 300.0, 5.0, 1,
+                           self._on_stock,
                            suffix=" mm")
         # Where the sheet's front-left corner actually is. The bed fixture puts
         # it on the machine origin, but a sheet clamped by hand is wherever it
