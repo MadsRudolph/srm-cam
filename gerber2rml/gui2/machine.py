@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                                QComboBox, QSizePolicy)
 
 from gerber2rml.gui2 import theme, widgets
+from gerber2rml.gui2.jogpad import JogPad
 from gerber2rml.engine import spi_probe
 from gerber2rml.engine.estimate import format_duration
 from gerber2rml.engine.progress import RunProgress
@@ -130,6 +131,9 @@ class MachineLink(QObject):
         self._current = None          # name of the op the worker is inside
         self._abort = threading.Event()
         self._external = False        # something else owns the port (a probe run)
+        self._jog_lock = threading.Lock()
+        self._jog_pending = [0.0, 0.0, 0.0]   # mm, not yet sent
+        self._jog_queued = False
         self.firmware = None
         self.last_status = {}
         self.last_position = None     # (x, y, z, touch) mm, last good read
@@ -176,6 +180,7 @@ class MachineLink(QObject):
     def disconnect_from(self, reason="", wait_s=3.0):
         ser, self._ser = self._ser, None
         self._drain()
+        self._forget_jog()
         if ser is not None and not (self._thread and self._thread.is_alive()):
             self._close(ser, self._spindle_ours)   # no worker to hand it to
         elif ser is not None:
@@ -236,6 +241,7 @@ class MachineLink(QObject):
         # Commands still waiting would run AFTER the stop - a queued spindle
         # start included. Nothing queued before a STOP is still wanted.
         self._drain()
+        self._forget_jog()
         ser = self._ser
         if ser is None:
             return self._external
@@ -384,6 +390,45 @@ class MachineLink(QObject):
         self.clear_abort()
         self.submit("jog_z", op)
 
+    def jog_by(self, dx_mm=0.0, dy_mm=0.0, dz_mm=0.0):
+        """Move the head relative to where it is, without lifting.
+
+        ``J`` lifts 5 mm and never comes back, so stepping across the bed with
+        it walked the bit up to the top of Z; ``N`` is one straight move.
+
+        Steps add up while one is waiting for the worker. A held key repeats
+        thirty times a second and each move takes longer than that; queued one
+        by one the head would carry on long after the key was let go. Here
+        there is never more than one move running and one waiting, so it stops
+        about when the key does."""
+        self.last_jog_t = time.time()
+        self.clear_abort()
+        with self._jog_lock:
+            p = self._jog_pending
+            p[0] += dx_mm
+            p[1] += dy_mm
+            p[2] += dz_mm
+            if self._jog_queued:
+                return
+            self._jog_queued = True
+
+        def op(ser):
+            with self._jog_lock:
+                dx, dy, dz = self._jog_pending
+                self._jog_pending = [0.0, 0.0, 0.0]
+                self._jog_queued = False
+            return spi_probe.timed_move(
+                ser, int(round(dx * 1000)), int(round(dy * 1000)),
+                int(round(dz * 1000)), should_abort=self.should_abort)
+        self.submit("jog_by", op)
+
+    def _forget_jog(self):
+        """Steps not sent yet: dropped with the command that would send them,
+        or the next jog would add to them and never queue a move."""
+        with self._jog_lock:
+            self._jog_pending = [0.0, 0.0, 0.0]
+            self._jog_queued = False
+
     def jog_to(self, x_mm, y_mm):
         def op(ser):
             return spi_probe.jog_to(ser, int(round(x_mm * 1000)),
@@ -423,7 +468,6 @@ class MachineLink(QObject):
 
 # ---------------------------------------------------------------------------
 
-Z_STEPS = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0]
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +639,12 @@ class RunReadout(QWidget):
         p.end()
 
 
+# What the bar says with no link: Pro can still export; Novice runs the job.
+OFFLINE_PRO = ("Everything except probing works without the link — export the "
+               "files and send them from VPanel.")
+OFFLINE_NOVICE = "Connect the machine to run the board."
+
+
 class MachineBar(QWidget):
     """The persistent machine strip.
 
@@ -668,9 +718,7 @@ class MachineBar(QWidget):
         # Not an empty toolbar full of grey buttons: a sentence saying what the
         # link is for and what still works without it, because a bare SRM-20
         # with VPanel is a fully supported setup and the app should say so.
-        self.offline_note = QLabel(
-            "Everything except probing works without the link — export the "
-            "files and send them from VPanel.")
+        self.offline_note = QLabel(OFFLINE_PRO)
         self.offline_note.setFont(theme.font("small"))
         self.offline_note.setStyleSheet(f"color: {theme.TEXT_3};")
         self.offline_note.setWordWrap(True)
@@ -704,35 +752,10 @@ class MachineBar(QWidget):
 
         lh.addWidget(widgets.vrule())
 
-        zbox = QWidget()
-        zv = QVBoxLayout(zbox)
-        zv.setContentsMargins(0, 0, 0, 0)
-        zv.setSpacing(2)
-        zv.addWidget(widgets.eyebrow("Z jog"))
-        zrow = QWidget()
-        zh = QHBoxLayout(zrow)
-        zh.setContentsMargins(0, 0, 0, 0)
-        zh.setSpacing(4)
-        self.z_up = widgets.button("↑", kind="key", on=lambda: self._jog(+1),
-                                   tip="Raise the bit by one step. Page Up "
-                                       "does the same. Raising always works.")
-        self.z_down = widgets.button("↓", kind="key", on=lambda: self._jog(-1),
-                                     tip="Lower the bit by one step. Page "
-                                         "Down does the same. Refused while "
-                                         "the Z readout says the bit is already "
-                                         "touching copper.")
-        for b in (self.z_up, self.z_down):
-            b.setFixedSize(30, 28)
-        self.step_combo = QComboBox()
-        for s in Z_STEPS:
-            self.step_combo.addItem(f"{s:g} mm", s)
-        self.step_combo.setCurrentIndex(3)
-        self.step_combo.setFixedWidth(68)
-        zh.addWidget(self.z_down)
-        zh.addWidget(self.z_up)
-        zh.addWidget(self.step_combo)
-        zv.addWidget(zrow)
-        lh.addWidget(zbox)
+        self.pad = JogPad()
+        self.pad.z_requested.connect(self._jog)
+        self.z_up, self.z_down = self.pad.z_up, self.pad.z_down
+        lh.addWidget(self.pad)
 
         # Two touches, two different things changed. Probe Z tells the APP
         # where the copper is; Zero Z tells the MACHINE. They were one
@@ -902,8 +925,7 @@ class MachineBar(QWidget):
                 "warn", "The bit is already touching the copper, so jogging "
                         "down is refused. Raise it first.")
             return
-        step = self.step_combo.currentData() or 0.1
-        self.link.jog_z(step * direction)
+        self.link.jog_by(dz_mm=self.pad.z_step(direction) * direction)
 
     def _touch_refused(self):
         """Both touches descend from where the bit is. Starting them on the
@@ -963,6 +985,10 @@ class MachineBar(QWidget):
         if pause is not None:
             pause.setChecked(False)
             pause.setText("Pause")
+        # After a STOP the arrow keys are not still driving the machine.
+        pad = getattr(self, "pad", None)
+        if pad is not None:
+            pad.keys_btn.setChecked(False)
         if self.link.can_stop_something():
             self.link.stop_now()
             if not self.gated:                # no spindle button on a gated bar
@@ -1012,6 +1038,7 @@ class MachineBar(QWidget):
         self.offline_note.show()
         self.jog_btn.setChecked(False)
         self.jog_mode_changed.emit(False)
+        self.pad.keys_btn.setChecked(False)
         for d in (self.dro_x, self.dro_y, self.dro_z):
             d.set("—", colour=theme.TEXT_3)
         self.dro_z.set_label("Z")

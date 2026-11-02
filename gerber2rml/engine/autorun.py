@@ -52,6 +52,7 @@ LEVEL_GRID = (4, 3)
 HOLE_SEARCH_UM = 1500
 NUDGES = ((0, 0), (1.5, 0), (0, 1.5), (-1.5, 0), (0, -1.5))
 DRY_AIR_MM = 5.0             # a dry run cuts this far above the copper
+PLACE_MARGIN_MM = 3.0        # a board placed for you: this far in from the edges
 
 
 def _fmt(v):
@@ -148,7 +149,7 @@ class AutoRun:
     """Run the whole job. Call :meth:`run` on a thread."""
 
     def __init__(self, ser, printer, source, events, *, click_mm, stock_mm,
-                 double, bit_mm=0.8, margin_mm=3.0, rpm=None,
+                 double, bit_mm=0.8, margin_mm=PLACE_MARGIN_MM, rpm=None,
                  should_abort=None, should_pause=None, dry_run=False,
                  runner_opts=None, level=True, surface_hint=None,
                  datum=None, check_cut=True, start_at=None):

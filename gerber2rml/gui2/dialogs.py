@@ -277,14 +277,14 @@ def about_tier(parent):
     they remember is gone or merely put away.
     """
     from gerber2rml.gui2 import tier
-    d = Sheet(parent, "What the two tiers differ by", width=600)
-    d.say("Essential is the whole single-sided job, including bed levelling. "
-          "It is a strict subset of Full — the same controls, the same "
-          "handlers, and files that come out byte for byte identical.")
-    s1 = widgets.Section("Full adds")
+    d = Sheet(parent, "What Novice and Pro differ by", width=600)
+    d.say("Novice is one job, start to finish: load the board, put the stock "
+          "in the bracket, press Start. Pro is the same program with "
+          "everything else in view - the same plan, and the same cuts.")
+    s1 = widgets.Section("Pro adds")
     for line in tier.ADDED_BY_FULL:
         s1.add(widgets.hint("· " + line))
-    s2 = widgets.Section("Essential keeps, on purpose")
+    s2 = widgets.Section("Novice has, on purpose")
     for name, why in tier.KEPT_IN_ESSENTIAL:
         card = widgets.Card(quiet=True, pad=theme.GAP_S + 2, gap=2)
         t = QLabel(name)

@@ -153,6 +153,9 @@ QPushButton#key {
 }
 QPushButton#key:hover   { background: $RAISED_HI; border-color: $FOCUS; }
 QPushButton#key:pressed { background: $LIVE_FILL; border-color: $LIVE; }
+QPushButton#key:checked { background: $LIVE_FILL; border-color: $LIVE; color: $TEXT; }
+/* Lit, the keyboard is driving the machine: it has to be unmistakable. */
+QPushButton#jogkeys:checked { background: $LIVE_FILL; border-color: $LIVE; color: $LIVE; }
 QPushButton#key:disabled { background: $SUNK; color: $TEXT_4; border-color: $RULE; }
 
 QPushButton:checked { background: $SELECT; border-color: $SELECT_EDGE; color: $TEXT; }

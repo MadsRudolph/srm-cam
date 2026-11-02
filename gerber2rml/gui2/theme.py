@@ -202,7 +202,7 @@ RAIL_W = 316                # the traveller
 INSPECTOR_W = 352           # the inspector, at its narrowest
 INSPECTOR_DEFAULT_W = 440   # ...as it opens; drag the splitter for more
 INSPECTOR_MAX_W = 760
-BAR_H = 66                  # the machine bar
+BAR_H = 76                  # the machine bar: three rows of the jog pad
 HEADER_H = 56               # the title bar
 RADIUS = 3                  # one radius, small. Rounding everything by 8 px is
                             # decoration; 3 px reads as a machined edge.
