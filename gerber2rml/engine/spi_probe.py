@@ -228,7 +228,7 @@ DEFAULT_FRAME_US = 500
 
 
 def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None,
-              prime=True, frame_us=None):
+              prime=True, frame_us=DEFAULT_FRAME_US):
     """Open the prober serial port and wait out the Uno's reset-on-open.
 
     ``prime`` sends one throwaway position query. Measured on the machine: the
@@ -237,8 +237,10 @@ def open_link(port, baud=115200, startup_wait=2.0, serial_factory=None,
     of 0x00000000, a position of 0,0,0. Burning one read here means every
     caller's first real command is clean.
 
-    ``frame_us`` sets the SPI framing delay for this session (None leaves the
-    firmware's own default alone). Needs the patched library; silently does
+    ``frame_us`` sets the SPI framing delay for this session: the proven
+    ``DEFAULT_FRAME_US`` unless asked otherwise (None leaves the library's
+    5000 us alone - seven times slower on every read, which is what every
+    gui2 link ran at until 2026-11-02, because only the classic UI passed it). Needs the patched library; silently does
     nothing without it, which is the right failure — slow but correct.
     """
     ser = (serial_factory or _open_serial)(port, baud, 1.0)
