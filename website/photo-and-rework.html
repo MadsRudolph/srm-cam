@@ -13,7 +13,7 @@
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/continuity.js?v=20260930b"></script>
 <script defer src="js/anim/pr-overlay.js?v=20260930b"></script>
-<script defer src="js/anim/pr-rework.js?v=20260930b"></script>
+<script defer src="js/anim/pr-rework.js?v=20261102a"></script>
 </head>
 <body>
 <div class="layout">
@@ -36,6 +36,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -64,6 +65,9 @@
 
 <h1>Photo check &amp; rework</h1>
 <p class="lead">Did every channel cut through? Find the spots that didn't, box them, and re-cut only there, deeper, in one program. The board stays on the machine, and the XY origin is never touched. The drawings are live: press the buttons, and drag on the board.</p>
+
+<div class="note"><span class="t">Novice or Pro?</span>
+<p>This page is the <strong>Rework step, in Pro</strong>, for a board that is already off the machine. During a run, <a href="automatic.html#check">the check before the cut-out</a> recuts in boxes without any of this.</p></div>
 
 <div class="pill-flow">
   <span class="pf">Find the spots</span><span class="arr">→</span>
@@ -101,9 +105,9 @@
     <span class="ui">Repeat from</span>: <span class="ui">Isolation traces</span> or <span class="ui">Board cut-out</span> (on a double-sided job, <span class="ui">Bottom traces</span> or <span class="ui">Top traces</span>). The re-cut is that pass as it was cut, clipped to your boxes, so it follows the same route. Set <span class="ui">Depth for the next box</span> (0.25&nbsp;mm to start) deeper than the pass that missed.</li>
   <li><span class="st">Mark the spots</span>
     Tick <span class="ui">Drag boxes on the bed</span> and drag a box over each spot; while it's ticked, dragging adds a box instead of moving the board. Each box keeps its own depth; edit it in the table. <span class="ui">Level</span> is ticked whenever a height map is on, so that box's cut follows the map; untick it to cut flat.</li>
-  <li><span class="st">Full tier: let the photo find them</span>
+  <li><span class="st">Pro: let the photo find them</span>
     <span class="ui">Propose boxes from the photo</span> walks every channel of the pass and boxes each stretch with no cut in it at all. It needs a photo on the bed, and it can't see a cut that is only too shallow: in any photo that still looks like a channel.</li>
-  <li><span class="st">Full tier: check the depth</span>
+  <li><span class="st">Pro: check the depth</span>
     <span class="ui">Probe the boxes over the link</span> taps the map's first point for a datum, then the middle of each box. Where the copper sits lower than the map believed, that box is deepened by exactly the difference: the way to find a cut that is too shallow rather than missing. Tool a couple of millimetres up, spindle off, the clip on the copper; <span class="ui">STOP</span> stops it at the next point.</li>
   <li><span class="st">Write the file</span>
     <span class="ui">Watch the boxes in 3D…</span> plays only the re-cut. <span class="ui">Export the rework program…</span> writes one <code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code> with every box in it, so you send one program. A cut-out rework is taken down in passes, the way the cut-out was cut, not in one deep plunge.</li>

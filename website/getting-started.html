@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting started — SRM-CAM guide</title>
-<meta name="description" content="Install SRM-CAM on Windows or Linux, learn the window, the two tiers, and the files KiCad has to give you.">
+<meta name="description" content="Install SRM-CAM on Windows or Linux, learn the window, Novice and Pro, and the files KiCad has to give you.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,8 +12,7 @@
 <link rel="stylesheet" href="css/site.css?v=20260930a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/laptop.js?v=20260930b"></script>
-<script defer src="js/anim/gs-window.js?v=20260930b"></script>
-<script defer src="js/anim/gs-tiers.js?v=20260930b"></script>
+<script defer src="js/anim/gs-window.js?v=20261102a"></script>
 <script defer src="js/anim/gs-files.js?v=20260930b"></script>
 <style>.figs.top { align-items: start; }</style>
 </head>
@@ -38,6 +37,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link active" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -65,7 +65,7 @@
 <div class="content">
 
 <h1>Getting started</h1>
-<p class="lead">Install SRM-CAM, learn the four regions of the window and the two tiers, and get the right files out of KiCad. Then go on to <a href="milling-a-board.html">Milling a board</a>.</p>
+<p class="lead">Install SRM-CAM, learn the four regions of the window and Novice and Pro, and get the right files out of KiCad. Then go on to <a href="automatic.html">Run it all</a>.</p>
 
 <h2 id="install">Install</h2>
 <div class="tbl-wrap"><table>
@@ -108,10 +108,10 @@
   <figcaption>The real window, on the setup step (a Linux screenshot, so the machine bar is a sentence: the link is Windows-only).</figcaption>
 </figure>
 <ul>
-  <li><strong>The rail</strong> (left) is the run plan: the same order, and the same files, that the export writes. Numbered steps are files you send; the rows between them (fit the bit and set the Z origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>
+  <li><strong>The rail</strong> (left) is the plan. In Novice it is three rows. In Pro it is the whole run plan: the same order, and the same files, that the export writes. Numbered steps are files you send; the rows between them (fit the bit and set the Z origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>
   <li><strong>The stage</strong> (middle) is the bed in machine coordinates: the copper sheet, the board, the toolpaths of the selected step, the spoilboard's screw grid. Drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan, <span class="ui">Fit</span> to frame the work. <span class="ui">Bed — as cut</span> is the only frame the machine understands; <span class="ui">Design X-ray</span> is for checking that the two faces of a double-sided board register.</li>
   <li><strong>The inspector</strong> (right) shows the selected step: the setup page, the checks, or a step's parameters, estimate and file.</li>
-  <li><strong>The machine bar</strong> (bottom) is always there: <span class="ui">Connect</span> and the port, the position readout (always machine coordinates), Z jog, <span class="ui">Probe Z</span>, <span class="ui">Zero Z</span>, <span class="ui">Spindle</span>, <span class="ui">Click to jog</span>, and <span class="ui">STOP</span>. <kbd>Esc</kbd> stops the machine from anywhere, including with a dialog open.</li>
+  <li><strong>The machine bar</strong> (bottom) is always there: <span class="ui">Connect</span> and the port, the position readout (always machine coordinates), the <a href="machine-control.html#jog">jog pad</a>, <span class="ui">Probe Z</span>, <span class="ui">Zero Z</span>, <span class="ui">Spindle</span>, <span class="ui">Click to jog</span>, and <span class="ui">STOP</span>. <kbd>Esc</kbd> stops the machine from anywhere, including with a dialog open.</li>
 </ul>
 <div class="figs top">
   <figure class="fig">
@@ -120,38 +120,42 @@
   </figure>
   <figure class="fig">
     <img src="img/gui2_inspector_step.png" alt="The inspector showing the isolation traces step" loading="lazy">
-    <figcaption>The inspector on the traces step: what it needs, the file, and (in the Full tier) the cutting parameters, with the tool switchable between a flat endmill and a V-bit.</figcaption>
+    <figcaption>The inspector on the traces step: what it needs, the file, and (in Pro) the cutting parameters, with the tool switchable between a flat endmill and a V-bit.</figcaption>
   </figure>
 </div>
 <figure class="fig">
   <img src="img/gui2_bar.png" alt="The machine bar" loading="lazy">
-  <figcaption>The machine bar. Everything except probing works without the link; <span class="ui">STOP</span> is always there.</figcaption>
+  <figcaption>The machine bar, linked, with <span class="ui">Arrow keys</span> lit. <span class="ui">STOP</span> is always there.</figcaption>
 </figure>
 
-<h2 id="tiers">Essential &amp; Full</h2>
-<p>Two tiers, on the <span class="menu-path">Interface</span> menu. Essential is the whole single-sided job, including bed levelling, and it is the default. Full adds the rest. Essential is a strict subset: the same controls, the same handlers, and files that come out byte for byte identical.</p>
-<figure class="anim" data-anim="gs-tiers">
-  <figcaption><span class="k">Flip the switch</span>What Full adds slides in, marked in blue; nothing Essential has moves.</figcaption>
-</figure>
+<h2 id="tiers">Novice &amp; Pro</h2>
+<p>Two profiles, on the <span class="menu-path">Interface</span> menu. <strong>Novice</strong> is the default and is built around one thing: <a href="automatic.html">Run it all</a>. <strong>Pro</strong> has everything. It is the same program and the same plan, and exported files are identical in both.</p>
 <div class="tbl-wrap"><table>
-<tr><th>Essential keeps</th><th>Full adds</th></tr>
-<tr><td>Bed levelling: the stop control is part of the window, so probing is safe to keep</td><td>Per-operation cutting parameters: feeds, depths, offsets, stepover, V-bit geometry, and <span class="ui">Cut gaps too narrow for the bit</span> (in Essential the tool profile sets these)</td></tr>
-<tr><td>The dry run</td><td>Double-sided boards: registration, the flip, top traces</td></tr>
-<tr><td>The pre-flight checks</td><td>Rework</td></tr>
-<tr><td>Hold-down screws, and the raised travel height that goes with them</td><td>Output format and mirroring</td></tr>
-<tr><td>Placing the job on the bed</td><td>Streaming over the link (experimental), the machine test, saving your own tool profiles</td></tr>
+<tr><th></th><th>Novice</th><th>Pro</th></tr>
+<tr><td>Rail</td><td>Your board, Check it, Run it</td><td>The whole plan, step by step</td></tr>
+<tr><td>How it cuts</td><td>By itself, sent directly to the mill</td><td>Files you play from VPanel, or Automatic from the Machine menu</td></tr>
+<tr><td>The stock</td><td>Taped, in the corner bracket</td><td>Bracket, found by its edges, clamped or screwed</td></tr>
+<tr><td>Levelling</td><td>Part of the run</td><td>Also its own page, and by hand</td></tr>
+<tr><td>Double-sided</td><td>One tick</td><td>Fiducials or dowels, every setting</td></tr>
+<tr><td>Cutting parameters</td><td>From the tool profile</td><td>Per operation, and your own profiles</td></tr>
+<tr><td>Also only in Pro</td><td>—</td><td>Export, rework, several boards on a sheet, drilling a board made elsewhere, output format, streaming, machine test, simulated mill</td></tr>
+<tr><td>Both</td><td colspan="2">The pre-flight checks, the jog pad and arrow keys, Click to jog, and <span class="ui">STOP</span></td></tr>
 </table></div>
-<p><span class="menu-path">Interface › What the two tiers differ by…</span> lists it in the app. A lab that wants the tier fixed sets <code>SRM_CAM_MODE</code> to <code>essential</code> or <code>full</code> in the environment or the shortcut.</p>
+<p><span class="menu-path">Interface › What Novice and Pro differ by…</span> lists it in the app. A lab that wants the profile fixed sets <code>SRM_CAM_MODE</code> to <code>novice</code> or <code>pro</code> in the environment or the shortcut.</p>
 <div class="figs top">
   <figure class="fig">
-    <img src="img/gui2_tiers.png" alt="The sheet explaining the two tiers" loading="lazy">
-    <figcaption><span class="menu-path">Interface › What the two tiers differ by…</span></figcaption>
+    <img src="img/automatic_setup.png" alt="Novice: three rows on the rail, and the Your board page" loading="lazy">
+    <figcaption>Novice: three rows on the rail, and <span class="ui">Your board</span>.</figcaption>
   </figure>
   <figure class="fig">
-    <img src="img/gui2_help_menu.png" alt="The Help menu" loading="lazy">
-    <figcaption>The Help menu: the web guide on <kbd>F1</kbd>, the machine lessons, and the update check.</figcaption>
+    <img src="img/gui2_tiers.png" alt="The sheet explaining what Novice and Pro differ by" loading="lazy">
+    <figcaption><span class="menu-path">Interface › What Novice and Pro differ by…</span></figcaption>
   </figure>
 </div>
+<figure class="fig mid">
+  <img src="img/gui2_help_menu.png" alt="The Help menu" loading="lazy">
+  <figcaption>The Help menu: the web guide on <kbd>F1</kbd>, the machine lessons, and the update check.</figcaption>
+</figure>
 
 <h3>The machine, in five minutes</h3>
 <p><span class="menu-path">Help › The machine, in five minutes</span> is the part that is true at every step: VPanel's three coordinate systems and why G54 is the one that matters; zero Z and leave X and Y alone; keep machine Z above −50&nbsp;mm with the bit on the copper (−55 is the end of the travel); the probe's one wire, the red clip on the copper; STOP against Pause; and where the files go.</p>

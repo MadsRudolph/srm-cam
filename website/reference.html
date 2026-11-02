@@ -62,6 +62,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -102,6 +103,7 @@
 </table></div>
 
 <h2>What comes out</h2>
+<p><a href="automatic.html#after">Run it all</a> keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>. Below is what <span class="ui">Export the job</span> writes, in Pro.</p>
 <p><span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one program per step, in the machine's format, and the run plan beside them. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>dry run, drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
 <figure class="anim" data-anim="rf-files">
   <figcaption><span class="k">Inside the files</span>Click a file, then a line, to see what it does. The lines are real output from the test board. Switch to <em>As VPanel lists them</em> to see why the cut-out has to be moved down.</figcaption>
@@ -122,7 +124,7 @@
 </table></div>
 
 <h3>G-code or RML</h3>
-<p>Picked under <span class="menu-path">Set up the job › Output format and mirroring › File format</span>, in the Full tier. Keep G-code unless you have a reason not to: the files explain themselves in VPanel.</p>
+<p>Picked under <span class="menu-path">Set up the job › Output format and mirroring › File format</span>, in Pro. Keep G-code unless you have a reason not to: the files explain themselves in VPanel.</p>
 <div class="tbl-wrap"><table>
 <tr><th></th><th>G-code (default)</th><th>RML</th></tr>
 <tr><td>File format</td><td><em>Roland SRM-20 (G-code)</em></td><td><em>Roland SRM-20</em></td></tr>
@@ -140,10 +142,10 @@
   <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (1.7&nbsp;mm through, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
   <li><strong>SRM-20 V-bit 30°, 0.1&nbsp;mm tip</strong>: 0.2&nbsp;mm traces for fine SMD work, with the 0.8&nbsp;mm bit for holes and outline. Level the bed first: a V-bit's width depends on its depth.</li>
 </ul>
-<p><span class="ui">Save as…</span> (Full tier) keeps your own in <code>~/.gerber2rml/presets.json</code>. A lab can share profiles in a <code>presets.json</code> beside the installed program (in a source checkout, <code>examples/presets.json</code>).</p>
+<p><span class="ui">Save as…</span> (Pro) keeps your own in <code>~/.gerber2rml/presets.json</code>. A lab can share profiles in a <code>presets.json</code> beside the installed program (in a source checkout, <code>examples/presets.json</code>).</p>
 
 <h2>Cutting parameters</h2>
-<p>On each step's page under <span class="menu-path">Cutting parameters</span>, in the Full tier (<span class="menu-path">Interface › Full</span>). In Essential, the profile sets them.</p>
+<p>On each step's page under <span class="menu-path">Cutting parameters</span>, in Pro (<span class="menu-path">Interface › Pro</span>). In Novice, the profile sets them.</p>
 <div class="tbl-wrap"><table>
 <tr><th>Parameter</th><th>Applies to</th><th>Meaning</th></tr>
 <tr><td>Bit diameter</td><td>all</td><td>The cutter's width, and what the shorts check measures against.</td></tr>
@@ -175,7 +177,8 @@ python -m gerber2rml.doctor                           # fix dependencies after a
 <div class="tbl-wrap"><table>
 <tr><th>Key</th><th>Effect</th></tr>
 <tr><td><kbd>Esc</kbd></td><td>STOP the machine, from anywhere</td></tr>
-<tr><td><kbd>Page Up</kbd> / <kbd>Page Down</kbd></td><td>Raise / lower Z by the step. Lowering is refused while the bit reads Touch.</td></tr>
+<tr><td><kbd>Page Up</kbd> / <kbd>Page Down</kbd></td><td>Raise / lower Z by the jog pad's step (down at most 1&nbsp;mm). Lowering is refused while the bit reads Touch.</td></tr>
+<tr><td>Arrow keys, <span class="ui">Arrow keys</span> lit on the jog pad</td><td>Jog the head by the pad's step, from anywhere in the window; <kbd>Shift</kbd> ×10, <kbd>Ctrl</kbd> ÷10. Not while typing in a box.</td></tr>
 <tr><td>Arrow keys, board picked</td><td>Nudge the board 0.1&nbsp;mm; <kbd>Shift</kbd> 1&nbsp;mm; <kbd>Ctrl</kbd> 0.01&nbsp;mm</td></tr>
 <tr><td>Arrow keys, <span class="ui">Click to jog</span> on</td><td>Jog the head 1&nbsp;mm; <kbd>Shift</kbd> 10&nbsp;mm; <kbd>Ctrl</kbd> 0.1&nbsp;mm</td></tr>
 <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Open a Gerber folder / add another board to the sheet</td></tr>

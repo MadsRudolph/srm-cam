@@ -36,6 +36,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -109,12 +110,12 @@
 </table></div>
 
 <div class="warn"><span class="t">STOP does not promise to lift the tool</span>
-<p>STOP drops the move and stops the spindle. The firmware tries to retract to the safe height after an abort, but SRM-CAM does not count on it: the bit may still be down. Raise it with <kbd>Page Up</kbd> before the next move. See <a href="machine-control.html#pause-stop">Pause and STOP</a>.</p></div>
+<p>STOP drops the move and stops the spindle. Firmware v4 fixes the retract after an abort, which used to cancel itself, but SRM-CAM does not count on it: the bit may still be down. Raise it with <kbd>Page Up</kbd> before the next move. See <a href="machine-control.html#pause-stop">Pause and STOP</a>.</p></div>
 
 <h2 id="install">Install (one-time, for whoever maintains the mill)</h2>
 <ol class="steps">
   <li><span class="st">Fit the Arduino</span>An Arduino Uno on the SPI shield, plugged into the SRM-20's SPI remote header on the back. The red clip's wire goes to D7. Full story: <code>docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md</code>.</li>
-  <li><span class="st">Flash</span><code>python scripts/flash_firmware.py</code> syncs the bundled library, compiles, uploads and reads the version back to prove the board came back as v3. It uses the <code>arduino-cli</code> bundled with the Arduino IDE. <code>--port COM4</code> pins the port; <code>--compile-only</code> just checks it builds.</li>
+  <li><span class="st">Flash</span><code>python scripts/flash_firmware.py</code> syncs the bundled library, compiles, uploads and reads the version back to prove the board came back as v4. It uses the <code>arduino-cli</code> bundled with the Arduino IDE. <code>--port COM4</code> pins the port; <code>--compile-only</code> just checks it builds.</li>
   <li><span class="st">Close the Serial Monitor</span>Only one program can hold the port; SRM-CAM cannot connect while the IDE has it.</li>
   <li><span class="st">Check it</span><span class="menu-path">Machine › Machine test…</span> in SRM-CAM, or <code>python scripts/srm20_bench.py --port COM5 --features</code>, the read-only "is it flashed and talking?" check.</li>
 </ol>
@@ -129,10 +130,11 @@
 <tr><td><code>T</code> / <code>W</code></td><td>Touch off from here and stop on the surface / touch off and write the work-origin Z there</td></tr>
 <tr><td><code>H x y</code></td><td>Hole test at absolute (x, y): copper or hole</td></tr>
 <tr><td><code>J x y</code> / <code>L</code> / <code>Z z</code></td><td>Jog (lifts about 5&nbsp;mm first) / lift to safe Z / set safe Z</td></tr>
+<tr><td><code>O x y z</code></td><td>Set the work origin absolutely, no motion (v4). It reaches the User origin only, which NC jobs ignore.</td></tr>
 <tr><td><code>Q</code> / <code>G</code> / <code>V</code> / <code>I</code></td><td>Position and touch / work origin / firmware version and features / the machine's remote-protocol version</td></tr>
 <tr><td><code>X</code> / <code>S rpm</code></td><td>Status words and spindle rpm / spindle on or off (the machine ignores the rpm: VPanel's slider sets the speed)</td></tr>
 <tr><td><code>~</code> <code>^</code> <code>%</code> <code>K</code></td><td>Pause / resume / drop the move in flight / cancel the job</td></tr>
-<tr><td><code>Y</code> / <code>N dx dy dz s</code></td><td>Move to the View position / timed relative move (the Z jog)</td></tr>
+<tr><td><code>Y</code> / <code>N dx dy dz s</code></td><td>Move to the View position / timed relative move, no lift (the jog pad and arrow keys)</td></tr>
 <tr><td><code>C</code> / <code>M x y z s</code></td><td>Begin a streaming session / stream one move (experimental)</td></tr>
 <tr><td><code>A 0|1</code> / <code>F us</code></td><td>Status guard off or on / SPI framing delay (bench)</td></tr>
 <tr><td><code>!</code></td><td>Abort: stop the spindle and the move in flight, then retract</td></tr>

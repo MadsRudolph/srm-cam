@@ -36,6 +36,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -64,10 +65,10 @@
 
 <div class="hero">
   <h1>Machine control</h1>
-  <p class="lead">With the Arduino fitted, the bar along the bottom of SRM-CAM reads the machine's position, jogs Z, probes and zeroes it, runs the spindle, pauses, and stops. VPanel still plays the files and sets the spindle speed. The drawings are live: try the bar.</p>
+  <p class="lead">With the Arduino fitted, the bar along the bottom of SRM-CAM reads the machine's position, jogs X, Y and Z, probes and zeroes it, runs the spindle, pauses, and stops. VPanel still plays the files and sets the spindle speed. The drawings are live: try the bar.</p>
   <div class="badge-row">
     <span class="badge copper">Windows only</span>
-    <span class="badge">Firmware v3</span>
+    <span class="badge">Firmware v4</span>
     <span class="badge">Speed: VPanel's slider</span>
   </div>
 </div>
@@ -82,7 +83,7 @@
 <div class="tbl-wrap"><table>
 <tr><th>Control</th><th>Does</th></tr>
 <tr><td>X Y Z readout</td><td>The machine's position, about three times a second, in <strong>machine coordinates</strong>. Z turns red and says <em>Touch</em> while the probe reads contact. SRM-CAM has no G54 switch: VPanel shows G54.</td></tr>
-<tr><td><span class="ui">↓</span> <span class="ui">↑</span> + step</td><td>Jog Z by the step: 0.01, 0.05, 0.1, 0.5 (the default), 1 or 5&nbsp;mm. <kbd>Page Down</kbd> / <kbd>Page Up</kbd> do the same from anywhere, one step per press. Down is refused while the bit is touching; up always works.</td></tr>
+<tr><td>Jog pad</td><td>Move X, Y and Z by the step: see <a href="#jog">Jogging</a>.</td></tr>
 <tr><td><span class="ui">Probe Z</span></td><td>Lower the bit from here until it touches, and stop on the copper. Tells <strong>SRM-CAM</strong> where the surface is (for the Z-reach check and the level page). VPanel's origin is untouched.</td></tr>
 <tr><td><span class="ui">Zero Z</span></td><td>Touch off the same way, then the firmware writes the <strong>machine's G54 Z origin</strong> at the copper and lifts 2&nbsp;mm, like VPanel's Z under Set Origin Point. Only Z: X and Y are never moved. Check VPanel's G54 Z once before a job.</td></tr>
 <tr><td><span class="ui">Spindle</span></td><td>Start or stop the tool, at whatever speed VPanel's slider says: the machine ignores a speed sent over the link. Refused with the lid open.</td></tr>
@@ -91,6 +92,22 @@
 <tr><td>Run readout</td><td>While a run is being followed: how far it has got and the time left. <span class="menu-path">Machine › Track this step's run</span>, or leave <span class="menu-path">Machine › Start tracking when the bit moves</span> on.</td></tr>
 <tr><td><span class="ui">STOP</span></td><td>Drop the move in flight and stop the spindle. <kbd>Esc</kbd> does the same from anywhere, dialogs included. The bit stays where it is: raise it with <kbd>Page Up</kbd>.</td></tr>
 </table></div>
+
+<h2 id="jog">Jogging</h2>
+<figure class="fig">
+  <img src="img/gui2_bar.png" alt="The machine bar with the jog pad: an XY cross, Z up and down, step sizes and the Arrow keys button" loading="lazy">
+  <figcaption>The jog pad: the XY cross, Z, the step, and <span class="ui">Arrow keys</span>, here lit.</figcaption>
+</figure>
+<div class="tbl-wrap"><table>
+<tr><th>Control</th><th>Does</th></tr>
+<tr><td>XY cross, Z ▲▼</td><td>Move by the step. ▲ on the cross is +Y, away from you.</td></tr>
+<tr><td>Step: 0.01, 0.1, 1 or 10&nbsp;mm</td><td>Each press moves this far. Z down is capped at 1&nbsp;mm a press, whatever the step.</td></tr>
+<tr><td><span class="ui">Arrow keys</span></td><td>While lit, the arrow keys move X and Y from anywhere in the window, except while you type in a box or a dialog is open. <kbd>Shift</kbd> is 10× the step, <kbd>Ctrl</kbd> a tenth. It goes off by itself on STOP and on disconnect, and when a run starts.</td></tr>
+<tr><td><kbd>Page Up</kbd> / <kbd>Page Down</kbd></td><td>Z up / down one step, from anywhere, lit or not.</td></tr>
+<tr><td><span class="ui">Click to jog</span></td><td>Click the bed for a long trip: the head lifts about 5&nbsp;mm first. Works alongside <span class="ui">Arrow keys</span>.</td></tr>
+</table></div>
+<div class="warn"><span class="t">The pad and the keys do not lift</span>
+<p>They move at the height the bit is at. Raise it before crossing clamps or brackets. A step sideways or down is refused while Z says <em>Touch</em>; up always works.</p></div>
 
 <h2 id="pause-stop">Pause and STOP</h2>
 <p>They are different things. <strong>Pause</strong> holds the machine with the spindle turning, and <strong>Resume</strong> carries on from the same place. <strong>STOP</strong> drops the move and stops the spindle; the job does not resume, and the bit stays down in the cut until you raise it.</p>
@@ -115,8 +132,11 @@
 <tr><td><span class="ui">Export the hold-down screw file…</span></td><td>See <a href="holding-the-copper.html">Holding the copper</a>.</td></tr>
 <tr><td><span class="ui">Export the bed fixture (pin holes)…</span></td><td>The dowel-pin holes in the spoilboard.</td></tr>
 <tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command and report PASS / FAIL / UNKNOWN. Read-only by default; motion and spindle tests are armed separately. STOP reaches a running test.</td></tr>
+<tr><td><span class="ui">Automatic mode (run it all)</span></td><td>Pro: adds <a href="automatic.html">Run it all</a> to the plan. It is always on in Novice.</td></tr>
 <tr><td><span class="ui">Stream this step over the link (experimental)…</span></td><td>Send the selected step's moves one by one instead of through VPanel. Starts as a dry run. The speed units are not calibrated: for real jobs, export and play the files from VPanel.</td></tr>
 </table></div>
+
+<p>Novice's menu has only the serial ports, connect and the View position; the rest is in Pro.</p>
 
 <h2 id="limits">What the link does not give you</h2>
 <div class="danger"><span class="t">Spindle speed is a VPanel setting</span>
@@ -124,7 +144,7 @@
 <ul>
   <li><strong>Feed rate is not calibrated</strong> for streamed moves.</li>
   <li><strong>Only the lid bit of the status word is proven</strong> on this machine. The bit Roland labels "paused" does not mean paused here, so none of the others is shown as a machine state.</li>
-  <li><strong>No X or Y zero.</strong> There is a control that zeroes Z and none that zeroes XY, on purpose: the screw fixture, dowel registration and every re-run depend on the XY origin staying put.</li>
+  <li><strong>No X or Y zero.</strong> There is a control that zeroes Z and none that zeroes XY, on purpose: the screw fixture, dowel registration and every re-run depend on the XY origin staying put. Automatic mode leaves G54 alone too, and checks it before cutting.</li>
 </ul>
 
 <h2 id="spindle">The spindle's rules</h2>

@@ -13,9 +13,9 @@
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/bow.js?v=20260930b"></script>
 <script defer src="js/anim/probe.js?v=20260930b"></script>
-<script defer src="js/anim/bl-drift.js?v=20260930b"></script>
+<script defer src="js/anim/bl-drift.js?v=20261102a"></script>
 <script defer src="js/anim/bl-density.js?v=20260930b"></script>
-<script defer src="js/anim/bl-mesh.js?v=20260930b"></script>
+<script defer src="js/anim/bl-mesh.js?v=20261102a"></script>
 <script defer src="js/anim/bl-warp.js?v=20260930b"></script>
 <script defer src="js/anim/bl-hand.js?v=20260930b"></script>
 </head>
@@ -40,6 +40,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -68,6 +69,9 @@
 
 <h1>Bed levelling &amp; probing</h1>
 <p class="lead">Isolation cuts 0.15&nbsp;mm into copper that is 0.035&nbsp;mm thick, and a clamped sheet of FR-4 bows by about as much. Measure the surface once, and every cut follows it. The drawings are live: press the buttons and drag the sliders.</p>
+
+<div class="note"><span class="t">Novice or Pro?</span>
+<p>This page is the <strong>Level the bed step, in Pro</strong>. In Novice, <a href="automatic.html">Run it all</a> levels by itself; its height map opens from <span class="ui">What the run made</span>.</p></div>
 
 <figure class="anim" data-anim="bow">
   <figcaption><span class="k">Why level at all</span>A 0.13&nbsp;mm bow is almost a whole cutting depth: a flat cut leaves copper in the dip and shorts the traces, while a levelled cut follows the surface.</figcaption>
@@ -101,7 +105,7 @@
 </table></div>
 
 <h3>The drift check</h3>
-<p>In the Full tier, <span class="menu-path">Measure it › Drift check</span> re-touches point 1 before the first point, every so many points (6 by default) and at the end, and corrects every height for how far the reference moved in between: a warming spindle and a board settling in its clamps move it by tens of microns over a long grid. It needs the second Arduino firmware; with the first one the run turns it off and says so.</p>
+<p>In Pro, <span class="menu-path">Measure it › Drift check</span> re-touches point 1 before the first point, every so many points (6 by default) and at the end, and corrects every height for how far the reference moved in between: a warming spindle and a board settling in its clamps move it by tens of microns over a long grid. It needs the second Arduino firmware; with the first one the run turns it off and says so.</p>
 <figure class="anim" data-anim="bl-drift">
   <figcaption><span class="k">Drift</span>Heights are measured against point 1, so a reference that creeps makes every late point read low. The re-touches measure the creep, and each point is corrected by the amount interpolated to the moment it was probed. The drift curve is illustrative.</figcaption>
 </figure>
