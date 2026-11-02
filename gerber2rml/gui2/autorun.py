@@ -17,15 +17,35 @@ import threading
 
 from PySide6.QtCore import QObject, Qt, Signal, QTimer
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
-                               QDoubleSpinBox, QCheckBox)
+                               QDoubleSpinBox, QCheckBox, QComboBox,
+                               QGridLayout)
 
 from gerber2rml.engine import autorun as ar
 from gerber2rml.engine import simmachine
+from gerber2rml.engine.stockfind import CORNERS, datum_outline
+
+# The DTU fixture's back-left bracket, measured 2026-11-02 (a 160 x 100
+# stock found at 22.31, 29.47, turned -0.10°). Each machine saves its own.
+DEFAULT_DATUM = (22.49, 129.47, "back-left")
+
+
+def saved_datum():
+    """(x, y, corner) of the corner bracket, from the settings."""
+    from gerber2rml.gui2 import workspace
+    raw = workspace.setting("autorun/datum", "") or ""
+    try:
+        x, y, c = raw.split(",")
+        if c in CORNERS:
+            return float(x), float(y), c
+    except ValueError:
+        pass
+    return DEFAULT_DATUM
 from gerber2rml.gui2 import theme, widgets, inspector
 
 STATE_GLYPH = {"waiting": ("○", theme.TEXT_3),
                "running": ("●", theme.LIVE), "done": ("✓", theme.VERIFIED),
-               "failed": ("✕", theme.DANGER)}
+               "failed": ("✕", theme.DANGER),
+               "skipped": ("–", theme.TEXT_3)}
 
 
 class _OnGui(QObject):
@@ -62,6 +82,7 @@ class WindowSource(ar.JobSource):
 
     def __init__(self, win, gui):
         self.w, self.gui = win, gui
+        self.keep_placement = False      # the outline is real: keep the board
 
     def _plan_steps(self):
         steps = [s for s in self.w.plan.steps
@@ -87,8 +108,21 @@ class WindowSource(ar.JobSource):
             w = self.w
             b = w.work_bounds()
             st = w.state
-            w.action_place(st.place_x + pose.x + margin_mm - b[0],
-                           st.place_y + pose.y + margin_mm - b[1])
+            # Where the operator put the board on the stock outline is where
+            # it is cut: keep its offset from the stock's corner. That outline
+            # is real only when the stock sits in the bracket; found by its
+            # edges, or not on the outline, the board goes to the front-left
+            # corner by the margin.
+            sx, sy, sw, sh = w.stock
+            on = (self.keep_placement
+                  and b[0] >= sx - 1e-6 and b[1] >= sy - 1e-6
+                  and b[2] <= sx + sw + 1e-6 and b[3] <= sy + sh + 1e-6)
+            if on:
+                ox, oy = b[0] - sx, b[1] - sy
+            else:
+                ox = oy = margin_mm
+            w.action_place(st.place_x + pose.x + ox - b[0],
+                           st.place_y + pose.y + oy - b[1])
             w.action_stock(pose.w, pose.h, pose.x, pose.y, show=True)
             w.set_stock_turn(ar.about(pose.x, pose.y, pose.angle))
         self.gui(go)
@@ -147,6 +181,7 @@ class _Events(QObject, ar.Events):
     step_sig = Signal(str, str)
     stock_sig = Signal(object)
     flip_sig = Signal()
+    check_sig = Signal(str, float)
     level_sig = Signal(str, object, int, int)
     fit_sig = Signal(object, object, object)
     job_sig = Signal(str, str, str)
@@ -155,6 +190,8 @@ class _Events(QObject, ar.Events):
         super().__init__()
         self.flipped = threading.Event()
         self.go_on = True
+        self.checked = threading.Event()
+        self.answer = ("stop", 0.0)
 
     def note(self, text):
         self.note_sig.emit(text)
@@ -171,8 +208,15 @@ class _Events(QObject, ar.Events):
     def fit(self, nominal, measured, t):
         self.fit_sig.emit(list(nominal), list(measured), t)
 
-    def job(self, key, label, rml):
-        self.job_sig.emit(key, label, rml)
+    def job(self, key, label, program):
+        self.job_sig.emit(key, label, program)
+
+    def check(self, traces_label, deeper_mm):
+        self.checked.clear()
+        self.answer = ("stop", 0.0)
+        self.check_sig.emit(traces_label, float(deeper_mm))
+        self.checked.wait()
+        return self.answer
 
     def flip(self):
         self.flipped.clear()
@@ -195,11 +239,13 @@ class AutoRunPage(inspector.Page):
         self._gui = _OnGui()
         self._rows = {}
 
-        self.add(widgets.body(
-            "Put the copper stock on the bed (on tape - the bed must not "
-            "conduct), clip the probe to its copper, type its size and click "
-            "roughly where it lies. Start finds it, probes it and cuts the "
-            "whole board with the one bit in the collet."))
+        intro = widgets.hint(
+            "Stock on the bed, probe clipped to its copper, size typed - "
+            "then Start.")
+        intro.setToolTip(
+            "Start finds the stock, probes it and cuts the whole board with "
+            "the one bit in the collet. The bed must not conduct (tape).")
+        self.add(intro)
 
         stock = widgets.Section("The stock")
         row = QWidget()
@@ -213,6 +259,57 @@ class AutoRunPage(inspector.Page):
         h.addWidget(QLabel("mm"))
         h.addStretch(1)
         stock.add(row)
+        self.where = QComboBox()
+        self.where.addItem("In the corner bracket", "bracket")
+        self.where.addItem("Anywhere - click it", "click")
+        self.where.setToolTip(
+            "In the bracket: push the stock into the corner bracket. Its "
+            "outline is that corner and the size typed, so the run only "
+            "touches the copper once for its height - any size of stock.\n"
+            "Anywhere: click on the stock and the probe walks to its edges "
+            "(slow, and every edge it crosses must be clear of clamps).")
+        stock.add(self.where)
+        self.datum_box = QWidget()
+        dl = QVBoxLayout(self.datum_box)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.setSpacing(2)
+        drow = QWidget()
+        h = QHBoxLayout(drow)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(theme.GAP_S)
+        dx, dy, dc = saved_datum()
+        self.dx_spin, self.dy_spin = (self._spin(v, 0.0, 210.0, 2)
+                                      for v in (dx, dy))
+        self.corner_box = QComboBox()
+        for c in CORNERS:
+            self.corner_box.addItem(c, c)
+        self.corner_box.setCurrentIndex(CORNERS.index(dc))
+        h.addWidget(QLabel("Bracket X"))
+        h.addWidget(self.dx_spin)
+        h.addWidget(QLabel("Y"))
+        h.addWidget(self.dy_spin)
+        h.addWidget(self.corner_box)
+        h.addStretch(1)
+        dl.addWidget(drow)
+        brow = QWidget()
+        h = QHBoxLayout(brow)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(theme.GAP_S)
+        self.datum_btn = widgets.button(
+            "Set from the bit",
+            tip="Jog the bit over the bracket's inside corner (where the "
+                "stock's corner sits) and press this. Asks first; saved by "
+                "the next Start.",
+            on=self._datum_from_head)
+        self.datum_back_btn = widgets.button(
+            "Saved corner",
+            tip="Put the bracket corner back to the one saved by the last "
+                "run.", on=self._datum_back)
+        h.addWidget(self.datum_btn)
+        h.addWidget(self.datum_back_btn)
+        h.addStretch(1)
+        dl.addWidget(brow)
+        stock.add(self.datum_box)
         self.pick_btn = widgets.button(
             "Click where it is",
             tip="Then click on the stage, anywhere on the stock. The probe "
@@ -237,6 +334,41 @@ class AutoRunPage(inspector.Page):
             "spot, and the board is assumed flat - quicker, fine for a small "
             "board on a flat bed.")
         stock.add(self.level_chk)
+        self.check_chk = QCheckBox("Stop before the cut-out, so I can check "
+                                   "the traces")
+        self.check_chk.setChecked(True)
+        self.check_chk.setToolTip(
+            "After the traces the bit parks and the run waits. Look at the "
+            "board: cut it out, or cut the traces again a little deeper on "
+            "the same height map. Once it is cut free it cannot be re-cut "
+            "where it lay.")
+        stock.add(self.check_chk)
+        srow = QWidget()
+        h = QHBoxLayout(srow)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(theme.GAP_S)
+        h.addWidget(QLabel("Start at"))
+        self.start_box = QComboBox()
+        self.start_box.setToolTip(
+            "To finish a board that stopped part-way: the steps before this "
+            "one are skipped. The stock must not have moved.")
+        h.addWidget(self.start_box, 1)
+        stock.add(srow)
+        self.dry_chk = QCheckBox("Dry run: spindle off, every cut 5 mm "
+                                 "above the copper")
+        self.dry_chk.setToolTip(
+            "Everything a real run does - finding the stock, probing, every "
+            "job start to finish - with the bit kept in the air. For "
+            "watching a new setup before it cuts.")
+        stock.add(self.dry_chk)
+        self.where.currentIndexChanged.connect(self._where_changed)
+        self._where_changed()
+        # The outline on the stage follows the size and the bracket as they
+        # are typed, so what is drawn is where the run will think it is.
+        for sp in (self.w_spin, self.h_spin, self.dx_spin, self.dy_spin):
+            sp.valueChanged.connect(self._sync_outline)
+        self.corner_box.currentIndexChanged.connect(self._sync_outline)
+        self.where.currentIndexChanged.connect(self._sync_outline)
 
         run = widgets.Section("Run")
         row = QWidget()
@@ -252,6 +384,48 @@ class AutoRunPage(inspector.Page):
         h.addWidget(self.flip_btn)
         h.addStretch(1)
         run.add(row)
+        # The check before the cut-out: shown only while the run waits.
+        self.check_box = QWidget()
+        cl = QVBoxLayout(self.check_box)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(theme.GAP_S)
+        self.check_lbl = widgets.body("")
+        cl.addWidget(self.check_lbl)
+        # Re-cut where it came out shallow - rarely the whole board - the
+        # way Rework does: boxes on the bed, the trace pass clipped to them.
+        self._boxes = []
+        def _row(*ws):
+            r = QWidget()
+            h = QHBoxLayout(r)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(theme.GAP_S)
+            for w_ in ws:
+                h.addWidget(w_)
+            h.addStretch(1)
+            cl.addWidget(r)
+        self.box_btn = widgets.button(
+            "Drag boxes over the shallow spots",
+            tip="While this is lit, dragging on the bed draws a box. Only "
+                "the traces inside the boxes are cut again.")
+        self.box_btn.setCheckable(True)
+        self.box_btn.toggled.connect(self._arm_boxes)
+        self.clear_boxes_btn = widgets.button("Clear boxes",
+                                              on=self._clear_boxes)
+        _row(self.box_btn, self.clear_boxes_btn)
+        self.again_btn = widgets.button(
+            "Recut all traces", on=self._recut)
+        self.deeper_spin = self._spin(0.05, 0.01, 0.5, 2)
+        self.deeper_spin.setSuffix(" mm")
+        self.deeper_spin.setToolTip("How much deeper than the last pass.")
+        _row(self.again_btn, QLabel("deeper by"), self.deeper_spin)
+        self.cut_btn = widgets.button(
+            "Cut it out", kind="primary",
+            on=lambda: self._answer("go", 0.0))
+        self.stop_here_btn = widgets.button(
+            "Stop here", on=lambda: self._answer("stop", 0.0))
+        _row(self.cut_btn, self.stop_here_btn)
+        self.check_box.setVisible(False)
+        run.add(self.check_box)
         self.status = widgets.body("")
         run.add(self.status)
         self.list_box = QWidget()
@@ -264,9 +438,11 @@ class AutoRunPage(inspector.Page):
         self.add(run)
 
         made = widgets.Section("What the run made")
-        made.add(widgets.hint(
-            "Everything the run measures and sends is kept, to look at the "
-            "same way as when you do it by hand."))
+        grid = QWidget()
+        g = QGridLayout(grid)
+        g.setContentsMargins(0, 0, 0, 0)
+        g.setSpacing(theme.GAP_S)
+        made.add(grid)
         self.made_btns = {}
         for key, text, tip in (
                 ("level", "Height map", "The probed surface: the table, the "
@@ -280,8 +456,9 @@ class AutoRunPage(inspector.Page):
             b = widgets.button(text, tip=tip,
                                on=lambda _c=False, k=key: self._show(k))
             b.setEnabled(key == "sim3d")
+            n = len(self.made_btns)
             self.made_btns[key] = b
-            made.add(b)
+            g.addWidget(b, n // 2, n % 2)
         self.add(made)
         self.finish()
 
@@ -291,14 +468,69 @@ class AutoRunPage(inspector.Page):
         self.finished.connect(self._on_finished)
 
     @staticmethod
-    def _spin(value):
+    def _spin(value, lo=10.0, hi=200.0, decimals=1):
         s = QDoubleSpinBox()
-        s.setRange(10.0, 200.0)
-        s.setDecimals(1)
+        s.setRange(lo, hi)
+        s.setDecimals(decimals)
         s.setValue(float(value))
         s.setKeyboardTracking(False)
         s.setFocusPolicy(Qt.StrongFocus)
         return s
+
+    # -- where the stock is --------------------------------------------------
+    def bracket(self):
+        return self.where.currentData() == "bracket"
+
+    def _where_changed(self, *_):
+        on = self.bracket()
+        self.datum_box.setVisible(on)
+        self.pick_btn.setVisible(not on)
+        self.click_lbl.setVisible(not on)
+        if on:
+            self.pick_btn.setChecked(False)
+
+    def datum(self):
+        return (self.dx_spin.value(), self.dy_spin.value(),
+                self.corner_box.currentData())
+
+    def _datum_from_head(self):
+        pos = getattr(self.ctl, "_last_xyz", None)
+        if not pos or not self.ctl.link.is_connected():
+            self.ctl.say("warn", "Connect the machine and jog the bit over "
+                                 "the bracket corner first.")
+            return
+        from gerber2rml.gui2 import dialogs
+        x, y, c = self.datum()
+        if not dialogs.confirm(
+                self, "Move the bracket corner to the bit?",
+                "The bit is at X %.2f, Y %.2f. The bracket corner (%s) is "
+                "now X %.2f, Y %.2f.\n\nOnly do this with the bit right over "
+                "the bracket's inside corner, where the stock's %s corner "
+                "sits." % (pos[0], pos[1], c, x, y, c),
+                "Use where the bit is"):
+            return
+        self.dx_spin.setValue(pos[0])
+        self.dy_spin.setValue(pos[1])
+
+    def _datum_back(self):
+        x, y, c = saved_datum()
+        self.dx_spin.setValue(x)
+        self.dy_spin.setValue(y)
+        self.corner_box.setCurrentIndex(CORNERS.index(c))
+
+    def _sync_outline(self, *_):
+        # Only while this page is the one open: it must not move the sheet
+        # under someone working on another step.
+        insp = getattr(self.ctl, "inspector", None)
+        if insp is None or insp.stack.currentWidget() is not self:
+            return
+        w, h = self.w_spin.value(), self.h_spin.value()
+        if self.bracket():
+            x, y, c = self.datum()
+            x0, y0 = datum_outline((x, y), c, (w, h))
+            self.ctl.action_stock(w, h, x0, y0, show=True)
+        else:
+            self.ctl.action_stock(w, h, show=True)
 
     # -- the click ---------------------------------------------------------
     def _arm_pick(self, on):
@@ -336,7 +568,18 @@ class AutoRunPage(inspector.Page):
             rows += [(k, t) for k, t in src.top_steps() if k == "cutout_run"]
         return rows
 
+    def _fill_start(self):
+        keep = self.start_box.currentData()
+        self.start_box.clear()
+        self.start_box.addItem("The beginning", None)
+        src = WindowSource(self.ctl, self._gui)
+        for k, t in src.bottom_steps() + src.top_steps():
+            self.start_box.addItem(t, k)
+        i = self.start_box.findData(keep)
+        self.start_box.setCurrentIndex(max(0, i))
+
     def _fill_rows(self):
+        self._fill_start()
         while self.list_lay.count():
             item = self.list_lay.takeAt(0)
             if item.widget():
@@ -382,6 +625,7 @@ class AutoRunPage(inspector.Page):
             self.sim_lbl.setText("")
         if self._thread is None:
             self._fill_rows()
+        self._sync_outline()
 
     def hideEvent(self, e):
         super().hideEvent(e)
@@ -401,9 +645,13 @@ class AutoRunPage(inspector.Page):
         if ctl.state.board is None:
             ctl.say("warn", "Load a board first.")
             return
-        if self._click is None:
+        datum = self.datum() if self.bracket() else None
+        if datum is None and self._click is None:
             ctl.say("warn", "Click where the stock is first.")
             return
+        from gerber2rml.gui2 import workspace
+        if datum is not None:
+            workspace.set_setting("autorun/datum", "%.3f,%.3f,%s" % datum)
         sim = simmachine.is_sim(port)
         if sim:
             printer = simmachine.printer()
@@ -434,17 +682,27 @@ class AutoRunPage(inspector.Page):
         ev.step_sig.connect(self._set_row)
         ev.stock_sig.connect(self._on_stock)
         ev.flip_sig.connect(self._on_flip)
+        ev.check_sig.connect(self._on_check)
         ev.level_sig.connect(self._on_level)
         ev.fit_sig.connect(self._on_fit)
         ev.job_sig.connect(self._on_job)
         self._new_run_dir()
         src = WindowSource(ctl, self._gui)
+        src.keep_placement = datum is not None
         self.start_btn.setEnabled(False)
         self._last_port = port
         self._measured = None
-        click = self._click
+        click = self._click or (0.0, 0.0)
         bit = ctl.state.drill.bit_diameter
         level = self.level_chk.isChecked()
+        dry = self.dry_chk.isChecked()
+        check_cut = self.check_chk.isChecked()
+        start_at = self.start_box.currentData()
+        from gerber2rml.gui2 import workspace
+        try:
+            hint = float(workspace.setting("autorun/surface_z", "") or "x")
+        except ValueError:
+            hint = None
 
         def work():
             from gerber2rml.engine import spi_probe
@@ -456,8 +714,18 @@ class AutoRunPage(inspector.Page):
                                  stock_mm=size, double=ctl._double,
                                  bit_mm=bit, should_abort=link.should_abort,
                                  should_pause=link.should_pause,
-                                 level=level)
-                ok = run.run()
+                                 level=level, surface_hint=hint,
+                                 datum=datum, dry_run=dry,
+                                 check_cut=check_cut, start_at=start_at)
+                try:
+                    ok = run.run()
+                finally:
+                    if run.pose is not None:
+                        # The bed does not move: next time, drop straight
+                        # to just above this instead of feeling down from
+                        # the top.
+                        workspace.set_setting("autorun/surface_z",
+                                              "%.3f" % run.pose.z)
                 msg = "The board is done."
             except Exception as e:
                 msg = str(e) or e.__class__.__name__
@@ -509,6 +777,16 @@ class AutoRunPage(inspector.Page):
 
     def _on_level(self, side, rows, nx, ny):
         self.ctl.level_page.adopt(side, rows, nx, ny)
+        if getattr(self, "run_dir", None) is not None:
+            try:
+                with open(self.run_dir / ("height_map_%s.csv" % side), "w",
+                          encoding="utf-8") as f:
+                    f.write("# %d x %d grid; dz in mm from the first point\n"
+                            "x_mm,y_mm,dz_mm\n" % (nx, ny))
+                    for x, y, dz in rows:
+                        f.write("%.3f,%.3f,%.4f\n" % (x, y, dz))
+            except OSError:
+                pass
         self.made_btns["level"].setEnabled(True)
         self._log("%s surface: %d points, %.3f mm from flat" % (
             side, len(rows), max(r[2] for r in rows) - min(r[2] for r in rows)))
@@ -527,7 +805,7 @@ class AutoRunPage(inspector.Page):
             return
         from gerber2rml.naming import clean_name
         self._jobs_sent += 1
-        name = "%02d_%s.rml" % (self._jobs_sent, clean_name(key))
+        name = "%02d_%s.nc" % (self._jobs_sent, clean_name(key))
         try:
             (self.run_dir / name).write_text(rml, encoding="ascii")
         except OSError:
@@ -567,13 +845,73 @@ class AutoRunPage(inspector.Page):
         self._events.go_on = True
         self._events.flipped.set()
 
+    def _on_check(self, traces_label, deeper):
+        self.check_lbl.setText(
+            "%s done%s. Look at the board: is every trace through the "
+            "copper? Then cut it out. If some are not, cut them again a "
+            "little deeper - the stock has not moved, so they land in the "
+            "same grooves." % (traces_label, "" if not deeper else
+                               ", %.2f mm deeper" % deeper))
+        self._boxes = []
+        self._show_boxes()
+        self.check_box.setVisible(True)
+        self.ctl.say("warn", "Check the traces before the cut-out.")
+        self._log("waiting: check the traces (%.2f mm deeper so far)" % deeper)
+
+    # -- boxes over the shallow spots ----------------------------------------
+    def _arm_boxes(self, on):
+        self.ctl.set_stage_mode("box" if on else "place")
+
+    def add_box(self, x0, y0, x1, y1):
+        self._boxes.append((min(x0, x1), min(y0, y1),
+                            max(x0, x1), max(y0, y1)))
+        self._show_boxes()
+
+    def _clear_boxes(self):
+        self._boxes = []
+        self._show_boxes()
+
+    def _show_boxes(self):
+        n = len(self._boxes)
+        self.again_btn.setText("Recut the %d box%s" % (n, "" if n == 1
+                                                       else "es")
+                               if n else "Recut all traces")
+        self.ctl.stage.set_regions(
+            [b + (theme.CAUTION,) for b in self._boxes])
+
+    def _recut(self):
+        self._answer("again", self.deeper_spin.value(),
+                     list(self._boxes) or None)
+
+    def _answer(self, what, mm, boxes=None):
+        self.check_box.setVisible(False)
+        self.box_btn.setChecked(False)
+        boxes_shown = bool(self._boxes)
+        self._boxes = []
+        if boxes_shown:
+            # Give the stage back to Rework's own boxes.
+            self.ctl.rework_page._push()
+        if self._events is None:
+            return
+        self._log("check answered: %s %.2f%s" % (
+            what, mm, "" if not boxes else " in boxes %s" % [
+                tuple(round(v, 2) for v in b) for b in boxes]))
+        self._events.answer = ((what, float(mm), boxes) if boxes
+                               else (what, float(mm)))
+        self._events.checked.set()
+
     def _on_finished(self, ok, msg):
         self._thread = None
         self.start_btn.setEnabled(True)
         self.flip_btn.setVisible(False)
+        self.check_box.setVisible(False)
+        if self.box_btn.isChecked():
+            self.box_btn.setChecked(False)
         if self._events is not None:
             self._events.go_on = False
             self._events.flipped.set()
+            self._events.answer = ("stop", 0.0)
+            self._events.checked.set()
         self.status.setText(msg)
         if getattr(self, "_measured", None):
             self.w_spin.setValue(round(self._measured[0], 1))

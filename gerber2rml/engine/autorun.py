@@ -26,13 +26,17 @@ with its corner at the stock's corner plus a margin. The stock is rarely
 square to the bed, so the bottom side's paths are turned about the stock
 corner by the angle the stock finder measured. The top side's paths are
 already in the machine frame: the fiducial fit maps them there directly.
-The origin is set to machine XY (0, 0) - so RML coordinates ARE machine
-coordinates - and Z on the copper where the height map is zero.
+No origin is set anywhere. The jobs are NC (the mill's command set is NC
+Code) and start from two known points: Z at the machine top (``G28``), XY
+at the first point through G54, which is machine (0, 0) on this mill - the
+run moves there once and reads the head back before it cuts anything.
+After that every move is incremental, and Z is machine Z: the probed
+copper height plus the path's depth (backends/gcode.render_incremental).
 """
 import math
 import threading
 
-from gerber2rml.backends.srm20 import render
+from gerber2rml.backends.gcode import render_incremental
 from gerber2rml.engine import spi_probe, stockfind
 from gerber2rml.engine.fidfind import find_hole_center, hole_test
 from gerber2rml.engine.fiducial import (Transform, apply_to_toolpaths,
@@ -40,11 +44,19 @@ from gerber2rml.engine.fiducial import (Transform, apply_to_toolpaths,
 from gerber2rml.engine.leveling import HeightMap, apply_leveling, probe_points
 from gerber2rml.engine.runner import JobRunner, RunStopped
 from gerber2rml.engine.spi_probe import ProbeError
+from gerber2rml.engine.select import clip_toolpaths_to_regions
+from gerber2rml.toolpath import Move
 
 FIT_WORST_MM = 0.15          # a fiducial further off than this stops the run
 LEVEL_GRID = (4, 3)
 HOLE_SEARCH_UM = 1500
 NUDGES = ((0, 0), (1.5, 0), (0, 1.5), (-1.5, 0), (0, -1.5))
+DRY_AIR_MM = 5.0             # a dry run cuts this far above the copper
+
+
+def _fmt(v):
+    s = ("%.3f" % v).rstrip("0")
+    return s if s.endswith(".") else s
 
 
 class RunFailed(RuntimeError):
@@ -114,6 +126,16 @@ class Events:
     def job(self, key, label, rml):
         """A job is about to be sent: its program, exactly as sent."""
 
+    def check(self, traces_label, deeper_mm):
+        """The traces are done and the cut-out is next: block until the
+        operator has looked. Returns ``("go", 0)`` to cut it out,
+        ``("again", mm)`` to cut the traces again that much deeper still
+        (``deeper_mm`` is how much deeper they already went), or
+        ``("stop", 0)``. ``("again", mm, boxes)`` re-cuts only inside the
+        boxes - ``[(x0, y0, x1, y1)]``, machine mm - which is the usual case:
+        a spot or two came out shallow, not the whole board."""
+        return ("go", 0.0)
+
 
 def about(cx, cy, deg):
     """The rotation by ``deg`` about (cx, cy), as a :class:`Transform`."""
@@ -128,7 +150,8 @@ class AutoRun:
     def __init__(self, ser, printer, source, events, *, click_mm, stock_mm,
                  double, bit_mm=0.8, margin_mm=3.0, rpm=None,
                  should_abort=None, should_pause=None, dry_run=False,
-                 runner_opts=None, level=True):
+                 runner_opts=None, level=True, surface_hint=None,
+                 datum=None, check_cut=True, start_at=None):
         self.ser, self.printer = ser, printer
         self.src, self.ev = source, events
         self.click, self.size = click_mm, stock_mm
@@ -139,9 +162,20 @@ class AutoRun:
         self.dry_run = dry_run
         self.runner_opts = runner_opts or {}
         self.do_level = level
+        self.surface_hint = surface_hint     # copper Z last time, mm
+        # (x, y, corner): the stock sits in a corner bracket - no edge walks
+        self.datum = datum
+        # Stop before a cut-out so the traces can be looked at first: once
+        # the board is cut free it can no longer be re-cut where it lay.
+        self.check_cut = check_cut
+        # Skip every job before this one (finishing a board that stopped).
+        self.start_at = start_at
+        self._skipping = start_at is not None
         self.pose = self.pose_top = None
         self.rotation = None
         self.fit = None
+        self.z_surf = None           # machine Z of the copper, mm
+        self._frame_ok = False
 
     # -- the sequence --------------------------------------------------------
     def run(self):
@@ -149,29 +183,76 @@ class AutoRun:
         self.src.place(self.pose, self.margin)
         self.rotation = about(self.pose.x, self.pose.y, self.pose.angle)
         x0, y0, x1, y1 = self.src.area("bottom")
-        need = (x1 - self.pose.x + self.margin, y1 - self.pose.y + self.margin)
-        if need[0] > self.pose.w or need[1] > self.pose.h:
+        p = self.pose
+        need = (x1 - x0 + 2 * self.margin, y1 - y0 + 2 * self.margin)
+        if need[0] > p.w or need[1] > p.h:
             raise RunFailed("the board needs %.1f × %.1f mm of stock with its "
                             "margins, and this stock is %.1f × %.1f mm. Use a "
-                            "bigger piece." % (need[0], need[1],
-                                               self.pose.w, self.pose.h))
-        hmap = self._level("level", "bottom", self.rotation)
-        for key, label in self.src.bottom_steps():
-            self._job(key, label, self.rotation, hmap)
+                            "bigger piece." % (need[0], need[1], p.w, p.h))
+        if (x0 < p.x - 1e-6 or y0 < p.y - 1e-6 or x1 > p.x + p.w + 1e-6
+                or y1 > p.y + p.h + 1e-6):
+            raise RunFailed(
+                "the board hangs off the stock (it spans X %.1f-%.1f, Y "
+                "%.1f-%.1f; the stock X %.1f-%.1f, Y %.1f-%.1f). Drag it "
+                "onto the stock outline." % (x0, x1, y0, y1, p.x, p.x + p.w,
+                                             p.y, p.y + p.h))
+        bottom, top = self.src.bottom_steps(), self.src.top_steps()
+        if self.start_at is not None and self.start_at not in [
+                k for k, _l in bottom + top]:
+            raise RunFailed("there is no step %r to start from"
+                            % self.start_at)
+        # Started on a top-side step: the bottom is done and the board is
+        # already turned over, so neither is asked for again.
+        on_top = self.start_at in [k for k, _l in top]
+        if on_top:
+            for key, _l in bottom:
+                self._step(key, "skipped")
+        else:
+            hmap = self._level("level", "bottom", self.rotation)
+            self._jobs(bottom, self.rotation, hmap)
         if not self.double:
             return True
-        self._step("flip", "running")
-        self.ev.note("Turn the board over, left to right, and put it back "
-                     "where it was. Then press Continue.")
-        if not self.ev.flip():
-            raise RunStopped("stopped at the flip")
-        self._step("flip", "done")
+        if not on_top:
+            self._step("flip", "running")
+            self.ev.note("Turn the board over, left to right, and put it "
+                         "back where it was. Then press Continue.")
+            if not self.ev.flip():
+                raise RunStopped("stopped at the flip")
+            self._step("flip", "done")
         self._find_stock("stock_top", again=True)
         self._fiducials()
         hmap = self._level("level_top", "top", None)
-        for key, label in self.src.top_steps():
-            self._job(key, label, None, hmap)
+        self._jobs(top, None, hmap)
         return True
+
+    def _jobs(self, steps, t, hmap):
+        """Run ``steps`` in order; before a cut-out, let the traces be
+        checked - and cut again, deeper, as often as asked."""
+        traces = None
+        for key, label in steps:
+            if self._skipping:
+                if key != self.start_at:
+                    self._step(key, "skipped")
+                    continue
+                self._skipping = False
+            if "cutout" in key and self.check_cut and traces is not None:
+                deeper = 0.0
+                while True:
+                    answer = self.ev.check(traces[1], deeper)
+                    what, mm = answer[0], answer[1]
+                    boxes = answer[2] if len(answer) > 2 else None
+                    if what == "stop":
+                        raise RunStopped("stopped before the cut-out")
+                    if what != "again":
+                        break
+                    deeper += float(mm)
+                    self.ev.note("%s again%s, %.2f mm deeper…" % (
+                        traces[1], " in %d boxes" % len(boxes) if boxes
+                        else "", deeper))
+                    self._job(traces[0], traces[1], t, hmap, deeper, boxes)
+            self._job(key, label, t, hmap)
+            if "traces" in key:
+                traces = (key, label)
 
     def _step(self, key, state):
         self.ev.step(key, state)
@@ -194,10 +275,15 @@ class AutoRun:
                 # Flipped in place: the middle of the stock is still about
                 # where it was, so no click is needed the second time.
                 click = self.pose.to_machine(self.pose.w / 2, self.pose.h / 2)
-            pose = stockfind.find_stock(self.ser, click, self.size,
-                                        bit_mm=self.bit,
-                                        should_abort=self.should_abort,
-                                        note=self.ev.note)
+            if self.datum is not None:
+                # Flipped left to right and pushed back into the same
+                # bracket, the stock covers the same rectangle again.
+                pose = stockfind.from_datum(
+                    self.ser, self.datum[:2], self.datum[2], self.size,
+                    should_abort=self.should_abort, note=self.ev.note,
+                    hint_mm=self.pose.z if again else self.surface_hint)
+            else:
+                pose = self._find_by_edges(click, again)
             if again:
                 self.pose_top = pose
             else:
@@ -207,6 +293,15 @@ class AutoRun:
                          % (pose.x, pose.y, pose.angle))
             return pose
         return self._guard(key, go)
+
+    def _find_by_edges(self, click, again):
+        return stockfind.find_stock(self.ser, click, self.size,
+                                    holes=again,
+                                    hint_mm=(self.pose.z if again else
+                                             self.surface_hint),
+                                    bit_mm=self.bit,
+                                    should_abort=self.should_abort,
+                                    note=self.ev.note)
 
     # -- the surface -----------------------------------------------------------
     def _level(self, key, side, t):
@@ -259,12 +354,8 @@ class AutoRun:
                 raise RunFailed("the copper is %.2f mm out of flat - more than "
                                 "the cut can follow. Re-tape the stock flat."
                                 % spread)
-            got = spi_probe.set_origin(self.ser, 0, 0, z0)
-            if got is None:
-                raise RunFailed("the machine did not take the origin - the "
-                                "firmware must be v4 (Machine ▸ Flash).")
-            self.ev.note("Surface probed: %.2f mm from flat. Origin set."
-                         % spread)
+            self.z_surf = z0 / 1000.0
+            self.ev.note("Surface probed: %.2f mm from flat." % spread)
             self.ev.level(side, rows, nx, ny)
             return HeightMap.from_points(rows, nx, ny)
         return self._guard(key, go)
@@ -272,9 +363,7 @@ class AutoRun:
     def _flat(self, side):
         """No levelling: Z zero on the copper the stock finder touched."""
         pose = self.pose_top if side == "top" else self.pose
-        if spi_probe.set_origin(self.ser, 0, 0, int(pose.z * 1000)) is None:
-            raise RunFailed("the machine did not take the origin - the "
-                            "firmware must be v4 (Machine ▸ Flash).")
+        self.z_surf = pose.z
         self.ev.note("Not levelling: Z zero is the copper at the clicked spot.")
         return None
 
@@ -344,21 +433,66 @@ class AutoRun:
                                 should_abort=self.should_abort)
 
     # -- jobs ----------------------------------------------------------------
-    def _job(self, key, label, t, hmap):
+    def _check_frame(self, x, y):
+        """Move to (x, y) through G54 with Z at the top, and read the head
+        back. Every job's XY rests on G54 being machine (0, 0); if someone
+        moved it, this is where the run finds out - before anything cuts."""
+        prog = ("%%\nO0001\n(frame check)\nG21\nG91\nG28 Z0.\nG90\nG54\n"
+                "G0 X%s Y%s\nM30\n%%\n" % (_fmt(x), _fmt(y)))
+        self.ev.note("Checking where the mill's G54 origin is…")
+        try:
+            JobRunner(self.ser, self.printer, self.should_abort,
+                      self.should_pause, self.ev.note,
+                      **self.runner_opts).run(prog, "frame check",
+                                              end_mm=(x, y), timeout_s=120)
+        except RunStopped as e:
+            if str(e) != "the job ran past its time limit":
+                raise
+        pos = spi_probe.query_position(self.ser)
+        if pos is None or math.hypot(pos[0] - x, pos[1] - y) > 0.1:
+            raise RunFailed(
+                "the head went to %s, not %.2f, %.2f. The mill's G54 X/Y "
+                "origin is not machine 0, 0 - in VPanel, set G54 X/Y back to "
+                "machine 0, 0 (only Z is ever zeroed)." % (
+                    "?" if pos is None else "%.2f, %.2f" % pos[:2], x, y))
+        self._frame_ok = True
+
+    def _job(self, key, label, t, hmap, deeper=0.0, boxes=None):
         def go():
             paths, xy, plunge = self.src.toolpaths(key)
             if t is not None:
                 paths = apply_to_toolpaths(paths, t)
+            if boxes:
+                # The boxes were drawn on the bed, where the cuts are: clip
+                # in that frame, after the turn and before the levelling.
+                paths = clip_toolpaths_to_regions(
+                    paths, [(b, None) for b in boxes])
+                if not paths:
+                    self.ev.note("None of the boxes holds any of the %s - "
+                                 "nothing re-cut." % label.lower())
+                    return True
+            if deeper:
+                # Only the cutting moves go down; travel stays where it was.
+                paths = [[Move(m.x, m.y, m.z - deeper if m.z < 0 else m.z,
+                               rapid=m.rapid) for m in tp] for tp in paths]
             if hmap is not None:
                 paths = apply_leveling(paths, hmap)
-            rml = render(paths, xy_feed=xy, plunge_feed=plunge,
-                         spindle=not self.dry_run, rpm=self.rpm,
-                         safe_start=True)
+            # A dry run is the whole job in the air: the spindle off AND
+            # every cut lifted clear - a still bit plunged into copper
+            # snaps.
+            prog, end = render_incremental(
+                paths, xy_feed=xy, plunge_feed=plunge,
+                z_surface=self.z_surf + (DRY_AIR_MM if self.dry_run else 0.0),
+                spindle=not self.dry_run,
+                name=label + (" (dry run)" if self.dry_run else ""))
+            first = next((m for tp in paths for m in tp), None)
+            if first is not None and not self._frame_ok:
+                self._check_frame(first.x, first.y)
             self.ev.note("%s…" % label)
-            self.ev.job(key, label, rml)
+            self.ev.job(key, label, prog)
             JobRunner(self.ser, self.printer, self.should_abort,
                       self.should_pause, self.ev.note,
-                      **self.runner_opts).run(rml, label)
+                      **self.runner_opts).run(prog, label, end_mm=end)
             # The head ends high and somewhere; the next probe re-finds it.
             return True
         return self._guard(key, go)

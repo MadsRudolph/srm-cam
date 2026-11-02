@@ -154,3 +154,90 @@ def test_levelling_can_be_left_out():
     assert run.run() is True
     assert not probed
     assert ("level", "done") in log.steps
+
+def test_a_dry_run_keeps_the_bit_in_the_air():
+    from tests.test_gcode_incremental import _walk
+    m, ser, board, log, run = _run(False, level=False, dry_run=True)
+    sent = []
+    log.job = lambda key, label, prog: sent.append(prog)
+    assert run.run() is True
+    assert len(sent) == 3
+    for prog in sent:
+        assert "M3" not in prog.split()
+        lowest = min(p[2] for p in _walk(prog)[0])
+        # Cut depths are a fraction of a mm: 5 mm up keeps them in the air.
+        assert lowest > run.pose.z + 3.0, (lowest, run.pose.z)
+
+
+def test_the_traces_are_checked_and_cut_again_deeper_before_the_cut_out():
+    from tests.test_gcode_incremental import _walk
+    m, ser, board, log, run = _run(False, level=False)
+    sent, asked = [], []
+    log.job = lambda key, label, prog: sent.append((key, prog))
+    answers = iter([("again", 0.05), ("again", 0.05), ("go", 0)])
+
+    def check(label, deeper):
+        asked.append(deeper)
+        return next(answers)
+    log.check = check
+    assert run.run() is True
+    assert asked == [0.0, 0.05, 0.10]
+    keys = [k for k, _p in sent]
+    assert keys == ["drill", "traces", "traces", "traces", "cutout"]
+
+    def lowest(p):
+        return min(z for _x, _y, z in _walk(p)[0])
+    t = [lowest(p) for k, p in sent if k == "traces"]
+    assert t[0] - t[1] == pytest.approx(0.05, abs=0.002)
+    assert t[0] - t[2] == pytest.approx(0.10, abs=0.002)
+
+
+def test_stop_at_the_check_leaves_the_board_uncut_free():
+    from gerber2rml.engine.runner import RunStopped
+    m, ser, board, log, run = _run(False, level=False)
+    sent = []
+    log.job = lambda key, label, prog: sent.append(key)
+    log.check = lambda label, deeper: ("stop", 0)
+    with pytest.raises(RunStopped):
+        run.run()
+    assert "cutout" not in sent
+
+
+def test_a_run_can_start_at_a_later_step():
+    m, ser, board, log, run = _run(False, level=False, start_at="traces")
+    sent = []
+    log.job = lambda key, label, prog: sent.append(key)
+    assert run.run() is True
+    assert sent == ["traces", "cutout"]
+    assert ("drill", "skipped") in log.steps
+
+
+def test_a_recut_in_boxes_cuts_only_inside_them():
+    from tests.test_gcode_incremental import _walk
+    m, ser, board, log, run = _run(False, level=False)
+    sent = []
+    log.job = lambda key, label, prog: sent.append((key, prog))
+    first = []
+
+    def check(label, deeper):
+        if first:
+            return ("go", 0)
+        # A box over the middle of where the traces were just cut.
+        cuts = [p for p in _walk(sent[-1][1])[0] if p[2] < run.pose.z]
+        x0, x1 = min(p[0] for p in cuts), max(p[0] for p in cuts)
+        y0, y1 = min(p[1] for p in cuts), max(p[1] for p in cuts)
+        q = (x1 - x0) / 4
+        box = (x0 + q, y0 - 1, x1 - q, y1 + 1)       # the middle half
+        first.append(box)
+        return ("again", 0.05, [box])
+    log.check = check
+    assert run.run() is True
+    assert [k for k, _p in sent] == ["drill", "traces", "traces", "cutout"]
+    x0, y0, x1, y1 = first[0]
+    full = [p for p in _walk(sent[1][1])[0] if p[2] < run.pose.z]
+    redo = [p for p in _walk(sent[2][1])[0] if p[2] < run.pose.z]
+    span = lambda pts: max(p[0] for p in pts) - min(p[0] for p in pts)
+    assert redo and span(redo) < span(full) - 5
+    for x, y, _z in redo:
+        assert x0 - 0.01 <= x <= x1 + 0.01 and y0 - 0.01 <= y <= y1 + 0.01
+    assert min(p[2] for p in redo) < min(p[2] for p in full) - 0.04

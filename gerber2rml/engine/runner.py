@@ -53,13 +53,18 @@ class JobRunner:
         self.poll_s = poll_s
         self.origin = origin_mm
 
-    def run(self, rml_text, name, timeout_s=6 * 3600, progress=None):
-        """Run ``rml_text`` to the end. Raises :class:`RunStopped`."""
-        end = program_end(rml_text)
-        end_mm = (None if end is None else
-                  (self.origin[0] + end[0] / 100.0,
-                   self.origin[1] + end[1] / 100.0))
-        self.printer.send(rml_text, name)
+    def run(self, program, name, timeout_s=6 * 3600, progress=None,
+            end_mm=None):
+        """Run ``program`` to the end. Raises :class:`RunStopped`.
+
+        ``end_mm`` is where the head stops, machine XY; without it the end is
+        read from the program as RML."""
+        if end_mm is None:
+            end = program_end(program)
+            end_mm = (None if end is None else
+                      (self.origin[0] + end[0] / 100.0,
+                       self.origin[1] + end[1] / 100.0))
+        self.printer.send(program, name)
         t0 = time.monotonic()
         still_since = None
         paused = False
@@ -75,6 +80,13 @@ class JobRunner:
             if st.get("cover"):
                 self.stop()
                 raise RunStopped("the lid was opened")
+            if st.get("error") or st.get("fatal"):
+                # What a refused program looks like: the mill holds in pause
+                # with its error bit up (RML sent to a mill set to NC Code).
+                self.stop()
+                raise RunStopped("the mill refused the job. In VPanel, "
+                                 "Setup ▸ Command Set must be NC Code; press "
+                                 "Cancel there to clear it")
             pos = spi_probe.query_position(self.ser)
             if progress is not None and pos:
                 progress(pos)

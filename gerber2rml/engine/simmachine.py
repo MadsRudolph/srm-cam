@@ -447,7 +447,8 @@ class SimPrinter:
             self.m.halt.clear()
             self.m.moving = True
             try:
-                run_rml(self.m, text)
+                (run_nc if text.lstrip().startswith("%") else run_rml)(
+                    self.m, text)
             finally:
                 self.m.moving = False
                 with self._lock:
@@ -484,6 +485,60 @@ def run_rml(m, text):
             x, y, z = (int(v) for v in cmd[1:].split(","))
             if not m.move_to(ox + x * 10, oy + y * 10, min(0, oz + z * 10), feed):
                 return False
+    m.spindle = 0
+    return True
+
+
+def run_nc(m, text):
+    """Execute the NC subset the automatic run writes. G54 is machine (0, 0)
+    in XY, as on the real mill; Z is only ever moved incrementally or by
+    ``G28`` to the top, so G54's Z never matters."""
+    absolute, rapid, feed = True, True, 15.0
+    for raw in text.splitlines():
+        if m.halt.is_set():
+            m.spindle = 0
+            return False
+        line = re.sub(r"\(.*?\)", "", raw).strip().upper()
+        if not line or line in ("%",) or line.startswith("O"):
+            continue
+        words = dict((w[0], float(w[1:])) for w in
+                     re.findall(r"[A-Z][-+]?[0-9.]+", line) if w[0] in "FXYZ")
+        codes = re.findall(r"[GM]\d+", line)
+        if "G90" in codes:
+            absolute = True
+        if "G91" in codes:
+            absolute = False
+        if "M3" in codes or "M03" in codes:
+            m.spindle = 7000
+        if "M5" in codes or "M05" in codes:
+            m.spindle = 0
+        if "F" in words:
+            feed = words["F"] / 60.0
+        if "G28" in codes:
+            if not m.move_to(m.pos[0], m.pos[1], 0, 40.0):
+                return False
+            continue
+        if "G04" in codes or "G4" in codes:
+            continue
+        if "G0" in codes or "G00" in codes:
+            rapid = True
+        if "G1" in codes or "G01" in codes:
+            rapid = False
+        if not any(k in words for k in "XYZ"):
+            continue
+        x, y, z = m.pos
+        if absolute:
+            x = words["X"] * 1000 if "X" in words else x
+            y = words["Y"] * 1000 if "Y" in words else y
+            if "Z" in words:
+                raise ValueError("absolute Z in an automatic-run program")
+        else:
+            x += words.get("X", 0) * 1000
+            y += words.get("Y", 0) * 1000
+            z += words.get("Z", 0) * 1000
+        if not m.move_to(round(x), round(y), min(0, round(z)),
+                         40.0 if rapid else feed):
+            return False
     m.spindle = 0
     return True
 
