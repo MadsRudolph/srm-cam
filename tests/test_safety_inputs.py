@@ -45,3 +45,15 @@ def test_rml_lifts_before_it_travels_and_can_set_the_speed():
     assert lift == "!PZ0,200;PU1000,1000;"
     assert lines.index(lift) < next(i for i, l in enumerate(lines)
                                     if l.startswith("Z"))
+
+
+def test_the_suite_never_writes_the_real_settings():
+    # QSettings("org", "app") is always the registry on Windows, whatever
+    # the default format says - which let the suite write the operator's
+    # remembered folders and Automatic mode's bracket corner and copper
+    # height into the real app. Every SRM-CAM settings store must follow
+    # the default format, so the conftest's INI redirect catches it.
+    from PySide6.QtCore import QSettings
+    from gerber2rml.gui2 import tier, workspace
+    for s in (workspace._settings(), tier._settings()):
+        assert s.format() == QSettings.IniFormat, s.fileName()

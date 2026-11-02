@@ -56,7 +56,8 @@ _ALIASES = {"novice": ESSENTIAL, "essential": ESSENTIAL,
 
 
 def _settings():
-    return QSettings("SRM-CAM", "SRM-CAM-2")
+    return QSettings(QSettings.defaultFormat(), QSettings.UserScope,
+                     "SRM-CAM", "SRM-CAM-2")
 
 
 def pinned_tier():

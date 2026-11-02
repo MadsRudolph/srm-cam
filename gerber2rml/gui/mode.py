@@ -36,7 +36,8 @@ _VALID = (NOVICE, PRO)
 
 
 def _settings():
-    return QSettings("SRM-CAM", "SRM-CAM")
+    return QSettings(QSettings.defaultFormat(), QSettings.UserScope,
+                     "SRM-CAM", "SRM-CAM")
 
 
 def forced_mode():

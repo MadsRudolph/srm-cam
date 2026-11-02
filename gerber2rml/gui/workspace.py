@@ -31,7 +31,8 @@ def workspace_root():
 
 
 def _settings():
-    return QSettings("SRM-CAM", "SRM-CAM")
+    return QSettings(QSettings.defaultFormat(), QSettings.UserScope,
+                     "SRM-CAM", "SRM-CAM")
 
 
 def remembered_dir(key, fallback_sub=""):

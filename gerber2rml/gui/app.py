@@ -2386,7 +2386,8 @@ class MainWindow(QMainWindow):
 
     def _app_settings(self):
         from PySide6.QtCore import QSettings
-        return QSettings("SRM-CAM", "SRM-CAM")
+        return QSettings(QSettings.defaultFormat(), QSettings.UserScope,
+                     "SRM-CAM", "SRM-CAM")
 
     def _kicad_plugin_dirs(self):
         from gerber2rml.engine import kicadplugin

@@ -36,7 +36,8 @@ def _settings():
     # Its own organisation-scoped key space. The two interfaces remember their
     # own window geometry and their own last-used folders; sharing those would
     # make an A/B of "where does it open?" meaningless.
-    return QSettings("SRM-CAM", "SRM-CAM-2")
+    return QSettings(QSettings.defaultFormat(), QSettings.UserScope,
+                     "SRM-CAM", "SRM-CAM-2")
 
 
 def remembered_dir(key, fallback_sub=""):
