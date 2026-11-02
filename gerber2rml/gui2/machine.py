@@ -1047,6 +1047,23 @@ class MachineBar(QWidget):
         if reason and reason != "disconnected":
             self.message.emit("warn", f"Machine link closed: {reason}")
 
+    def set_held_by_run(self, on):
+        """Automatic mode has taken the port. "Offline" and a Connect button
+        would be wrong for as long as it has it; STOP still reaches the run."""
+        if self.gated:
+            return
+        self.connect_btn.setEnabled(not on)
+        self.port_combo.setEnabled(not on)
+        if on:
+            self._note_before = self.offline_note.text()
+            self.chip.set("Running", "live")
+            self.offline_note.setText("The run has the machine. STOP or Esc "
+                                      "stops it.")
+        else:
+            self.chip.set("Machine offline", "idle")
+            self.offline_note.setText(getattr(self, "_note_before",
+                                              self.offline_note.text()))
+
     def _on_position(self, x, y, z, touch):
         self.dro_x.set(f"{x:8.2f}")
         self.dro_y.set(f"{y:8.2f}")
