@@ -110,6 +110,8 @@ def test_the_two_tiers_export_identical_bytes(qt_app, monkeypatch, tmp_path):
 
 
 def test_the_plan_is_the_same_in_both_tiers(qt_app, monkeypatch):
+    """Novice shows three rows, but the run needs the whole plan. The only
+    difference is that its Run it all step is always there."""
     w1 = _window(monkeypatch, "novice")
     try:
         essential = [(s.key, s.ordinal, s.file) for s in w1.plan]
@@ -117,54 +119,199 @@ def test_the_plan_is_the_same_in_both_tiers(qt_app, monkeypatch):
         w1.close()
     w2 = _window(monkeypatch, "pro")
     try:
+        w2.action_autorun(True)
         full = [(s.key, s.ordinal, s.file) for s in w2.plan]
+        w2.action_autorun(False)
     finally:
         w2.close()
     assert essential == full
 
 
-def test_essential_is_a_strict_subset(qt_app, monkeypatch):
-    """Not a second interface: everything in the simpler tier is also in the
-    fuller one, so there is nothing that can drift between them."""
-    w1 = _window(monkeypatch, "novice")
-    try:
-        essential = _visible_controls(w1)
-    finally:
-        w1.close()
-    w2 = _window(monkeypatch, "pro")
-    try:
-        full = _visible_controls(w2)
-    finally:
-        w2.close()
-    assert essential <= full, sorted(essential - full)
-    assert full - essential, "the full tier is supposed to add something"
-
-
-def test_essential_keeps_bed_levelling(qt_app, monkeypatch):
-    """The thing the first interface had to take out of its beginner mode.
-
-    It can stay here because the stop control is not in a hideable panel — see
-    ``gui2/machine.py``. Levelling is what makes cut depth follow the real
-    surface, and that is what decides whether isolation actually separates two
-    tracks, so it is the single most useful thing the Arduino buys a beginner.
-    """
+def test_novice_is_three_rows_built_around_the_run(qt_app, monkeypatch):
     w = _window(monkeypatch, "novice")
     try:
-        assert w.plan.by_key("level") is not None
-        w.select_step("level")
-        assert w.inspector.stack.currentWidget() is w.level_page
-        assert w.bar.stop_btn.isEnabled()
-        assert not w.bar.stop_btn.isHidden()
+        assert list(w.traveller._rows) == ["setup", "checks", "autorun"]
+        assert w.traveller._rows["autorun"].step.title == "Run it"
+        # Its Next button is the way on from the board page.
+        w.select_step("setup")
+        assert not w.inspector.setup.next_btn.isHidden()
+        w.inspector.setup.next_btn.click()
+        assert w.inspector.stack.currentWidget() is w.autorun_page
+        assert w.traveller.current() == "autorun"
     finally:
         w.close()
 
 
-def test_essential_keeps_the_dry_run_and_the_checks(qt_app, monkeypatch):
+def test_pro_has_the_whole_plan_and_no_novice_button(qt_app, monkeypatch):
+    w = _window(monkeypatch, "pro")
+    try:
+        assert list(w.traveller._rows) == [s.key for s in w.plan]
+        assert "autorun" not in w.traveller._rows      # chosen, in Pro
+        assert w.inspector.setup.next_btn.isHidden()
+        assert w.autorun_act.isVisible() and w.export_act.isVisible()
+    finally:
+        w.close()
+
+
+def test_novice_has_nothing_to_export(qt_app, monkeypatch):
     w = _window(monkeypatch, "novice")
     try:
-        assert w.plan.by_key("airpass").ordinal == 0
-        assert w.plan.by_key("checks") is not None
-        assert w._checks
+        assert w.traveller.export_btn.isHidden()
+        assert w.traveller.total_row.isHidden()
+        for a in (w.export_act, w.export_folder_act, w.screw_act,
+                  w.autorun_act, w.mtest_act):
+            assert not a.isVisible(), a.text()
+        assert not w.export_act.isEnabled()            # nor by Ctrl+E
+        assert w.inspector.setup.add_board_btn.isHidden()
+        assert "VPanel" not in w.bar.offline_note.text()
+    finally:
+        w.close()
+
+
+def test_novice_setup_asks_only_what_the_run_cannot_find_out(qt_app,
+                                                             monkeypatch):
+    w = _window(monkeypatch, "novice")
+    try:
+        w.select_step("setup")
+        page = w.inspector.setup
+        assert not page.double.isHidden() and not page.ds_section.isHidden()
+        assert not page.thickness.isHidden()
+        for box in (page.ds_more, page.copper_more, page.place_section,
+                    page.advanced):
+            assert box.isHidden()
+        page.double.setChecked(True)                   # one tick
+        assert w._double and page.ds_more.isHidden()
+        assert w.plan.by_key("flip") is not None
+        # Three rows still, and the run still has both sides to do.
+        assert list(w.traveller._rows) == ["setup", "checks", "autorun"]
+    finally:
+        w.close()
+
+
+def test_novice_run_page_is_the_bracket_and_a_real_run(qt_app, monkeypatch):
+    w = _window(monkeypatch, "novice")
+    try:
+        w.select_step("autorun")
+        page = w.autorun_page
+        assert page.bracket() and page.where.isHidden()
+        assert page.dry_chk.isHidden() and not page.dry_chk.isChecked()
+        assert not page.level_chk.isHidden()
+        assert not page.check_chk.isHidden()
+        assert not page.offline_box.isHidden()         # offline: says so
+    finally:
+        w.close()
+
+
+def test_novice_brings_the_board_onto_the_stock_it_shows(qt_app, monkeypatch):
+    w = _window(monkeypatch, "novice")
+    try:
+        w.select_step("autorun")
+        page = w.autorun_page
+        page.dx_spin.setValue(22.49)
+        page.dy_spin.setValue(129.47)
+        page.w_spin.setValue(160)
+        page.h_spin.setValue(120)
+        b = w.work_bounds()
+        sx, sy, sw, sh = w.stock
+        assert b[0] >= sx and b[1] >= sy
+        assert b[2] <= sx + sw and b[3] <= sy + sh
+    finally:
+        w.close()
+
+
+def test_novice_keeps_the_jog_controls_and_stop(qt_app, monkeypatch):
+    w = _window(monkeypatch, "novice")
+    try:
+        assert not w.bar.pad.isHidden()
+        assert not w.bar.jog_btn.isHidden()            # Click to jog
+        assert w.bar.stop_btn.isEnabled() and not w.bar.stop_btn.isHidden()
+    finally:
+        w.close()
+
+
+def test_novice_can_open_what_the_run_measured(qt_app, monkeypatch):
+    """The height map has no row in Novice, but it can be looked at."""
+    w = _window(monkeypatch, "novice")
+    try:
+        w.select_step("autorun")
+        w.autorun_page._show("level")
+        assert w.inspector.stack.currentWidget() is w.level_page
+        assert not any(r.selected for r in w.traveller._rows.values())
+        w.refresh_plan()                               # stays where it is
+        assert w.inspector.stack.currentWidget() is w.level_page
+    finally:
+        w.close()
+
+
+def test_the_simulated_mill_is_a_pro_thing(qt_app, monkeypatch):
+    from gerber2rml.gui2 import machine
+    w = _window(monkeypatch, "novice")
+    try:
+        assert machine.SHOW_SIM is False
+    finally:
+        w.close()
+
+
+def _novice_run(qt_app, w, double):
+    import time
+    from gerber2rml.engine import simmachine as sm
+    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+               size=(150000, 120000))
+
+    def wait(cond, secs=120):
+        t0 = time.monotonic()
+        while not cond() and time.monotonic() - t0 < secs:
+            qt_app.processEvents()
+            time.sleep(0.01)
+        return cond()
+    w.link.connect_to("SIM")
+    assert wait(w.link.is_connected, 10)
+    w.inspector.setup.double.setChecked(double)
+    w.select_step("autorun")
+    page = w.autorun_page
+    assert wait(page.offline_box.isHidden, 5)
+    page.dx_spin.setValue(41.3)
+    page.dy_spin.setValue(147.8)
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+
+    def step():
+        if not page.flip_btn.isHidden():
+            page.flip_btn.click()
+        if not page.check_box.isHidden():
+            page.cut_btn.click()
+        return bool(done)
+    assert wait(step), "the run never finished"
+    assert done[0][0], done[0][1]
+    assert sm.machine().lines
+    w.link.disconnect_from("test")
+    if w.link._thread is not None:
+        w.link._q.put(None)
+        w.link._thread.join(2)
+
+
+def test_novice_runs_a_single_sided_board_end_to_end(qt_app, monkeypatch,
+                                                     tmp_path):
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "documents_dir", lambda *a, **k: tmp_path)
+    w = _window(monkeypatch, "novice")
+    try:
+        _novice_run(qt_app, w, False)
+    finally:
+        w.close()
+
+
+def test_novice_runs_a_double_sided_board_end_to_end(qt_app, monkeypatch,
+                                                     tmp_path):
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "documents_dir", lambda *a, **k: tmp_path)
+    w = _window(monkeypatch, "novice")
+    try:
+        _novice_run(qt_app, w, True)
     finally:
         w.close()
 

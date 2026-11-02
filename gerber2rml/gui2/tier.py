@@ -1,41 +1,32 @@
-"""Two tiers of interface, over one code path.
+"""Two profiles, over one code path: Novice and Pro.
 
-The problem is real and unchanged from the first interface: most people who sit
-down at this mill have never used CAM and will use it twice, and a few are
-running double-sided boards over a probed height map and need everything.
+Most people who sit down at this mill have never used CAM and will use it
+twice; a few run double-sided boards over a probed height map and need
+everything. Since Automatic mode cut real boards (2026-11-02), the line falls
+between **running the job** and **running each step of it**:
 
-What is different here is *where the line falls*. The first interface splits by
-CONTROL — Novice hides the job-parameter forms, the machine dock, double-sided,
-rework. That is a defensible split, and it had one bad consequence its own
-commit log records: hiding the machine dock hid the STOP button, so guided bed
-levelling — which steps a spinning-capable machine down onto the copper — had
-to be pulled out of Novice entirely to stop it being the more dangerous mode.
+``ESSENTIAL`` (shown as Novice) is built around Automatic mode. Load the board,
+say whether it is double-sided, put the stock in the bracket, press Start. It
+levels, cuts, asks for the flip and stops before the cut-out by itself. The rail
+has three rows and there are no files to export.
 
-This interface splits by TASK instead. ``ESSENTIAL`` carries the whole
-single-sided job including levelling, because levelling is the thing the
-Arduino actually buys a beginner. It can do that safely because the stop
-control is not in a hideable panel: the machine bar is a structural part of the
-window and every control that moves the machine lives in it. See
-``machine.py``.
+``FULL`` (shown as Pro) has everything, with Automatic mode as one way among
+several.
 
-``FULL`` adds the work that assumes you already know the machine — double-sided
-registration, rework regions, per-operation parameter editing, the output
-format, the experimental stream path, and the machine test.
-
-Two properties are preserved from the first interface's ``mode.py``, because
-they were right:
+Three properties are kept on purpose:
 
 * **Hidden, not disabled.** A greyed-out control still invites a click and
   still has to be explained. A hidden one costs a beginner nothing.
-* **A strict subset, not a second program.** Same widgets, same handlers, same
-  ``ProjectState``, same ``build_jobs`` call. There is no ESSENTIAL code path
-  that can drift, and ``tests/test_gui2_tier.py`` asserts the exported bytes
-  are identical in both tiers.
+* **One plan.** Novice shows three rows of the plan Pro shows in full; the run
+  needs all of it. Same ``ProjectState``, same ``build_jobs`` call, and
+  ``tests/test_gui2_tier.py`` asserts the exported bytes are identical.
+* **STOP is never in a mode.** The machine bar is a structural part of the
+  window, in both.
 
 ``ESSENTIAL`` is the default on a fresh install, because the person who has
 never opened the app is exactly who a default is for.
 
-``SRM_CAM_MODE`` pins the tier machine-wide — the same variable the first
+``SRM_CAM_MODE`` pins the profile machine-wide - the same variable the first
 interface reads, and the same spellings, so a lab that has already pinned its
 seats does not have to do it twice.
 """
@@ -92,34 +83,38 @@ def is_full():
 # code uses. The Interface menu shows this verbatim, so that nobody has to
 # guess whether the thing they remember is gone or merely put away.
 ADDED_BY_FULL = [
-    "Per-operation cutting parameters — feeds, depths, offsets, stepover, "
-    "V-bit geometry. In Essential the tool profile sets these.",
-    "Double-sided boards — dowel or fiducial registration, the flip, "
-    "top-side traces.",
-    "Rework — boxing spots on a finished board to re-cut deeper.",
+    "Running the job by hand: every step of the plan, one at a time, and "
+    "exporting the files for VPanel. Novice runs them itself.",
+    "Per-operation cutting parameters - feeds, depths, offsets, stepover, "
+    "V-bit geometry. In Novice the tool profile sets these.",
+    "How a double-sided board is registered: dowels, and choosing the "
+    "fiducials. Novice flips and finds its own fiducials.",
+    "Stock that is not in the bracket, found by its edges or clamped by hand, "
+    "and hold-down screws.",
+    "Rework of a finished board, levelling on its own page, and drilling a "
+    "board made elsewhere.",
     "Output format and mirroring. The defaults are the ones this lab runs.",
     "Streaming a job over the link instead of through VPanel "
-    "(experimental — see the warning it carries).",
-    "The machine test panel, and saving your own tool profiles.",
+    "(experimental - see the warning it carries).",
+    "The machine test panel, the simulated mill, and saving your own tool "
+    "profiles.",
 ]
 
-# What ESSENTIAL keeps that a control-based split would have taken away, and
-# why. Shown beside the list above so the split reads as a decision rather than
-# an arbitrary line.
+# What NOVICE does for you that a beginner still gets, and why. Shown beside
+# the list above so the split reads as a decision rather than a missing feature.
 KEPT_IN_ESSENTIAL = [
-    ("Bed levelling", "Probing is the thing the Arduino buys a beginner: it "
-                      "makes cut depth follow the real surface, and that is "
-                      "what decides whether isolation actually separates two "
-                      "tracks. The stop control is part of the window, so this "
-                      "is safe to keep."),
-    ("The dry run", "The cheapest board-saving check in the product, and the "
-                    "one a beginner needs most."),
+    ("Bed levelling", "Part of every run. Probing makes the cut depth follow "
+                      "the real surface, and that is what decides whether "
+                      "isolation actually separates two tracks."),
+    ("Double-sided boards", "One tick. The run drills its own fiducials, asks "
+                            "you to turn the board over, finds them again and "
+                            "cuts the top to match."),
+    ("A look before the cut-out", "The run stops before it cuts the board "
+                                  "free. Box what came out shallow and it cuts "
+                                  "just those spots again, deeper."),
     ("Pre-flight checks", "A beginner needs the checks more than an expert "
                           "does, not less."),
-    ("Hold-down screws", "A student who screws the copper down without the "
-                         "raised travel height drives the spindle into a screw "
-                         "head. The checkbox is what prevents that."),
-    ("Placing the job on the bed", "Without it the only way to say where the "
-                                   "copper is, is to type machine coordinates "
-                                   "nobody can know."),
+    ("Moving the machine by hand", "The jog pad, the arrow keys and Click to "
+                                   "jog, with STOP always beside them. STOP "
+                                   "is part of the window, not of a mode."),
 ]

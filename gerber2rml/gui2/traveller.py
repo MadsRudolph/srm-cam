@@ -291,6 +291,7 @@ class Traveller(QWidget):
         self.total_value.setStyleSheet(f"color: {theme.TEXT_2};")
         th.addWidget(self.total_value)
         fv.addWidget(trow)
+        self.total_row = trow
         self.export_btn = widgets.button(
             "Export the job", kind="primary", on=self.export_requested.emit,
             tip="Write every file in this plan, plus the printed run plan, "
@@ -312,7 +313,9 @@ class Traveller(QWidget):
         self.job_name.setText(name or "No job")
         self.job_facts.setText(facts)
 
-    def set_plan(self, plan):
+    def set_plan(self, plan, rail=None):
+        """Show ``rail`` - by default the whole ``plan``. Novice shows only
+        its own few rows of the same plan."""
         while self.list.count():
             item = self.list.takeAt(0)
             w = item.widget()
@@ -326,7 +329,7 @@ class Traveller(QWidget):
                 w.deleteLater()
         self._rows = {}
         last_kind = None
-        for step in plan:
+        for step in (plan if rail is None else rail):
             if step.kind == "run" and last_kind != "run" and last_kind is not None:
                 self._add_eyebrow("Run order" if last_kind == "tool" else "")
             if step.kind == "tool" and last_kind in ("run", "handoff"):
@@ -372,6 +375,10 @@ class Traveller(QWidget):
 
     def select(self, key):
         if key not in self._rows:
+            # A page with no row of its own (Novice's height map, opened from
+            # the Run page): nothing on the rail is what is on screen.
+            for row in self._rows.values():
+                row.set_selected(False)
             return
         for k, row in self._rows.items():
             row.set_selected(k == key)
@@ -412,6 +419,11 @@ class Traveller(QWidget):
         self._exported = set(keys)
         for k, row in self._rows.items():
             row.set_exported(k in self._exported)
+
+    def set_novice(self, on):
+        """Novice runs the job itself: no files to write, no plan to total."""
+        self.total_row.setVisible(not on)
+        self.export_btn.setVisible(not on)
 
     def set_export_enabled(self, on, reason=""):
         self.export_btn.setEnabled(on)

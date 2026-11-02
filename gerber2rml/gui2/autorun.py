@@ -288,13 +288,13 @@ class AutoRunPage(inspector.Page):
         h.addWidget(self.dx_spin)
         h.addWidget(QLabel("Y"))
         h.addWidget(self.dy_spin)
-        h.addWidget(self.corner_box)
         h.addStretch(1)
         dl.addWidget(drow)
         brow = QWidget()
         h = QHBoxLayout(brow)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(theme.GAP_S)
+        h.addWidget(self.corner_box)
         self.datum_btn = widgets.button(
             "Set from the bit",
             tip="Jog the bit over the bracket's inside corner (where the "
@@ -371,6 +371,16 @@ class AutoRunPage(inspector.Page):
         self.where.currentIndexChanged.connect(self._sync_outline)
 
         run = widgets.Section("Run")
+        self.offline_box = QWidget()
+        h = QHBoxLayout(self.offline_box)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(theme.GAP_S)
+        h.addWidget(widgets.hint("The machine is not connected."))
+        self.connect_btn = widgets.button(
+            "Connect", on=lambda: ctl.bar._toggle_connect())
+        h.addWidget(self.connect_btn)
+        h.addStretch(1)
+        run.add(self.offline_box)
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
@@ -461,6 +471,11 @@ class AutoRunPage(inspector.Page):
             g.addWidget(b, n // 2, n % 2)
         self.add(made)
         self.finish()
+        # Bound methods, so they queue onto this thread: the link emits these
+        # from its worker, where a lambda would run and touch the widgets.
+        ctl.link.linked.connect(self._sync_offline)
+        ctl.link.unlinked.connect(self._sync_offline)
+        self._sync_offline()
 
         self._sim_timer = QTimer(self)
         self._sim_timer.setInterval(120)
@@ -480,6 +495,20 @@ class AutoRunPage(inspector.Page):
     # -- where the stock is --------------------------------------------------
     def bracket(self):
         return self.where.currentData() == "bracket"
+
+    def _sync_offline(self, *_):
+        self.offline_box.setVisible(not self.ctl.link.is_connected()
+                                    and self._thread is None)
+
+    def sync_tier(self):
+        """Novice: the stock is in the bracket, and a run is a real run."""
+        from gerber2rml.gui2 import tier
+        full = tier.is_full()
+        self.where.setVisible(full)
+        self.dry_chk.setVisible(full)
+        if not full:
+            self.where.setCurrentIndex(self.where.findData("bracket"))
+            self.dry_chk.setChecked(False)
 
     def _where_changed(self, *_):
         on = self.bracket()
@@ -512,6 +541,21 @@ class AutoRunPage(inspector.Page):
         self.dx_spin.setValue(pos[0])
         self.dy_spin.setValue(pos[1])
 
+    def _board_onto_outline(self):
+        """Novice: what is on the screen is where it will be cut, so a board
+        off the outline is brought onto it now, not surprisingly at Start. Pro
+        decides for itself, and Start says so if it hangs off."""
+        from gerber2rml.gui2 import tier
+        ctl = self.ctl
+        if tier.is_full() or ctl.state.board is None:
+            return
+        b = ctl.work_bounds()
+        sx, sy, sw, sh = ctl.stock
+        if (b[0] < sx or b[1] < sy or b[2] > sx + sw or b[3] > sy + sh):
+            st = ctl.state
+            ctl.action_place(st.place_x + sx + ar.PLACE_MARGIN_MM - b[0],
+                             st.place_y + sy + ar.PLACE_MARGIN_MM - b[1])
+
     def _datum_back(self):
         x, y, c = saved_datum()
         self.dx_spin.setValue(x)
@@ -529,6 +573,7 @@ class AutoRunPage(inspector.Page):
             x, y, c = self.datum()
             x0, y0 = datum_outline((x, y), c, (w, h))
             self.ctl.action_stock(w, h, x0, y0, show=True)
+            self._board_onto_outline()
         else:
             self.ctl.action_stock(w, h, show=True)
 
@@ -614,8 +659,8 @@ class AutoRunPage(inspector.Page):
             cx = sum(p[0] for p in c) / 4
             cy = sum(p[1] for p in c) / 4
             self.sim_lbl.setText(
-                "Simulator: the stock is %.0f × %.0f mm, about X %.0f, Y %.0f "
-                "- click near there." % (m.w / 1000, m.h / 1000, cx, cy))
+                "Simulator: the stock is %.0f × %.0f mm, about X %.0f, Y %.0f."
+                % (m.w / 1000, m.h / 1000, cx, cy))
             if self._thread is None:
                 # Its size is known here; the operator still has to click.
                 self.w_spin.setValue(m.w / 1000.0)
