@@ -49,3 +49,4 @@ examples/fullboard_probe_test/
 
 # agent worktrees (Claude Code)
 .claude/worktrees/
+scripts/lab_runs/
