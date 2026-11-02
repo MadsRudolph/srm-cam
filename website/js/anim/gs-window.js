@@ -11,7 +11,7 @@
   var REGIONS = {
     rail: ["The rail", "The run plan: the same order, and the same files, the export writes. Numbered steps are files you send; the rows between them (fit the bit, set the Z origin) are things you do by hand. Click any step, any time. The worst finding stays on the red banner; Export the job is at the bottom."],
     stage: ["The stage", "The bed in machine coordinates: the copper sheet, the board, and the toolpath of the selected step. Drag the board, or nudge it with the arrow keys (0.1 mm; Shift 1 mm, Ctrl 0.01 mm). Scroll to zoom, right-drag to pan."],
-    inspector: ["The inspector", "The selected step: the setup page, the checks, or a step's file, time and (in the Full tier) its cutting parameters."],
+    inspector: ["The inspector", "The selected step: the setup page, the checks, or a step's file, time and (in Pro) its cutting parameters."],
     bar: ["The machine bar", "Always there: Connect, the position readout, Z jog, Probe Z and Zero Z, Spindle, Click to jog, and STOP. Esc stops the machine from anywhere, even with a dialog open."],
     head: ["The header", "Bed — as cut is the only frame the machine understands. Design X-ray shows the board as KiCad drew it, for checking that the two faces of a double-sided board register."]
   };

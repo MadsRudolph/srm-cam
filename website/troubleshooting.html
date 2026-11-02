@@ -16,7 +16,7 @@
 <script defer src="js/anim/joblist.js?v=20260930b"></script>
 <script defer src="js/anim/ts-coords.js?v=20260930b"></script>
 <script defer src="js/anim/bow.js?v=20260930b"></script>
-<script defer src="js/anim/gaps.js?v=20260930b"></script>
+<script defer src="js/anim/gaps.js?v=20261102a"></script>
 <script defer src="js/anim/continuity.js?v=20260930b"></script>
 <style>
 /* troubleshooting: the finder and the symptom entries (this page only) */
@@ -68,6 +68,7 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -133,7 +134,7 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <summary>✕ marks on the traces: the checks say the spots will be shorted</summary>
 <div class="ts-body">
 <p><span class="k">Cause</span>Two nets sit closer than the 0.8&nbsp;mm bit. The cutter physically cannot pass between them, so the gap stays copper whatever the depth.</p>
-<p><span class="k">Fix</span>Best: more clearance in KiCad (<span class="menu-path">Board Setup › Net Classes</span>, at least 0.8&nbsp;mm) or a narrower bit. If the design can't change: <span class="menu-path">Interface › Full</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>, which trims both pads.</p>
+<p><span class="k">Fix</span>Best: more clearance in KiCad (<span class="menu-path">Board Setup › Net Classes</span>, at least 0.8&nbsp;mm) or a narrower bit. If the design can't change: <span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>, which trims both pads.</p>
 <figure class="anim" data-anim="gaps"><figcaption><span class="k">Try it</span>Drag the gap, and tick the box.</figcaption></figure>
 </div></details>
 <details class="ts-item" id="strands" data-cat="top" data-q="copper strand hair sliver bridge continuity multimeter short beep clean board looks fine" open>
@@ -145,6 +146,48 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 </div></details>
 
 <h2 data-cat-title="machine" data-short="At the machine">At the machine</h2>
+<details class="ts-item" id="automatic" data-cat="machine" data-q="automatic run it all shallow traces right side one side not through levelling springing tape press recut">
+<summary>Automatic: traces shallow in one area, even with levelling</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The sheet springs under the bit. The light probe touch measures it floating; the cutter pushes it down.</p>
+<p><span class="k">Fix</span>Press on the copper there. If it gives, tape it down under the board area. Then recut in boxes at <a href="automatic.html#check">the check</a>, or use <a href="automatic.html#startat">Start at</a>.</p>
+</div></details>
+<details class="ts-item" id="auto-refused" data-cat="machine" data-q="the mill refused the job command set nc code rml pause error vpanel cancel automatic">
+<summary>“The mill refused the job”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>VPanel's command set is not NC Code. The machine holds in pause with its error light up.</p>
+<p><span class="k">Fix</span>In VPanel: <span class="menu-path">Setup › Command Set › NC Code</span>, then press <span class="ui">Cancel</span> to clear it.</p>
+</div></details>
+<details class="ts-item" id="auto-g54" data-cat="machine" data-q="g54 x/y origin is not machine 0 0 the head went to automatic frame check">
+<summary>“The mill's G54 X/Y origin is not machine 0, 0”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>Someone set a G54 X/Y origin in VPanel. Nothing has been cut: the run checks this first.</p>
+<p><span class="k">Fix</span>In VPanel, set G54 X/Y back to machine 0, 0: in <span class="ui">Machine Coordinate System</span> move to X 0, Y 0, then set the G54 X/Y origin there.</p>
+</div></details>
+<details class="ts-item" id="auto-off-stock" data-cat="machine" data-q="board hangs off the stock bigger piece needs mm of stock margins automatic outline">
+<summary>“The board hangs off the stock” / “Use a bigger piece”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The board isn't on the stock outline, or it doesn't fit with 3&nbsp;mm margins.</p>
+<p><span class="k">Fix</span>Check the W and H you typed. Drag the board onto the outline, or use a bigger piece.</p>
+</div></details>
+<details class="ts-item" id="auto-no-copper" data-cat="probe" data-q="no copper under the clicked spot all the way down probe already reads contact clip automatic touch">
+<summary>“No copper under the clicked spot” / “The probe already reads contact”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The clip is off the copper, or it, its wire or the bit is touching something it shouldn't. In the bracket, it can also mean the stock isn't in the corner the page says.</p>
+<p><span class="k">Fix</span>Check the clip and the wire. Check the bracket corner and <span class="ui">Saved corner</span>, see <a href="automatic.html#bracket">The bracket corner</a>.</p>
+</div></details>
+<details class="ts-item" id="jog-touching" data-cat="probe" data-q="bit is touching the copper raise it first jog refused sideways arrow keys">
+<summary>“The bit is touching the copper. Raise it first”</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The jog pad and arrow keys don't lift, so a sideways step would drag the bit through the copper.</p>
+<p><span class="k">Fix</span><kbd>Page Up</kbd>, then jog.</p>
+</div></details>
+<details class="ts-item" id="arrows" data-cat="probe" data-q="arrow keys do not move the machine board moves instead jog nudge">
+<summary>The arrow keys move the board, not the machine</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span><span class="ui">Arrow keys</span> on the jog pad isn't lit. It goes off by itself on STOP, on disconnect and when a run starts.</p>
+<p><span class="k">Fix</span>Light it again. In a box being typed in, the arrows stay with the box.</p>
+</div></details>
 <details class="ts-item" id="deep-screwed" data-cat="machine" data-q="too deep screwed held at points extra depth cut deeper by probe map">
 <summary>Cut far deeper than the trace depth on a screwed-down board</summary>
 <div class="ts-body">

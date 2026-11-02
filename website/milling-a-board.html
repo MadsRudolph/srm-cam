@@ -20,7 +20,7 @@
 <script defer src="js/anim/butt.js?v=20260930a"></script>
 <script defer src="js/anim/bow.js?v=20260930a"></script>
 <script defer src="js/anim/probe.js?v=20260930a"></script>
-<script defer src="js/anim/gaps.js?v=20260930a"></script>
+<script defer src="js/anim/gaps.js?v=20261102a"></script>
 <script defer src="js/anim/joblist.js?v=20260930a"></script>
 <script defer src="js/anim/cutting.js?v=20260930a"></script>
 <script defer src="js/anim/continuity.js?v=20260930a"></script>
@@ -46,6 +46,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -74,6 +75,9 @@
 
 <h1>Milling a board</h1>
 <p class="lead">A single-sided board on the Roland SRM-20, start to finish, in the order the job happens at the mill: from KiCad to a board that is ready to solder. The drawings are live: press the buttons and drag the sliders.</p>
+
+<div class="note"><span class="t">Novice or Pro?</span>
+<p>This is the <strong>by-hand way, in Pro</strong>: you export the files and run them from VPanel. It is also the way to learn what the machine is doing. For the normal job, in Novice, see <a href="automatic.html">Run it all</a>.</p></div>
 
 <figure class="fig video-guide">
   <div style="position:relative;aspect-ratio:16/9;background:#000">
@@ -180,7 +184,7 @@
 <h2 id="check">4 · Check and export</h2>
 <h3>Check every step</h3>
 <p>Before exporting, select <span class="ui">Isolation traces</span> on the rail: SRM-CAM marks every problem on the stage. Red marks are spots where two nets sit closer than the 0.8&nbsp;mm bit can pass. They stay shorted, whatever the depth. The proper fix is more clearance in KiCad.</p>
-<p>If you can't change the design: <span class="menu-path">Interface › Full</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>. The cutter goes through anyway, trimming a little off the pads.</p>
+<p>If you can't change the design: <span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>. The cutter goes through anyway, trimming a little off the pads.</p>
 <figure class="anim" data-anim="gaps">
   <figcaption><span class="k">Narrow gaps</span>A gap narrower than the bit is left uncut and stays shorted, unless the cutter is sent down the middle, trimming both pads. A 0.45&nbsp;mm gap costs 0.175&nbsp;mm off each side.</figcaption>
 </figure>

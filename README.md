@@ -13,7 +13,9 @@ replacing the mods site and FlatCAM.
 
 [![SRM-CAM: KiCad Gerbers in, a milled PCB out, on the Roland SRM-20 (click for the 40-second video)](docs/media/srm-cam-showcase.webp)](https://madsrudolph.github.io/srm-cam/video/srm-cam-showcase.mp4)
 
-![SRM-CAM: the run plan, the bed, the selected step, the machine bar](website/img/gui2_setup.png)
+![SRM-CAM: three steps, the stock and board on the bed, the Run it page, the machine bar](website/img/automatic_run.png)
+
+**Novice** (the default) runs the job itself: stock in the bracket, press Start, check the traces before the cut-out. **Pro** has the whole plan by hand, with export for VPanel. See [Run it all](https://madsrudolph.github.io/srm-cam/automatic.html).
 
 ### Video guide
 

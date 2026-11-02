@@ -34,6 +34,7 @@
         <div class="nav-title">Start here</div>
         <a class="nav-link active" href="index.html">Overview</a>
         <a class="nav-link" href="getting-started.html">Getting started</a>
+        <a class="nav-link" href="automatic.html">Run it all</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">Core workflow</div>
@@ -62,7 +63,7 @@
 
 <div class="hero">
   <h1>SRM-CAM</h1>
-  <p class="lead">Desktop CAM for the <strong>Roland SRM-20</strong>: load KiCad Gerber&nbsp;+&nbsp;Excellon files, walk the run plan, and export ready-to-run G-code — with a probed surface the cut follows, several boards on one sheet, and double-sided registration built in.</p>
+  <p class="lead">Desktop CAM for the <strong>Roland SRM-20</strong>: load KiCad Gerber&nbsp;+&nbsp;Excellon files, push the stock into the bracket and press Start. It touches the copper, levels, drills, cuts the traces and waits for you before it cuts the board out. Pro has everything by hand: the full run plan, ready-to-run G-code, several boards on one sheet, double-sided registration.</p>
 
   <div class="badge-row">
     <span class="badge copper">Windows installer</span>
@@ -74,7 +75,7 @@
   <div class="btn-row">
     <a class="btn primary" href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">Download for Windows</a>
     <a class="btn" href="https://github.com/MadsRudolph/srm-cam/releases/latest">Linux AppImage</a>
-    <a class="btn" href="getting-started.html">Get started →</a>
+    <a class="btn" href="automatic.html">Run it all →</a>
     <a class="btn" href="https://github.com/MadsRudolph/srm-cam">GitHub</a>
   </div>
 </div>
@@ -90,18 +91,18 @@
 </figure>
 
 <figure class="fig">
-  <img src="img/gui2_setup.png" alt="The SRM-CAM window: run plan on the left, the bed in the middle, the selected step on the right">
+  <img src="img/automatic_run.png" alt="The SRM-CAM window in Novice: three steps on the left, the stock and board in the middle, the Run it page on the right">
   <figcaption>The setup sheet. Left: the run plan, in the order you send the files. Middle: the bed, the copper and the job. Right: the selected step. Bottom: the machine bar, with <span class="ui">STOP</span> (on Windows; this screenshot is from Linux, where the link is off).</figcaption>
 </figure>
 
 <h2>How it works</h2>
-<p>One program for the whole SRM-20 flow. Every numbered step of the run plan is a file you send from VPanel: step 0 is a spindle-off dry run that traces where the board will be cut before anything touches copper, then the drill, the isolation traces, and the cut-out last. With the Arduino probe link fitted, SRM-CAM also reads the machine's position, jogs, probes the bed and zeroes Z; VPanel still plays the files and sets the spindle speed.</p>
+<p><strong>In Novice</strong>, the default, SRM-CAM runs the job itself: see <a href="automatic.html">Run it all</a>. <strong>In Pro</strong>, every numbered step of the run plan is a file you send from VPanel: step 0 is a spindle-off dry run that traces where the board will be cut before anything touches copper, then the drill, the isolation traces, and the cut-out last. With the Arduino probe link fitted, SRM-CAM also reads the machine's position, jogs, probes the bed and zeroes Z; VPanel still plays the files and sets the spindle speed.</p>
 <figure class="anim" data-anim="ix-pipeline">
   <figcaption><span class="k">From KiCad to a board</span>Tap a stop to read what happens there, and follow it to its page. <a href="machine-control.html">Machine control →</a></figcaption>
 </figure>
 
 <div class="tip"><span class="t">New to the mill?</span>
-<p>Start with <a href="milling-a-board.html">Milling a board</a>: the whole single-sided job in the order it happens at the machine, with live explainers. If you get stuck, reach out to Mads Rudolph or to the TAs of the course.</p></div>
+<p>Start with <a href="automatic.html">Run it all</a>. To learn what the machine is doing, <a href="milling-a-board.html">Milling a board</a> walks the same job by hand, with live explainers. If you get stuck, reach out to Mads Rudolph or to the TAs of the course.</p></div>
 
 <h2>The video guide</h2>
 <p>Milling a board from KiCad to a finished PCB, start to finish, in 13 minutes. The written walkthrough is <a href="milling-a-board.html">Milling a board</a>.</p>
@@ -116,11 +117,15 @@
 <div class="cards">
   <a class="card" href="getting-started.html">
     <span class="ct"><span class="ico">🚀</span>Getting started</span>
-    <span class="cd">Install on Windows or Linux, learn the four regions of the window, the two tiers, and the files KiCad has to give you.</span>
+    <span class="cd">Install on Windows or Linux, learn the four regions of the window, Novice and Pro, and the files KiCad has to give you.</span>
+  </a>
+  <a class="card" href="automatic.html">
+    <span class="ct"><span class="ico">▶️</span>Run it all</span>
+    <span class="cd">The normal job: stock in the bracket, press Start, check the traces before the cut-out. All of Novice, on one page.</span>
   </a>
   <a class="card" href="milling-a-board.html">
     <span class="ct"><span class="ico">🛠️</span>Milling a board</span>
-    <span class="cd">The whole single-sided job, KiCad to a finished board, in the order it happens at the mill — with live explainers for zeroing Z, finding the corner, levelling and the VPanel job list.</span>
+    <span class="cd">The whole single-sided job by hand, in Pro, KiCad to a finished board, in the order it happens at the mill — with live explainers for zeroing Z, finding the corner, levelling and the VPanel job list.</span>
   </a>
   <a class="card" href="panels.html">
     <span class="ct"><span class="ico">🧩</span>Several boards on one sheet</span>
@@ -148,7 +153,7 @@
   </a>
   <a class="card" href="machine-control.html">
     <span class="ct"><span class="ico">🎛️</span>Machine control</span>
-    <span class="cd">The machine bar and menu: position, jog, zero Z, spindle, STOP — and an honest list of what the link cannot do.</span>
+    <span class="cd">The machine bar and menu: position, the jog pad and arrow keys, zero Z, spindle, STOP — and an honest list of what the link cannot do.</span>
   </a>
   <a class="card" href="reference.html">
     <span class="ct"><span class="ico">📄</span>Files &amp; reference</span>

@@ -129,6 +129,8 @@ network folder instead.
 
 ## Novice and Professional modes
 
+*This section is the original interface (`SRM-CAM --original`). The current one has its own Novice and Pro: see [Novice & Pro](https://madsrudolph.github.io/srm-cam/getting-started.html#tiers).*
+
 **Mode** menu. Novice is the default on a fresh install.
 
 **Novice** is the short path from Gerbers to files you can send from VPanel:

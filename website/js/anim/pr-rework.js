@@ -1,6 +1,6 @@
 /* Rework (on the rail, under When you need it): box the spots the first pass did not
    finish, each box with its own depth, and export ONE program that repeats the pass
-   clipped to the boxes (gui2/rework.py). Full tier adds two helpers:
+   clipped to the boxes (gui2/rework.py). Pro adds two helpers:
    - Propose boxes from the photo: walks every channel and looks for stretches with no
      cut in them at all. A cut that is merely too shallow still looks like a channel in
      any photo, so it can't see those;

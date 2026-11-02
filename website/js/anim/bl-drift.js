@@ -1,4 +1,4 @@
-/* The drift check (Level the bed › Measure it › Drift check, Full tier, the v2 firmware).
+/* The drift check (Level the bed › Measure it › Drift check, Pro, the v2 firmware).
    Over a long grid the reference itself moves: the spindle warms, the board settles in
    its clamps. Every height is stored relative to point 1, so a point probed minutes later
    reads low by however far the reference has moved. The run re-touches point 1 before

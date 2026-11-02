@@ -1,7 +1,7 @@
 /* Nets closer than the bit. Two pads of different nets, a gap between them, and the
    0.8 mm flat end mill. A gap narrower than the bit cannot be separated and left
    whole: off, SRM-CAM leaves it uncut and the checks mark it (the two nets stay
-   shorted); on ("Cut gaps too narrow for the bit", Full tier, Isolation traces ›
+   shorted); on ("Cut gaps too narrow for the bit", Pro, Isolation traces ›
    Cutting parameters) the cutter goes down the middle and takes (0.8 - gap) / 2 off
    each pad. The source's own example: a 0.45 mm gap costs 0.175 mm a side. */
 (function () {
@@ -19,10 +19,10 @@
     var PX = narrow ? 24 : 660, PY = narrow ? DY + DH + 16 : 56, QW = narrow ? 472 : 196, QH = narrow ? 170 : 330;
     var svg = A.stage(host, W, H, "Two pads closer than the 0.8 mm bit, cut or left shorted");
     if (narrow) {
-      A.text(svg, 24, 34, "Interface › Full, then", { size: 16, font: "mono", fill: C.copperHi });
+      A.text(svg, 24, 34, "Interface › Pro, then", { size: 16, font: "mono", fill: C.copperHi });
       A.text(svg, 24, 58, "Isolation traces › Cutting parameters", { size: 16, font: "mono", fill: C.copperHi });
     } else {
-      A.text(svg, 24, 34, "Interface › Full, then Isolation traces › Cutting parameters", { size: 16, font: "mono", fill: C.copperHi });
+      A.text(svg, 24, 34, "Interface › Pro, then Isolation traces › Cutting parameters", { size: 16, font: "mono", fill: C.copperHi });
     }
     A.text(svg, 24, H - 18, "Top view, to scale · copper where nothing is cut", { size: 15, fill: C.text3 });
 

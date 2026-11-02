@@ -122,7 +122,7 @@
       } else if (fault && extra.some(function (v, k) { return v && k >= 8 && k < 12; })) {
         say(["Nothing flagged.", "A whole row off by the same", "amount still looks like a", "smooth board."], C.ok);
         st.className = "anim-status caution";
-        st.textContent = "Row 3 reads 60 µm low because it was probed late, and no fit can tell. That is what the drift check is for (Full tier).";
+        st.textContent = "Row 3 reads 60 µm low because it was probed late, and no fit can tell. That is what the drift check is for (Pro).";
       } else {
         say(["Every point agrees with a", "smooth surface through", "the others."], C.ok);
         st.className = "anim-status ok";
