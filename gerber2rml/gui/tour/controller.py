@@ -22,7 +22,8 @@ class TourController(QObject):
     def __init__(self, window, settings=None):
         super().__init__(window)
         self.window = window
-        self.settings = settings or QSettings("srm-cam", "SRM-CAM")
+        self.settings = settings or QSettings(
+            QSettings.defaultFormat(), QSettings.UserScope, "srm-cam", "SRM-CAM")
         self._steps = []
         self._i = 0
         self._is_branch = False
