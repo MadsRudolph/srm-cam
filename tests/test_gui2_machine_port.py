@@ -60,6 +60,11 @@ class _Link:
     def jog_z(self, dz):
         self.calls.append(("jog_z", dz))
 
+    def jog_by(self, dx=0.0, dy=0.0, dz=0.0, dx_mm=None, dy_mm=None, dz_mm=None):
+        self.calls.append(("by", round(dx if dx_mm is None else dx_mm, 3),
+                           round(dy if dy_mm is None else dy_mm, 3),
+                           round(dz if dz_mm is None else dz_mm, 3)))
+
     def pause(self):
         self.calls.append("pause")
         return self.connected
@@ -126,6 +131,8 @@ def _connect(win):
     link.calls = []
     link.jog_to = lambda x, y: link.calls.append(("jog", round(x, 3),
                                                   round(y, 3)))
+    link.jog_by = lambda dx=0.0, dy=0.0, dz=0.0: link.calls.append(
+        ("by", round(dx, 3), round(dy, 3), round(dz, 3)))
     win.bar._on_linked(link.firmware)
     win.bar._timer.stop()
     win._on_linked(link.firmware)
@@ -396,9 +403,9 @@ def test_arrow_keys_jog_the_bit_in_jog_mode_and_the_board_otherwise(loaded, qt_a
     QTest.keyClick(loaded.stage, Qt.Key_Left, Qt.ControlModifier)
     assert steps == [(1.0, 0.0), (0.0, 10.0), (-0.1, 0.0)]
     assert nudges == []
-    # each one was a relative move from the live position, accumulating
-    assert link.calls == [("jog", 51.0, 40.0), ("jog", 51.0, 50.0),
-                          ("jog", 50.9, 50.0)]
+    # each one a relative move that does not lift
+    assert link.calls == [("by", 1.0, 0.0, 0.0), ("by", 0.0, 10.0, 0.0),
+                          ("by", -0.1, 0.0, 0.0)]
     loaded.stage._nudge_timer.stop()
     loaded.set_stage_mode("place")
     QTest.keyClick(loaded.stage, Qt.Key_Right)
