@@ -90,7 +90,8 @@ class JogPad(QWidget):
             b.setObjectName("key")
             b.setCheckable(True)
             b.setFixedHeight(BTN + 4)
-            b.setMinimumWidth(30)
+            b.setMinimumWidth(34)
+            b.setFont(theme.font("small"))
             b.setCursor(Qt.PointingHandCursor)
             b.setToolTip("Each press moves %g mm." % s)
             b.setChecked(s == DEFAULT_STEP)
@@ -105,6 +106,7 @@ class JogPad(QWidget):
                 "box. Shift is ten times the step, Ctrl a tenth. Page Up and "
                 "Page Down move Z. It goes off by itself on STOP, on "
                 "disconnect and when a run starts.")
+        self.keys_btn.setObjectName("jogkeys")
         self.keys_btn.setCheckable(True)
         self.keys_btn.setFixedHeight(BTN + 8)
         self.keys_btn.toggled.connect(self.keys_toggled)
