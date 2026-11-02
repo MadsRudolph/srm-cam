@@ -639,6 +639,12 @@ class RunReadout(QWidget):
         p.end()
 
 
+# What the bar says with no link: Pro can still export; Novice runs the job.
+OFFLINE_PRO = ("Everything except probing works without the link — export the "
+               "files and send them from VPanel.")
+OFFLINE_NOVICE = "Connect the machine to run the board."
+
+
 class MachineBar(QWidget):
     """The persistent machine strip.
 
@@ -712,9 +718,7 @@ class MachineBar(QWidget):
         # Not an empty toolbar full of grey buttons: a sentence saying what the
         # link is for and what still works without it, because a bare SRM-20
         # with VPanel is a fully supported setup and the app should say so.
-        self.offline_note = QLabel(
-            "Everything except probing works without the link — export the "
-            "files and send them from VPanel.")
+        self.offline_note = QLabel(OFFLINE_PRO)
         self.offline_note.setFont(theme.font("small"))
         self.offline_note.setStyleSheet(f"color: {theme.TEXT_3};")
         self.offline_note.setWordWrap(True)

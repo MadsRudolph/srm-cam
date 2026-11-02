@@ -157,12 +157,13 @@ class SetupPage(Page):
         bh = QHBoxLayout(brow)
         bh.setContentsMargins(0, 0, 0, 0)
         bh.setSpacing(theme.GAP_S)
-        bh.addWidget(widgets.button(
+        self.add_board_btn = widgets.button(
             "Add another board…", on=ctl.action_add_board,
             tip="Put a second Gerber folder on the same sheet of copper, "
                 "beside this one. Both are cut in the same run: one trace "
                 "file, one drill file, one cut-out. The same folder twice "
-                "makes two of the board."))
+                "makes two of the board.")
+        bh.addWidget(self.add_board_btn)
         self.remove_board_btn = widgets.button(
             "Take this board off", on=lambda: ctl.action_remove_board(),
             tip="Take the picked board off the sheet. The others stay put.")
@@ -350,10 +351,14 @@ class SetupPage(Page):
                 "Run it FIRST, drop the screws in, then re-zero Z - the "
                 "board sits differently once it is bolted down.")
         stock.add(self.screw_file_btn)
+        # Novice keeps the thickness: the size and the corner of the stock
+        # are on its Run page, and how it is held is the bracket.
+        self.copper_more = self._gather(stock, 1)
         self.add(stock)
 
         # -- placement ---------------------------------------------------
         place = widgets.Section("Where it sits on the bed")
+        self.place_section = place
         self.place_section = place
         self.place_x = num(0.0, -50.0, 400.0, 1.0, 2, self._on_place, suffix=" mm")
         self.place_y = num(0.0, -50.0, 400.0, 1.0, 2, self._on_place, suffix=" mm")
@@ -616,9 +621,32 @@ class SetupPage(Page):
                  "you actually do, and jog-check a drilled hole in the top "
                  "view before cutting.")
         self.ds_section.add(self.fid_flip_field)
+        # Novice keeps the one question; Start chooses everything after it.
+        self.ds_more = self._gather(self.ds_section, 1)
         self.add(self.ds_section)
 
+        # Novice's way on: the Setup page is the first of its three steps.
+        self.next_btn = widgets.button(
+            "Next: Run it →", kind="primary",
+            on=lambda: ctl.select_step("autorun"))
+        self.add(self.next_btn)
+
         self.finish()
+
+    @staticmethod
+    def _gather(section, keep):
+        """Everything in ``section`` after its first ``keep`` rows, in one
+        widget, so it can be put away whole without touching the rows' own
+        rules for when they show."""
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(theme.GAP_S)
+        while section.body.count() > keep:
+            w = section.body.takeAt(keep).widget()
+            v.addWidget(w)
+        section.body.addWidget(box)
+        return box
 
     # -- handlers ------------------------------------------------------
     def _on_name(self, text):
@@ -876,8 +904,14 @@ class SetupPage(Page):
         self.machine.blockSignals(False)
         full = tier.is_full()
         self.advanced.setVisible(full)
-        self.ds_section.setVisible(full)
+        self.copper_more.setVisible(full)
+        self.place_section.setVisible(full)
+        self.ds_more.setVisible(full)
         self.save_preset_btn.setVisible(full)
+        self.next_btn.setVisible(not full)
+        self.add_board_btn.setVisible(full)
+        self.set_head("Step", "Set up the job" if full else "Your board")
+        self.next_btn.setEnabled(st.board is not None)
         self.registration_field.setVisible(full and self.double.isChecked())
         fiducial = (full and self.double.isChecked()
                     and self.registration.currentData() == "fiducial")
