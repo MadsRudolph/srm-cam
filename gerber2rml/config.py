@@ -2,6 +2,9 @@
 import math
 from dataclasses import dataclass
 
+# The copper-clad the lab stocks: every sheet is 160 x 100 mm (W x H).
+DEFAULT_STOCK_MM = (160.0, 100.0)
+
 
 @dataclass
 class TraceJob:

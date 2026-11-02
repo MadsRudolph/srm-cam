@@ -137,13 +137,13 @@
 <div class="warn"><span class="t">Newer than the single-sided run</span>
 <p>Double-sided Automatic has so far only run on the simulator, not on the mill. For your first one, watch it closely and keep a hand near <span class="ui">STOP</span>.</p></div>
 
-<h2 id="bracket">The bracket corner</h2>
-<p>The saved corner is the one fixed point. It is set once per machine and only changes if the bracket moves.</p>
+<h2 id="bracket">The bracket</h2>
+<p>The bracket is drawn on the bed as the part it is: the L and its screws, over the spoilboard's holes. Its inside corner is where the stock's corner sits, and the run measures everything from it. It is set once per machine and only changes when the bracket is moved.</p>
 <ol class="steps">
-  <li><span class="st">Jog over the corner</span>Use the <a href="machine-control.html#jog">jog pad</a> to put the bit right over the bracket's inside corner, where the stock's corner sits.</li>
-  <li><span class="st">Set from the bit</span>Choose which corner it is (back-left at DTU), press <span class="ui">Set from the bit</span> and confirm. <span class="ui">Start</span> saves it.</li>
+  <li><span class="st">Match the real one</span>Drag the drawn bracket to the holes the real one is screwed into. It moves a whole hole at a time, like the real one. Choose the corner it holds (back-left at DTU).</li>
+  <li><span class="st">Or find it with the bit</span>Jog the bit over the bracket's inside corner, press <span class="ui">Find it with the bit</span> and confirm: it goes to the holes nearest.</li>
 </ol>
-<p><span class="ui">Saved corner</span> puts the boxes back to the saved value.</p>
+<p>Where it is is saved as soon as it is moved. <span class="ui">Centre the board on the copper</span> puts the board in the middle of the stock, with the spare copper shared on every side.</p>
 
 <h2 id="after">What the run keeps</h2>
 <p>Each run has a folder, <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>: every program exactly as sent, <code>run.log</code>, and the height map as <code>height_map_bottom.csv</code>. The buttons under <span class="ui">What the run made</span> open them.</p>

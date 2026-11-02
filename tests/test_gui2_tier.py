@@ -19,6 +19,7 @@ import pytest
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QAbstractButton
 
+from gerber2rml.engine import bracket as br
 from gerber2rml.gui2 import tier
 from gerber2rml.gui2.window import MainWindow
 
@@ -207,8 +208,7 @@ def test_novice_brings_the_board_onto_the_stock_it_shows(qt_app, monkeypatch):
     try:
         w.select_step("autorun")
         page = w.autorun_page
-        page.dx_spin.setValue(22.49)
-        page.dy_spin.setValue(129.47)
+        page.set_bracket(br.DEFAULT)
         page.w_spin.setValue(160)
         page.h_spin.setValue(120)
         b = w.work_bounds()
@@ -255,7 +255,7 @@ def test_the_simulated_mill_is_a_pro_thing(qt_app, monkeypatch):
 def _novice_run(qt_app, w, double):
     import time
     from gerber2rml.engine import simmachine as sm
-    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+    sm.machine(speedup=1e6, corner=(42490, 9470), angle_deg=0.0,
                size=(150000, 120000))
 
     def wait(cond, secs=120):
@@ -270,8 +270,7 @@ def _novice_run(qt_app, w, double):
     w.select_step("autorun")
     page = w.autorun_page
     assert wait(page.offline_box.isHidden, 5)
-    page.dx_spin.setValue(41.3)
-    page.dy_spin.setValue(147.8)
+    page.set_bracket(br.Bracket(3, 12))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)

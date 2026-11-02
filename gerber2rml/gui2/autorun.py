@@ -22,24 +22,27 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 
 from gerber2rml.engine import autorun as ar
 from gerber2rml.engine import simmachine
+from gerber2rml.engine import bracket as br
 from gerber2rml.engine.stockfind import CORNERS, datum_outline
 
-# The DTU fixture's back-left bracket, measured 2026-11-02 (a 160 x 100
-# stock found at 22.31, 29.47, turned -0.10°). Each machine saves its own.
-DEFAULT_DATUM = (22.49, 129.47, "back-left")
 
+def saved_bracket():
+    """Where the corner bracket is screwed down, from the settings.
 
-def saved_datum():
-    """(x, y, corner) of the corner bracket, from the settings."""
+    Each machine saves its own. A corner saved by an older version as a
+    measured X, Y is moved to the hole position nearest it; with nothing
+    saved it is the DTU fixture's (br.DEFAULT)."""
     from gerber2rml.gui2 import workspace
-    raw = workspace.setting("autorun/datum", "") or ""
+    b = br.from_text(workspace.setting("autorun/bracket", ""))
+    if b is not None:
+        return b
     try:
-        x, y, c = raw.split(",")
+        x, y, c = (workspace.setting("autorun/datum", "") or "").split(",")
         if c in CORNERS:
-            return float(x), float(y), c
+            return br.snap(float(x), float(y), c) or br.DEFAULT
     except ValueError:
         pass
-    return DEFAULT_DATUM
+    return br.DEFAULT
 from gerber2rml.gui2 import theme, widgets, inspector
 
 STATE_GLYPH = {"waiting": ("○", theme.TEXT_3),
@@ -83,6 +86,7 @@ class WindowSource(ar.JobSource):
     def __init__(self, win, gui):
         self.w, self.gui = win, gui
         self.keep_placement = False      # the outline is real: keep the board
+        self.centre = False              # centre it on the stock found
 
     def _plan_steps(self):
         steps = [s for s in self.w.plan.steps
@@ -112,12 +116,17 @@ class WindowSource(ar.JobSource):
             # it is cut: keep its offset from the stock's corner. That outline
             # is real only when the stock sits in the bracket; found by its
             # edges, or not on the outline, the board goes to the front-left
-            # corner by the margin.
+            # corner by the margin. Centred, it goes in the middle of the
+            # stock as FOUND - its measured size, before the turn - whatever
+            # the outline said.
             sx, sy, sw, sh = w.stock
             on = (self.keep_placement
                   and b[0] >= sx - 1e-6 and b[1] >= sy - 1e-6
                   and b[2] <= sx + sw + 1e-6 and b[3] <= sy + sh + 1e-6)
-            if on:
+            if self.centre:
+                ox = (pose.w - (b[2] - b[0])) / 2.0
+                oy = (pose.h - (b[3] - b[1])) / 2.0
+            elif on:
                 ox, oy = b[0] - sx, b[1] - sy
             else:
                 ox = oy = margin_mm
@@ -269,46 +278,37 @@ class AutoRunPage(inspector.Page):
             "Anywhere: click on the stock and the probe walks to its edges "
             "(slow, and every edge it crosses must be clear of clamps).")
         stock.add(self.where)
+        # The bracket is drawn on the bed as the part it is, and dragged
+        # there hole to hole; no coordinates to type. Its corner is what the
+        # run measures the stock from.
+        self._bracket = saved_bracket()
         self.datum_box = QWidget()
         dl = QVBoxLayout(self.datum_box)
         dl.setContentsMargins(0, 0, 0, 0)
         dl.setSpacing(2)
-        drow = QWidget()
-        h = QHBoxLayout(drow)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(theme.GAP_S)
-        dx, dy, dc = saved_datum()
-        self.dx_spin, self.dy_spin = (self._spin(v, 0.0, 210.0, 2)
-                                      for v in (dx, dy))
-        self.corner_box = QComboBox()
-        for c in CORNERS:
-            self.corner_box.addItem(c, c)
-        self.corner_box.setCurrentIndex(CORNERS.index(dc))
-        h.addWidget(QLabel("Bracket X"))
-        h.addWidget(self.dx_spin)
-        h.addWidget(QLabel("Y"))
-        h.addWidget(self.dy_spin)
-        h.addStretch(1)
-        dl.addWidget(drow)
         brow = QWidget()
         h = QHBoxLayout(brow)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(theme.GAP_S)
+        self.corner_box = QComboBox()
+        for c in CORNERS:
+            self.corner_box.addItem(c, c)
+        self.corner_box.setCurrentIndex(CORNERS.index(self._bracket.corner))
+        self.corner_box.setToolTip(
+            "Which corner of the stock the bracket holds.")
         h.addWidget(self.corner_box)
         self.datum_btn = widgets.button(
-            "Set from the bit",
+            "Find it with the bit",
             tip="Jog the bit over the bracket's inside corner (where the "
-                "stock's corner sits) and press this. Asks first; saved by "
-                "the next Start.",
+                "stock's corner sits) and press this: the bracket moves to "
+                "the holes nearest. Asks first.",
             on=self._datum_from_head)
-        self.datum_back_btn = widgets.button(
-            "Saved corner",
-            tip="Put the bracket corner back to the one saved by the last "
-                "run.", on=self._datum_back)
         h.addWidget(self.datum_btn)
-        h.addWidget(self.datum_back_btn)
         h.addStretch(1)
         dl.addWidget(brow)
+        self.bracket_lbl = widgets.hint(
+            "Drag the bracket on the bed to the holes it is screwed into.")
+        dl.addWidget(self.bracket_lbl)
         stock.add(self.datum_box)
         self.pick_btn = widgets.button(
             "Click where it is",
@@ -325,6 +325,19 @@ class AutoRunPage(inspector.Page):
         self.sim_lbl = widgets.hint("")
         stock.add(self.sim_lbl)
         self.add(stock)
+
+        from gerber2rml.gui2 import workspace
+        self.centre_chk = QCheckBox("Centre the board on the copper")
+        self.centre_chk.setChecked(str(workspace.setting(
+            "autorun/centre", "false")).lower() in ("true", "1"))
+        self.centre_chk.setToolTip(
+            "The run puts the board in the middle of the stock it finds, "
+            "with the spare copper shared equally on every side. Off: in "
+            "the bracket the board is cut where it is on the outline; found "
+            "by its edges it goes %g mm in from the front-left corner."
+            % ar.PLACE_MARGIN_MM)
+        self.centre_chk.toggled.connect(self._centre_changed)
+        stock.add(self.centre_chk)
 
         self.level_chk = QCheckBox("Probe the surface first (bed levelling)")
         self.level_chk.setChecked(True)
@@ -365,9 +378,9 @@ class AutoRunPage(inspector.Page):
         self._where_changed()
         # The outline on the stage follows the size and the bracket as they
         # are typed, so what is drawn is where the run will think it is.
-        for sp in (self.w_spin, self.h_spin, self.dx_spin, self.dy_spin):
+        for sp in (self.w_spin, self.h_spin):
             sp.valueChanged.connect(self._sync_outline)
-        self.corner_box.currentIndexChanged.connect(self._sync_outline)
+        self.corner_box.currentIndexChanged.connect(self._corner_changed)
         self.where.currentIndexChanged.connect(self._sync_outline)
 
         run = widgets.Section("Run")
@@ -519,8 +532,61 @@ class AutoRunPage(inspector.Page):
             self.pick_btn.setChecked(False)
 
     def datum(self):
-        return (self.dx_spin.value(), self.dy_spin.value(),
-                self.corner_box.currentData())
+        """(x, y, corner): the bracket's inside corner, machine mm."""
+        x, y = self._bracket.inside_corner()
+        return x, y, self._bracket.corner
+
+    def _bed(self):
+        from gerber2rml.backends import BACKENDS
+        return BACKENDS[self.ctl.state.machine].bed
+
+    def set_bracket(self, b):
+        """Put the bracket in hole position ``b``: saved at once - it is a
+        fact about the machine, not about this job - and drawn."""
+        from gerber2rml.gui2 import workspace
+        self._bracket = b
+        workspace.set_setting("autorun/bracket", br.to_text(b))
+        if self.corner_box.currentData() != b.corner:
+            self.corner_box.blockSignals(True)
+            self.corner_box.setCurrentIndex(CORNERS.index(b.corner))
+            self.corner_box.blockSignals(False)
+        self._sync_outline()
+
+    def _snap_view(self, corner):
+        """For the stage: where a drag would put it, as it would be drawn."""
+        bed = self._bed()
+
+        def snap(x, y):
+            b = br.snap(x, y, corner, bed=bed)
+            if b is None:
+                return None
+            return b.outline(), b.screw_points(), b.inside_corner()
+        return snap
+
+    def on_bracket_moved(self, x, y):
+        b = br.snap(x, y, self._bracket.corner, bed=self._bed())
+        if b is not None:
+            self.set_bracket(b)
+
+    def _corner_changed(self, *_):
+        """The same bracket, holding another corner: it is turned to suit
+        and put in the holes nearest where its corner was."""
+        c = self.corner_box.currentData()
+        if c == self._bracket.corner:
+            return
+        x, y = self._bracket.inside_corner()
+        self.set_bracket(br.snap(x, y, c, bed=self._bed()) or self._bracket)
+
+    def _draw_bracket(self, on):
+        stage = getattr(self.ctl, "stage", None)
+        if stage is None:
+            return
+        if not on:
+            stage.set_bracket(None)
+            return
+        b = self._bracket
+        stage.set_bracket(b.outline(), b.screw_points(), b.inside_corner(),
+                          self._snap_view(b.corner))
 
     def _datum_from_head(self):
         pos = getattr(self.ctl, "_last_xyz", None)
@@ -529,38 +595,50 @@ class AutoRunPage(inspector.Page):
                                  "the bracket corner first.")
             return
         from gerber2rml.gui2 import dialogs
-        x, y, c = self.datum()
-        if not dialogs.confirm(
-                self, "Move the bracket corner to the bit?",
-                "The bit is at X %.2f, Y %.2f. The bracket corner (%s) is "
-                "now X %.2f, Y %.2f.\n\nOnly do this with the bit right over "
-                "the bracket's inside corner, where the stock's %s corner "
-                "sits." % (pos[0], pos[1], c, x, y, c),
-                "Use where the bit is"):
+        b = br.snap(pos[0], pos[1], self._bracket.corner, bed=self._bed())
+        if b is None:
+            self.ctl.say("warn", "The bracket cannot be screwed down with "
+                                 "its corner there.")
             return
-        self.dx_spin.setValue(pos[0])
-        self.dy_spin.setValue(pos[1])
+        if not dialogs.confirm(
+                self, "Move the bracket to the bit?",
+                "The bit is at X %.2f, Y %.2f. The bracket goes to the holes "
+                "that put its inside corner nearest there.\n\nOnly do this "
+                "with the bit right over the bracket's inside corner, where "
+                "the stock's %s corner sits." % (pos[0], pos[1], b.corner),
+                "Move it there"):
+            return
+        self.set_bracket(b)
+
+    def _centre_changed(self, on):
+        from gerber2rml.gui2 import workspace
+        workspace.set_setting("autorun/centre", bool(on))
+        self._sync_outline()
 
     def _board_onto_outline(self):
         """Novice: what is on the screen is where it will be cut, so a board
         off the outline is brought onto it now, not surprisingly at Start. Pro
-        decides for itself, and Start says so if it hangs off."""
+        decides for itself, and Start says so if it hangs off.
+
+        Centring is what is on the screen in both: the board goes to the
+        middle of the outline as it is typed, and the run centres it again on
+        the stock it finds."""
         from gerber2rml.gui2 import tier
         ctl = self.ctl
-        if tier.is_full() or ctl.state.board is None:
+        if ctl.state.board is None:
             return
         b = ctl.work_bounds()
         sx, sy, sw, sh = ctl.stock
+        st = ctl.state
+        if self.centre_chk.isChecked():
+            ctl.action_place(st.place_x + sx + (sw - (b[2] - b[0])) / 2 - b[0],
+                             st.place_y + sy + (sh - (b[3] - b[1])) / 2 - b[1])
+            return
+        if tier.is_full():
+            return
         if (b[0] < sx or b[1] < sy or b[2] > sx + sw or b[3] > sy + sh):
-            st = ctl.state
             ctl.action_place(st.place_x + sx + ar.PLACE_MARGIN_MM - b[0],
                              st.place_y + sy + ar.PLACE_MARGIN_MM - b[1])
-
-    def _datum_back(self):
-        x, y, c = saved_datum()
-        self.dx_spin.setValue(x)
-        self.dy_spin.setValue(y)
-        self.corner_box.setCurrentIndex(CORNERS.index(c))
 
     def _sync_outline(self, *_):
         # Only while this page is the one open: it must not move the sheet
@@ -569,6 +647,7 @@ class AutoRunPage(inspector.Page):
         if insp is None or insp.stack.currentWidget() is not self:
             return
         w, h = self.w_spin.value(), self.h_spin.value()
+        self._draw_bracket(self.bracket())
         if self.bracket():
             x, y, c = self.datum()
             x0, y0 = datum_outline((x, y), c, (w, h))
@@ -576,6 +655,8 @@ class AutoRunPage(inspector.Page):
             self._board_onto_outline()
         else:
             self.ctl.action_stock(w, h, show=True)
+            if self.centre_chk.isChecked():
+                self._board_onto_outline()
 
     # -- the click ---------------------------------------------------------
     def _arm_pick(self, on):
@@ -677,6 +758,7 @@ class AutoRunPage(inspector.Page):
 
     def hideEvent(self, e):
         super().hideEvent(e)
+        self._draw_bracket(False)
         if self.pick_btn.isChecked():
             self.pick_btn.setChecked(False)      # leaving the page disarms it
 
@@ -697,9 +779,6 @@ class AutoRunPage(inspector.Page):
         if datum is None and self._click is None:
             ctl.say("warn", "Click where the stock is first.")
             return
-        from gerber2rml.gui2 import workspace
-        if datum is not None:
-            workspace.set_setting("autorun/datum", "%.3f,%.3f,%s" % datum)
         sim = simmachine.is_sim(port)
         if sim:
             printer = simmachine.printer()
@@ -738,6 +817,7 @@ class AutoRunPage(inspector.Page):
         self._new_run_dir()
         src = WindowSource(ctl, self._gui)
         src.keep_placement = datum is not None
+        src.centre = self.centre_chk.isChecked()
         self.start_btn.setEnabled(False)
         self._last_port = port
         self._measured = None
