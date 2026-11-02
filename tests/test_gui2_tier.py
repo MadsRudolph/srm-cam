@@ -283,11 +283,17 @@ def _novice_run(qt_app, w, double):
         if not page.flip_btn.isHidden():
             page.flip_btn.click()
         if not page.check_box.isHidden():
+            # The run has the port: that is not "not connected".
+            assert page.offline_box.isHidden()
+            assert not w.bar.connect_btn.isEnabled()
+            assert "run has the machine" in w.bar.offline_note.text()
             page.cut_btn.click()
         return bool(done)
     assert wait(step), "the run never finished"
     assert done[0][0], done[0][1]
     assert sm.machine().lines
+    assert "VPanel" not in w.bar.offline_note.text()
+    assert wait(w.link.is_connected, 15)      # and it has the machine back
     w.link.disconnect_from("test")
     if w.link._thread is not None:
         w.link._q.put(None)

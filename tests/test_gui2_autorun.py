@@ -284,7 +284,7 @@ def test_at_the_check_a_box_recuts_only_the_traces_inside_it(win, qt_app):
     b = win.work_bounds()
     cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
     win._on_region(cx - 10, cy - 10, cx + 10, cy + 10)   # as a drag would
-    assert page.again_btn.text() == "Recut the 1 box"
+    assert page.again_btn.text() == "Recut 1 box"
     assert not win.rework_page._regions                   # not Rework's
     page.again_btn.click()
     assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)

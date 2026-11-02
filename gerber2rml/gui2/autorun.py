@@ -240,7 +240,7 @@ class AutoRunPage(inspector.Page):
         self._rows = {}
 
         intro = widgets.hint(
-            "Stock on the bed, probe clipped to its copper, size typed - "
+            "Stock in the bracket, probe clipped to its copper, size typed - "
             "then Start.")
         intro.setToolTip(
             "Start finds the stock, probes it and cuts the whole board with "
@@ -628,6 +628,9 @@ class AutoRunPage(inspector.Page):
         while self.list_lay.count():
             item = self.list_lay.takeAt(0)
             if item.widget():
+                # setParent(None) too: out of the layout is not off the screen,
+                # and a stale row draws under the new one until it is deleted.
+                item.widget().setParent(None)
                 item.widget().deleteLater()
         self._rows = {}
         for key, title in self._plan_rows():
@@ -721,6 +724,7 @@ class AutoRunPage(inspector.Page):
         link = ctl.link
         link.mark_external(True)
         link.disconnect_from("handing the port to the run")
+        ctl.bar.set_held_by_run(True)
         link.clear_abort()
         self._events = ev = _Events()
         ev.note_sig.connect(self._on_note)
@@ -786,6 +790,9 @@ class AutoRunPage(inspector.Page):
         self._thread = threading.Thread(target=work, name="srm-autorun",
                                         daemon=True)
         self._thread.start()
+        # The link let go of the port before the run took it: "not connected"
+        # would be the wrong thing to say for as long as the run has it.
+        self._sync_offline()
         if sim:
             self._sim_timer.start()
         ctl.say("info", "Running. STOP on the bar stops it.")
@@ -918,8 +925,7 @@ class AutoRunPage(inspector.Page):
 
     def _show_boxes(self):
         n = len(self._boxes)
-        self.again_btn.setText("Recut the %d box%s" % (n, "" if n == 1
-                                                       else "es")
+        self.again_btn.setText("Recut %d box%s" % (n, "" if n == 1 else "es")
                                if n else "Recut all traces")
         self.ctl.stage.set_regions(
             [b + (theme.CAUTION,) for b in self._boxes])
@@ -947,6 +953,8 @@ class AutoRunPage(inspector.Page):
 
     def _on_finished(self, ok, msg):
         self._thread = None
+        self.ctl.bar.set_held_by_run(False)
+        self._sync_offline()
         self.start_btn.setEnabled(True)
         self.flip_btn.setVisible(False)
         self.check_box.setVisible(False)
