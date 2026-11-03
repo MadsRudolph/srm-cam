@@ -11,5 +11,5 @@ Estimated run time (excludes tool changes, spin-up and pauses):
    golden_gcode_airpass.nc: ~38s
    golden_gcode_drill.nc: ~2m 41s
    golden_gcode_traces.nc: ~14m 49s
-   golden_gcode_cutout.nc: ~5m 33s
-   TOTAL: ~23m 40s
+   golden_gcode_cutout.nc: ~5m 31s
+   TOTAL: ~23m 38s

@@ -14,6 +14,8 @@ just fits on:
   The sheet edge is the board edge there, and a ring that ran along it would
   be a cutter in the air.
 """
+import math
+
 from shapely.geometry import LineString, MultiPolygon, Polygon, box
 from shapely.ops import linemerge, unary_union
 from gerber2rml.toolpath import Move
@@ -24,6 +26,14 @@ _SEGMENT_STEP_MM = 0.5  # interpolation resolution for cut segments
 # A rim thinner than this is not a cut worth making: the cutter would be
 # mostly in air, and the sliver it left breaks off by hand.
 SHEET_EDGE_MM = 0.5
+
+# Tabs go along the long sides, never in a corner: one left in a corner is very
+# hard to cut off. A side counts as long from this share of the longest, so a
+# square gets a tab on each side and a long board gets them all on its two.
+LONG_SIDE_SHARE = 0.6
+CORNER_CLEAR_MM = 2.0       # from a corner to the near edge of a tab
+TINY_BOARD_CLEAR_MM = 0.5   # the same, on a board too small to leave that
+_STRAIGHT_DEG = 2.0         # a turn smaller than this is still the same side
 
 
 def _islands(geom):
@@ -103,11 +113,113 @@ def _sheet_band(stock, r, edge_tol):
             .difference(sheet.buffer(r - edge_tol, join_style="mitre")))
 
 
+def _headings(coords):
+    """``[(start distance, length, heading)]`` of each real segment."""
+    out, along = [], 0.0
+    for (x0, y0), (x1, y1) in zip(coords, coords[1:]):
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length > 1e-9:
+            out.append((along, length, math.atan2(y1 - y0, x1 - x0)))
+            along += length
+    return out
+
+
+def _turn(a, b):
+    return abs((b - a + math.pi) % (2 * math.pi) - math.pi)
+
+
+def _straight_sides(coords):
+    """``[(start distance, length)]`` of the straight runs along a line."""
+    sides = []
+    start, length, last = None, 0.0, None
+    for along, seg, heading in _headings(coords):
+        if last is not None and _turn(last, heading) <= math.radians(_STRAIGHT_DEG):
+            length += seg
+        else:
+            if start is not None:
+                sides.append((start, length))
+            start, length = along, seg
+        last = heading
+    if start is not None:
+        sides.append((start, length))
+    return sides
+
+
+def _start_at_corner(ring):
+    """The same closed ring, started at its sharpest corner, so no straight
+    side runs across the point where it begins and ends."""
+    coords = [c[:2] for c in ring.coords]
+    if coords[0] == coords[-1]:
+        coords = coords[:-1]
+    n = len(coords)
+    best, at = -1.0, 0
+    for i in range(n):
+        a = _headings([coords[i - 1], coords[i]])
+        b = _headings([coords[i], coords[(i + 1) % n]])
+        if a and b:
+            turn = _turn(a[0][2], b[0][2])
+            if turn > best:
+                best, at = turn, i
+    return LineString(coords[at:] + coords[:at] + [coords[at]])
+
+
+def _tab_centres(lines, tabs, tab_width):
+    """Where the tabs go, as one sorted list of distances per line: spread
+    along the long straight sides, clear of the corners. None if there is no
+    straight side long enough, as on a round board, which has no corners."""
+    for margin in (CORNER_CLEAR_MM, TINY_BOARD_CLEAR_MM):
+        clear = tab_width / 2.0 + margin
+        sides = [(i, start, length) for i, line in enumerate(lines)
+                 for start, length in _straight_sides(list(line.coords))
+                 if length >= 2 * clear]
+        if sides:
+            break
+    else:
+        return None
+    longest = max(s[2] for s in sides)
+    sides = [s for s in sides if s[2] >= LONG_SIDE_SHARE * longest]
+    counts = [0] * len(sides)
+    for _ in range(tabs):
+        k = max(range(len(sides)), key=lambda j: sides[j][2] / (counts[j] + 1))
+        counts[k] += 1
+    centres = [[] for _ in lines]
+    for (i, start, length), n in zip(sides, counts):
+        for k in range(n):
+            centres[i].append(start + length * (k + 1) / (n + 1))
+    return [sorted(c) for c in centres]
+
+
+def _keep_between(line, centres, tab_width):
+    """The parts of ``line`` left to cut, with a tab at each centre."""
+    keep, prev = [], 0.0
+    for c in centres:
+        if c - tab_width / 2.0 > prev:
+            keep.append((prev, c - tab_width / 2.0))
+        prev = max(prev, c + tab_width / 2.0)
+    if line.length > prev:
+        keep.append((prev, line.length))
+    segments = []
+    for (a, b) in keep:
+        n = max(2, int((b - a) / _SEGMENT_STEP_MM))
+        segments.append([line.interpolate(a + (b - a) * t / (n - 1)).coords[0]
+                         for t in range(n)])
+    return segments
+
+
 def _segments_with_tabs(ring, tabs, tab_width):
     """Split the closed ring into kept segments, leaving `tabs` gaps."""
     L = ring.length
     if tabs <= 0:
         return [list(ring.coords)]
+    turned = _start_at_corner(ring)
+    placed = _tab_centres([turned], tabs, tab_width)
+    if placed is not None and tabs * tab_width < L:
+        segments = _keep_between(turned, placed[0], tab_width)
+        if len(segments) > 1:
+            # The ring starts and ends in a corner, not a tab: one cut, not two.
+            segments[0] = segments[-1] + segments[0][1:]
+            segments.pop()
+        return segments
     gap_centers = [L * k / tabs for k in range(tabs)]
     cut_ranges = []  # (start_dist, end_dist) to KEEP
     prev = 0.0
@@ -132,13 +244,16 @@ def _segments_with_tabs(ring, tabs, tab_width):
 def _segments_with_tabs_open(pieces, tabs, tab_width):
     """Tabs along a ring that the sheet's edge has broken into pieces.
 
-    The gaps fall at the same fractions of the total length as on a closed
-    ring, so a board with one side on the sheet edge keeps the same number
-    of tabs on the sides that are cut."""
+    A board with one side on the sheet edge keeps the same number of tabs, on
+    the long sides that are cut."""
     lines = [LineString(p) for p in pieces]
     total = sum(l.length for l in lines)
     if tabs <= 0 or total <= 0:
         return [list(l.coords) for l in lines]
+    placed = _tab_centres(lines, tabs, tab_width)
+    if placed is not None:
+        return [seg for line, centres in zip(lines, placed)
+                for seg in _keep_between(line, centres, tab_width)]
     centres = [total * k / tabs for k in range(tabs)]
     segments, offset = [], 0.0
     for l in lines:

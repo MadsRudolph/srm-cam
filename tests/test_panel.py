@@ -313,7 +313,9 @@ def test_a_panel_that_fills_the_sheet_needs_only_the_middle_cut_and_the_ends():
                     cut_depth=0.6, total_depth=0.6)
     paths = cut_outline(two, job, stock=(0.0, -10.0, 200.0, 150.0))
     cut = [m for tp in paths for m in tp if not m.rapid]
-    assert min(m.x for m in cut) > 0.5 and max(m.x for m in cut) < 199.5
+    # The long sides are cut right up to the sheet's edge, but not along it.
+    assert min(m.x for m in cut) > 0.0 and max(m.x for m in cut) < 200.0
+    assert not _runs_at_x(paths, -0.4) and not _runs_at_x(paths, 200.4)
     assert _runs_at_x(paths, 100.0)
 
 
