@@ -94,16 +94,17 @@ class DowelSpec:
 class FiducialSpec:
     """2-4 corner reference holes for measured (non-dowel) registration.
 
-    ``placement='onboard'`` insets the holes ``edge_offset`` mm inside the board
-    corners (permanent holes, no oversized stock — works for full-bed boards);
-    ``'waste'`` outsets them ``edge_offset`` mm beyond the corners (clean board,
-    needs larger stock). ``'manual'`` places them at ``points`` — free positions
+    ``placement='waste'``, the standard, outsets the holes ``edge_offset`` mm
+    beyond the board corners (clean board, needs larger stock); ``'onboard'``
+    insets them ``edge_offset`` mm inside the corners (permanent holes in the
+    design, only for a sheet too small for anything else). ``'manual'`` places
+    them at ``points`` — free positions
     for when neither corner scheme fits the stock (e.g. a large board with waste
     only on some edges). Holes are through-holes drilled stock-only (board
     thickness + ``breakthrough``); they never take the dowel bed bite.
     """
     count: int = 4                     # 2..4
-    placement: str = "onboard"         # "onboard" | "waste" | "manual"
+    placement: str = "waste"           # "waste" | "onboard" | "manual"
     edge_offset: float = 4.0           # inset (onboard) / outset (waste), mm
     hole_diameter: float = 0.8         # mm (drilled with the single bit)
     breakthrough: float = 0.3          # mm past the board, for a clean through-hole

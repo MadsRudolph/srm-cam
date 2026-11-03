@@ -191,8 +191,10 @@ def render_incremental(toolpaths: list[list[Move]], xy_feed: float,
     0, and one ``G90 G54 G00`` puts XY at the first point - G54 XY is
     machine (0, 0) on this machine, and the run checks that before it cuts.
     Everything after is incremental. Each step is the difference of two
-    absolute positions rounded to whole microns, so the steps add up exactly
-    and nothing drifts over thousands of moves.
+    absolute positions rounded to the machine's own 0.01 mm step, so the mill
+    has nothing to round and the steps add up exactly. Steps in whole microns
+    did drift: 1032 of them ended 0.46 mm off on the mill (2026-11-03), on a
+    job whose words summed exactly.
 
     Returns ``(program, end_xy_mm)``; the program ends at the top, at end_xy.
     """
@@ -204,7 +206,7 @@ def render_incremental(toolpaths: list[list[Move]], xy_feed: float,
         return "\n".join(out + ["M30", "%"]) + "\n", (0.0, 0.0)
 
     def um(v):
-        return int(round(v * 1000))
+        return int(round(v * 100)) * 10
 
     def mm(v):
         return _f(v / 1000.0)

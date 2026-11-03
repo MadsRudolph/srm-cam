@@ -3,6 +3,8 @@ import math
 import random
 import re
 
+import pytest
+
 from gerber2rml.backends.gcode import render_incremental
 from gerber2rml.toolpath import Move
 
@@ -48,8 +50,8 @@ def test_thousands_of_steps_end_exactly_where_they_should():
     want = path[1:-1]
     assert len(cuts) == len(want)
     worst = max(math.dist(c, (m.x, m.y, -43.3 + m.z)) for c, m in zip(cuts, want))
-    assert worst < 0.0015             # rounding to whole microns, no drift
-    assert math.dist(end, (path[-1].x, path[-1].y)) < 0.001
+    assert worst < 0.009             # rounding to the 0.01 mm step, no drift
+    assert math.dist(end, (path[-1].x, path[-1].y)) < 0.0075
 
 
 def test_it_starts_at_the_top_and_never_rapids_diagonally():
@@ -71,3 +73,30 @@ def test_a_dry_run_keeps_the_spindle_off():
     prog, _ = render_incremental([[Move(10, 10, 2, rapid=True)]], 4, 1,
                                  z_surface=-40.0, spindle=False)
     assert "M3" not in prog.split()
+
+
+def test_every_step_is_a_whole_machine_step_so_nothing_can_drift():
+    import math
+    path = [Move(10.0, 10.0, 2.0, rapid=True), Move(10.0, 10.0, -0.1)]
+    for i in range(1, 400):                 # short chords, as curves are cut
+        a = i * 0.037
+        path.append(Move(10 + 5 * math.cos(a), 10 + 5 * math.sin(a),
+                         -0.1 - 0.0007 * i))
+    prog, end = render_incremental([path], 4.0, 1.0, z_surface=-40.0)
+    motion = 0
+    for line in prog.splitlines():
+        for word in re.findall(r"[XYZ](-?[0-9.]+)", line):
+            motion += 1
+            assert abs(float(word) * 100 - round(float(word) * 100)) < 1e-6, line
+    assert motion > 800
+    assert end == pytest.approx((round(path[-1].x, 2), round(path[-1].y, 2)))
+
+
+def test_what_the_mill_does_to_finer_steps_is_the_drift_it_had():
+    # The mill rounds each move to 0.01 mm, halves up. A job's words that sum
+    # exactly then still walk off, always the same way: this is what left the
+    # 2026-11-03 traces 0.36, 0.29 mm from their end. Whole steps cannot walk.
+    def walk(words):
+        return sum(math.floor(w * 100 + 0.5 + 1e-9) / 100 - w for w in words)
+    assert walk([0.005, -0.005] * 100) == pytest.approx(1.0)
+    assert walk([0.01, -0.03, 0.07] * 100) == pytest.approx(0.0)

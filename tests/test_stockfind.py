@@ -124,3 +124,85 @@ def test_a_stock_in_a_corner_bracket_is_one_touch(corner):
     p = stockfind.from_datum(ser, datum, corner, (120, 80))
     assert (p.x, p.y, p.angle) == (40, 30, 0.0)
     assert abs(p.z - m.surface_z / 1000) < 0.1
+
+
+def test_a_mill_that_stopped_away_from_the_end_does_not_hang_the_run():
+    m, ser = _sim()
+    said = []
+    rml = render([[Move(80, 60, 2, rapid=True), Move(90, 60, 2, rapid=True)]], 4, 1)
+    assert JobRunner(ser, sm.printer(), lambda: False, note=said.append,
+                     still_s=0.05, poll_s=0.01, settled_s=0.2).run(
+        rml, "traces", end_mm=(150.0, 96.0), timeout_s=10)
+    assert "not at the program's end" in said[-1] and "150.00" in said[-1]
+
+
+def test_a_slow_job_is_not_taken_for_a_stopped_one():
+    m, ser = _sim()
+    said = []
+    m.speedup = 20.0                       # about 0.1 s for each mm here
+    rml = render([[Move(80, 60, 2, rapid=True), Move(90, 60, 2, rapid=True)]], 4, 1)
+    JobRunner(ser, sm.printer(), lambda: False, note=said.append,
+              still_s=0.05, poll_s=0.01, settled_s=0.5).run(rml, "traces",
+                                                            timeout_s=30)
+    assert not said
+
+
+def _probe_port(pos_z_um, speedup=1e6):
+    m = sm.machine(speedup=speedup, corner=(32020, 27740),
+                   size=(160000, 100000))
+    m.pos = [100000, 80000, pos_z_um]
+    return m, m.surface(100000, 80000), sm.serial_for("SIM")
+
+
+def test_a_touch_from_the_top_with_a_known_height_drops_fast_and_lands():
+    m, surface, ser = _probe_port(0)
+    r = stockfind.touch_from_anywhere(ser, surface)
+    assert r is not None and r[2] * 1000 == pytest.approx(surface, abs=50)
+    assert r[:2] == (100.0, 80.0)
+
+
+def test_a_touch_from_the_top_with_no_known_height_still_lands():
+    m, surface, ser = _probe_port(0)
+    r = stockfind.touch_from_anywhere(ser, None)
+    assert r is not None and r[2] * 1000 == pytest.approx(surface, abs=50)
+
+
+def test_a_touch_that_already_reads_contact_goes_no_lower():
+    m, surface, ser = _probe_port(0)
+    m.pos[2] = surface - 10
+    assert stockfind.touch_from_anywhere(ser, None) is None
+    assert m.pos[2] == surface - 10
+
+
+def test_a_hint_never_moves_the_head_up():
+    m, surface, ser = _probe_port(0)
+    m.pos[2] = surface + 3000
+    assert stockfind.drop_to_hint(ser, surface)
+    assert m.pos[2] == surface + 3000
+
+
+def test_a_fast_drop_stops_on_copper_higher_than_it_was_told():
+    m, surface, ser = _probe_port(0)
+    said = []
+    # Told the copper is 20 mm lower than it is: this is a longer bit.
+    assert stockfind.drop_to_hint(ser, surface - 20000, note=said.append)
+    assert any("higher than expected" in s for s in said)
+    assert m.pos[2] >= surface
+
+
+def test_with_no_known_height_it_still_drops_fast_on_firmware_that_stops():
+    m, surface, ser = _probe_port(0)
+    said = []
+    stockfind.seek_surface(ser, 100000, 80000, note=said.append, hint_um=None)
+    assert any("Dropping fast" in s for s in said)
+    # One look, not one per 5.5 mm from the top.
+    assert sum("Looking for" in s for s in said) <= 2
+
+
+def test_older_firmware_with_no_known_height_does_not_drop_blind(monkeypatch):
+    m, surface, ser = _probe_port(0)
+    monkeypatch.setattr(spi_probe, "firmware_version",
+                        lambda s, timeout=1.5: (4, {"timedmove"}))
+    said = []
+    assert stockfind.drop_to_hint(ser, None, note=said.append)
+    assert m.pos[2] == 0 and "feeling down" in said[0]

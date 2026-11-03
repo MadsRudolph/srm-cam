@@ -393,5 +393,31 @@ def test_a_first_interface_setup_brings_its_dowel_and_fiducial_keys_across():
     # hand-placed with no points is still the corner scheme, and says so
     theirs["fid"].pop("points")
     ours, unreadable = _as_gui2_setup(theirs)
-    assert ours["fid_placement"] == "onboard"
+    assert ours["fid_placement"] == "waste"
     assert "the hand-placed reference holes" in unreadable
+
+
+def test_opening_a_board_with_copper_on_both_layers_makes_it_double_sided(
+        win, monkeypatch, tmp_path):
+    import shutil
+    from PySide6.QtWidgets import QFileDialog
+    ds = Path(__file__).parent.parent / "examples" / "double_sided_40x20"
+    one = tmp_path / "one"
+    shutil.copytree(ds, one)
+    # KiCad's empty front layer: the file is there, with nothing on it.
+    (one / "ds40x20-F_Cu.gbr").write_text(
+        "%FSLAX46Y46*%\n%MOMM*%\nM02*\n", encoding="ascii")
+
+    def opens(folder):
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                            lambda *a, **k: str(folder))
+        win.action_open()
+
+    opens(ds)
+    assert win._double and win.inspector.setup.double.isChecked()
+    opens(one)
+    assert not win._double and not win.inspector.setup.double.isChecked()
+    opens(ds)
+    assert win._double
+    win.inspector.setup.double.setChecked(False)  # the box still has the last word
+    assert not win._double

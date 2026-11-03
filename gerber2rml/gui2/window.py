@@ -244,7 +244,7 @@ def _as_gui2_setup(data):
             out["fid_placement"] = "manual"
             out["fid_points"] = points
         elif place == 2:
-            out["fid_placement"] = "onboard"
+            out["fid_placement"] = "waste"
             unreadable.append("the hand-placed reference holes")
         if "scale" in fid:
             out["fid_scale"] = bool(fid["scale"])
@@ -354,9 +354,10 @@ class MainWindow(QMainWindow):
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
         # descend INSIDE it to probe it, which is a hole no bit can enter.
+        self._auto_top = False             # Automatic: the sheet is turned over
         self._fid_diameter = 1.6
         self._fid_count = 4
-        self._fid_placement = "onboard"    # "onboard" | "waste" | "manual"
+        self._fid_placement = "waste"      # "waste" | "onboard" | "manual"
         self._fid_offset = 4.0
         # Which way the board is physically turned over. The fit cannot tell:
         # a rectangle of corner holes matches equally well either way, so a
@@ -1072,6 +1073,20 @@ class MainWindow(QMainWindow):
                 else self.state.board.copper)
         return None if geom is None or geom.is_empty else geom.bounds
 
+    def work_extent(self):
+        """Like :meth:`work_bounds`, with the reference holes of a fiducial
+        job: all of it has to land on the stock, and they can be outside the
+        board."""
+        b = self.work_bounds()
+        if b is None or not self._double or self._registration != "fiducial":
+            return b
+        lay = self._ds_layout()
+        if lay is None or not lay.align_holes:
+            return b
+        xs = [x + s * d / 2.0 for x, _y, d in lay.align_holes for s in (-1, 1)]
+        ys = [y + s * d / 2.0 for _x, y, d in lay.align_holes for s in (-1, 1)]
+        return (min(b[0], *xs), min(b[1], *ys), max(b[2], *xs), max(b[3], *ys))
+
     def _on_machine_position(self, x, y, z, touch):
         # The bar shows the RAW machine readout, VPanel-equal. Everything
         # drawn on the design - the bit, its trail, the run tracking, the 3D
@@ -1734,7 +1749,8 @@ class MainWindow(QMainWindow):
                     self.say("fail", f"The design X-ray could not be built "
                                      f"({e.__class__.__name__}: {e}). Showing "
                                      f"the bed frame instead.")
-            if step is not None and step.side == "top":
+            if step is not None and (step.side == "top" or (
+                    self._auto_top and step.key == "autorun")):
                 # AS PLACED once the fiducials have been measured: the flip is
                 # where the board actually is, not where a perfect flip would
                 # have put it. Jog, snap and rework all read this picture, so
@@ -2516,6 +2532,33 @@ class MainWindow(QMainWindow):
             workspace.remembered_dir("gerber"))
         if d:
             self.load_folder(d)
+            self._detect_sides()
+
+    def show_auto_face(self, top):
+        """Automatic mode has one step on the rail and two faces: once the
+        sheet is turned over, the bed shows the top, and the first side's
+        height map goes, because it describes a surface that is now underneath."""
+        if top == self._auto_top:
+            return
+        self._auto_top = top
+        if top:
+            self.stage.set_level_mesh(None, None, 0.0)
+            self.stage.set_probe_points([])
+        self.refresh_preview()
+
+    def _detect_sides(self):
+        """Only a double-sided board has copper on both layers. Copper, not
+        files: KiCad can plot an empty F.Cu for a single-sided board. Opening a
+        folder decides this; the box still overrules it afterwards."""
+        board = self.state.board
+        if board is None or self.state.is_panel:
+            return
+        top = board.copper_top
+        two = (top is not None and not top.is_empty
+               and board.copper is not None and not board.copper.is_empty)
+        self.inspector.setup.double.setChecked(two)
+        if two:
+            self.say("info", "Copper on both layers: set up as double-sided.")
 
     def action_open_demo(self):
         if not DEMO.exists():
@@ -2542,6 +2585,7 @@ class MainWindow(QMainWindow):
                 "Drill Files produce. If the folder holds a zip, unpack it "
                 "first.")
             return
+        self._auto_top = False
         # A measured flip belongs to one physical board on the bed. Carrying it
         # onto the next one would draw the new board where the old one landed.
         # A setup restore re-applies its own saved fit after this call.
@@ -4076,7 +4120,7 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             self._flex_mm = 0.0
         self._fid_count = int(data.get("fid_count", 4))
-        self._fid_placement = data.get("fid_placement", "onboard")
+        self._fid_placement = data.get("fid_placement", "waste")
         self._fid_offset = float(data.get("fid_offset", 4.0))
         # Defaults for setups written before these were saved: the values
         # the export used then, so an old job reproduces what it produced.
@@ -4091,7 +4135,7 @@ class MainWindow(QMainWindow):
             foreign.append("the hand-placed reference holes")
         if self._fid_placement == "manual" and len(self._fid_points) < 2:
             # Hand-placed holes without their places are not a placement.
-            self._fid_placement = "onboard"
+            self._fid_placement = "waste"
             foreign.append("the hand-placed reference holes")
         self._dowel_mode = "grid" if data.get("dowel_mode") == "grid" else "fresh"
         self._dowel_edges = ("leftright" if data.get("dowel_edges") == "leftright"
@@ -4114,6 +4158,7 @@ class MainWindow(QMainWindow):
             x, y, w, h = (float(v) for v in stock)
             self.stock = (x, y, w, h)
             self._stock_set = "stock" in data
+            self.autorun_page.show_size(w, h)
         except (TypeError, ValueError):
             # Not four numbers. Keep the sheet we had rather than storing
             # something the stage cannot unpack — a dict's keys, say.
@@ -4302,6 +4347,8 @@ class MainWindow(QMainWindow):
 
     def _on_drag(self, dx, dy):
         """The drag landed. This is the one expensive moment, and it is once."""
+        # Dragged somewhere is where it should go: centring would undo it.
+        self.autorun_page.board_dragged()
         self.state.set_placement(self.state.place_x + dx,
                                  self.state.place_y + dy)
         self._paths_cache = {}

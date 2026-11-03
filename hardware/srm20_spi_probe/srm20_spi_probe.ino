@@ -67,6 +67,8 @@
  * SERIAL PROTOCOL (115200 baud, newline-terminated, all distances in MICRONS):
  *   host -> board:
  *     D                 set datum = current X,Y and safe Z = current Z
+ *     U <z>             v5: fast straight down to machine Z, stopping at the
+ *                       first touch -> 'U T x y z' touched, 'U K x y z' got there
  *     P <id> <x> <y>    probe local (x,y) -> 'R id x y z'
  *     B                 re-touch the reference (datum X,Y) -> 'B z'
  *     Z <z>             set safe Z manually (machine um)
@@ -345,6 +347,10 @@ void haltMotion() {
   srm20.stopMoving();
 }
 
+// v5: while set, waitForMotorStop halts the move at the first debounced touch.
+bool gStopOnTouch = false;
+bool gTouchStopped = false;
+
 // Wait for motion to finish. Returns FALSE if the operator aborted (!), the
 // machine reports an abnormal state (v3), OR the move stalled. Every false
 // return HALTS THE MACHINE first — callers treat false as "stop and lift", and
@@ -358,6 +364,10 @@ bool waitForMotorStop() {
       srm20.getStatus(sys, rem);
       if (rem & RM_CMDERR) sawCmdErr = true;
       if (checkAbort()) { haltMotion(); return false; }
+      if (gStopOnTouch && !gTouchStopped && probeTouched()) {
+        haltMotion();
+        gTouchStopped = true;            // keep waiting: the motors still run down
+      }
       // Still moving? Then nothing is stuck — restart the stall clock. This is
       // what lets a slow move run to completion instead of being cut off.
       if (sys & ST_MOVING) t0 = millis();
@@ -382,7 +392,7 @@ bool waitForMotorStop() {
         pause0 = 0;
         abnormal = 0;
       }
-      delay(40);
+      delay(gStopOnTouch ? 1 : 40);
       // A held pause keeps the loop alive even once the motors have stopped —
       // otherwise a mid-move pause would be reported as a completed move.
     } while (((sys & ST_MOVING) || gPauseRequested)
@@ -722,6 +732,25 @@ void handleLine(char *s) {
 #else
     Serial.println(F("E F NOPATCH"));
 #endif
+  } else if (s[0] == 'U') {        // v5: fast down, stopping at the first touch
+    long tz = strtol(s + 1, NULL, 10);
+    long x, y, z;
+    if (!readPos(x, y, z)) { Serial.println(F("E U UNSTABLE")); return; }
+    if (probeTouched()) { Serial.println(F("E U LOW")); return; }
+    if (tz > z) tz = z;                 // never up
+    clearHold();
+    gTouchStopped = false;
+    gStopOnTouch = true;
+    srm20.jumpTo(x, y, tz, (int)MOVE_SPEED);
+    bool ok = waitForMotorStop();
+    gStopOnTouch = false;
+    if (!ok) { if (gLiftPending) abortLift();
+               Serial.println(F("E U ABORT")); return; }
+    long ax, ay, az;
+    if (!readPos(ax, ay, az)) { Serial.println(F("E U UNSTABLE")); return; }
+    Serial.print(gTouchStopped ? F("U T ") : F("U K "));
+    Serial.print(ax); Serial.print(' '); Serial.print(ay); Serial.print(' ');
+    Serial.println(az);
   } else if (s[0] == 'N') {        // v3: TIMED relative move — calibrates the
     // speed units. Timed on the board (millis) so the USB round-trip is not in
     // the number. Resolution is the status-poll interval (~100 ms at the stock
@@ -818,11 +847,11 @@ void handleLine(char *s) {
     Serial.println(r == 1 ? F("H 1") : F("H 0"));
   } else if (s[0] == 'V') {        // version + feature flags for the host
 #ifdef SRM20SPIREMOTE_LOCAL_PATCH
-    Serial.println(F("V 4 probe,refine,verify,retouch,zeroz,touchbit,stream,"
-                     "holetest,status,spindle,jobctl,view,timedmove,guard,info,frame,origin,liftfix"));
+    Serial.println(F("V 5 probe,refine,verify,retouch,zeroz,touchbit,stream,"
+                     "holetest,status,spindle,jobctl,view,timedmove,guard,info,frame,origin,liftfix,touchstop"));
 #else
-    Serial.println(F("V 4 probe,refine,verify,retouch,zeroz,touchbit,stream,"
-                     "holetest,status,spindle,jobctl,view,timedmove,guard,origin,liftfix"));
+    Serial.println(F("V 5 probe,refine,verify,retouch,zeroz,touchbit,stream,"
+                     "holetest,status,spindle,jobctl,view,timedmove,guard,origin,liftfix,touchstop"));
 #endif
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);

@@ -49,6 +49,9 @@ REREF_UM = 20000
 CHECK_UM = 5000              # how far inside the far edges copper is checked
 TRAVEL_UM = 10000            # lift above the copper between spots; the jog adds
                              # 5 more: 15 mm clears the DTU fixture knobs
+LAB_COPPER_UM = -57200       # the lab's copper with a usual bit: only ever used
+                             # by a descent that stops on touch (firmware v5)
+TOUCH_BACK_UM = 3000         # up this far after a fast descent touched early
 HINT_ABOVE_UM = 5000         # a remembered surface: drop fast to this far above it,
                              # inside the probe's 6 mm reach, so one probe finds it
 
@@ -112,12 +115,7 @@ def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
     on down as usual."""
     note = note or (lambda _m: None)
     travel(ser, x_um, y_um, should_abort)
-    if hint_um is not None:
-        pos = spi_probe.query_position(ser)
-        target = min(0, int(hint_um) + HINT_ABOVE_UM)
-        if pos is not None and pos[2] * 1000 > target + 500:
-            spi_probe.timed_move(ser, dz_um=int(target - pos[2] * 1000),
-                                 should_abort=should_abort)
+    drop_to_hint(ser, hint_um, should_abort, note)
     while True:
         r = _cmd(ser, "D", should_abort, 5.0)
         if not r or not r.startswith("D "):
@@ -137,6 +135,83 @@ def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
                 "the stock, and check the clip is on its copper.")
         spi_probe.timed_move(ser, dz_um=-DROP_STEP_UM,
                              should_abort=should_abort)
+
+
+def drop_to_hint(ser, hint_um, should_abort=None, note=None):
+    """Fast down from wherever the head is to ``HINT_ABOVE_UM`` above where
+    the copper was last time. Never moves up. False if the move failed.
+
+    Firmware v5 halts this at the first touch, so it can run with no remembered
+    height too, on the lab's usual one. Older firmware cannot: it only drops on
+    a remembered height, and copper higher than that gets hit."""
+    note = note or (lambda _m: None)
+    _ver, feats = spi_probe.firmware_version(ser)
+    stops = "touchstop" in feats
+    if hint_um is None:
+        if not stops:
+            note("No copper height known yet: feeling down from here.")
+            return True
+        hint_um = LAB_COPPER_UM
+    pos = spi_probe.query_position(ser)
+    if pos is None:
+        note("Fast drop skipped: cannot read where the head is.")
+        return False
+    target = min(0, int(hint_um) + HINT_ABOVE_UM)
+    z = pos[2] * 1000
+    if z <= target + 500:
+        return True
+    note("Dropping fast to Z %.1f mm…" % (target / 1000.0))
+    why = []
+    if stops:
+        r = spi_probe.fast_descend(ser, target, should_abort, last_error=why)
+        if r == "touch":
+            note("Touched copper on the way down, higher than expected.")
+            spi_probe.timed_move(ser, dz_um=TOUCH_BACK_UM,
+                                 should_abort=should_abort)
+    else:
+        r = spi_probe.timed_move(ser, dz_um=int(target - z),
+                                 should_abort=should_abort, last_error=why)
+    if r is None:
+        note("Fast drop failed (%s): feeling down from here."
+             % (why[0] if why else "no reply"))
+        return False
+    return True
+
+
+def touch_from_anywhere(ser, hint_um=None, should_abort=None):
+    """Find the copper under the head from any height, without moving XY.
+
+    Fast to just above ``hint_um`` when the copper's height is known. After
+    that, or with no hint, touch-offs: each reaches 6 mm below where it starts
+    and comes back up empty, so the next starts ``DROP_STEP_UM`` lower. Returns
+    ``(x_mm, y_mm, z_mm)``, or None if it stopped without one."""
+    try:
+        if not drop_to_hint(ser, hint_um, should_abort):
+            return None
+        pos = spi_probe.query_position(ser)
+        if pos is None:
+            return None
+        start = int(pos[2] * 1000)
+        while True:
+            r = _cmd(ser, "T", should_abort, 40.0)
+            if r and r.startswith("T "):
+                x, y, z = r.split()[1:4]
+                return int(x) / 1000.0, int(y) / 1000.0, int(z) / 1000.0
+            # Only a clean miss may go lower. On anything else, above all the
+            # probe already reading contact, going lower drives the bit in.
+            if not (r and r.rstrip().endswith("NOTOUCH")):
+                return None
+            start -= DROP_STEP_UM
+            if start < Z_LIMIT_UM:
+                return None
+            pos = spi_probe.query_position(ser)
+            if pos is None or pos[3]:
+                return None
+            if spi_probe.timed_move(ser, dz_um=int(start - pos[2] * 1000),
+                                    should_abort=should_abort) is None:
+                return None
+    except ProbeError:
+        return None
 
 
 def reference_at(ser, x_um, y_um, should_abort=None, surface_um=None):

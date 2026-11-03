@@ -24,8 +24,8 @@ def test_srm20_preset_depths_and_feeds():
     p = BUILTIN_PRESETS[name]
     assert p["trace"]["bit_diameter"] == 0.8   # one 0.8 mm bit for everything
     assert p["trace"]["xy_feed"] == 4.0
-    assert p["drill"]["total_depth"] == 1.7    # 1.6 mm board + 0.1 mm through
-    assert p["cutout"]["total_depth"] == 1.7
+    assert p["drill"]["total_depth"] == 1.9    # 1.6 mm board + 0.3 mm through
+    assert p["cutout"]["total_depth"] == 1.9
 
 
 def test_apply_preset_sets_jobs():

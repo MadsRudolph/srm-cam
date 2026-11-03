@@ -689,6 +689,20 @@ def timed_move(ser, dx_um=0, dy_um=0, dz_um=0, speed=-1, timeout=120.0,
             "mm_per_s": (dist / ms) if ms > 0 else None}
 
 
+def fast_descend(ser, z_um, should_abort=None, timeout=60.0, last_error=None):
+    """Firmware v5, ``U``: fast straight down to machine ``z_um``, halting at
+    the first touch. ``"touch"`` if it touched on the way, ``"there"`` if it got
+    there, None if it failed (the reason goes in ``last_error``)."""
+    parts, err = _ack(ser, f"U {int(z_um)}", "U", timeout, should_abort,
+                      return_error=True)
+    if not parts or len(parts) < 2:
+        if last_error is not None:
+            last_error.append(err or "no reply")
+        stop_moving_now(ser)
+        return None
+    return "touch" if parts[1] == "T" else "there"
+
+
 def deviations_mm(results, ref_id=0):
     """Map probe results (microns) to ``{id: dz_mm}`` deviations relative to the
     reference point's height. Skips points that didn't contact."""

@@ -2,13 +2,18 @@
 on the bed and off the origin, found, cut, flipped, found again, fitted."""
 import math
 
+import time
+
 import pytest
 
 from gerber2rml.engine import simmachine as sm
 from gerber2rml.engine import spi_probe, stockfind
-from gerber2rml.engine.autorun import AutoRun, Events, JobSource, RunFailed
+from gerber2rml.engine.autorun import (HOLES_AGAIN, START_AT_CHECK,
+                                       START_AT_FIDUCIALS, AutoRun, Events,
+                                       JobSource, RunFailed, about)
 from gerber2rml.engine.fidfind import hole_test
-from gerber2rml.engine.fiducial import apply_to_toolpaths
+from gerber2rml.engine.fiducial import Transform, apply_to_toolpaths
+from gerber2rml.engine.runner import RunStopped
 from gerber2rml.toolpath import Move
 
 FAST = {"still_s": 0.0, "poll_s": 0.0}
@@ -241,3 +246,161 @@ def test_a_recut_in_boxes_cuts_only_inside_them():
     for x, y, _z in redo:
         assert x0 - 0.01 <= x <= x1 + 0.01 and y0 - 0.01 <= y <= y1 + 0.01
     assert min(p[2] for p in redo) < min(p[2] for p in full) - 0.04
+
+
+def test_a_finished_board_is_brought_to_the_view_position():
+    m, ser, board, log, run = _run(False)
+    assert run.run() is True
+    assert m.pos == [0, 150000, 0]
+
+
+def test_a_stopped_run_is_not_moved_to_the_view_position(monkeypatch):
+    m, ser, board, log, run = _run(False, check_cut=True)
+    seen = []
+    monkeypatch.setattr(run, "_to_view", lambda: seen.append(1))
+    log.check = lambda label, deeper: ("stop", 0.0)
+    with pytest.raises(RunStopped):
+        run.run()
+    assert len(seen) == 1                   # the check's, and no other
+
+
+def test_the_run_waits_for_the_lid_before_it_cuts_on(monkeypatch):
+    m, ser, board, log, run = _run(False)
+    lid = [True, True, False]
+    monkeypatch.setattr(spi_probe, "machine_status",
+                        lambda s: {"cover": lid.pop(0) if lid else False})
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    notes = []
+    log.note = notes.append
+    run._wait_for_lid()
+    assert notes == ["Close the lid to carry on."] and not lid
+
+
+def test_the_board_is_brought_out_to_be_flipped_and_the_lid_waited_for():
+    m, ser, board, log, run = _run(True)
+    seen = []
+
+    def flip():
+        seen.append(tuple(m.pos))
+        m.flip()
+        return True
+    log.flip = flip
+    waits = []
+    wait = run._wait_for_lid
+    run._wait_for_lid = lambda: (waits.append(1), wait())
+    assert run.run() is True
+    assert seen == [(0, 150000, 0)]
+    assert waits
+
+
+def test_each_fiducial_is_looked_for_where_the_last_one_says(monkeypatch):
+    m, ser, board, log, run = _run(True)
+    run.pose = run.pose_top = stockfind.StockPose(30.0, 20.0, 0.0, 100.0, 80.0, -40.0)
+    run.rotation = None
+    run.rotation = about(30.0, 20.0, 0.0)
+    bottom = [(40.0, 30.0), (90.0, 30.0), (90.0, 70.0)]
+    board.fiducials = lambda: (bottom, [(90.0, 30.0), (40.0, 30.0), (40.0, 70.0)])
+    asked = []
+
+    def locate(x, y, search_um=None):
+        asked.append((x, y))
+        # Off by 2 mm one way, past the old 1.5 mm search if it were not told.
+        return (x + 2.0 - (asked[0][0] - asked[0][0] if len(asked) == 1 else 2.0),
+                y - 0.5 + (0.0 if len(asked) == 1 else 0.5))
+    monkeypatch.setattr(run, "_locate", locate)
+    run._fiducials()
+    perfect = [(30.0 + 100.0 - (x - 30.0), y) for x, y in bottom]
+    assert asked[0] == pytest.approx(perfect[0])
+    assert asked[1] == pytest.approx((perfect[1][0] + 2.0, perfect[1][1] - 0.5))
+    assert asked[2] == pytest.approx((perfect[2][0] + 2.0, perfect[2][1] - 0.5))
+
+
+def test_a_flipped_sheet_can_start_at_the_fiducials(monkeypatch):
+    m, ser, board, log, run = _run(True, level=False,
+                                   start_at=START_AT_FIDUCIALS)
+    sent, found = [], []
+    log.job = lambda key, label, prog: sent.append(key)
+    log.flip = lambda: pytest.fail("it is already flipped")
+
+    def fiducials():
+        found.append(1)
+        board.set_top_fit(Transform(theta=0.0, scale=1.0, tx=0.0, ty=0.0))
+    monkeypatch.setattr(run, "_fiducials", fiducials)
+    assert run.run() is True
+    assert found == [1]
+    assert sent == [k for k, _l in board.top_steps()]
+    assert ("drill", "skipped") in log.steps
+
+
+def _pose_for_fiducials(run):
+    run.pose = run.pose_top = stockfind.StockPose(30.0, 20.0, 0.0, 100.0, 80.0, -40.0)
+    run.rotation = about(30.0, 20.0, 0.0)
+
+
+BOTTOM = [(40.0, 30.0), (90.0, 30.0), (90.0, 70.0), (40.0, 70.0)]
+TOP = [(90.0, 30.0), (40.0, 30.0), (40.0, 70.0), (90.0, 70.0)]
+
+
+def test_one_closed_fiducial_is_skipped_and_the_rest_still_fit(monkeypatch):
+    m, ser, board, log, run = _run(True)
+    _pose_for_fiducials(run)
+    board.fiducials = lambda: (BOTTOM, TOP)
+    notes = []
+    log.note = notes.append
+    tries = []
+
+    def locate(x, y, search_um=None):
+        tries.append(search_um)
+        if len(tries) == 3:
+            raise RunFailed("fiducial not found within 1.0 mm of %.1f, %.1f" % (x, y))
+        return x, y
+    monkeypatch.setattr(run, "_locate", locate)
+    assert run._fiducials() is not None
+    assert any("Fiducial 3 skipped" in n for n in notes)
+    assert any("3 of 4 found" in n for n in notes)
+    assert tries[2] == tries[3] == 1000      # short, once the fit knows where
+
+
+def test_too_few_fiducials_stop_before_the_top_is_cut(monkeypatch):
+    m, ser, board, log, run = _run(True)
+    _pose_for_fiducials(run)
+    board.fiducials = lambda: (BOTTOM, TOP)
+    tries = []
+
+    def locate(x, y, search_um=None):
+        tries.append(1)
+        if len(tries) > 2:
+            raise RunFailed("not found")
+        return x, y
+    monkeypatch.setattr(run, "_locate", locate)
+    with pytest.raises(RunFailed, match="only 2 of the 4"):
+        run._fiducials()
+
+
+def test_starting_at_the_check_cuts_nothing_until_it_is_answered(monkeypatch):
+    m, ser, board, log, run = _run(False, level=False, start_at=START_AT_CHECK)
+    sent, asked = [], []
+    log.job = lambda key, label, prog: sent.append(key)
+
+    def check(label, deeper):
+        asked.append((label, list(sent)))
+        return ("go", 0.0)
+    log.check = check
+    assert run.run() is True
+    assert asked[0][1] == []                 # nothing cut before the question
+    assert sent[-1] == "cutout" and "traces" not in sent
+
+
+def test_the_check_can_drill_the_holes_again_deeper_and_asks_again(monkeypatch):
+    m, ser, board, log, run = _run(False, level=False)
+    answers = [("holes", 0.3), ("go", 0.0)]
+    log.check = lambda label, deeper: answers.pop(0)
+    sent = []
+    log.job = lambda key, label, prog: sent.append(key)
+    real = board.toolpaths
+    monkeypatch.setattr(board, "toolpaths", lambda key: real(
+        "drill" if key == HOLES_AGAIN else key))
+    assert run.run() is True
+    assert not answers
+    assert sent[-2:] == [HOLES_AGAIN, "cutout"]
+
