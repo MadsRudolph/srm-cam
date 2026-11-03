@@ -11,5 +11,5 @@ Estimated run time (excludes tool changes, spin-up and pauses):
    golden_rml_airpass.rml: ~38s
    golden_rml_drill.rml: ~2m 41s
    golden_rml_traces.rml: ~14m 49s
-   golden_rml_cutout.rml: ~5m 33s
-   TOTAL: ~23m 40s
+   golden_rml_cutout.rml: ~5m 31s
+   TOTAL: ~23m 38s
