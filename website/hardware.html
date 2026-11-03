@@ -83,6 +83,15 @@
   <li><span class="st">Clip on the copper</span>The red alligator clip, anywhere on the sheet's copper.</li>
   <li><span class="st">Test it</span>Touch the clip to the bit: SRM-CAM's Z readout on the machine bar turns red and says <em>Touch</em>. Let go and it goes back to <em>Z</em>.</li>
 </ol>
+<h3 id="bracket">The probe bracket</h3>
+<p>The printed corner bracket replaces the clip: a sprung tongue presses the bare wire onto the sheet as it slides in. Files: <a href="https://github.com/MadsRudolph/srm-cam/tree/main/hardware/probe_bracket"><code>hardware/probe_bracket</code></a>.</p>
+<ol class="steps">
+  <li><span class="st">Print</span><code>probe_bracket_print.stl</code> in PLA: 0.15&nbsp;mm layers, 100% infill, no supports. Check the slit beside the tongue is open.</li>
+  <li><span class="st">Tongue</span>Strip 15&nbsp;mm. Bare end down through a tongue hole, along the groove, up the other hole; knot or tape it on top.</li>
+  <li><span class="st">Arm</span>Insulated wire down one arm hole, along the channel underneath, up the other. It takes any pull.</li>
+  <li><span class="st">Mount</span>Countersunk M4 in the back-right holes. The wire stays connected while cutting, so keep it off the copper.</li>
+  <li><span class="st">Test</span>Slide in a sheet and lower the bit onto it by hand: Z must turn red and say <em>Touch</em>.</li>
+</ol>
 <figure class="anim" data-anim="hw-probe">
   <figcaption><span class="k">A switch, read three times</span>Lower the bit onto the copper and D7 goes low. The firmware only believes it after three low reads in a row, 1&nbsp;ms apart, so a spike of stepper noise cannot fake a touch.</figcaption>
 </figure>
@@ -110,7 +119,7 @@
 </table></div>
 
 <div class="warn"><span class="t">STOP does not promise to lift the tool</span>
-<p>STOP drops the move and stops the spindle. Firmware v4 fixes the retract after an abort, which used to cancel itself, but SRM-CAM does not count on it: the bit may still be down. Raise it with <kbd>Page Up</kbd> before the next move. See <a href="machine-control.html#pause-stop">Pause and STOP</a>.</p></div>
+<p>STOP drops the move and stops the spindle. Firmware v4 and later fix the retract after an abort, which used to cancel itself, but SRM-CAM does not count on it: the bit may still be down. Raise it with <kbd>Page Up</kbd> before the next move. See <a href="machine-control.html#pause-stop">Pause and STOP</a>.</p></div>
 
 <h2 id="install">Install (one-time, for whoever maintains the mill)</h2>
 <ol class="steps">
@@ -130,6 +139,7 @@
 <tr><td><code>T</code> / <code>W</code></td><td>Touch off from here and stop on the surface / touch off and write the work-origin Z there</td></tr>
 <tr><td><code>H x y</code></td><td>Hole test at absolute (x, y): copper or hole</td></tr>
 <tr><td><code>J x y</code> / <code>L</code> / <code>Z z</code></td><td>Jog (lifts about 5&nbsp;mm first) / lift to safe Z / set safe Z</td></tr>
+<tr><td><code>U z</code></td><td>Fast straight down to machine Z, halting at the first touch (v5). The motors take a moment to stop, so treat it as a safety net: a bit can still hit the copper at speed.</td></tr>
 <tr><td><code>O x y z</code></td><td>Set the work origin absolutely, no motion (v4). It reaches the User origin only, which NC jobs ignore.</td></tr>
 <tr><td><code>Q</code> / <code>G</code> / <code>V</code> / <code>I</code></td><td>Position and touch / work origin / firmware version and features / the machine's remote-protocol version</td></tr>
 <tr><td><code>X</code> / <code>S rpm</code></td><td>Status words and spindle rpm / spindle on or off (the machine ignores the rpm: VPanel's slider sets the speed)</td></tr>
