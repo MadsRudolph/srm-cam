@@ -37,24 +37,28 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="getting-started.html">Getting started</a>
-        <a class="nav-link" href="automatic.html">Run it all</a>
+        <a class="nav-link" href="automatic.html">Mill a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Core workflow</div>
-        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
-        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
-        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
-        <a class="nav-link active" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">Setup &amp; reference</div>
+        <div class="nav-title">Set up a mill</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro: by hand</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link active" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">More</div>
         <a class="nav-link" href="feedback.html">Feedback</a>
       </div>
     </nav>
@@ -68,7 +72,7 @@
 <p class="lead">Copper on both faces, cut from both sides of the same sheet. Both faces register off reference holes the mill drills itself, never the board edge: sheared FR-4 is never truly square. At the lab that is done with <strong>fiducial holes</strong>. The drawings are live: press the buttons.</p>
 
 <div class="note"><span class="t">Where it is</span>
-<p>In Novice this is one tick, and the run does the rest: see <a href="automatic.html#double">Run it all</a>. This page is the by-hand way, in Pro: <span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Set up the job › Double-sided › This board has copper on both faces</span>, and <span class="menu-path">Registration › Fiducial holes — measured after the flip</span>. It needs an <strong>F.Cu</strong> Gerber in the folder, so plot F.Cu as well as B.Cu and Edge.Cuts in KiCad.</p></div>
+<p>In Novice this is one tick, and the run does the rest: see <a href="automatic.html#double">Mill a board</a>. This page is the by-hand way, in Pro: <span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Set up the job › Double-sided › This board has copper on both faces</span>, and <span class="menu-path">Registration › Fiducial holes — measured after the flip</span>. It needs an <strong>F.Cu</strong> Gerber in the folder, so plot F.Cu as well as B.Cu and Edge.Cuts in KiCad.</p></div>
 
 <figure class="fig mid">
   <img src="img/gui2_xray.png" alt="The design X-ray with both copper layers overlaid" loading="lazy">

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Run it all — SRM-CAM guide</title>
+<title>Mill a board — SRM-CAM guide</title>
 <meta name="description" content="SRM-CAM's Automatic mode: push the stock into the bracket, press Start, and it touches the copper, levels, drills, cuts the traces and waits for you before the cut-out.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -31,25 +31,28 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="getting-started.html">Getting started</a>
-        <a class="nav-link active" href="automatic.html">Run it all</a>
+        <a class="nav-link active" href="automatic.html">Mill a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Core workflow</div>
-        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
-        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
-        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
-        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
-        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">Setup &amp; reference</div>
+        <div class="nav-title">Set up a mill</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro: by hand</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">More</div>
         <a class="nav-link" href="feedback.html">Feedback</a>
       </div>
     </nav>
@@ -60,113 +63,113 @@
 <div class="content">
 
 <div class="hero">
-  <h1>Run it all</h1>
-  <p class="lead">Load the board, push the stock into the bracket, press <span class="ui">Start</span>. SRM-CAM touches the copper, levels, drills and cuts the traces, then waits for you to check them before it cuts the board out. This is all there is in <strong>Novice</strong>, the default profile.</p>
+  <h1>Mill a board</h1>
+  <p class="lead">Load the board, push the copper into the corner, press <span class="ui">Start</span>. SRM-CAM does the rest and stops so you can check the board before it's cut out.</p>
   <div class="badge-row">
-    <span class="badge copper">Needs the probe link</span>
-    <span class="badge">One 0.8&nbsp;mm flat endmill</span>
+    <span class="badge copper">One 0.8&nbsp;mm flat bit</span>
     <span class="badge">No files to send</span>
+    <span class="badge">One side or two</span>
   </div>
 </div>
 
-<h2 id="need">Before you start</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Check</th><th>Why</th></tr>
-<tr><td><strong>Both USB cables</strong> in: black (Arduino) and white (mill)</td><td>The Arduino probes and watches; the jobs go down the white one.</td></tr>
-<tr><td><strong>0.8&nbsp;mm flat endmill</strong> in the collet, and that tool profile selected</td><td>One bit does the whole job, so nothing stops for a bit change.</td></tr>
-<tr><td><strong>Stock held flat</strong> and pushed into the bracket corner. <strong>Big sheet:</strong> masking tape under it, across the middle too, plus clamps. <strong>Small sheet:</strong> clamps alone</td><td>Levelling follows a bowed sheet, not one that springs under the bit. Three layers of tape gave clean traces on a 160&nbsp;mm sheet; an 80&nbsp;×&nbsp;42&nbsp;mm sheet needed none. See <a href="#shallow">shallow traces</a>.</td></tr>
-<tr><td><strong>Sheet pushed under the probe tongue</strong></td><td>The touch is the bit closing a circuit through the copper. The bracket's tongue presses the probe wire onto it, so there is no clip to fit.</td></tr>
-<tr><td><strong>Lid closed</strong></td><td>Opening it stops the run.</td></tr>
-<tr><td><strong>VPanel:</strong> command set NC Code, G54 X/Y left at machine 0, 0</td><td>The lab's usual settings. VPanel may open by itself; press nothing in it. The run checks G54 before it cuts.</td></tr>
-</table></div>
-
-<h2 id="steps">The three steps</h2>
+<h2 id="steps">The steps</h2>
 <ol class="steps">
-  <li><span class="st">Your board</span>Open the Gerber folder. Pick the tool profile, press <span class="ui">Apply profile</span>, and set the board thickness from calipers. Tick <span class="ui">This board has copper on both faces</span> for a <a href="#double">double-sided</a> board. Then <span class="ui">Next: Run it</span>.</li>
-  <li><span class="st">Check it</span>Red on the rail means something will not mill as drawn, usually nets closer than the bit. Fix it in KiCad. See <a href="troubleshooting.html#narrow">spots that will be shorted</a>.</li>
-  <li><span class="st">Run it</span>Type the stock's <strong>W</strong> and <strong>H</strong>, measured. Drag the board where you want it on the outline. <span class="ui">Connect</span>, then <span class="ui">Start</span>.</li>
+  <li><span class="st">Plug in</span>Both USB cables: black (Arduino) and white (mill). Put the 0.8&nbsp;mm flat bit in the collet.</li>
+  <li><span class="st">Copper in the corner</span>Slide the sheet under the tongue and into the bracket. Hold it down: see <a href="#hold">holding the copper</a>.</li>
+  <li><span class="st">Your board</span>Open the Gerber folder from KiCad. A board with copper on both layers is set up as <a href="#double">double-sided</a> by itself.</li>
+  <li><span class="st">Check it</span>Red means something won't mill as drawn. See <a href="troubleshooting.html#narrow">spots that will be shorted</a>.</li>
+  <li><span class="st">Run it</span>Type the sheet's measured <strong>W</strong> and <strong>H</strong>, and drag the board where you want it. Press <span class="ui">Connect</span>, close the lid, press <span class="ui">Start</span>.</li>
+  <li><span class="st">Check, then cut out</span>The board comes forward and the run waits for you. <a href="#check">Check it</a>, close the lid and press <span class="ui">Cut it out</span>.</li>
 </ol>
 <figure class="fig">
-  <img src="img/automatic_run.png" alt="The Run it page: stock size, bracket corner, levelling and cut-out check options, Start, and the checklist. The board sits on the dashed stock outline on the stage." loading="lazy">
-  <figcaption>The <span class="ui">Run it</span> page. The dashed outline is the stock, drawn from the bracket corner and the size you typed. What you see is where it cuts.</figcaption>
+  <img src="img/automatic_run.png" alt="The Run it page: stock size, options and Start on the right, and the board on the sheet's outline next to the bracket" loading="lazy">
+  <figcaption>What you see is where it cuts. The outline is your sheet, drawn from the bracket corner and the size you typed.</figcaption>
 </figure>
+<div class="tip"><span class="t">VPanel</span>
+<p>It may open by itself, and you don't need to press anything in it. Keep the command set on NC Code and G54 X/Y at machine 0, 0. The run checks G54 before it cuts.</p></div>
+
+<h2 id="hold">Holding the copper</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Sheet</th><th>Hold it with</th></tr>
+<tr><td><strong>Small</strong> (80&nbsp;×&nbsp;42&nbsp;mm worked)</td><td>Clamps on the two free edges.</td></tr>
+<tr><td><strong>Big</strong> (160&nbsp;mm)</td><td>Clamps, and masking tape stuck under the sheet, across the middle too. Three layers worked.</td></tr>
+</table></div>
+<ul>
+  <li><strong>Clamps:</strong> fit one loosely, push it round by hand until it presses the sheet into the corner, then tighten. Don't push hard: that can bow the sheet.</li>
+  <li><strong>Test it:</strong> press on the copper near the middle. If it moves, the bit will move it too, and the traces will come out shallow.</li>
+  <li><strong>Print them:</strong> <a href="hardware.html#bracket">bracket and clamps</a>.</li>
+</ul>
 
 <h2 id="does">What the run does</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Step</th><th>What happens</th><th>Time</th></tr>
-<tr><td>Find the stock</td><td>One touch, 15&nbsp;mm in from the bracket corner. The outline comes from the corner and your size, so any size of stock works.</td><td>About 15&nbsp;s</td></tr>
-<tr><td>Probe the surface</td><td>12 touches over the board. Every cut then follows the copper's real height.</td><td>About 1&nbsp;min</td></tr>
-<tr><td>Check G54</td><td>Moves to the first point at the top of Z and reads the head back. It stops here if G54 X/Y has been moved.</td><td>Seconds</td></tr>
-<tr><td>Drill, then traces</td><td>Spindle on at VPanel's speed setting. Each job is sent directly to the mill.</td><td>Depends on the board</td></tr>
-<tr><td><a href="#check">Check before the cut-out</a></td><td>The board comes to the view position and the run waits for you.</td><td>Up to you</td></tr>
-<tr><td>Cut the board out</td><td>Runs last, because it frees the board.</td><td>Depends on the board</td></tr>
-</table></div>
+<ol class="steps">
+  <li><span class="st">Touches the copper</span>Once, near the bracket corner. It drops fast, then feels for the last few millimetres.</li>
+  <li><span class="st">Levels</span>12 touches over the board, about a minute. Every cut follows the copper's real height.</li>
+  <li><span class="st">Drills and cuts the traces</span>Each job goes straight to the mill.</li>
+  <li><span class="st">Waits for your check</span>The board comes to the view position.</li>
+  <li><span class="st">Cuts the board out</span>Then the board comes forward again.</li>
+</ol>
 
-<h2 id="check">Check the traces before the cut-out</h2>
-<p>Once the board is cut free it cannot be recut where it lay, so the run stops first. Look at the board: a good channel shows the dark substrate; bright copper in the groove is not through. Test with a multimeter if unsure.</p>
+<h2 id="check">The check before the cut-out</h2>
+<p>Once it's cut free, a board can't be recut in place. A good channel shows dark substrate; bright copper in the groove isn't through. If you're unsure, use a multimeter.</p>
 <figure class="fig">
-  <img src="img/automatic_check.png" alt="The run waiting before the cut-out, with buttons to drag boxes, recut, cut the board out or stop" loading="lazy">
+  <img src="img/automatic_check.png" alt="The run waiting at the check, with buttons to recut traces, drill the holes again, cut the board out or stop" loading="lazy">
   <figcaption>The run waiting at the check.</figcaption>
 </figure>
 <div class="tbl-wrap"><table>
-<tr><th>Do</th><th>Effect</th></tr>
-<tr><td><span class="ui">Drag boxes over the shallow spots</span>, then <span class="ui">Recut N boxes</span></td><td>Cuts only the traces inside the boxes, on the same height map. It is rarely the whole board.</td></tr>
-<tr><td><span class="ui">Recut all traces</span> (no boxes drawn)</td><td>Cuts every trace again.</td></tr>
-<tr><td><span class="ui">deeper by</span></td><td>0.05&nbsp;mm to start. It adds up: a second recut goes deeper again.</td></tr>
-<tr><td><span class="ui">Drill the holes again</span></td><td>Every board hole again from the side facing up, deeper by the amount you set.</td></tr>
-<tr><td><span class="ui">Cut it out</span></td><td>Carries on to the cut-out. Close the lid first: the run waits for it.</td></tr>
-<tr><td><span class="ui">Stop here</span></td><td>Ends the run with the board uncut. Come back with <a href="#startat">Start at</a>.</td></tr>
+<tr><th>If</th><th>Do</th></tr>
+<tr><td>It all looks good</td><td><span class="ui">Cut it out</span></td></tr>
+<tr><td>Some traces aren't through</td><td><span class="ui">Drag boxes over the shallow spots</span>, then <span class="ui">Recut</span>. Start with 0.05&nbsp;mm deeper. Recuts add up.</td></tr>
+<tr><td>All traces are shallow</td><td><span class="ui">Recut all traces</span>, without drawing boxes.</td></tr>
+<tr><td>Holes aren't through</td><td><span class="ui">Drill the holes again</span>, 0.3&nbsp;mm deeper.</td></tr>
+<tr><td>You need to stop for now</td><td><span class="ui">Stop here</span>. See <a href="#startat">picking a board up again</a>.</td></tr>
 </table></div>
-
-<h3 id="shallow">Shallow on one side, even with levelling?</h3>
-<p>The sheet is probably springing. The probe touches lightly and measures the copper where it floats; the cutter pushes it down. Press on the copper there: if it gives, tape it down under the board area, then <a href="#startat">Start at</a> the traces.</p>
-
-<h2 id="stop">Stopping, and finishing a stopped board</h2>
-<ul>
-  <li><span class="ui">STOP</span> or <kbd>Esc</kbd> stops the run at any point. If the bit is still low afterwards, raise it with <kbd>Page Up</kbd>.</li>
-  <li><strong>Opening the lid</strong> also stops it.</li>
-</ul>
-<p><strong>A relaunch forgets where the board sat.</strong> If you may need to pick a board up again, use <span class="ui">File ▸ Save setup</span> before you start, and load it again first.</p>
-<p id="startat"><strong>Start at</strong> picks up a board that stopped part-way. <span class="ui">Find the fiducials (already flipped)</span> starts the second side, and <span class="ui">Check the board (traces are cut)</span> goes straight to the check. For the rest: choose <span class="ui">Isolation traces</span> and the drilling is skipped. It touches and probes again, so cuts land in the same place only if <strong>the stock has not moved</strong>.</p>
+<p>Close the lid after looking: the run waits for it before cutting again.</p>
+<h3 id="shallow">Shallow even with levelling?</h3>
+<p>The sheet is probably moving under the bit. The probe touches it lightly, but the cutter pushes it down. Hold it down better: see <a href="#hold">holding the copper</a>.</p>
 
 <h2 id="double">Double-sided</h2>
-<p>Tick the box on <span class="ui">Your board</span> and have an <strong>F.Cu</strong> Gerber in the folder. The run drills its own fiducials <strong>outside the design</strong>, 4&nbsp;mm past each board corner, so there is nothing to choose. The sheet must be about 14&nbsp;mm bigger than the board each way.</p>
+<p>Use copper-clad on both faces. The sheet must be about <strong>14&nbsp;mm bigger than the board</strong> each way, because the run drills its own reference holes outside the design.</p>
 <ol class="steps">
-  <li><span class="st">Bottom side</span>Touch, level, fiducials, drill, bottom traces, as above.</li>
-  <li><span class="st">Flip</span>The run asks you to. Turn the board over <strong>left to right</strong>, push it back into the bracket, tape it flat, with the copper now on top under the tongue. Press <span class="ui">It is flipped - continue</span>.</li>
-  <li><span class="st">Top side</span>It touches again, finds every fiducial and fits the top to them. Each hole is searched for from where the last one turned up. A hole it cannot find is skipped, and it stops if it finds fewer than 3, or if one is more than 0.15&nbsp;mm off. Then it levels and cuts the top traces, stops for your check, and cuts the board out.</li>
+  <li><span class="st">First side</span>Same steps as above. Then the board comes forward and the run asks you to flip it.</li>
+  <li><span class="st">Flip it left to right</span>Not front to back: the app can't detect a wrong direction. Push it hard into the corner, hold it down, close the lid and press <span class="ui">It is flipped - continue</span>.</li>
+  <li><span class="st">Second side</span>It finds the reference holes, levels, cuts the top traces and stops for your check.</li>
 </ol>
-<div class="warn"><span class="t">Newer than the single-sided run</span>
-<p>Double-sided Automatic has made one good board on the mill, with restarts and fixes along the way. Watch your first one closely and keep a hand near <span class="ui">STOP</span>. Turn the sheet <strong>left to right</strong>: the fit cannot detect a wrong flip direction.</p></div>
+<ul>
+  <li><strong>Measure the sheet:</strong> the flip mirrors the board across the width you typed.</li>
+  <li><strong>If a hole isn't found:</strong> it's skipped. Fewer than 3 found stops the run before the top is cut.</li>
+  <li><strong>Holes aren't plated:</strong> joining the two sides is up to you, with wire for example.</li>
+  <li><strong>Try it first:</strong> <code>examples/double_sided_40x20</code> has an F and a B that only read right after a correct flip.</li>
+</ul>
+<div class="warn"><span class="t">Newer than one side</span>
+<p>Double-sided has made one good board on the mill so far, with fixes along the way. Keep a hand near <span class="ui">STOP</span>.</p></div>
 
-<h2 id="bracket">The bracket</h2>
-<p>The bracket is drawn on the bed as the part it is: the L and its screws, over the spoilboard's holes. Its inside corner is where the stock's corner sits, and the run measures everything from it. It is set once per machine and only changes when the bracket is moved.</p>
-<ol class="steps">
-  <li><span class="st">Match the real one</span>Drag the drawn bracket to the holes the real one is screwed into. It moves a whole hole at a time, like the real one. Choose the corner it holds (back-right at DTU).</li>
-  <li><span class="st">Or find it with the bit</span>Jog the bit over the bracket's inside corner, press <span class="ui">Find it with the bit</span> and confirm: it goes to the holes nearest.</li>
-</ol>
-<p>The drawn bracket shows its <strong>probe tongue</strong> reaching 4&nbsp;mm over the stock. A board that runs under it stops the run before anything is cut: drag it away from that spot. <a href="hardware.html#bracket">Printing and wiring it</a>.</p>
-<p>Where it is is saved as soon as it is moved. <span class="ui">Centre the board on the copper</span> puts the board in the middle of the stock, with the spare copper shared on every side.</p>
-
-<h2 id="after">What the run keeps</h2>
-<p>Each run has a folder, <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>: every program exactly as sent, <code>run.log</code>, and the height map as <code>height_map_bottom.csv</code>. The buttons under <span class="ui">What the run made</span> open them.</p>
+<h2 id="stop">Stopping</h2>
+<ul>
+  <li><span class="ui">STOP</span> or <kbd>Esc</kbd> stops the run at any point. If the bit is still low, raise it with <kbd>Page Up</kbd>.</li>
+  <li><strong>Opening the lid</strong> during a job also stops it.</li>
+</ul>
+<h3 id="startat">Picking a board up again</h3>
+<p>Don't move the sheet. If the app was closed, load your saved setup first: <span class="menu-path">File › Save setup</span> before a run keeps the board's position. Then choose a step in <span class="ui">Start at</span>:</p>
 <div class="tbl-wrap"><table>
-<tr><th>Button</th><th>Shows</th></tr>
-<tr><td><span class="ui">Height map</span></td><td>The probed surface: table, heatmap and 3D.</td></tr>
-<tr><td><span class="ui">Fiducial fit</span></td><td>Where each fiducial was found after the flip.</td></tr>
-<tr><td><span class="ui">Watch a step in 3D</span></td><td>The selected step's toolpath, played through.</td></tr>
-<tr><td><span class="ui">The job files</span></td><td>The run's folder.</td></tr>
+<tr><th>Start at</th><th>For</th></tr>
+<tr><td><span class="ui">Isolation traces</span></td><td>Drilling done, traces still to cut.</td></tr>
+<tr><td><span class="ui">Find the fiducials (already flipped)</span></td><td>Double-sided, second side still to cut.</td></tr>
+<tr><td><span class="ui">Check the board (traces are cut)</span></td><td>Straight to the check, cutting nothing first.</td></tr>
 </table></div>
 
-<h2 id="pro">In Pro</h2>
-<p><span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Machine › Automatic mode (run it all)</span> adds the same step to the full plan, with three extras:</p>
+<h2 id="small">How small can it go?</h2>
+<p>A cut can't be narrower than the bit, so the 0.8&nbsp;mm bit can't isolate IC pins. <code>examples/torture_60x30</code> tests gaps, trace widths and real footprints, and <code>nets.py</code> in that folder says what each bit should manage. Smaller bits haven't been tried yet.</p>
+
+<h2 id="more">Good to know</h2>
 <ul>
-  <li><strong>Anywhere - click it:</strong> for stock outside the bracket. Click on it and the probe walks to its edges. It takes minutes, and every edge it crosses must be clear: the probe can't sense clamps or brackets.</li>
-  <li><strong>Dry run:</strong> the whole job with the spindle off and every cut 5&nbsp;mm above the copper.</li>
-  <li><strong>The simulated mill:</strong> a <em>Simulated SRM-20</em> entry in the port list, to try a run with the machine off.</li>
+  <li><strong>The bracket:</strong> it's set for the lab. If it's moved, drag the drawn one to the holes it's in, then re-check its corner. The app stops at Start if the board runs under the tongue.</li>
+  <li><strong>Clamps and thumbscrews:</strong> the app doesn't know where they are. Keep the board clear of them, and raise the bit before jogging near them.</li>
+  <li><strong>After changing to a longer bit:</strong> jog down close to the copper before a run or Probe Z, because the last height no longer holds.</li>
+  <li id="after"><strong>Each run's files:</strong> <code>Documents\SRM-CAM\runs</code> keeps its jobs, log and height map. <span class="ui">What the run made</span> opens them.</li>
+  <li id="pro"><strong>Pro:</strong> <span class="menu-path">Interface › Pro</span> has everything by hand, and Automatic with extras such as a dry run: <span class="menu-path">Machine › Automatic mode</span>.</li>
 </ul>
 
-<p>Stuck? <a href="troubleshooting.html#automatic">Troubleshooting: Automatic mode</a>.</p>
+<p>Stuck? <a href="troubleshooting.html#automatic">Troubleshooting</a>.</p>
 
 </div>
 </main>
