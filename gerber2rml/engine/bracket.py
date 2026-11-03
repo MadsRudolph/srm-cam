@@ -7,39 +7,40 @@ a whole 10 mm pitch at a time. So it is modelled as the hole its corner screw
 is in, and its inside corner - where the stock's corner sits, the one point
 Automatic mode measures everything from - follows from that.
 
-What makes this exact is one measurement and the grid's pitch. The inside
-corner of the back-left bracket was measured with the bit at X 22.49, Y
-129.47 (2026-11-02), with its corner screw in hole (1, 12): 6.07 mm right of
-and 5.11 mm in front of that hole's centre. Moving the bracket by whole holes
-keeps that offset, so every position it can be screwed into is known to the
-same accuracy as the one that was measured.
+What makes this exact is a measurement and the grid's pitch. The lab's standard
+position is back-right, corner screw in hole (19, 12): the bit on the copper in
+its inside corner read X 192.52, Y 128.24 (2026-11-03), 3.90 mm left of and 6.34
+mm in front of that hole's centre. The back-left position was measured the same
+way, at X 22.49, Y 129.47 in hole (1, 12) (2026-11-02). Moving the bracket by
+whole holes keeps its side's offset.
 
-ESTIMATED from a photo of the lab's fixture, not measured - the picture on
-the stage only, nothing that cuts depends on them:
+The part itself (the picture on the stage; nothing that cuts depends on it):
 
-    bar width            11 mm
-    arm along X          60 mm, outside
-    arm along Y          45 mm, outside
-    screws               the corner, and one near the end of each arm
+    bar width            10 mm at the copper, 11 mm at the top (measured): the
+                         inside face tapers, so the top overhangs the stock by
+                         1 mm and hides the line the stock really stops at
+    arms                 61 mm outside, both (six holes at the 10 mm pitch and
+                         half a bar past the last, read from a photo)
+    screws               the corner, and the last hole of each arm
 
-The offsets for the other three corners are the back-left's, mirrored.
+The two front corners are not measured: they use their side's offset, mirrored.
 """
 from dataclasses import dataclass
 
 from gerber2rml.engine import spoilboard
 from gerber2rml.engine.stockfind import CORNERS
 
-# MEASURED (2026-11-02): inside corner minus the corner screw's hole centre,
-# back-left bracket, in mm. +x is to the right, +y is towards the back.
-CORNER_FROM_HOLE = (6.07, -5.11)
+# MEASURED: how far the inside corner is from the corner screw's hole centre,
+# in mm, as (towards the stock in X, towards the back in Y) on a back corner.
+CORNER_FROM_HOLE = {"left": (6.07, -5.11), "right": (3.90, -6.34)}
 
-# ESTIMATED from a photo - measure the brackets and replace these.
-BAR_W = 11.0             # mm, width of the flat bar
-ARM_X = 60.0             # mm, the arm along X, outside length
-ARM_Y = 45.0             # mm, the arm along Y, outside length
-SCREW_END_MARGIN = 5.0   # mm, the last screw's centre from the arm's end
+BAR_W = 10.0             # mm, MEASURED: width of the bar at the copper
+BAR_W_TOP = 11.0         # mm, MEASURED: width at the top, overhanging the stock
+ARM_X = 61.0             # mm, the arm along X, outside length (from a photo)
+ARM_Y = 61.0             # mm, the arm along Y, outside length (from a photo)
+HOLES_PER_ARM = 6        # counting the corner hole, at the grid's pitch
 
-DEFAULT_CORNER = "back-left"
+DEFAULT_CORNER = "back-right"
 
 
 def _axes(corner):
@@ -68,8 +69,8 @@ class Bracket:
         grid = grid or spoilboard.measured_grid()
         a, b = _axes(self.corner)
         hx, hy = grid.centre(self.i, self.j)
-        dx, dy = CORNER_FROM_HOLE
-        # The back-left's offset, mirrored: a = +1, b = -1 there.
+        dx, dy = CORNER_FROM_HOLE["left" if "left" in self.corner else "right"]
+        # Mirrored for the corner: b = -1 at the back.
         return hx + a * dx, hy - b * dy
 
     def outline(self, grid=None):
@@ -83,13 +84,9 @@ class Bracket:
     def screws(self):
         """``[(i, j)]``: the holes its screws are in, the corner one first."""
         a, b = _axes(self.corner)
-        dx, dy = CORNER_FROM_HOLE
-        p = spoilboard.PITCH
-        # The furthest hole along each arm that is still inside it.
-        nx = int((ARM_X - BAR_W - SCREW_END_MARGIN + abs(dx)) // p)
-        ny = int((ARM_Y - BAR_W - SCREW_END_MARGIN + abs(dy)) // p)
-        return [(self.i, self.j), (self.i + a * nx, self.j),
-                (self.i, self.j + b * ny)]
+        n = HOLES_PER_ARM - 1
+        return [(self.i, self.j), (self.i + a * n, self.j),
+                (self.i, self.j + b * n)]
 
     def screw_points(self, grid=None):
         grid = grid or spoilboard.measured_grid()
@@ -129,7 +126,10 @@ def snap(x, y, corner=DEFAULT_CORNER, grid=None, bed=None):
     return best
 
 
-DEFAULT = Bracket(1, 12, DEFAULT_CORNER)
+DEFAULT = Bracket(19, 12, DEFAULT_CORNER)
+# Where the standard was until 2026-11-03. A machine that saved this did not
+# choose it, it took the default: it follows the standard to the new place.
+OLD_DEFAULT = Bracket(1, 12, "back-left")
 
 
 def to_text(b):

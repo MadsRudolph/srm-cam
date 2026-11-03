@@ -161,7 +161,7 @@ def test_in_the_bracket_any_size_of_stock_needs_one_touch(win, qt_app):
     page = win.autorun_page
     page.where.setCurrentIndex(page.where.findData("bracket"))
     assert page.pick_btn.isHidden() and not page.datum_box.isHidden()
-    page.set_bracket(br.Bracket(3, 12))
+    page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.corner_box.setCurrentIndex(page.corner_box.findData("back-left"))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
@@ -185,12 +185,35 @@ def test_the_outline_follows_the_size_and_the_bracket(win, qt_app):
     qt_app.processEvents()
     page.where.setCurrentIndex(page.where.findData("bracket"))
     page.set_bracket(br.DEFAULT)
-    page.corner_box.setCurrentIndex(page.corner_box.findData("back-left"))
     page.w_spin.setValue(160)
     page.h_spin.setValue(100)
-    assert win.stock == pytest.approx((22.49, 29.47, 160, 100))
+    assert win.stock == pytest.approx((32.52, 28.24, 160, 100))
     page.h_spin.setValue(60)                   # a smaller sheet, same bracket
-    assert win.stock == pytest.approx((22.49, 69.47, 160, 60))
+    assert win.stock == pytest.approx((32.52, 68.24, 160, 60))
+
+
+def test_the_standard_bracket_cuts_inside_its_outline(win, qt_app):
+    # Back-right, a sheet tall enough for the demo board's margins.
+    sm.machine(speedup=1e6, corner=(32520, 8240), angle_deg=0.0,
+               size=(160000, 120000))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 120), "the run never finished"
+    assert done[0][0], done[0][1]
+    pts = [p for line in sm.machine().view()["cuts"] for p in line]
+    assert pts
+    assert min(p[0] for p in pts) > 32.52 and max(p[0] for p in pts) < 192.52
+    assert min(p[1] for p in pts) > 8.24 and max(p[1] for p in pts) < 128.24
 
 
 def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
@@ -202,7 +225,7 @@ def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
     win.select_step("autorun")
     page = win.autorun_page
     page.where.setCurrentIndex(page.where.findData("bracket"))
-    page.set_bracket(br.Bracket(3, 12))
+    page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)
@@ -239,7 +262,7 @@ def test_a_board_placed_on_the_stock_stays_where_it_was_put(win, qt_app):
     win.select_step("autorun")
     page = win.autorun_page
     page.where.setCurrentIndex(page.where.findData("bracket"))
-    page.set_bracket(br.Bracket(3, 12))
+    page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)
@@ -300,7 +323,7 @@ def test_centring_moves_the_board_to_the_middle_of_the_outline(win, qt_app):
     win.select_step("autorun")
     page = win.autorun_page
     page.where.setCurrentIndex(page.where.findData("bracket"))
-    page.set_bracket(br.Bracket(3, 12))
+    page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     try:
@@ -322,7 +345,7 @@ def test_at_the_check_a_box_recuts_only_the_traces_inside_it(win, qt_app):
     win.select_step("autorun")
     page = win.autorun_page
     page.where.setCurrentIndex(page.where.findData("bracket"))
-    page.set_bracket(br.Bracket(3, 12))
+    page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)

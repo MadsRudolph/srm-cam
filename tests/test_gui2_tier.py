@@ -270,7 +270,7 @@ def _novice_run(qt_app, w, double):
     w.select_step("autorun")
     page = w.autorun_page
     assert wait(page.offline_box.isHidden, 5)
-    page.set_bracket(br.Bracket(3, 12))
+    page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)
