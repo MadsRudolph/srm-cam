@@ -34,15 +34,14 @@ def saved_bracket():
     saved it is the DTU fixture's (br.DEFAULT)."""
     from gerber2rml.gui2 import workspace
     b = br.from_text(workspace.setting("autorun/bracket", ""))
-    if b is not None:
-        return b
-    try:
-        x, y, c = (workspace.setting("autorun/datum", "") or "").split(",")
-        if c in CORNERS:
-            return br.snap(float(x), float(y), c) or br.DEFAULT
-    except ValueError:
-        pass
-    return br.DEFAULT
+    if b is None:
+        try:
+            x, y, c = (workspace.setting("autorun/datum", "") or "").split(",")
+            if c in CORNERS:
+                b = br.snap(float(x), float(y), c)
+        except ValueError:
+            pass
+    return br.DEFAULT if b is None or b == br.OLD_DEFAULT else b
 from gerber2rml.gui2 import theme, widgets, inspector
 
 STATE_GLYPH = {"waiting": ("○", theme.TEXT_3),
