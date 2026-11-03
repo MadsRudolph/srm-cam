@@ -81,3 +81,19 @@ def test_parse_file_dispatches_by_extension(tmp_path):
 def test_empty_text_parses_to_nothing():
     assert parse_nc("") == []
     assert parse_rml("") == []
+
+
+def test_the_first_traverse_is_at_the_first_height_not_a_dive_to_zero():
+    nc = gcode.render(_square_ring(), xy_feed=4.0, plunge_feed=1.0)
+    first = parse_nc(nc)[0][0]
+    assert first.rapid and first.z > 0
+
+
+def test_a_file_written_the_old_way_does_not_start_at_the_origin():
+    m = parse_nc("G90\nG0 Z2.\nG0 X10. Y20.\nG1 Z-0.1 F60.\n")[0]
+    assert (m[0].x, m[0].y, m[0].z) == (10.0, 20.0, 2.0)
+
+
+def test_an_incremental_job_starts_its_z_from_the_top():
+    m = parse_nc("G90\nG0 X10. Y20.\nG91\nG0 Z-50.\n")[0]
+    assert m[0].z == 0.0 and m[1].z == -50.0
