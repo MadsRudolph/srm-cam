@@ -35,6 +35,7 @@ copper height plus the path's depth (backends/gcode.render_incremental).
 """
 import math
 import threading
+import time
 
 from gerber2rml.backends.gcode import render_incremental
 from gerber2rml.engine import spi_probe, stockfind
@@ -49,9 +50,16 @@ from gerber2rml.toolpath import Move
 
 FIT_WORST_MM = 0.15          # a fiducial further off than this stops the run
 LEVEL_GRID = (4, 3)
-HOLE_SEARCH_UM = 1500
+HOLE_SEARCH_UM = 2500
+FITTED_SEARCH_UM = 1000      # once two holes have given the fit
 NUDGES = ((0, 0), (1.5, 0), (0, 1.5), (-1.5, 0), (0, -1.5))
 DRY_AIR_MM = 5.0             # a dry run cuts this far above the copper
+# The bed towards the operator, the head at the back in the left corner. Low Y
+# is the opposite: X 2.1, Y 3.1 took the bed furthest away (seen 2026-11-03).
+VIEW_MM = (0.0, 150.0)
+START_AT_FIDUCIALS = "find_fiducials"
+START_AT_CHECK = "check_before_cutout"  # the traces are cut: straight to the check
+HOLES_AGAIN = "holes_again"             # the job the check can ask for
 PLACE_MARGIN_MM = 3.0        # a board placed for you: this far in from the edges
 
 
@@ -79,6 +87,11 @@ class JobSource:
         """Put the board on the stock: its corner at the stock corner plus
         ``margin_mm``, unrotated."""
         raise NotImplementedError
+
+    def extent(self, side):
+        """(x0, y0, x1, y1) everything the run cuts covers on that side, in
+        the frame of :meth:`area`: reference holes can be outside the board."""
+        return self.area(side)
 
     def toolpaths(self, key):
         """``(paths, xy_feed, plunge_feed)`` for one step. Bottom steps are
@@ -152,7 +165,7 @@ class AutoRun:
                  double, bit_mm=0.8, margin_mm=PLACE_MARGIN_MM, rpm=None,
                  should_abort=None, should_pause=None, dry_run=False,
                  runner_opts=None, level=True, surface_hint=None,
-                 datum=None, check_cut=True, start_at=None):
+                 datum=None, check_cut=True, start_at=None, keepout=None):
         self.ser, self.printer = ser, printer
         self.src, self.ev = source, events
         self.click, self.size = click_mm, stock_mm
@@ -166,6 +179,7 @@ class AutoRun:
         self.surface_hint = surface_hint     # copper Z last time, mm
         # (x, y, corner): the stock sits in a corner bracket - no edge walks
         self.datum = datum
+        self.keepout = keepout               # (x0, y0, x1, y1) the bit stays out
         # Stop before a cut-out so the traces can be looked at first: once
         # the board is cut free it can no longer be re-cut where it lay.
         self.check_cut = check_cut
@@ -180,31 +194,49 @@ class AutoRun:
 
     # -- the sequence --------------------------------------------------------
     def run(self):
+        done = self._sequence()
+        self._to_view()                 # finished: bring the board out
+        return done
+
+    def _sequence(self):
         self._find_stock("stock")
         self.src.place(self.pose, self.margin)
         self.rotation = about(self.pose.x, self.pose.y, self.pose.angle)
-        x0, y0, x1, y1 = self.src.area("bottom")
+        x0, y0, x1, y1 = self.src.extent("bottom")
         p = self.pose
         need = (x1 - x0 + 2 * self.margin, y1 - y0 + 2 * self.margin)
         if need[0] > p.w or need[1] > p.h:
-            raise RunFailed("the board needs %.1f × %.1f mm of stock with its "
+            raise RunFailed("the job needs %.1f × %.1f mm of stock with its "
                             "margins, and this stock is %.1f × %.1f mm. Use a "
                             "bigger piece." % (need[0], need[1], p.w, p.h))
         if (x0 < p.x - 1e-6 or y0 < p.y - 1e-6 or x1 > p.x + p.w + 1e-6
                 or y1 > p.y + p.h + 1e-6):
             raise RunFailed(
-                "the board hangs off the stock (it spans X %.1f-%.1f, Y "
+                "the job hangs off the stock (it spans X %.1f-%.1f, Y "
                 "%.1f-%.1f; the stock X %.1f-%.1f, Y %.1f-%.1f). Drag it "
                 "onto the stock outline." % (x0, x1, y0, y1, p.x, p.x + p.w,
                                              p.y, p.y + p.h))
+        self._check_keepout("bottom")
+        if self.double:
+            # Turned over left to right, the job lands mirrored across the
+            # stock. Find out now, not with one side already cut.
+            mid = 2 * p.x + p.w
+            self._clear_of_keepout(mid - x1, y0, mid - x0, y1,
+                                   " once the board is flipped")
         bottom, top = self.src.bottom_steps(), self.src.top_steps()
-        if self.start_at is not None and self.start_at not in [
+        from_fiducials = self.start_at == START_AT_FIDUCIALS and top
+        at_check = self.start_at == START_AT_CHECK
+        if from_fiducials:
+            # The sheet is already turned over: everything on the top is to do.
+            self._skipping = False
+        elif not at_check and self.start_at is not None and self.start_at not in [
                 k for k, _l in bottom + top]:
             raise RunFailed("there is no step %r to start from"
                             % self.start_at)
         # Started on a top-side step: the bottom is done and the board is
         # already turned over, so neither is asked for again.
-        on_top = self.start_at in [k for k, _l in top]
+        on_top = (from_fiducials or (at_check and bool(top))
+                  or self.start_at in [k for k, _l in top])
         if on_top:
             for key, _l in bottom:
                 self._step(key, "skipped")
@@ -215,10 +247,12 @@ class AutoRun:
             return True
         if not on_top:
             self._step("flip", "running")
+            self._to_view()
             self.ev.note("Turn the board over, left to right, and put it "
                          "back where it was. Then press Continue.")
             if not self.ev.flip():
                 raise RunStopped("stopped at the flip")
+            self._wait_for_lid()
             self._step("flip", "done")
         self._find_stock("stock_top", again=True)
         self._fiducials()
@@ -232,18 +266,29 @@ class AutoRun:
         traces = None
         for key, label in steps:
             if self._skipping:
-                if key != self.start_at:
+                if not (key == self.start_at or (
+                        self.start_at == START_AT_CHECK and "cutout" in key)):
                     self._step(key, "skipped")
+                    if "traces" in key:
+                        traces = (key, label)
                     continue
                 self._skipping = False
-            if "cutout" in key and self.check_cut and traces is not None:
+            if "cutout" in key and traces is not None and (
+                    self.check_cut or self.start_at == START_AT_CHECK):
                 deeper = 0.0
                 while True:
+                    self._to_view()
                     answer = self.ev.check(traces[1], deeper)
                     what, mm = answer[0], answer[1]
                     boxes = answer[2] if len(answer) > 2 else None
                     if what == "stop":
                         raise RunStopped("stopped before the cut-out")
+                    self._wait_for_lid()
+                    if what == "holes":
+                        self.ev.note("Drilling the holes again, %.2f mm deeper…"
+                                     % float(mm))
+                        self._job(HOLES_AGAIN, "Holes again", t, hmap, float(mm))
+                        continue
                     if what != "again":
                         break
                     deeper += float(mm)
@@ -303,6 +348,55 @@ class AutoRun:
                                     bit_mm=self.bit,
                                     should_abort=self.should_abort,
                                     note=self.ev.note)
+
+    def _to_view(self):
+        """Bring the board out to look at it, as a short NC job. The SPI View
+        command acked straight after a job and did not move (2026-11-03); NC is
+        what the mill is taking at that moment. The stock has not moved, so the
+        jobs that follow land where they should, and if the mill will not go
+        the check is still worth having."""
+        self.ev.note("Bringing the board to the view position…")
+        x, y = VIEW_MM
+        prog = ("%%\nO0001\n(view position)\nG21\nG91\nG28 Z0.\nG90\nG54\n"
+                "G0 X%s Y%s\nM30\n%%\n" % (_fmt(x), _fmt(y)))
+        try:
+            JobRunner(self.ser, self.printer, self.should_abort,
+                      self.should_pause, self.ev.note,
+                      **self.runner_opts).run(prog, "view position",
+                                              end_mm=VIEW_MM, timeout_s=120)
+        except RunStopped as e:
+            if self.should_abort():
+                raise
+            self.ev.note("The mill did not go to the view position: %s." % e)
+
+    def _wait_for_lid(self):
+        """Looking at the board means opening the lid, and a job started with
+        it open stops at once."""
+        said = False
+        while (spi_probe.machine_status(self.ser) or {}).get("cover"):
+            if not said:
+                self.ev.note("Close the lid to carry on.")
+                said = True
+            if self.should_abort():
+                raise RunStopped("stopped")
+            time.sleep(0.2)
+
+    def _check_keepout(self, side):
+        """The job, and the bit along its edge, clear of the bracket's probe
+        tongue."""
+        if self.keepout is not None:
+            self._clear_of_keepout(*self.src.extent(side))
+
+    def _clear_of_keepout(self, x0, y0, x1, y1, when=""):
+        if self.keepout is None:
+            return
+        kx0, ky0, kx1, ky1 = self.keepout
+        b = self.bit
+        if x0 - b < kx1 and x1 + b > kx0 and y0 - b < ky1 and y1 + b > ky0:
+            raise RunFailed(
+                "the job runs under the bracket's probe tongue%s (X %.1f-%.1f, "
+                "Y %.1f-%.1f) and the bit would hit it. Move the board, or use "
+                "a bigger piece." % (when, kx0, kx1, ky0, ky1))
 
     # -- the surface -----------------------------------------------------------
     def _level(self, key, side, t):
@@ -376,7 +470,8 @@ class AutoRun:
                 raise RunFailed("the job has fewer than two fiducials")
             p1, p2 = self.pose, self.pose_top
             a1 = math.radians(p1.angle)
-            measured = []
+            measured = []           # one per hole; None for one not found
+            off_x = off_y = 0.0     # how far the holes found so far were off
             for i, (bx, by) in enumerate(bottom):
                 mx, my = self.rotation.apply(bx, by)
                 dx, dy = mx - p1.x, my - p1.y
@@ -384,22 +479,62 @@ class AutoRun:
                 v = -dx * math.sin(a1) + dy * math.cos(a1)
                 px, py = p2.to_machine(p2.w - u, v)    # turned over left-right
                 self.ev.note("Finding fiducial %d of %d…" % (i + 1, len(bottom)))
-                measured.append(self._locate(px, py))
-            t = fit_transform(top, measured, allow_scale=False)
-            worst = max(residuals(t, top, measured))
+                # The sheet came back off by about the same everywhere, so the
+                # last hole says where to look for this one. From two holes on
+                # the fit says, turn included, and a short search is enough.
+                got = [(tp, mp) for tp, mp in zip(top, measured) if mp]
+                if len(got) >= 2:
+                    guess = fit_transform([g[0] for g in got],
+                                          [g[1] for g in got],
+                                          allow_scale=False).apply(*top[i])
+                    radius = FITTED_SEARCH_UM
+                else:
+                    guess = (px + off_x, py + off_y)
+                    radius = HOLE_SEARCH_UM
+                try:
+                    found = self._locate(guess[0], guess[1], radius)
+                except (RunFailed, ProbeError) as e:
+                    if self.should_abort():
+                        raise
+                    # A burr or swarf can close one hole: the others still fit.
+                    self.ev.note("Fiducial %d skipped: %s." % (i + 1, e))
+                    measured.append(None)
+                    continue
+                measured.append(found)
+                off_x, off_y = found[0] - px, found[1] - py
+                self.ev.note("Fiducial %d at X %.2f, Y %.2f: %+.2f, %+.2f from "
+                             "where a perfect flip puts it."
+                             % (i + 1, found[0], found[1], off_x, off_y))
+            got = [(tp, mp) for tp, mp in zip(top, measured) if mp]
+            # Two holes fit anything: it takes a third to show one was misread.
+            need = min(3, len(bottom))
+            if len(got) < need:
+                raise RunFailed(
+                    "only %d of the %d fiducials were found, and it takes %d "
+                    "to trust the fit. Check those holes are open and the "
+                    "sheet is seated. Nothing on the top side was cut."
+                    % (len(got), len(bottom), need))
+            nominal, seen = [g[0] for g in got], [g[1] for g in got]
+            t = fit_transform(nominal, seen, allow_scale=False)
+            worst = max(residuals(t, nominal, seen))
             if worst > FIT_WORST_MM:
                 raise RunFailed("the fiducials disagree by %.2f mm after the "
                                 "flip - a hole was misread or the board moved. "
                                 "Nothing on the top side was cut." % worst)
             self.fit = t
             self.src.set_top_fit(t)
+            self._check_keepout("top")
             self.ev.fit(top, measured, t)
-            self.ev.note("Fiducials fit to within %.3f mm." % worst)
+            self.ev.note("Fiducials fit to within %.3f mm, %d of %d found, the "
+                         "sheet turned %+.2f°."
+                         % (worst, len(got), len(bottom),
+                            math.degrees(t.theta)))
             return t
         return self._guard("fiducials", go)
 
-    def _locate(self, x_mm, y_mm):
+    def _locate(self, x_mm, y_mm, search_um=None):
         """The centre of the hole near (x, y), mm."""
+        search_um = search_um or HOLE_SEARCH_UM
         x0, y0 = int(x_mm * 1000), int(y_mm * 1000)
         ref = int(self.pose_top.z * 1000)
         for ox, oy in ((2500, 0), (-2500, 0), (0, 2500), (0, -2500)):
@@ -413,9 +548,11 @@ class AutoRun:
         else:
             raise RunFailed("no copper around fiducial at %.1f, %.1f"
                             % (x_mm, y_mm))
-        step = max(200, self.src.fiducial_clearance_um())
+        # The bit drops in only near the middle, and a milled hole comes out a
+        # little under size: rings closer than the nominal clearance, not gaps.
+        step = max(200, int(self.src.fiducial_clearance_um() * 0.75))
         start = None
-        for ring in range(0, HOLE_SEARCH_UM // step + 1):
+        for ring in range(0, search_um // step + 1):
             r = ring * step
             n = 1 if r == 0 else max(6, int(round(2 * math.pi * r / step)))
             for k in range(n):
@@ -429,7 +566,7 @@ class AutoRun:
                 break
         if start is None:
             raise RunFailed("fiducial not found within %.1f mm of %.1f, %.1f"
-                            % (HOLE_SEARCH_UM / 1000, x_mm, y_mm))
+                            % (search_um / 1000, x_mm, y_mm))
         return find_hole_center(self.ser, start[0] / 1000.0, start[1] / 1000.0,
                                 should_abort=self.should_abort)
 

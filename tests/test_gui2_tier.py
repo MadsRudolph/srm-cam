@@ -255,8 +255,8 @@ def test_the_simulated_mill_is_a_pro_thing(qt_app, monkeypatch):
 def _novice_run(qt_app, w, double):
     import time
     from gerber2rml.engine import simmachine as sm
-    sm.machine(speedup=1e6, corner=(42490, 9470), angle_deg=0.0,
-               size=(150000, 120000))
+    sm.machine(speedup=1e6, corner=(42490, 5470), angle_deg=0.0,
+               size=(150000, 124000))
 
     def wait(cond, secs=120):
         t0 = time.monotonic()
@@ -272,7 +272,7 @@ def _novice_run(qt_app, w, double):
     assert wait(page.offline_box.isHidden, 5)
     page.set_bracket(br.Bracket(3, 12, "back-left"))
     page.w_spin.setValue(150)
-    page.h_spin.setValue(120)
+    page.h_spin.setValue(124)
     page.level_chk.setChecked(False)
     done = []
     page.finished.connect(lambda ok, msg: done.append((ok, msg)))

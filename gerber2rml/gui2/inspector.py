@@ -219,7 +219,7 @@ class SetupPage(Page):
             "the bit breaks through cleanly and takes a controlled bite out of "
             "the spoilboard rather than an uncontrolled one.")
         self.auto_depth.toggled.connect(self._on_auto_depth)
-        self.overshoot = num(0.10, 0.0, 1.0, 0.05, 2, self._on_auto_depth,
+        self.overshoot = num(0.30, 0.0, 1.0, 0.05, 2, self._on_auto_depth,
                              suffix=" mm")
         arow = QWidget()
         ah = QHBoxLayout(arow)
@@ -743,7 +743,7 @@ class SetupPage(Page):
         self.fid_count.setValue(int(getattr(ctl, "_fid_count", 4)))
         self.fid_count.blockSignals(False)
         self.fid_place.blockSignals(True)
-        want = getattr(ctl, "_fid_placement", "onboard")
+        want = getattr(ctl, "_fid_placement", "waste")
         i = self.fid_place.findData(want)
         if i >= 0:
             self.fid_place.setCurrentIndex(i)

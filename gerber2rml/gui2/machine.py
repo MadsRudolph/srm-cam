@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 
 from gerber2rml.gui2 import theme, widgets
 from gerber2rml.gui2.jogpad import JogPad
-from gerber2rml.engine import simmachine, spi_probe
+from gerber2rml.engine import simmachine, spi_probe, stockfind
 from gerber2rml.engine.estimate import format_duration
 from gerber2rml.engine.progress import RunProgress
 from gerber2rml import platform as plat
@@ -462,14 +462,32 @@ class MachineLink(QObject):
         self.submit("spindle", op)
 
     def zero_z(self):
+        hint = self.copper_hint_um()
+
         def op(ser):
+            if not stockfind.drop_to_hint(ser, hint, self.should_abort):
+                return None
             return spi_probe.zero_z(ser, should_abort=self.should_abort)
         self.clear_abort()
         self.submit("zero_z", op)
 
+    def copper_hint_um(self):
+        """Where the copper probably is: this session's touch, else the last
+        one saved on this PC. None if it has never been touched here."""
+        from gerber2rml.gui2 import workspace
+        z = self.surface_z
+        if z is None:
+            try:
+                z = float(workspace.setting("autorun/surface_z", "") or "x")
+            except ValueError:
+                return None
+        return int(z * 1000)
+
     def touch_off(self):
+        hint = self.copper_hint_um()
+
         def op(ser):
-            return spi_probe.touch_off(ser, should_abort=self.should_abort)
+            return stockfind.touch_from_anywhere(ser, hint, self.should_abort)
         self.clear_abort()
         self.submit("touch", op)
 
@@ -763,8 +781,10 @@ class MachineBar(QWidget):
                 "This changes nothing on the machine: the app records the "
                 "surface height so the pre-flight can check the Z stroke "
                 "and the level page knows where the copper is. VPanel's "
-                "origin is untouched. Start a few millimetres above the "
-                "surface with the touch clips on.")
+                "origin is untouched. It can start from any height: it drops "
+                "fast to 5 mm above the copper's last known height, then feels "
+                "its way down. After changing to a longer bit, jog down to "
+                "just above the copper first: the last height no longer holds.")
         lh.addWidget(self.probe_btn)
         self.zero_btn = widgets.button(
             "Zero Z", on=self._zero_z,
@@ -1064,10 +1084,11 @@ class MachineBar(QWidget):
         if name == "touch":
             if not result:
                 self.message.emit(
-                    "warn", "Probe Z found no contact in its whole stroke. "
-                            "Check the touch clips, and start the bit closer "
-                            "to the copper.")
+                    "warn", "Probe Z found no copper and stopped. Check the "
+                            "probe wire is on the copper.")
                 return
+            from gerber2rml.gui2 import workspace
+            workspace.set_setting("autorun/surface_z", "%.3f" % result[2])
             self.message.emit(
                 "ok", f"Surface found at machine Z {result[2]:.2f} mm. The "
                       f"app knows where the copper is; the machine's origin "

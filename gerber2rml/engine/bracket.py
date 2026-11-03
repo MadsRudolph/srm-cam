@@ -8,20 +8,22 @@ is in, and its inside corner - where the stock's corner sits, the one point
 Automatic mode measures everything from - follows from that.
 
 What makes this exact is a measurement and the grid's pitch. The lab's standard
-position is back-right, corner screw in hole (19, 12): the bit on the copper in
-its inside corner read X 192.52, Y 128.24 (2026-11-03), 3.90 mm left of and 6.34
-mm in front of that hole's centre. The back-left position was measured the same
-way, at X 22.49, Y 129.47 in hole (1, 12) (2026-11-02). Moving the bracket by
-whole holes keeps its side's offset.
+position is back-right, corner screw in hole (19, 12), with the printed bracket
+(hardware/probe_bracket). Its inside corner was read with the bit over it at
+X 191.79, Y 128.43 (2026-11-03). The back-left offset is the old bracket's, at X 22.49,
+Y 129.47 in hole (1, 12) (2026-11-02). Moving the bracket by whole holes keeps its
+side's offset.
 
 The part itself (the picture on the stage; nothing that cuts depends on it):
 
-    bar width            10 mm at the copper, 11 mm at the top (measured): the
-                         inside face tapers, so the top overhangs the stock by
-                         1 mm and hides the line the stock really stops at
-    arms                 61 mm outside, both (six holes at the 10 mm pitch and
-                         half a bar past the last, read from a photo)
+    bar width            10 mm, straight walls
+    arms                 61 mm outside, both
     screws               the corner, and the last hole of each arm
+
+Its tongue carries the probe wire onto the copper, on the arm along X. The
+tongue reaches over the stock, so the bit must stay out from under it
+(:meth:`Bracket.keepout`). Only the back-right part exists; the other corners
+are that shape mirrored.
 
 The two front corners are not measured: they use their side's offset, mirrored.
 """
@@ -32,13 +34,18 @@ from gerber2rml.engine.stockfind import CORNERS
 
 # MEASURED: how far the inside corner is from the corner screw's hole centre,
 # in mm, as (towards the stock in X, towards the back in Y) on a back corner.
-CORNER_FROM_HOLE = {"left": (6.07, -5.11), "right": (3.90, -6.34)}
+CORNER_FROM_HOLE = {"left": (6.07, -5.11), "right": (4.63, -6.15)}
 
-BAR_W = 10.0             # mm, MEASURED: width of the bar at the copper
-BAR_W_TOP = 11.0         # mm, MEASURED: width at the top, overhanging the stock
-ARM_X = 61.0             # mm, the arm along X, outside length (from a photo)
-ARM_Y = 61.0             # mm, the arm along Y, outside length (from a photo)
+BAR_W = 10.0             # mm, width of the bar
+ARM_X = 61.0             # mm, the arm along X, outside length
+ARM_Y = 61.0             # mm, the arm along Y, outside length
 HOLES_PER_ARM = 6        # counting the corner hole, at the grid's pitch
+
+# The tongue, from the inside corner along the X arm, and how far it reaches
+# over the stock. Mm, as in hardware/probe_bracket/build.py.
+TONGUE_U = (2.5, 26.0)
+TONGUE_V = 4.0
+TONGUE_CLEARANCE = 0.5   # mm kept between the tongue and anything the bit cuts
 
 DEFAULT_CORNER = "back-right"
 
@@ -77,9 +84,20 @@ class Bracket:
         """The L, as a closed polygon of machine (x, y) mm."""
         grid = grid or spoilboard.measured_grid()
         w = BAR_W
-        local = [(-w, -w), (ARM_X - w, -w), (ARM_X - w, 0.0), (0.0, 0.0),
+        u0, u1 = TONGUE_U
+        local = [(-w, -w), (ARM_X - w, -w), (ARM_X - w, 0.0), (u1, 0.0),
+                 (u1, TONGUE_V), (u0, TONGUE_V), (u0, 0.0), (0.0, 0.0),
                  (0.0, ARM_Y - w), (-w, ARM_Y - w)]
         return [self._local(u, v, grid) for u, v in local]
+
+    def keepout(self, grid=None):
+        """(x0, y0, x1, y1) machine mm the bit must stay out of: the tongue
+        over the stock, with its clearance."""
+        grid = grid or spoilboard.measured_grid()
+        c = TONGUE_CLEARANCE
+        ax, ay = self._local(TONGUE_U[0] - c, 0.0, grid)
+        bx, by = self._local(TONGUE_U[1] + c, TONGUE_V + c, grid)
+        return min(ax, bx), min(ay, by), max(ax, bx), max(ay, by)
 
     def screws(self):
         """``[(i, j)]``: the holes its screws are in, the corner one first."""

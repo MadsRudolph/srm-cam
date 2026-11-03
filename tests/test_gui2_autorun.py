@@ -1,10 +1,13 @@
 """The Run-it-all page, end to end against the simulator: connect to SIM,
 click the stock, Start, and the board comes out cut where the design is."""
+import math
+import re
 import time
 from pathlib import Path
 
 import pytest
 
+from gerber2rml.engine import autorun as ar
 from gerber2rml.engine import bracket as br
 from gerber2rml.engine import simmachine as sm
 from gerber2rml.gui2.window import MainWindow
@@ -117,6 +120,88 @@ def test_run_it_all_flips_and_fits_a_double_sided_board(win, qt_app):
     assert win.level_page.points(side="top")
     assert sm.machine().face == 1
 
+def test_the_standard_bracket_runs_double_sided(win, qt_app):
+    # Back-right, from the bracket, flipped and pushed back slightly off.
+    sm.machine(speedup=1e6, corner=(31790, 4430), angle_deg=0.0,
+               size=(160000, 124000))
+    win.inspector.setup.double.setChecked(True)
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(124)
+    page.level_chk.setChecked(False)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+
+    def step():
+        if not page.flip_btn.isHidden():
+            page._flipped()
+        if not page.check_box.isHidden():
+            page.cut_btn.click()
+        return bool(done)
+    assert _wait(qt_app, step, 240), "the run never finished"
+    assert done[0][0], done[0][1]
+    assert sm.machine().face == 1
+    assert sum(m is not None for m in win._fid_measured) == 4
+    # The holes are outside the design, and on the sheet.
+    lay = win._ds_layout()
+    x0, y0, x1, y1 = lay.outline.bounds
+    sx, sy, sw, sh = win.stock
+    for x, y, _d in lay.align_holes:
+        assert not (x0 < x < x1 and y0 < y < y1)
+        assert sx < x < sx + sw and sy < y < sy + sh
+
+
+def test_a_flip_that_lands_under_the_tongue_stops_before_anything_is_cut(
+        win, qt_app):
+    # Clear of the tongue as placed; mirrored across the sheet it is not.
+    sm.machine(speedup=1e6, corner=(31790, 8430), angle_deg=0.0,
+               size=(160000, 120000))
+    win.inspector.setup.double.setChecked(True)
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 60), "the run never finished"
+    assert not done[0][0] and "once the board is flipped" in done[0][1]
+    assert not sm.machine().view()["cuts"]
+
+
+def test_a_sheet_with_no_room_for_the_holes_stops_before_anything_is_cut(
+        win, qt_app):
+    # The 104 mm board fits 112 x 112 with its margins, but not with its holes.
+    sm.machine(speedup=1e6, corner=(79790, 16430), angle_deg=0.0,
+               size=(112000, 112000))
+    win.inspector.setup.double.setChecked(True)
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(112)
+    page.h_spin.setValue(112)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 60), "the run never finished"
+    assert not done[0][0] and "bigger piece" in done[0][1]
+    assert not sm.machine().view()["cuts"]
+
+
 def test_the_click_is_armed_shown_and_taken_back(win, qt_app):
     win.select_step("autorun")
     page = win.autorun_page
@@ -187,14 +272,14 @@ def test_the_outline_follows_the_size_and_the_bracket(win, qt_app):
     page.set_bracket(br.DEFAULT)
     page.w_spin.setValue(160)
     page.h_spin.setValue(100)
-    assert win.stock == pytest.approx((32.52, 28.24, 160, 100))
+    assert win.stock == pytest.approx((31.79, 28.43, 160, 100))
     page.h_spin.setValue(60)                   # a smaller sheet, same bracket
-    assert win.stock == pytest.approx((32.52, 68.24, 160, 60))
+    assert win.stock == pytest.approx((31.79, 68.43, 160, 60))
 
 
 def test_the_standard_bracket_cuts_inside_its_outline(win, qt_app):
     # Back-right, a sheet tall enough for the demo board's margins.
-    sm.machine(speedup=1e6, corner=(32520, 8240), angle_deg=0.0,
+    sm.machine(speedup=1e6, corner=(31790, 8430), angle_deg=0.0,
                size=(160000, 120000))
     win.link.connect_to("SIM")
     assert _wait(qt_app, win.link.is_connected, 10)
@@ -212,8 +297,35 @@ def test_the_standard_bracket_cuts_inside_its_outline(win, qt_app):
     assert done[0][0], done[0][1]
     pts = [p for line in sm.machine().view()["cuts"] for p in line]
     assert pts
-    assert min(p[0] for p in pts) > 32.52 and max(p[0] for p in pts) < 192.52
-    assert min(p[1] for p in pts) > 8.24 and max(p[1] for p in pts) < 128.24
+    assert min(p[0] for p in pts) > 31.79 and max(p[0] for p in pts) < 191.79
+    assert min(p[1] for p in pts) > 8.43 and max(p[1] for p in pts) < 128.43
+
+
+def test_a_board_under_the_probe_tongue_stops_before_anything_is_cut(
+        win, qt_app):
+    sm.machine(speedup=1e6, corner=(31790, 8430), angle_deg=0.0,
+               size=(160000, 120000))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(120)
+    page.level_chk.setChecked(False)
+    qt_app.processEvents()
+    # On the stock, its margins kept, but its back-right corner by the tongue.
+    x, y = br.DEFAULT.inside_corner()
+    b = win.work_bounds()
+    st = win.state
+    win.action_place(st.place_x + x - 3 - b[2], st.place_y + y - 3 - b[3])
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 60), "the run never finished"
+    assert not done[0][0] and "probe tongue" in done[0][1]
+    assert not sm.machine().view()["cuts"]
 
 
 def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
@@ -234,6 +346,10 @@ def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
     page.finished.connect(lambda ok, msg: done.append((ok, msg)))
     page.start()
     assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)
+    # Brought out to be looked at, at the top, and told so.
+    m = sm.machine()
+    assert m.pos == [0, 150000, 0]
+    assert "view position" in page.check_lbl.text()
     page.deeper_spin.setValue(0.05)
     page.again_btn.click()                     # traces once more, deeper
     assert _wait(qt_app, lambda: not page.check_box.isHidden(), 60)
@@ -267,11 +383,11 @@ def test_a_board_placed_on_the_stock_stays_where_it_was_put(win, qt_app):
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)
     qt_app.processEvents()
-    # Put the board in the stock's back-left corner, 4 mm in.
+    # Put the board in the stock's back-left corner, clear of the tongue.
     b = win.work_bounds()
     st = win.state
-    win.action_place(st.place_x + 42.49 + 4 - b[0],
-                     st.place_y + 129.47 - 4 - b[3])
+    win.action_place(st.place_x + 42.49 + 7 - b[0],
+                     st.place_y + 129.47 - 7 - b[3])
     before = win.work_bounds()
     done = []
     page.finished.connect(lambda ok, msg: done.append((ok, msg)))
@@ -280,6 +396,28 @@ def test_a_board_placed_on_the_stock_stays_where_it_was_put(win, qt_app):
     assert done[0][0], done[0][1]
     after = win.work_bounds()
     assert after == pytest.approx(before, abs=0.01)
+
+
+def test_dragging_the_board_turns_centring_off_and_it_stays_put(win, qt_app):
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(120)
+    try:
+        page.centre_chk.setChecked(True)
+        qt_app.processEvents()
+        before = win.work_bounds()
+        win._on_drag(10.0, -5.0)
+        assert not page.centre_chk.isChecked()
+        after = win.work_bounds()
+        assert after[0] == pytest.approx(before[0] + 10.0)
+        assert after[1] == pytest.approx(before[1] - 5.0)
+        page._sync_outline()                # what Start does, and any edit
+        assert win.work_bounds() == pytest.approx(after)
+    finally:
+        page.centre_chk.setChecked(False)   # remembered: leave it as found
 
 
 def test_centred_the_board_lands_in_the_middle_of_the_stock_found(win,
@@ -369,3 +507,153 @@ def test_at_the_check_a_box_recuts_only_the_traces_inside_it(win, qt_app):
     files = sorted(page.run_dir.glob("*.nc"))
     full, redo = files[1].read_text(), files[2].read_text()
     assert len(redo) < len(full) / 2                       # only the box
+
+
+def test_a_loaded_setup_brings_its_stock_size_and_the_board_stays(
+        win, qt_app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(120)
+    page.h_spin.setValue(110)
+    qt_app.processEvents()
+    b = win.work_bounds()
+    st = win.state
+    win.action_place(st.place_x + win.stock[0] + 8 - b[0],
+                     st.place_y + win.stock[1] + 3 - b[1])
+    path = tmp_path / "job.srmcam"
+    before = win.work_bounds()
+    stock = win.stock
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(path), ""))
+    win.action_save_setup()
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(100)
+    win.load_setup(path)
+    qt_app.processEvents()
+    assert (page.w_spin.value(), page.h_spin.value()) == (120, 110)
+    assert win.stock == pytest.approx(stock)
+    assert win.work_bounds() == pytest.approx(before)
+    page._sync_outline()                     # the next edit, or opening the page
+    assert win.stock == pytest.approx(stock)
+    assert win.work_bounds() == pytest.approx(before)
+
+
+def test_a_double_sided_job_can_start_at_the_fiducials(win, qt_app):
+    win.action_double_sided(True)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page._fill_rows()
+    keys = [page.start_box.itemData(i) for i in range(page.start_box.count())]
+    at = keys.index(ar.START_AT_FIDUCIALS)
+    assert at > 0 and keys[at + 1:] and at < keys.index("cutout_run")
+
+
+def test_a_fit_with_a_hole_not_found_is_shown_and_logged(win, qt_app, tmp_path):
+    from gerber2rml.engine.fiducial import Transform
+    win.action_double_sided(True)
+    win.select_step("autorun")
+    page = win.autorun_page
+    logged = []
+    page._log = logged.append
+    nominal = [(10.0, 10.0), (60.0, 10.0), (60.0, 40.0), (10.0, 40.0)]
+    measured = [(10.0, 10.0), (60.0, 10.0), None, (10.0, 40.0)]
+    page._on_fit(nominal, measured, Transform(theta=0.0, scale=1.0, tx=0.0, ty=0.0))
+    assert "fiducial 3 not found" in logged
+    assert sum("off by" in s for s in logged) == 3
+    assert win._fid_measured[2] is None
+    qt_app.processEvents()
+
+
+def _to_the_check(win, qt_app, double, start_at=None, flip=True):
+    sm.machine(speedup=1e6, corner=(31790, 4430), angle_deg=0.0,
+               size=(160000, 124000))
+    if double:
+        win.inspector.setup.double.setChecked(True)
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.w_spin.setValue(160)
+    page.h_spin.setValue(124)
+    page.level_chk.setChecked(False)
+    page.check_chk.setChecked(True)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+
+    def step():
+        if not page.flip_btn.isHidden():
+            page._flipped()
+        return not page.check_box.isHidden() or bool(done)
+    assert _wait(qt_app, step, 240)
+    assert not done, done
+    return page, done
+
+
+def test_at_the_check_the_holes_can_be_drilled_again_from_this_side(win, qt_app):
+    page, done = _to_the_check(win, qt_app, True)
+    sent = []
+    page._events.job_sig.connect(lambda key, label, prog: sent.append((key, prog)))
+    page.holes_spin.setValue(0.3)
+    page.holes_btn.click()
+    assert _wait(qt_app, lambda: bool(sent) and not page.check_box.isHidden(), 60)
+    key, prog = sent[0]
+    assert key == ar.HOLES_AGAIN
+    # Where the fit says the board's holes came through, on this face.
+    lay = win._ds_layout()
+    from gerber2rml.doublesided import reflect_holes
+    want = win._fit_holes(reflect_holes(lay.holes, lay.axis, lay.flip_pos))
+    first = re.search(r"G0 X([-0-9.]+) Y([-0-9.]+)", prog)
+    x, y = float(first[1]), float(first[2])
+    assert min(math.hypot(x - h[0], y - h[1]) for h in want) < 1.0
+    page.cut_btn.click()
+    assert _wait(qt_app, lambda: bool(done), 60)
+    assert done[0][0], done[0][1]
+
+
+def test_a_board_with_its_traces_cut_can_start_at_the_check(win, qt_app):
+    win.select_step("autorun")
+    page = win.autorun_page
+    page._fill_rows()
+    keys = [page.start_box.itemData(i) for i in range(page.start_box.count())]
+    assert ar.START_AT_CHECK in keys
+
+
+def test_once_turned_over_the_bed_shows_the_top_and_drops_the_old_map(
+        win, qt_app, monkeypatch):
+    win.action_double_sided(True)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page._fill_rows()
+    qt_app.processEvents()
+    drawn, meshes, points = [], [], []
+    real = win.stage.set_board
+
+    def set_board(copper, outline, *a, **k):
+        drawn.append(outline)
+        return real(copper, outline, *a, **k)
+    monkeypatch.setattr(win.stage, "set_board", set_board)
+    monkeypatch.setattr(win.stage, "set_level_mesh",
+                        lambda *a: meshes.append(a))
+    monkeypatch.setattr(win.stage, "set_probe_points", points.append)
+    lay = win._ds_layout()
+    page._set_row("stock_top", "running")
+    wait = time.monotonic() + 5
+    while not drawn and time.monotonic() < wait:
+        qt_app.processEvents()
+    assert win._auto_top
+    assert drawn[-1].equals(lay.top_outline)
+    assert meshes[-1] == (None, None, 0.0) and points[-1] == []
+    # A new start, and it is the first side again.
+    del drawn[:]
+    win.show_auto_face(False)
+    wait = time.monotonic() + 5
+    while not drawn and time.monotonic() < wait:
+        qt_app.processEvents()
+    assert drawn[-1].equals(lay.outline)
+

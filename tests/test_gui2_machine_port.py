@@ -296,7 +296,7 @@ def test_the_touch_results_are_reported_in_the_operators_terms(bar):
     bar._on_done("touch", (10.0, 10.0, -12.34))
     assert "origin is unchanged" in bar.said[-1][1]
     bar._on_done("touch", None)
-    assert bar.said[-1][0] == "warn" and "clips" in bar.said[-1][1]
+    assert bar.said[-1][0] == "warn" and "probe wire" in bar.said[-1][1]
     bar._on_done("zero_z", (0.0, 0.0, -12.34))
     assert "Origin Z written" in bar.said[-1][1] and "G54" in bar.said[-1][1]
     bar._on_done("zero_z", None)

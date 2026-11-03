@@ -109,7 +109,7 @@ class WindowSource(ar.JobSource):
     def place(self, pose, margin_mm):
         def go():
             w = self.w
-            b = w.work_bounds()
+            b = w.work_extent()
             st = w.state
             # Where the operator put the board on the stock outline is where
             # it is cut: keep its offset from the stock's corner. That outline
@@ -135,9 +135,28 @@ class WindowSource(ar.JobSource):
             w.set_stock_turn(ar.about(pose.x, pose.y, pose.angle))
         self.gui(go)
 
+    def _holes_again(self):
+        """The board's holes, from the side it is on now. Turned over, that
+        is where the fit says they came through: not the first side's frame."""
+        w = self.w
+        job = w.cutting_drill()
+        if w._double and w._top_fit is not None:
+            from gerber2rml.doublesided import reflect_holes
+            from gerber2rml.engine.drill import drill_holes, drill_single_bit
+            lay = w._ds_layout()
+            holes = w._fit_holes(reflect_holes(lay.holes, lay.axis, lay.flip_pos))
+            paths = (drill_single_bit(holes, job) if w.state.drill.single_bit
+                     else drill_holes(holes, job))
+        else:
+            step = next(s for s in w.plan.steps if s.op == "drill")
+            paths = w._toolpaths_for(step)[0]
+        return paths, job.xy_feed, job.plunge_feed
+
     def toolpaths(self, key):
         def go():
             w = self.w
+            if key == ar.HOLES_AGAIN:
+                return self._holes_again()
             step = w.plan.by_key(key)
             if w._double and step.op == "cutout":
                 # The cut-out runs after the flip, so it is cut from the top:
@@ -165,6 +184,21 @@ class WindowSource(ar.JobSource):
                 xs, ys = zip(*pts)
                 return min(xs), min(ys), max(xs), max(ys)
             return w.work_bounds()
+        return self.gui(go)
+
+    def extent(self, side):
+        def go():
+            w = self.w
+            if side == "top" and w._double and w._registration == "fiducial":
+                from gerber2rml.doublesided import nominal_top_fiducials
+                lay = w._ds_layout()
+                x0, y0, x1, y1 = lay.top_outline.bounds
+                pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+                pts += [tuple(p[:2]) for p in nominal_top_fiducials(lay)]
+                xs, ys = zip(*[w._top_fit.apply(x, y) for x, y in pts])
+                r = w._fid_diameter / 2.0
+                return min(xs) - r, min(ys) - r, max(xs) + r, max(ys) + r
+            return w.work_extent()
         return self.gui(go)
 
     def fiducials(self):
@@ -248,7 +282,7 @@ class AutoRunPage(inspector.Page):
         self._rows = {}
 
         intro = widgets.hint(
-            "Stock in the bracket, probe clipped to its copper, size typed - "
+            "Stock in the bracket, under its probe tongue, size typed - "
             "then Start.")
         intro.setToolTip(
             "Start finds the stock, probes it and cuts the whole board with "
@@ -440,6 +474,14 @@ class AutoRunPage(inspector.Page):
         self.deeper_spin.setSuffix(" mm")
         self.deeper_spin.setToolTip("How much deeper than the last pass.")
         _row(self.again_btn, QLabel("deeper by"), self.deeper_spin)
+        self.holes_btn = widgets.button(
+            "Drill the holes again", on=self._holes,
+            tip="If the holes did not come through: every board hole again from "
+                "the side facing up now, this much deeper than before.")
+        self.holes_spin = self._spin(0.3, 0.05, 1.0, 2)
+        self.holes_spin.setSuffix(" mm")
+        self.holes_spin.setToolTip("How much deeper than the drill job's depth.")
+        _row(self.holes_btn, QLabel("deeper by"), self.holes_spin)
         self.cut_btn = widgets.button(
             "Cut it out", kind="primary",
             on=lambda: self._answer("go", 0.0))
@@ -614,6 +656,22 @@ class AutoRunPage(inspector.Page):
         workspace.set_setting("autorun/centre", bool(on))
         self._sync_outline()
 
+    def show_size(self, w, h):
+        """A setup was loaded: its sheet, without moving anything. These boxes
+        are what Start uses and what the outline is drawn from."""
+        for spin, v in ((self.w_spin, w), (self.h_spin, h)):
+            spin.blockSignals(True)
+            spin.setValue(v)
+            spin.blockSignals(False)
+
+    def board_dragged(self):
+        """The operator put the board somewhere by hand. "Centre" would move
+        it away again at Start, so it goes off, and says so."""
+        if self.centre_chk.isChecked():
+            self.centre_chk.setChecked(False)
+            self.ctl.say("info", "Centring is off: the board stays where you "
+                                 "dragged it.")
+
     def _board_onto_outline(self):
         """Novice: what is on the screen is where it will be cut, so a board
         off the outline is brought onto it now, not surprisingly at Start. Pro
@@ -626,7 +684,7 @@ class AutoRunPage(inspector.Page):
         ctl = self.ctl
         if ctl.state.board is None:
             return
-        b = ctl.work_bounds()
+        b = ctl.work_extent()
         sx, sy, sw, sh = ctl.stock
         st = ctl.state
         if self.centre_chk.isChecked():
@@ -698,8 +756,16 @@ class AutoRunPage(inspector.Page):
         self.start_box.clear()
         self.start_box.addItem("The beginning", None)
         src = WindowSource(self.ctl, self._gui)
-        for k, t in src.bottom_steps() + src.top_steps():
+        for k, t in src.bottom_steps():
             self.start_box.addItem(t, k)
+        top = src.top_steps()
+        if top:
+            self.start_box.addItem("Find the fiducials (already flipped)",
+                                   ar.START_AT_FIDUCIALS)
+        for k, t in top:
+            self.start_box.addItem(t, k)
+        self.start_box.addItem("Check the board (traces are cut)",
+                               ar.START_AT_CHECK)
         i = self.start_box.findData(keep)
         self.start_box.setCurrentIndex(max(0, i))
 
@@ -721,6 +787,8 @@ class AutoRunPage(inspector.Page):
             self.list_lay.addWidget(lab)
 
     def _set_row(self, key, state):
+        if key == "stock_top" and state == "running":
+            self.ctl.show_auto_face(True)
         if key not in self._rows:
             return
         lab, title = self._rows[key]
@@ -796,6 +864,7 @@ class AutoRunPage(inspector.Page):
             ctl._fid_flip = "vertical"
             ctl._fid_diameter = round(ctl.state.drill.bit_diameter + 0.8, 2)
             ctl.refresh_plan()
+        ctl.show_auto_face(False)
         size = (self.w_spin.value(), self.h_spin.value())
         ctl.action_stock(size[0], size[1])
         self._fill_rows()
@@ -844,6 +913,8 @@ class AutoRunPage(inspector.Page):
                                  should_pause=link.should_pause,
                                  level=level, surface_hint=hint,
                                  datum=datum, dry_run=dry,
+                                 keepout=(self._bracket.keepout()
+                                          if datum is not None else None),
                                  check_cut=check_cut, start_at=start_at)
                 try:
                     ok = run.run()
@@ -923,13 +994,16 @@ class AutoRunPage(inspector.Page):
             side, len(rows), max(r[2] for r in rows) - min(r[2] for r in rows)))
 
     def _on_fit(self, nominal, measured, t):
-        from gerber2rml.engine.fiducial import residuals
+        from gerber2rml.engine.fiducial import pair_measured, residuals
         self.ctl.set_top_fit(t, measured)
         self.made_btns["fit"].setEnabled(True)
-        res = residuals(t, nominal, measured)
-        for i, (m, r) in enumerate(zip(measured, res), 1):
+        res = iter(residuals(t, *pair_measured(nominal, measured)))
+        for i, m in enumerate(measured, 1):
+            if m is None:
+                self._log("fiducial %d not found" % i)
+                continue
             self._log("fiducial %d at %.3f, %.3f - off by %.3f mm"
-                      % (i, m[0], m[1], r))
+                      % (i, m[0], m[1], next(res)))
 
     def _on_job(self, key, label, rml):
         if getattr(self, "run_dir", None) is None:
@@ -978,10 +1052,11 @@ class AutoRunPage(inspector.Page):
 
     def _on_check(self, traces_label, deeper):
         self.check_lbl.setText(
-            "%s done%s. Look at the board: is every trace through the "
-            "copper? Then cut it out. If some are not, cut them again a "
-            "little deeper - the stock has not moved, so they land in the "
-            "same grooves." % (traces_label, "" if not deeper else
+            "%s done%s. The board is at the view position. Is every trace "
+            "through the copper, and every hole through the board? Then cut it "
+            "out. If not, cut them again a little deeper: as long as the stock "
+            "has not moved, they land in the same place. Close the lid first; "
+            "the run waits for it." % (traces_label, "" if not deeper else
                                ", %.2f mm deeper" % deeper))
         self._boxes = []
         self._show_boxes()
@@ -1008,6 +1083,9 @@ class AutoRunPage(inspector.Page):
                                if n else "Recut all traces")
         self.ctl.stage.set_regions(
             [b + (theme.CAUTION,) for b in self._boxes])
+
+    def _holes(self):
+        self._answer("holes", self.holes_spin.value())
 
     def _recut(self):
         self._answer("again", self.deeper_spin.value(),

@@ -8,9 +8,10 @@ BED = (203.2, 152.4)
 
 
 def test_the_default_is_the_measured_corner():
-    # Measured with the bit, 2026-11-03, corner screw in hole (19, 12).
+    # Read with the bit over the printed bracket's corner, 2026-11-03. Corner
+    # screw in hole (19, 12).
     assert br.DEFAULT.corner == "back-right"
-    assert br.DEFAULT.inside_corner() == pytest.approx((192.52, 128.24))
+    assert br.DEFAULT.inside_corner() == pytest.approx((191.79, 128.43))
     assert br.fits(br.DEFAULT, bed=BED)
     # The sheet the lab stocks stays on the bed from there.
     x, y = br.DEFAULT.inside_corner()
@@ -43,7 +44,7 @@ def test_every_screw_is_in_a_hole_of_the_plate():
         for i, j in b.screws():
             assert 0 <= i < grid.nx and 0 <= j < grid.ny
     # Off the back of the plate there are no holes: it snaps back onto it.
-    far = br.snap(192.52, 400.0, bed=BED)
+    far = br.snap(191.79, 400.0, bed=BED)
     assert far.j == 12
 
 
@@ -59,6 +60,19 @@ def test_the_l_wraps_the_corner_it_holds():
     x, y = b.inside_corner()
     assert max(p[0] for p in b.outline()) == pytest.approx(x + br.BAR_W)
     assert min(p[1] for p in b.outline()) == pytest.approx(y - br.BAR_W)
+
+
+def test_the_drawn_part_has_the_tongue_over_the_stock():
+    x, y = br.DEFAULT.inside_corner()
+    pts = br.DEFAULT.outline()
+    assert (x - 26.0, y - 4.0) in [pytest.approx(p) for p in pts]
+    assert (x - 2.5, y - 4.0) in [pytest.approx(p) for p in pts]
+
+
+def test_the_keepout_covers_the_tongue_with_its_clearance():
+    x, y = br.DEFAULT.inside_corner()
+    assert br.DEFAULT.keepout() == pytest.approx(
+        (x - 26.5, y - 4.5, x - 2.0, y))
 
 
 def test_saved_text_round_trips():

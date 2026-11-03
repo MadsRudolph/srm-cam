@@ -282,7 +282,17 @@ class SimSerial:
         if c == "V":
             self._say("V 4 probe,refine,verify,retouch,zeroz,touchbit,stream,"
                       "holetest,status,spindle,jobctl,view,timedmove,guard,"
-                      "info,frame,origin,liftfix")
+                      "info,frame,origin,liftfix,touchstop")
+        elif c == "U":
+            if m.touching():
+                self._say("E U LOW")
+                return
+            surface = m.surface(x, y)
+            floor = surface if surface is not None else args[0]
+            touched = args[0] < floor
+            m.move_to(x, y, min(z, max(args[0], floor)))
+            _x, _y, nz = m.pos
+            self._say("U %s %d %d %d" % ("T" if touched else "K", x, y, nz))
         elif c == "Q":
             self._say(f"Q {x} {y} {z} {1 if m.touching() else 0}")
         elif c == "X":
@@ -319,7 +329,7 @@ class SimSerial:
             self._say(f"J {args[0]} {args[1]}")
         elif c == "Y":
             m.move_to(x, y, 0)
-            m.move_to(x, 140000, 0)
+            m.move_to(2100, 3100, 0)    # measured on the mill, 2026-08-21
             self._say("Y ok")
         elif c in "TW":
             if m.touching():
