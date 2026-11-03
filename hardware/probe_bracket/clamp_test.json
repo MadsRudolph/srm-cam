@@ -1,0 +1,82 @@
+{
+ "commands": [
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "XY",
+    "offset": 0.2,
+    "name": "Boss"
+   }
+  },
+  {
+   "command": "sketch.circle.center",
+   "params": {
+    "center": [
+     0,
+     0
+    ],
+    "diameter": 22.0
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "distance": 1.4000000000000001,
+    "body_name": "Clamp"
+   }
+  },
+  {
+   "command": "sketch.create",
+   "params": {
+    "plane": "XY",
+    "offset": 1.6,
+    "name": "Top"
+   }
+  },
+  {
+   "command": "sketch.circle.center",
+   "params": {
+    "center": [
+     0,
+     0
+    ],
+    "diameter": 26.0
+   }
+  },
+  {
+   "command": "sketch.finish",
+   "params": {}
+  },
+  {
+   "command": "solid.extrude",
+   "params": {
+    "distance": 1.7999999999999998,
+    "operation": "join",
+    "targets": [
+     "Clamp"
+    ]
+   }
+  },
+  {
+   "command": "solid.hole",
+   "params": {
+    "position": [
+     -5.5,
+     0,
+     3.4
+    ],
+    "diameter": 4.4,
+    "type": "countersink",
+    "cs_diameter": 8.4,
+    "cs_angle": 90,
+    "targets": [
+     "Clamp"
+    ]
+   }
+  }
+ ]
+}
