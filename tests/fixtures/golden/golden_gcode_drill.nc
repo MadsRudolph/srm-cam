@@ -14,8 +14,8 @@ G54
 M3
 ( spindle spin-up settle 2. s before first cut )
 G04 X2.
-G0 Z2.
 G0 X79.405 Y26.663
+G0 Z2.
 G0 Z0.5
 G1 X79.405 Y26.663 Z-0.6 F60.
 G0 Z0.5

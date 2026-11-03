@@ -14,8 +14,10 @@ SRM-20:
 
 gerber2rml's engine emits already-linearised :class:`Move` lists, so we only
 need ``G0`` (rapid) and ``G1`` (feed) -- no arcs (``G2/G3``) or canned drill
-cycles (``G81``). Rapids lift Z first, then traverse, so the tool never drags
-through copper.
+cycles (``G81``). A rapid that climbs lifts Z first and then traverses, so the
+tool never drags through copper; one that descends, the first of a job above
+all, traverses first and then lowers, so the bit never crosses clamps or the
+fixture lower than it has to.
 
 Feeds arrive in mm/s (gerber2rml convention) and are converted to mm/min (the
 only feed unit the SRM-20 accepts).
@@ -118,14 +120,23 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
             xy_fpm = xy_feeds[ti] * 60.0
         for m in tp:
             if m.rapid:
-                # Lift Z first, then traverse XY -- never plunge during a rapid.
-                if changed(cz, m.z):
+                # Up first, then across, then down. The first rapid of a job
+                # starts at the machine top (G28 above), so it counts as down.
+                down = cz is None or m.z < cz - EPS
+                if not down and changed(cz, m.z):
                     out.append(f"G0 Z{_f(m.z)}")
                     cz = m.z
                 if changed(cx, m.x) or changed(cy, m.y):
                     out.append(f"G0 X{_f(m.x)} Y{_f(m.y)}")
                     cx, cy = m.x, m.y
+                if down:
+                    out.append(f"G0 Z{_f(m.z)}")
+                    cz = m.z
             else:
+                if cx is None:
+                    # A job that opens on a cut still crosses at the top.
+                    out.append(f"G0 X{_f(m.x)} Y{_f(m.y)}")
+                    cx, cy = m.x, m.y
                 # A pure downward move at constant XY is a plunge (slower feed).
                 is_plunge = (not changed(cx, m.x) and not changed(cy, m.y)
                              and cz is not None and m.z < cz - EPS)

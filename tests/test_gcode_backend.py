@@ -63,3 +63,33 @@ def test_every_comment_in_a_real_traces_file_is_balanced():
         for line in p.read_text().splitlines():
             if "(" in line or ")" in line:
                 assert re.fullmatch(r"\([^()]*\)", line.strip()), f"{p.name}: {line}"
+
+
+def _motion(nc):
+    return [l for l in nc.splitlines() if l.startswith(("G0 ", "G1 "))]
+
+
+def test_a_job_crosses_at_the_top_and_only_then_lowers():
+    """A student's report: the job dropped to travel height wherever the head
+    was and then crossed, through the clamps and the fixture."""
+    nc = render([[Move(10, 20, 2.0, rapid=True), Move(10, 20, -0.1),
+                  Move(15, 20, -0.1)]], xy_feed=4.0, plunge_feed=1.0)
+    lines = nc.splitlines()
+    assert _motion(nc)[:2] == ["G0 X10. Y20.", "G0 Z2."]
+    assert lines.index("G28 Z0.") < lines.index("G0 X10. Y20.")
+
+
+def test_a_job_that_opens_on_a_cut_also_crosses_first():
+    nc = render([[Move(10, 20, -0.1), Move(15, 20, -0.1)]],
+                xy_feed=4.0, plunge_feed=1.0)
+    assert _motion(nc)[0] == "G0 X10. Y20."
+
+
+def test_a_rapid_climbs_before_it_crosses_and_crosses_before_it_lowers():
+    nc = render([[Move(0, 0, 2.0, rapid=True), Move(0, 0, -0.1),
+                  Move(5, 0, 1.0, rapid=True), Move(9, 0, 0.5, rapid=True)]],
+                xy_feed=4.0, plunge_feed=1.0)
+    m = _motion(nc)
+    climb = m.index("G0 Z1.")
+    assert m[climb + 1] == "G0 X5. Y0."
+    assert m[climb + 2:climb + 4] == ["G0 X9. Y0.", "G0 Z0.5"]

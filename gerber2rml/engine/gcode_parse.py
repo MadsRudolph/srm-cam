@@ -49,9 +49,12 @@ def parse_nc(text):
 
     Handles modal ``G0``/``G1`` motion in absolute (``G90``) coordinates; lines
     that home the machine (``G28``) are skipped so the path stays in work
-    coordinates."""
+    coordinates. A job opens with the bit at the top and at no known XY, so an
+    axis not yet named holds the first value it gets (an incremental first
+    step starts from 0): the first traverse is not a dive to Z0."""
     moves = []
-    x = y = z = 0.0
+    x = y = z = None
+    first = {}               # axis -> the value it held before it was named
     motion = None            # 0 = rapid, 1 = feed
     absolute = True
     for raw in text.splitlines():
@@ -80,16 +83,23 @@ def parse_nc(text):
             if v is None:
                 continue
             val = float(v)
+            if letter in "XYZ" and {"X": x, "Y": y, "Z": z}[letter] is None:
+                first.setdefault(letter, val if absolute else 0.0)
             if letter == "X":
-                nx = val if absolute else x + val; moved = True
+                nx = val if absolute else (x or 0.0) + val; moved = True
             elif letter == "Y":
-                ny = val if absolute else y + val; moved = True
+                ny = val if absolute else (y or 0.0) + val; moved = True
             elif letter == "Z":
-                nz = val if absolute else z + val; moved = True
+                nz = val if absolute else (z or 0.0) + val; moved = True
         if moved and motion is not None:
             x, y, z = nx, ny, nz
-            moves.append(Move(x, y, z, rapid=(motion == 0)))
-    return [moves] if moves else []
+            moves.append((x, y, z, motion == 0))
+    if not moves:
+        return []
+    return [[Move(first.get("X", 0.0) if mx is None else mx,
+                  first.get("Y", 0.0) if my is None else my,
+                  first.get("Z", 0.0) if mz is None else mz, rapid=rapid)
+             for mx, my, mz, rapid in moves]]
 
 
 def _num(s):
