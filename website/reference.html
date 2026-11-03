@@ -61,25 +61,28 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="getting-started.html">Getting started</a>
-        <a class="nav-link" href="automatic.html">Run it all</a>
+        <a class="nav-link" href="automatic.html">Mill a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Core workflow</div>
-        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
-        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
-        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
-        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
-        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">Setup &amp; reference</div>
+        <div class="nav-title">Set up a mill</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro: by hand</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link active" href="reference.html">Files &amp; reference</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">More</div>
         <a class="nav-link" href="feedback.html">Feedback</a>
       </div>
     </nav>
@@ -103,7 +106,7 @@
 </table></div>
 
 <h2>What comes out</h2>
-<p><a href="automatic.html#after">Run it all</a> keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>. Below is what <span class="ui">Export the job</span> writes, in Pro.</p>
+<p><a href="automatic.html#after">Mill a board</a> keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>. Below is what <span class="ui">Export the job</span> writes, in Pro.</p>
 <p><span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one program per step, in the machine's format, and the run plan beside them. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>dry run, drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
 <figure class="anim" data-anim="rf-files">
   <figcaption><span class="k">Inside the files</span>Click a file, then a line, to see what it does. The lines are real output from the test board. Switch to <em>As VPanel lists them</em> to see why the cut-out has to be moved down.</figcaption>

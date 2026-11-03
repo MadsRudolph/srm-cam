@@ -33,25 +33,28 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link active" href="index.html">Overview</a>
-        <a class="nav-link" href="getting-started.html">Getting started</a>
-        <a class="nav-link" href="automatic.html">Run it all</a>
+        <a class="nav-link" href="automatic.html">Mill a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Core workflow</div>
-        <a class="nav-link" href="milling-a-board.html">Milling a board</a>
-        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
-        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
-        <a class="nav-link" href="double-sided.html">Double-sided boards</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
-        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">Setup &amp; reference</div>
+        <div class="nav-title">Set up a mill</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro: by hand</div>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">More</div>
         <a class="nav-link" href="feedback.html">Feedback</a>
       </div>
     </nav>
@@ -63,138 +66,65 @@
 
 <div class="hero">
   <h1>SRM-CAM</h1>
-  <p class="lead">Desktop CAM for the <strong>Roland SRM-20</strong>: load KiCad Gerber&nbsp;+&nbsp;Excellon files, push the stock into the bracket and press Start. It touches the copper, levels, drills, cuts the traces and waits for you before it cuts the board out. Pro has everything by hand: the full run plan, ready-to-run G-code, several boards on one sheet, double-sided registration.</p>
+  <p class="lead">Mill a PCB from KiCad on the <strong>Roland SRM-20</strong>. Load the Gerbers, push the copper into the corner, press Start.</p>
 
   <div class="badge-row">
     <span class="badge copper">Windows installer</span>
     <span class="badge">Linux AppImage</span>
-    <span class="badge">G-code (.nc) &amp; RML output</span>
     <span class="badge">Open source</span>
   </div>
 
   <div class="btn-row">
-    <a class="btn primary" href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">Download for Windows</a>
+    <a class="btn primary" href="automatic.html">Mill a board →</a>
+    <a class="btn" href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">Download for Windows</a>
     <a class="btn" href="https://github.com/MadsRudolph/srm-cam/releases/latest">Linux AppImage</a>
-    <a class="btn" href="automatic.html">Run it all →</a>
-    <a class="btn" href="https://github.com/MadsRudolph/srm-cam">GitHub</a>
   </div>
 </div>
 
-<!-- showcase video -->
+<figure class="fig">
+  <img src="img/automatic_run.png" alt="The SRM-CAM window: three steps on the left, the board on the sheet's outline in the middle, the Run it page on the right">
+  <figcaption>Three steps on the left, your board on the sheet in the middle, Start on the right, and STOP always at the bottom.</figcaption>
+</figure>
+
+<h2>How it works</h2>
+<ol class="steps">
+  <li><span class="st">Load your board</span>Open the Gerber folder from KiCad.</li>
+  <li><span class="st">Copper in the corner</span>Slide the sheet into the bracket and hold it down.</li>
+  <li><span class="st">Press Start</span>It finds the copper, levels, drills and cuts the traces by itself.</li>
+  <li><span class="st">Check it</span>The board comes forward so you can look, and recut anything shallow.</li>
+  <li><span class="st">Cut it out</span>Press one button. Double-sided adds one flip in the middle.</li>
+</ol>
+<p><a href="automatic.html"><strong>Mill a board</strong></a> is the only page you need at the machine. New to the mill, or stuck? Ask Mads Rudolph or the course TAs.</p>
+
+<h2>Where to go</h2>
+<div class="tbl-wrap"><table>
+<tr><th>You want to</th><th>Go to</th></tr>
+<tr><td>Mill a board, one side or two</td><td><a href="automatic.html">Mill a board</a></td></tr>
+<tr><td>Install it, or export from KiCad</td><td><a href="getting-started.html">Install &amp; KiCad</a></td></tr>
+<tr><td>Fix something that went wrong</td><td><a href="troubleshooting.html">Troubleshooting</a></td></tr>
+<tr><td>Set up a mill: Arduino, bracket, clamps</td><td><a href="hardware.html">Hardware &amp; firmware</a></td></tr>
+<tr><td>Do it all by hand, or use several boards on a sheet</td><td><a href="milling-a-board.html">Pro pages</a>, in the menu</td></tr>
+</table></div>
+
+<h2>In a video</h2>
 <figure class="fig">
   <video autoplay muted loop playsinline controls preload="metadata"
          poster="video/srm-cam-showcase-poster.jpg" style="display:block;width:100%;height:auto">
     <source src="video/srm-cam-showcase.webm" type="video/webm">
     <source src="video/srm-cam-showcase.mp4" type="video/mp4">
   </video>
-  <figcaption>SRM-CAM in forty seconds: KiCad Gerbers in, a milled board out.</figcaption>
+  <figcaption>SRM-CAM in forty seconds. It shows an older version; a new walkthrough is on the way.</figcaption>
 </figure>
-
-<figure class="fig">
-  <img src="img/automatic_run.png" alt="The SRM-CAM window in Novice: three steps on the left, the stock and board in the middle, the Run it page on the right">
-  <figcaption>The setup sheet. Left: the run plan, in the order you send the files. Middle: the bed, the copper and the job. Right: the selected step. Bottom: the machine bar, with <span class="ui">STOP</span> (on Windows; this screenshot is from Linux, where the link is off).</figcaption>
-</figure>
-
-<h2>How it works</h2>
-<p><strong>In Novice</strong>, the default, SRM-CAM runs the job itself: see <a href="automatic.html">Run it all</a>. <strong>In Pro</strong>, every numbered step of the run plan is a file you send from VPanel: step 0 is a spindle-off dry run that traces where the board will be cut before anything touches copper, then the drill, the isolation traces, and the cut-out last. With the Arduino probe link fitted, SRM-CAM also reads the machine's position, jogs, probes the bed and zeroes Z; VPanel still plays the files and sets the spindle speed.</p>
-<figure class="anim" data-anim="ix-pipeline">
-  <figcaption><span class="k">From KiCad to a board</span>Tap a stop to read what happens there, and follow it to its page. <a href="machine-control.html">Machine control →</a></figcaption>
-</figure>
-
-<div class="tip"><span class="t">New to the mill?</span>
-<p>Start with <a href="automatic.html">Run it all</a>. To learn what the machine is doing, <a href="milling-a-board.html">Milling a board</a> walks the same job by hand, with live explainers. If you get stuck, reach out to Mads Rudolph or to the TAs of the course.</p></div>
-
-<h2>The video guide</h2>
-<p>Milling a board from KiCad to a finished PCB, start to finish, in 13 minutes. The written walkthrough is <a href="milling-a-board.html">Milling a board</a>.</p>
-<figure class="fig video-guide">
-  <div style="position:relative;aspect-ratio:16/9;background:#000">
-    <iframe src="https://www.youtube-nocookie.com/embed/aab9ItDjwt0" title="Milling a PCB on the Roland SRM-20 with SRM-CAM (13 min)" style="position:absolute;inset:0;width:100%;height:100%;border:0" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen loading="lazy"></iframe>
-  </div>
-  <figcaption>The whole job on video, 13 minutes, with chapters: <a href="https://youtu.be/aab9ItDjwt0">watch on YouTube</a>. This page follows the same order.</figcaption>
-</figure>
-
-<h2>Guide contents</h2>
-<div class="cards">
-  <a class="card" href="getting-started.html">
-    <span class="ct"><span class="ico">🚀</span>Getting started</span>
-    <span class="cd">Install on Windows or Linux, learn the four regions of the window, Novice and Pro, and the files KiCad has to give you.</span>
-  </a>
-  <a class="card" href="automatic.html">
-    <span class="ct"><span class="ico">▶️</span>Run it all</span>
-    <span class="cd">The normal job: stock in the bracket, press Start, check the traces before the cut-out. All of Novice, on one page.</span>
-  </a>
-  <a class="card" href="milling-a-board.html">
-    <span class="ct"><span class="ico">🛠️</span>Milling a board</span>
-    <span class="cd">The whole single-sided job by hand, in Pro, KiCad to a finished board, in the order it happens at the mill — with live explainers for zeroing Z, finding the corner, levelling and the VPanel job list.</span>
-  </a>
-  <a class="card" href="panels.html">
-    <span class="ct"><span class="ico">🧩</span>Several boards on one sheet</span>
-    <span class="cd">Two or more designs on one piece of copper, cut in one run — one cut between boards that touch, none along the sheet's edge.</span>
-  </a>
-  <a class="card" href="holding-the-copper.html">
-    <span class="ct"><span class="ico">🔩</span>Holding the copper</span>
-    <span class="cd">Screws through the spoilboard grid, a datum the machine drills itself, the dry run, and what a board held at points does to the cut depth.</span>
-  </a>
-  <a class="card" href="bed-leveling.html">
-    <span class="ct"><span class="ico">📐</span>Bed levelling &amp; probing</span>
-    <span class="cd">Probe a height map over the link — or by hand — and every cut follows the real surface. One map per face.</span>
-  </a>
-  <a class="card" href="double-sided.html">
-    <span class="ct"><span class="ico">🔁</span>Double-sided boards</span>
-    <span class="cd">Dowel-pin or fiducial registration, the flip, measuring where the board landed, and the top files re-written to match.</span>
-  </a>
-  <a class="card" href="photo-and-rework.html">
-    <span class="ct"><span class="ico">📷</span>Photo check &amp; rework</span>
-    <span class="cd">Lay a photo of the board on the bed, box the spots that did not cut, and re-cut them deeper in one program.</span>
-  </a>
-  <a class="card" href="hardware.html">
-    <span class="ct"><span class="ico">🔌</span>Hardware &amp; firmware</span>
-    <span class="cd">The Arduino on the machine's SPI bus: wiring, one-command flashing, how a touch is measured, and the safety limits.</span>
-  </a>
-  <a class="card" href="machine-control.html">
-    <span class="ct"><span class="ico">🎛️</span>Machine control</span>
-    <span class="cd">The machine bar and menu: position, the jog pad and arrow keys, zero Z, spindle, STOP — and an honest list of what the link cannot do.</span>
-  </a>
-  <a class="card" href="reference.html">
-    <span class="ct"><span class="ico">📄</span>Files &amp; reference</span>
-    <span class="cd">Every file SRM-CAM reads and writes, setups, tool profiles, the parameters, the command line and the keys.</span>
-  </a>
-  <a class="card" href="troubleshooting.html">
-    <span class="ct"><span class="ico">🩹</span>Troubleshooting</span>
-    <span class="cd">Symptom → fix, learned on real boards: depth, reach, probing, registration, setups.</span>
-  </a>
-</div>
-
-<h2>Highlights</h2>
-<ul>
-  <li><strong>The checks are on screen, not in a box.</strong> Fits the bed, Z reach from the probed surface, nets the bit cannot separate (marked on the traces), the job on the copper, the screws in reach — all the time, and the worst finding stays on the rail until it is fixed.</li>
-  <li><strong>Depth you can trust.</strong> Probe the surface electrically and the cut follows it, per face. A board held at points gets a small, capped extra depth for the give under the cutter, and you can set it yourself.</li>
-  <li><strong>Several boards, one run.</strong> Put two designs on one sheet; touching boards share one cut, and an edge on the sheet's edge is not cut at all.</li>
-  <li><strong>Double-sided that registers.</strong> Dowel pins (sub-0.1&nbsp;mm, nothing to measure) or fiducial holes found electrically after the flip, with the top files re-written to where the board actually landed.</li>
-  <li><strong>STOP is part of the window.</strong> Never hidden by a tier, a step or a dialog; <kbd>Esc</kbd> does the same from anywhere.</li>
-  <li><strong>A run sheet, not a text file.</strong> Export writes the files and puts the plan in front of you: order, bit, depth, time, and the one rule — never re-zero XY.</li>
-</ul>
+<p>The <a href="https://youtu.be/aab9ItDjwt0">13-minute video</a> shows the by-hand way in Pro.</p>
 
 <h2>Finished boards</h2>
-<p>Two single-sided boards milled on one sheet, held to the light, and after sanding:</p>
 <div class="figs even">
   <figure class="fig" style="margin:0"><img src="img/boards-held-to-the-light.jpg" alt="Two milled boards in the sheet held up to the light, every channel visible" loading="lazy"><figcaption>Held to the light: every channel shows.</figcaption></figure>
   <figure class="fig" style="margin:0"><img src="img/boards-sanded-and-not.jpg" alt="Two cut-out boards side by side, one sanded, one not yet" loading="lazy"><figcaption>Cut out; one sanded, one not yet.</figcaption></figure>
 </div>
-<p>And both sides of a double-sided board, registered off dowel pins:</p>
-<div class="cards" style="grid-template-columns: 1fr 1fr">
-  <figure class="fig" style="margin:0">
-    <img src="img/doublesided_bcu.jpg" alt="Bottom copper of a finished board">
-    <figcaption>Bottom — B.Cu</figcaption>
-  </figure>
-  <figure class="fig" style="margin:0">
-    <img src="img/doublesided_fcu.jpg" alt="Top copper of a finished board">
-    <figcaption>Top — F.Cu</figcaption>
-  </figure>
-</div>
 
 <div class="page-nav">
-  <a class="next" href="getting-started.html"><span class="lbl">Next</span><span class="ttl">Getting started →</span></a>
+  <a class="next" href="automatic.html"><span class="lbl">Next</span><span class="ttl">Mill a board →</span></a>
 </div>
 
 <footer class="site">
