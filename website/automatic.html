@@ -74,8 +74,8 @@
 <tr><th>Check</th><th>Why</th></tr>
 <tr><td><strong>Both USB cables</strong> in: black (Arduino) and white (mill)</td><td>The Arduino probes and watches; the jobs go down the white one.</td></tr>
 <tr><td><strong>0.8&nbsp;mm flat endmill</strong> in the collet, and that tool profile selected</td><td>One bit does the whole job, so nothing stops for a bit change.</td></tr>
-<tr><td><strong>Stock taped flat</strong>, pushed into the bracket corner</td><td>Levelling follows a bowed sheet, not one that springs under the bit. See <a href="#shallow">shallow traces</a>.</td></tr>
-<tr><td><strong>Red clip on the copper</strong>, outside the board area</td><td>The touch is the bit closing a circuit through the copper. The bit must never run into the clip or its tape.</td></tr>
+<tr><td><strong>Stock held flat</strong> and pushed into the bracket corner. <strong>Big sheet:</strong> masking tape under it, across the middle too, plus clamps. <strong>Small sheet:</strong> clamps alone</td><td>Levelling follows a bowed sheet, not one that springs under the bit. Three layers of tape gave clean traces on a 160&nbsp;mm sheet; an 80&nbsp;×&nbsp;42&nbsp;mm sheet needed none. See <a href="#shallow">shallow traces</a>.</td></tr>
+<tr><td><strong>Sheet pushed under the probe tongue</strong></td><td>The touch is the bit closing a circuit through the copper. The bracket's tongue presses the probe wire onto it, so there is no clip to fit.</td></tr>
 <tr><td><strong>Lid closed</strong></td><td>Opening it stops the run.</td></tr>
 <tr><td><strong>VPanel:</strong> command set NC Code, G54 X/Y left at machine 0, 0</td><td>The lab's usual settings. VPanel may open by itself; press nothing in it. The run checks G54 before it cuts.</td></tr>
 </table></div>
@@ -98,7 +98,7 @@
 <tr><td>Probe the surface</td><td>12 touches over the board. Every cut then follows the copper's real height.</td><td>About 1&nbsp;min</td></tr>
 <tr><td>Check G54</td><td>Moves to the first point at the top of Z and reads the head back. It stops here if G54 X/Y has been moved.</td><td>Seconds</td></tr>
 <tr><td>Drill, then traces</td><td>Spindle on at VPanel's speed setting. Each job is sent directly to the mill.</td><td>Depends on the board</td></tr>
-<tr><td><a href="#check">Check before the cut-out</a></td><td>The bit parks and the run waits for you.</td><td>Up to you</td></tr>
+<tr><td><a href="#check">Check before the cut-out</a></td><td>The board comes to the view position and the run waits for you.</td><td>Up to you</td></tr>
 <tr><td>Cut the board out</td><td>Runs last, because it frees the board.</td><td>Depends on the board</td></tr>
 </table></div>
 
@@ -113,7 +113,8 @@
 <tr><td><span class="ui">Drag boxes over the shallow spots</span>, then <span class="ui">Recut N boxes</span></td><td>Cuts only the traces inside the boxes, on the same height map. It is rarely the whole board.</td></tr>
 <tr><td><span class="ui">Recut all traces</span> (no boxes drawn)</td><td>Cuts every trace again.</td></tr>
 <tr><td><span class="ui">deeper by</span></td><td>0.05&nbsp;mm to start. It adds up: a second recut goes deeper again.</td></tr>
-<tr><td><span class="ui">Cut it out</span></td><td>Carries on to the cut-out.</td></tr>
+<tr><td><span class="ui">Drill the holes again</span></td><td>Every board hole again from the side facing up, deeper by the amount you set.</td></tr>
+<tr><td><span class="ui">Cut it out</span></td><td>Carries on to the cut-out. Close the lid first: the run waits for it.</td></tr>
 <tr><td><span class="ui">Stop here</span></td><td>Ends the run with the board uncut. Come back with <a href="#startat">Start at</a>.</td></tr>
 </table></div>
 
@@ -125,17 +126,18 @@
   <li><span class="ui">STOP</span> or <kbd>Esc</kbd> stops the run at any point. If the bit is still low afterwards, raise it with <kbd>Page Up</kbd>.</li>
   <li><strong>Opening the lid</strong> also stops it.</li>
 </ul>
-<p id="startat"><strong>Start at</strong> picks up a board that stopped part-way: choose <span class="ui">Isolation traces</span> and the drilling is skipped. It touches and probes again, so cuts land in the same place only if <strong>the stock has not moved</strong>.</p>
+<p><strong>A relaunch forgets where the board sat.</strong> If you may need to pick a board up again, use <span class="ui">File ▸ Save setup</span> before you start, and load it again first.</p>
+<p id="startat"><strong>Start at</strong> picks up a board that stopped part-way. <span class="ui">Find the fiducials (already flipped)</span> starts the second side, and <span class="ui">Check the board (traces are cut)</span> goes straight to the check. For the rest: choose <span class="ui">Isolation traces</span> and the drilling is skipped. It touches and probes again, so cuts land in the same place only if <strong>the stock has not moved</strong>.</p>
 
 <h2 id="double">Double-sided</h2>
-<p>Tick the box on <span class="ui">Your board</span> and have an <strong>F.Cu</strong> Gerber in the folder. The run drills its own fiducials, so there is nothing to choose.</p>
+<p>Tick the box on <span class="ui">Your board</span> and have an <strong>F.Cu</strong> Gerber in the folder. The run drills its own fiducials <strong>outside the design</strong>, 4&nbsp;mm past each board corner, so there is nothing to choose. The sheet must be about 14&nbsp;mm bigger than the board each way.</p>
 <ol class="steps">
   <li><span class="st">Bottom side</span>Touch, level, fiducials, drill, bottom traces, as above.</li>
-  <li><span class="st">Flip</span>The run asks you to. Turn the board over <strong>left to right</strong>, push it back into the bracket, tape it flat, and <strong>move the red clip to the copper now on top</strong>. Press <span class="ui">It is flipped - continue</span>.</li>
-  <li><span class="st">Top side</span>It touches again, finds every fiducial and fits the top to them. It stops if a fiducial is more than 0.15&nbsp;mm off. Then it levels and cuts the top traces, stops for your check, and cuts the board out.</li>
+  <li><span class="st">Flip</span>The run asks you to. Turn the board over <strong>left to right</strong>, push it back into the bracket, tape it flat, with the copper now on top under the tongue. Press <span class="ui">It is flipped - continue</span>.</li>
+  <li><span class="st">Top side</span>It touches again, finds every fiducial and fits the top to them. Each hole is searched for from where the last one turned up. A hole it cannot find is skipped, and it stops if it finds fewer than 3, or if one is more than 0.15&nbsp;mm off. Then it levels and cuts the top traces, stops for your check, and cuts the board out.</li>
 </ol>
 <div class="warn"><span class="t">Newer than the single-sided run</span>
-<p>Double-sided Automatic has so far only run on the simulator, not on the mill. For your first one, watch it closely and keep a hand near <span class="ui">STOP</span>.</p></div>
+<p>Double-sided Automatic has made one good board on the mill, with restarts and fixes along the way. Watch your first one closely and keep a hand near <span class="ui">STOP</span>. Turn the sheet <strong>left to right</strong>: the fit cannot detect a wrong flip direction.</p></div>
 
 <h2 id="bracket">The bracket</h2>
 <p>The bracket is drawn on the bed as the part it is: the L and its screws, over the spoilboard's holes. Its inside corner is where the stock's corner sits, and the run measures everything from it. It is set once per machine and only changes when the bracket is moved.</p>
@@ -143,6 +145,7 @@
   <li><span class="st">Match the real one</span>Drag the drawn bracket to the holes the real one is screwed into. It moves a whole hole at a time, like the real one. Choose the corner it holds (back-right at DTU).</li>
   <li><span class="st">Or find it with the bit</span>Jog the bit over the bracket's inside corner, press <span class="ui">Find it with the bit</span> and confirm: it goes to the holes nearest.</li>
 </ol>
+<p>The drawn bracket shows its <strong>probe tongue</strong> reaching 4&nbsp;mm over the stock. A board that runs under it stops the run before anything is cut: drag it away from that spot. <a href="hardware.html#bracket">Printing and wiring it</a>.</p>
 <p>Where it is is saved as soon as it is moved. <span class="ui">Centre the board on the copper</span> puts the board in the middle of the stock, with the spare copper shared on every side.</p>
 
 <h2 id="after">What the run keeps</h2>
