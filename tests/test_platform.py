@@ -10,10 +10,111 @@ from pathlib import Path
 from gerber2rml import platform as plat
 
 
-def test_machine_link_is_windows_only():
+def test_the_machine_link_runs_wherever_pyserial_does():
     assert plat.capabilities("win32").machine_link is True
-    assert plat.capabilities("linux").machine_link is False
-    assert plat.capabilities("darwin").machine_link is False
+    assert plat.capabilities("linux").machine_link is True
+    assert plat.capabilities("darwin").machine_link is True
+    assert plat.capabilities("freebsd14").machine_link is False
+
+
+def test_each_system_has_its_own_way_of_getting_a_job_to_the_mill():
+    assert plat.capabilities("win32").job_routes == (plat.JOB_SPOOLER,)
+    assert plat.capabilities("linux").job_routes == (plat.JOB_USBLP, plat.JOB_CUPS)
+    assert plat.capabilities("darwin").job_routes == (plat.JOB_CUPS,)
+    assert plat.capabilities("freebsd14").job_routes == ()
+
+
+def test_vpanel_is_only_on_windows():
+    assert plat.capabilities("win32").vpanel is True
+    assert plat.capabilities("linux").vpanel is False
+    assert plat.capabilities("darwin").vpanel is False
+
+
+def test_only_windows_counts_as_proven_on_the_machine():
+    """A fact about what has been run, not about the code. Flip one of these
+    when someone has worked through docs/usage.md's checklist on a real SRM-20:
+    the warning at Connect goes with it."""
+    assert plat.capabilities("win32").link_proven is True
+    assert plat.capabilities("linux").link_proven is False
+    assert plat.capabilities("darwin").link_proven is False
+
+
+def test_a_capabilities_built_with_only_the_link_means_the_cnc_pc():
+    """What the older tests and callers build; it must keep meaning Windows."""
+    caps = plat.Capabilities(machine_link=True)
+    assert caps.vpanel and caps.link_proven
+    assert caps.job_routes == (plat.JOB_SPOOLER,)
+
+
+def test_the_instructions_do_not_send_anyone_to_a_program_they_cannot_have():
+    for note in (plat.how_to_send_files, plat.mill_refused_job_note,
+                 plat.g54_moved_note):
+        assert "VPanel" in note("win32")
+    assert "VPanel" not in plat.how_to_send_files("linux")
+    # These two have no other answer; they say where it has to be done.
+    for note in (plat.mill_refused_job_note, plat.g54_moved_note):
+        assert "Windows PC" in note("linux")
+        assert "Windows PC" in note("darwin")
+
+
+def test_the_udev_rules_cover_the_chips_the_link_knows_and_the_mill():
+    from gerber2rml.engine import spi_probe
+    rules = plat.udev_rules("linux")
+    for vid in spi_probe.BOARD_VIDS:
+        assert f'ATTRS{{idVendor}}=="{vid.lower()}"' in rules
+    assert f'ATTRS{{idVendor}}=="{plat.ROLAND_USB_VID}"' in rules
+    assert 'SUBSYSTEM=="usbmisc"' in rules
+    assert 'ENV{ID_MM_DEVICE_IGNORE}="1"' in rules
+    assert 'TAG+="uaccess"' in rules
+    # Numbered before systemd's 73-seat-late.rules, or uaccess does nothing.
+    assert int(Path(plat.UDEV_RULES_PATH).name.split("-")[0]) < 73
+    assert plat.udev_rules("win32") is None and plat.udev_rules("darwin") is None
+
+
+def test_the_udev_rules_are_lines_udev_can_read():
+    for line in plat.udev_rules("linux").splitlines():
+        assert line.startswith("#") or ('=="' in line and line.count('"') % 2 == 0)
+
+
+def test_the_install_script_quotes_a_path_with_a_space_in_it():
+    script = plat.udev_install_script("/tmp/a b/60-srm-cam.rules")
+    assert "'/tmp/a b/60-srm-cam.rules'" in script
+    assert plat.UDEV_RULES_PATH in script
+    assert "udevadm control --reload" in script
+    assert "udevadm trigger" in script
+
+
+def test_the_terminal_command_says_how_to_get_the_rules_from_a_sealed_file():
+    cmd = plat.udev_terminal_commands("./SRM-CAM-x86_64.AppImage")
+    assert cmd.startswith("./SRM-CAM-x86_64.AppImage --udev-rule | sudo tee ")
+
+
+def test_a_ch340_with_no_port_gets_told_about_brltty(tmp_path):
+    d = tmp_path / "1-1"
+    d.mkdir()
+    (d / "idVendor").write_text("1a86\n")
+    assert "brltty" in plat.no_serial_ports_hint("linux", tmp_path)
+    assert plat.no_serial_ports_hint("win32", tmp_path) == ""
+    assert plat.no_serial_ports_hint("linux", tmp_path / "missing") == ""
+
+
+def test_ports_that_cannot_be_the_arduino_are_left_out_per_system():
+    can = plat.serial_port_can_be_a_board
+    assert not can("/dev/ttyS0", "linux") and not can("/dev/ttyS31", "linux")
+    assert can("/dev/ttyACM0", "linux") and can("/dev/ttyUSB0", "linux")
+    assert not can("/dev/cu.Bluetooth-Incoming-Port", "darwin")
+    assert not can("/dev/cu.debug-console", "darwin")
+    assert can("/dev/cu.usbserial-1420", "darwin")
+    assert can("/dev/cu.usbmodem14201", "darwin")
+    # Windows keeps its whole list, the AMT port included: rank_ports sorts it.
+    assert can("COM3", "win32") and can("COM5", "win32")
+
+
+def test_macos_has_no_group_to_join():
+    assert plat.serial_permission_hint(
+        "/dev/cu.usbserial", "darwin",
+        stat_fn=lambda p: type("st", (), {"st_gid": 0})(),
+        group_fn=lambda gid: "wheel") is None
 
 
 def test_default_serial_port_is_com5_on_windows():
@@ -43,7 +144,7 @@ def test_reveal_has_no_command_off_windows():
 @pytest.mark.host_capabilities
 def test_capabilities_defaults_to_the_running_host():
     import sys
-    assert plat.capabilities().machine_link == sys.platform.startswith("win")
+    assert plat.capabilities() == plat.capabilities(sys.platform)
 
 
 def test_permission_hint_names_the_group_the_device_actually_has():

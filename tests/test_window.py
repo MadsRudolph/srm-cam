@@ -2555,7 +2555,7 @@ def test_the_first_interface_says_why_where_the_controls_would_have_been(monkeyp
     # the same is said again on the Bed leveling page, where probing was
     lvl = [lbl.text() for lbl in w.findChildren(QLabel)
            if "Load CSV" in lbl.text()]
-    assert lvl and "Windows only" in lvl[0]
+    assert lvl and "does not run on this system" in lvl[0]
     w.close()
 
 

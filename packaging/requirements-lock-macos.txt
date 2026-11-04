@@ -1,0 +1,58 @@
+# Pinned dependencies for the macOS build (packaging/build_macos.sh).
+#
+# The same pins as requirements-lock-linux.txt, so all three artifacts run
+# the same code, plus macholib: the one thing PyInstaller needs only on a
+# Mac. No Mac was to hand when this was written, so it is not a pip freeze.
+# It was checked from Linux with
+#   pip install --dry-run --only-binary=:all: --python-version 3.12 \
+#     --platform macosx_15_0_arm64 (and macosx_15_0_x86_64) -r <this file>
+# and every pin resolves to a macOS wheel on both architectures. The dmg job
+# in .github/workflows/build.yml prints pip freeze; if a real Mac adds
+# anything to that list, add it here.
+#
+# numpy==2.5.2 is what sets the oldest macOS this can run on: its wheels are
+# tagged macosx_14_0. See LSMinimumSystemVersion in srm-cam.spec.
+aiofiles==25.1.0
+altgraph==0.17.5
+blinker==1.9.0
+click==8.5.0
+colorama==0.4.6
+contourpy==1.3.3
+cycler==0.12.1
+Flask==3.1.3
+fonttools==4.64.0
+gerbonara==1.6.3
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+Hypercorn==0.18.0
+hyperframe==6.1.0
+itsdangerous==2.2.0
+Jinja2==3.1.6
+kiwisolver==1.5.1
+macholib==1.16.4
+MarkupSafe==3.0.3
+matplotlib==3.11.1
+numpy==2.5.2
+packaging==26.3
+pillow==12.3.0
+priority==2.0.0
+pyinstaller-hooks-contrib==2026.7
+pyinstaller==6.22.2
+PyOpenGL==3.1.10
+pyparsing==3.3.2
+pyqtgraph==0.14.0
+pyserial==3.5
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+python-dateutil==2.9.0.post0
+qrcode==8.2
+Quart==0.22.0
+rtree==1.4.1
+setuptools==84.0.0
+shapely==2.1.2
+shiboken6==6.11.2
+six==1.17.0
+Werkzeug==3.1.8
+wsproto==1.3.2

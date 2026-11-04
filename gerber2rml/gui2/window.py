@@ -812,6 +812,16 @@ class MainWindow(QMainWindow):
         self.mtest_act = self._act(m, "Machine test…", self.action_machine_test)
         self.stream_act = self._act(m, "Stream this step over the link "
                                        "(experimental)…", self.action_stream)
+        # What VPanel's Cut ▸ Output is for on a system with no VPanel.
+        self.run_step_act = self._act(m, "Run this step on the mill…",
+                                      self.action_run_step)
+        self.run_step_act.setToolTip(
+            "Sends the selected step to the mill over its USB lead and watches "
+            "it over the Arduino link. The depth comes from the last Probe Z, "
+            "so probe with the bit you are about to cut with.")
+        # Only where udev is what decides who may open the port.
+        self.usb_act = self._act(m, "Set up USB access…", self.action_usb_access)
+        self.usb_act.setVisible(plat.udev_rules() is not None)
         m.addSeparator()
         self.autorun_act = self._act(
             m, "Automatic mode (run it all)", self.action_autorun,
@@ -908,11 +918,11 @@ class MainWindow(QMainWindow):
                   self.export_folder_act, self.add_board_act, self.screw_act,
                   self.track_act, self.autotrack_act, self.autorun_act):
             a.setVisible(full)
+        self.run_step_act.setVisible(full and not plat.capabilities().vpanel)
         self.export_act.setEnabled(full)       # and its Ctrl+E with it
         self.traveller.set_novice(not full)
         self.bar.offline_note.setText(
-            _machine.OFFLINE_SIM_ONLY if self.bar.sim_only
-            else _machine.OFFLINE_PRO if full else _machine.OFFLINE_NOVICE)
+            _machine.offline_note(full, self.bar.sim_only))
         self.autorun_page.sync_tier()
         self._sync_sim_port()
         # The fit and the boxes are Full-tier work; a chip saying "Fit —"
@@ -3993,6 +4003,92 @@ class MainWindow(QMainWindow):
 
         self.link.submit("stream", op)
         self.say("warn", "Streaming. STOP drops the move in flight.")
+
+    def action_run_step(self):
+        """Run the selected step on the mill: VPanel's Cut ▸ Output, on a system
+        that has no VPanel.
+
+        Not the exported file. That file's Z is relative to G54, and G54 can
+        only be set from VPanel: the firmware's origin is a different one
+        (docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md). So this renders
+        the step the way the automatic run does, from the Z the last Probe Z
+        measured, and supervises it with the same runner. STOP, Pause and the
+        lid all behave as they do in that run.
+        """
+        from gerber2rml.backends.gcode import render_incremental
+        from gerber2rml.engine import autorun as ar
+        from gerber2rml.engine import rmlspool, simmachine
+        from gerber2rml.engine.leveling import apply_leveling
+        from gerber2rml.engine.runner import JobRunner, RunStopped
+        link = self.link
+        if not link.is_connected():
+            self.say("warn", "Connect to the machine first.")
+            return
+        key = self.traveller.current()
+        step = self.plan.by_key(key) if key else None
+        if step is None or step.kind != "run":
+            self.say("warn", "Pick a numbered step in the plan to run.")
+            return
+        if link.surface_z is None:
+            self.say("warn", "Probe Z first, with the bit you are about to cut "
+                             "with: the depth is measured from that touch.")
+            return
+        port = (link.firmware or {}).get("port", "")
+        if simmachine.is_sim(port):
+            printer = simmachine.printer()
+        else:
+            printer = rmlspool.find_printer()
+            if printer is None:
+                self.say("fail", rmlspool.no_printer_reason())
+                return
+            why = getattr(printer, "problem", lambda: None)()
+            if why:
+                self.say("fail", why)
+                return
+        try:
+            paths = self._toolpaths_for(step)[0]
+            level = self.level_page.height_map()
+            if level is not None:
+                paths = apply_leveling(paths, level)
+        except Exception as e:
+            self.report_error("That step could not be built", e)
+            return
+        first = next((m for tp in paths for m in tp), None)
+        if first is None:
+            self.say("warn", "That step has nothing to cut.")
+            return
+        choice = dialogs.run_step_dialog(
+            self, step.title, sum(len(p) for p in paths), link.surface_z)
+        if not choice["go"]:
+            return
+        job = {"drill": self.cutting_drill(), "align": self.cutting_drill(),
+               "cutout": self.cutting_cutout()}.get(step.op,
+                                                    self.cutting_trace())
+        dry = choice["dry"]
+        name = step.title + (" (dry run)" if dry else "")
+        prog, end = render_incremental(
+            paths, xy_feed=job.xy_feed, plunge_feed=job.plunge_feed,
+            z_surface=link.surface_z + (ar.DRY_AIR_MM if dry else 0.0),
+            spindle=not dry, name=name)
+        x0, y0 = first.x, first.y
+
+        def op(ser):
+            # Bound signals: these fire on the worker, the widgets are not here.
+            runner = JobRunner(ser, printer, link.should_abort,
+                               link.should_pause, link.run_note.emit)
+            try:
+                ar.check_frame(runner, x0, y0)
+                runner.run(prog, name, end_mm=end,
+                           progress=lambda p: link.position.emit(*p))
+            except (RunStopped, ar.RunFailed) as e:
+                return ("warn", f"{name}: {e}.")
+            return ("ok", f"{name} is done.")
+        link.clear_abort()
+        link.submit("run_step", op)
+        self.say("info", f"Running {name}. STOP on the bar stops it.")
+
+    def action_usb_access(self):
+        dialogs.usb_access_dialog(self)
 
     # ---------------------------------------------------------- setup files
     def action_save_setup(self):

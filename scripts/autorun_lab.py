@@ -42,10 +42,9 @@ class Lab:
         self.log_path = LOGS / f"{test}_{time.strftime('%Y%m%d_%H%M%S')}.log"
         self.log_f = self.log_path.open("w", encoding="utf-8")
         self.ser = spi_probe.open_link(port)
-        name = rmlspool.find_mill()
-        if not name:
-            raise SystemExit("no 'Roland SRM-20' printer")
-        self.printer = rmlspool.SpoolPrinter(name)
+        self.printer = rmlspool.find_printer()
+        if self.printer is None:
+            raise SystemExit(rmlspool.no_printer_reason())
         self.t0 = time.monotonic()
 
     def say(self, text):

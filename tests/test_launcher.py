@@ -97,3 +97,24 @@ def test_the_desktop_entries_name_a_launchable_command():
         "no desktop entry opens the default interface"
     assert any(launcher.ORIGINAL_FLAG in a for a in execs.values()), \
         "no desktop entry opens the original interface"
+
+
+def test_the_udev_flag_prints_the_rules_and_opens_no_window(monkeypatch, capsys):
+    """An AppImage is one sealed file: this is how a terminal gets at them, so
+    it must work before anything has imported Qt."""
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "udev_rules", lambda p=None: "THE RULES\n")
+
+    def no_window(*a, **k):
+        raise AssertionError("a window was opened")
+    import gerber2rml.gui2.app as gui2
+    monkeypatch.setattr(gui2, "main", no_window)
+    assert launcher.main(["SRM-CAM", "--udev-rule"]) == 0
+    assert capsys.readouterr().out == "THE RULES\n"
+
+
+def test_the_udev_flag_on_a_system_without_udev_says_so(monkeypatch, capsys):
+    from gerber2rml import platform as plat
+    monkeypatch.setattr(plat, "udev_rules", lambda p=None: None)
+    assert launcher.main(["SRM-CAM", "--udev-rule"]) == 0
+    assert "no udev" in capsys.readouterr().out

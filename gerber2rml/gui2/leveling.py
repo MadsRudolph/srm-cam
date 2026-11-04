@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QHeaderView, QFileDialog, QProgressBar,
                                QAbstractItemView)
 
+from gerber2rml import platform as plat
 from gerber2rml.gui2 import dialogs, theme, widgets, inspector, tier
 from gerber2rml.engine import leveling as lv
 
@@ -146,7 +147,10 @@ class LevelPage(inspector.Page):
         first.box.addWidget(widgets.body(
             "Jog the bit over point 1, the first marked point: every height "
             "is measured from it, so that is where you set the final Z "
-            "origin on the copper in VPanel (on G54). Leave X and Y alone, "
+            + ("origin on the copper in VPanel (on G54). "
+               if plat.capabilities().vpanel else
+               "with Probe Z on the machine bar. ")
+            + "Leave X and Y alone, "
             "and clip the probe wire to the copper — the tool is already "
             "earthed through the spindle."))
         first.box.addWidget(widgets.body(

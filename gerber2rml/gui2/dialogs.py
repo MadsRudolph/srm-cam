@@ -18,10 +18,13 @@ three separate things to exist:
 If a caller cannot write (2), that is a signal the failure is not understood
 well enough to be handled, not a reason to show the exception instead.
 """
+import os
+import shlex
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QWidget,
-                               QCheckBox, QScrollArea, QFrame)
+                               QCheckBox, QScrollArea, QFrame, QApplication)
 
 from gerber2rml.gui2 import theme, widgets
 
@@ -268,6 +271,107 @@ def stream_dialog(parent, *, move_count, dry_run_default=True):
     d.act("Start", kind="danger", on=go)
     d.exec()
     return out
+
+
+def run_step_dialog(parent, title, move_count, surface_z):
+    """What is about to happen on a system with no VPanel to look at."""
+    d = Sheet(parent, f"Run {title} on the mill", level="warn", width=560)
+    d.say(f"{move_count:,} moves, depth measured from the copper at machine Z "
+          f"{surface_z:.2f} mm (the last Probe Z).", colour=theme.TEXT)
+    lb = QLabel(
+        "Probe Z again if the bit has changed since that touch: this is the "
+        "number every depth is taken from.\n\n"
+        "The mill has to be set to the NC Code command set, and G54 X/Y has to "
+        "be at machine 0, 0. The run checks G54 before it cuts. The spindle "
+        "SPEED is whatever VPanel last set: nothing else can change it.\n\n"
+        "STOP or Esc stops it, opening the lid stops it, and Pause holds it.")
+    lb.setFont(theme.font("small"))
+    lb.setWordWrap(True)
+    lb.setStyleSheet(f"color: {theme.TEXT_2};")
+    d.add(lb)
+    dry = QCheckBox("Dry run — spindle off, bit held clear of the copper")
+    dry.setChecked(True)
+    d.add(dry)
+    out = {"go": False, "dry": True}
+
+    def go():
+        out["go"] = True
+        out["dry"] = dry.isChecked()
+        d.accept()
+
+    d.act("Cancel", on=d.reject, default=True)
+    d.act("Start", kind="danger", on=go)
+    d.exec()
+    return out
+
+
+def usb_access_dialog(parent):
+    """Let the logged-in user open the Arduino and the mill, without logging
+    out, and keep ModemManager off the Arduino.
+
+    The rules travel inside the app because an AppImage has no install step to
+    put them in place with. Installing is the one thing here that needs root,
+    so it goes through ``pkexec``, which asks for the password itself; where
+    there is no pkexec the same thing is on the clipboard for a terminal.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    from gerber2rml import platform as plat
+    rules = plat.udev_rules()
+    if rules is None:
+        return None
+    program = os.environ.get("APPIMAGE") or "SRM-CAM"
+    command = plat.udev_terminal_commands(shlex.quote(program))
+    d = Sheet(parent, "Set up USB access", width=620)
+    d.say("Lets you open the Arduino and the mill without being in a special "
+          "group, and stops ModemManager probing the Arduino. It writes "
+          f"{plat.UDEV_RULES_PATH}, once, and needs your password for that.",
+          colour=theme.TEXT)
+    lb = QLabel(command)
+    lb.setFont(theme.font("small", mono=True))
+    lb.setWordWrap(True)
+    lb.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    lb.setStyleSheet(f"color: {theme.TEXT_2};")
+    d.add(lb)
+    out = {"result": None}
+
+    def copy():
+        QApplication.clipboard().setText(command)
+        out["result"] = "copied"
+        d.accept()
+
+    def install():
+        pkexec = shutil.which("pkexec")
+        if pkexec is None:
+            copy()
+            parent.say("warn", "No pkexec here. The command is on the "
+                               "clipboard: paste it into a terminal.")
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "60-srm-cam.rules"
+            f.write_text(rules, encoding="ascii")
+            f.chmod(0o644)
+            done = subprocess.run(
+                [pkexec, "sh", "-c", plat.udev_install_script(f)],
+                env=plat.host_env(), capture_output=True, text=True)
+        if done.returncode == 0:
+            out["result"] = "installed"
+            parent.say("ok", "USB access is set up. Plug the USB leads in "
+                             "again, and connect.")
+            d.accept()
+        else:
+            out["result"] = "failed"
+            parent.say("fail", "That did not install: "
+                       + (done.stderr.strip() or "the password was refused")
+                       + ". The command above does the same from a terminal.")
+
+    d.act("Close", on=d.reject)
+    d.act("Copy the command", on=copy)
+    d.act("Install", kind="primary", on=install, default=True)
+    d.exec()
+    return out["result"]
 
 
 def about_tier(parent):

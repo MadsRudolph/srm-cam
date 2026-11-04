@@ -851,12 +851,15 @@ class AutoRunPage(inspector.Page):
             printer = simmachine.printer()
         else:
             from gerber2rml.engine import rmlspool
-            name = rmlspool.find_mill()
-            if name is None:
-                ctl.say("fail", "The Roland SRM-20 printer is not installed on "
-                                "this PC, so there is nothing to send jobs to.")
+            printer = rmlspool.find_printer()
+            if printer is None:
+                ctl.say("fail", rmlspool.no_printer_reason())
                 return
-            printer = rmlspool.SpoolPrinter(name)
+            # Now, not at the first job after ten minutes of probing.
+            why = getattr(printer, "problem", lambda: None)()
+            if why:
+                ctl.say("fail", why)
+                return
         if ctl._double:
             # Fiducials are the alignment, flipped left to right, and wide
             # enough for the probe bit to drop into.

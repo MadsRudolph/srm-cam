@@ -125,6 +125,7 @@ def port_holder_hint():
     """
     suspects = {
         "pythonw": "SRM-CAM (Disconnect, or close the Machine test dialog)",
+        "SRM-CAM": "SRM-CAM (Disconnect, or close the Machine test dialog)",
         "python": "a python script still holding the port",
         "Arduino IDE": "the Arduino IDE (close the Serial Monitor)",
         "putty": "PuTTY",
@@ -132,7 +133,8 @@ def port_holder_hint():
     found = []
     try:
         import subprocess
-        out = subprocess.run(["tasklist"], capture_output=True, text=True).stdout
+        out = subprocess.run(plat.process_list_command(), capture_output=True,
+                             text=True).stdout
         for name, hint in suspects.items():
             if name.lower() in out.lower():
                 found.append(hint)

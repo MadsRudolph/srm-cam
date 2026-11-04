@@ -159,7 +159,7 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <summary>“The mill refused the job”</summary>
 <div class="ts-body">
 <p><span class="k">Cause</span>VPanel's command set is not NC Code. The machine holds in pause with its error light up.</p>
-<p><span class="k">Fix</span>In VPanel: <span class="menu-path">Setup › Command Set › NC Code</span>, then press <span class="ui">Cancel</span> to clear it.</p>
+<p><span class="k">Fix</span>In VPanel: <span class="menu-path">Setup › Command Set › NC Code</span>, then press <span class="ui">Cancel</span> to clear it. On Linux or macOS there is no VPanel: set it once on a Windows PC.</p>
 </div></details>
 <details class="ts-item" id="auto-g54" data-cat="machine" data-q="g54 x/y origin is not machine 0 0 the head went to automatic frame check">
 <summary>“The mill's G54 X/Y origin is not machine 0, 0”</summary>
@@ -265,11 +265,11 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <p><span class="k">Cause</span>STOP drops the move in flight and stops the spindle; the bit stays where it is.</p>
 <p><span class="k">Fix</span>Raise the bit with <kbd>Page Up</kbd> before the next move.</p>
 </div></details>
-<details class="ts-item" id="linux" data-cat="probe" data-q="linux no machine bar link windows only sentence laptop">
-<summary>No machine bar, just a sentence</summary>
+<details class="ts-item" id="linux" data-cat="probe" data-q="linux macos mac macbook no machine bar link permission denied dialout uucp group port usb udev brltty ch340 printer lp0 usblp">
+<summary>Linux or macOS: the port will not open, or there is no port</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span>The machine link runs on Windows only.</p>
-<p><span class="k">Fix</span>Export on Linux and send the files from a Windows PC. Your own laptop at the mill works for the link and for VPanel only if it runs Windows.</p>
+<p><span class="k">Cause</span>On Linux, usually your login may not open the port, or (Ubuntu) <code>brltty</code> took the CH340. The link on Linux and macOS is new and not yet proven on a real mill.</p>
+<p><span class="k">Fix</span><span class="menu-path">Machine › Set up USB access</span>, then plug the leads in again. On Ubuntu also <code>sudo apt remove brltty</code>. There is no VPanel off Windows, so run jobs with Automatic mode or <span class="menu-path">Machine › Run this step on the mill</span>, and set the spindle speed and NC Code once on a Windows PC. On a Mac, the mill has to be added as a printer first; see the <a href="https://github.com/MadsRudolph/srm-cam/blob/main/docs/usage.md#running-on-macos">usage notes</a>.</p>
 </div></details>
 
 <h2 data-cat-title="panels" data-short="Panels">Panels</h2>

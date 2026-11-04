@@ -6,7 +6,10 @@ who wrote it. That is the situation this document is written for.
 SRM-CAM is the CAM tool the DTU Ballerup lab uses to mill PCBs on the Roland
 SRM-20. Students load KiCad Gerbers and get `.nc` files they send from VPanel.
 It is MIT-licensed, written in Python, and ships as a self-contained Windows
-installer.
+installer, a Linux AppImage and a macOS disk image. The lab runs Windows. The
+machine link on the other two has not been proven on a real mill: `link_proven` in
+`gerber2rml/platform.py` is what says so, and `docs/usage.md` has the checklists
+that change it.
 
 **If you read one section, read [When it breaks](#when-it-breaks).**
 
@@ -98,7 +101,8 @@ redundant.
 |---|---|---|
 | `tests.yml` → **locked** | every push and PR | **Stop.** This is the suite against the exact pinned versions we ship. Red here means the app we ship is broken. |
 | `tests.yml` → **canary** | 06:00 UTC on the 1st of each month | **Do not panic, do not ignore.** The world moved: a newer Python or dependency broke us. Nothing is shipping broken *yet* — this is the early warning. Read [When it breaks](#when-it-breaks). |
-| `build.yml` | on a `v*` tag, or manually | The installer cannot be built. Blocks releasing, not using. |
+| `build.yml` | on a `v*` tag, or manually | The installer, AppImage or a disk image cannot be built. Blocks releasing, not using. |
+| `tests.yml` → **macos** | every push and PR | The suite on a real Mac. It does not gate. Red is information until it has been green for a while. |
 | `pages.yml` | on pushes touching `website/` | The user guide is stale. Cosmetic. |
 
 The split between **locked** and **canary** is the whole point: what we ship is
@@ -126,6 +130,12 @@ is unaffected.
 There is no deadline. The lock file means you can leave it red for a term and
 students are unaffected — but do not leave it red for a *year*, because the fix
 gets harder the further behind you fall.
+
+### A student on a Mac says "it won't open"
+
+Gatekeeper, because the app is unsigned. The steps are in the README, and what it
+would take to end this is in
+[`packaging/README.md`](packaging/README.md#what-proper-signing-would-need).
 
 ### A student says "the installer won't run"
 

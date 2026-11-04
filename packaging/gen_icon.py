@@ -3,8 +3,9 @@ theme. Reproducible — rerun after tweaking, no binary-only assets in the repo.
 
     python packaging/gen_icon.py
 
-Writes packaging/srm-cam.ico (multi-size, PNG-compressed entries) and
-packaging/srm-cam-256.png (used as the window/taskbar icon at runtime).
+Writes packaging/srm-cam.ico (multi-size, PNG-compressed entries),
+packaging/srm-cam.icns (the macOS app icon) and packaging/srm-cam-256.png (used
+as the window/taskbar icon at runtime).
 """
 import os
 import struct
@@ -101,9 +102,23 @@ def write_ico(path, sizes=(16, 24, 32, 48, 64, 128, 256)):
     Path(path).write_bytes(header + directory + blobs)
 
 
+def write_icns(path, sizes=((b"ic07", 128), (b"ic08", 256), (b"ic09", 512),
+                            (b"ic10", 1024))):
+    """macOS icon file: PNG entries, each a four-byte type and a big-endian
+    length that counts its own eight-byte header. Rendered at every size rather
+    than scaled, since render() is vector. No iconutil, so it runs anywhere."""
+    body = b""
+    for kind, sz in sizes:
+        png = qimage_png_bytes(render(sz))
+        body += kind + struct.pack(">I", len(png) + 8) + png
+    Path(path).write_bytes(b"icns" + struct.pack(">I", len(body) + 8) + body)
+
+
 if __name__ == "__main__":
     app = QGuiApplication.instance() or QGuiApplication(sys.argv)
     here = Path(__file__).parent
     write_ico(here / "srm-cam.ico")
+    write_icns(here / "srm-cam.icns")
     render(256).save(str(here / "srm-cam-256.png"))
-    print("wrote", here / "srm-cam.ico", "and srm-cam-256.png")
+    print("wrote", here / "srm-cam.ico", here / "srm-cam.icns",
+          "and srm-cam-256.png")

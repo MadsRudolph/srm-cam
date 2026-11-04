@@ -7,30 +7,156 @@ tour, replayable per section) covers most of this interactively.
 
 The Linux build is an AppImage — one file, `chmod +x`, run. See the README for
 the download link. It carries its own Qt, so the distribution's version does
-not matter, and it needs no root.
+not matter, and it needs no root to run.
 
 Everything that turns Gerbers into toolpaths works exactly as it does on
 Windows: load, check, place, level, export. The run plan, the shorts check and
 the double-sided flow are all the same code and produce the same files.
 
-**The machine link is Windows-only.** No Connect, no DRO, no jogging, no
-probing the bed over the Arduino. This is deliberate: the CNC PC is Windows,
-that link has only ever been run there, and an unverified motion path is not
-something to hand someone standing next to a spinning tool.
+**The machine link.** Connect, the DRO, jogging, probing and STOP are the same
+code as on Windows, over the same Arduino. A job has no Roland driver to go
+through, so it goes to the mill's USB port directly (`/dev/usb/lp0`, the kernel's
+`usblp` driver), or through a raw CUPS queue if your system keeps `usblp` off the
+device. **This has not been run on a real SRM-20 yet**, and the app says so at
+every Connect. Before trusting it, work through the checklist below.
 
-### Levelling a board you prepared on Linux
+### Setting it up
+
+Machine ▸ Set up USB access installs a udev rule with a password prompt. From a
+terminal it is:
+
+```bash
+./SRM-CAM-x86_64.AppImage --udev-rule | sudo tee /etc/udev/rules.d/60-srm-cam.rules
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+The rule gives whoever is logged in at the screen the Arduino and the mill, with
+no group to join and no logging out, and it stops ModemManager sending the
+Arduino `AT` commands. Then plug the leads in again.
+
+| What you see | What it is |
+|---|---|
+| "…is owned by the 'dialout' group and you are not in it" | The rule is not installed. Install it, or join the group it names and log out and back in. Arch's group is `uucp`, Fedora's and Ubuntu's `dialout`. |
+| No serial port, and a CH340 plugged in | `brltty` took it (Ubuntu). `sudo apt remove brltty`, and plug it in again. |
+| "…is already open in another program" | Another SRM-CAM, or the Arduino Serial Monitor. |
+| "The mill is on USB but has no printer node" | `usblp` is not bound. `sudo modprobe usblp`, or add a CUPS queue as on macOS. |
+| "the mill refused the job" | Its command set is not NC Code. That is set from VPanel, on a Windows PC. |
+
+### What is different without VPanel
+
+- **Run jobs from the app.** Automatic mode, or in Pro Machine ▸ Run this step on
+  the mill. An exported file's Z is relative to G54, and only VPanel can set G54.
+  So a step run from here is rendered the way an automatic run renders it, from
+  the machine Z of your last Probe Z. Probe Z again after every bit change.
+- **Set these once on a Windows PC:** the spindle speed, the command set (NC
+  Code) and G54 X/Y at machine 0, 0. The run checks G54 before it cuts and stops
+  if it has moved. Whether the mill keeps the speed and the command set through a
+  power cycle without VPanel has not been checked: it is on the checklist.
+- **The simulator** is in the port list only in Pro with Automatic mode on, as it
+  is on Windows.
+
+### Bench checklist: Linux
+
+For someone at a real SRM-20 with the Arduino fitted. Nothing here has been done
+yet. Work down it in order, with **no bit fitted** and the bed clear until step
+8, and a hand near the mill's power switch. Stop at the first thing that is wrong.
+
+1. Plug in the mill's own USB lead, switch it on, and run
+   `lsusb -d 0b75: -v | grep -E 'idVendor|idProduct|iProduct|bInterfaceClass'`.
+   The whole job path rests on `bInterfaceClass 7 Printer`. If that is not what it
+   says, stop and report it.
+2. `ls -l /dev/usb/lp*` shows a node, and
+   `cat /sys/class/usbmisc/lp0/device/ieee1284_id` names the mill. Plug in the
+   Arduino: `ls -l /dev/ttyACM* /dev/ttyUSB*` shows a port.
+3. Before the rule is installed, press Connect. You should get the sentence naming
+   the group, not a traceback. Install the rule, replug, Connect: the chip says
+   Linked, and the warning that this is unproven appears.
+4. The DRO follows VPanel's numbers on the Windows PC (move the head from there
+   first, if you have one to hand), and opening the lid changes the chip.
+5. Machine test: every read-only row passes as it does on Windows.
+6. Jog X, Y and Z in small steps, and hold an arrow key: the head stops about when
+   the key is let go. **STOP during a long jog:** it stops within a blink, and the
+   log says STOP sent. Do the same with Esc.
+7. **Pull the Arduino's USB lead while connected and idle.** Within about a second
+   the chip says Link lost and the log says STOP cannot reach the machine. Replug,
+   reconnect. Then start the spindle with the button, pull the lead again, and
+   time it: the firmware should stop the spindle after about 10 seconds.
+8. Probe Z on a scrap of copper with a bit fitted. The bit stops at the touch.
+9. Machine ▸ Run this step on the mill on the dry-run step, with the Dry run box
+   ticked. The head goes to the first point, the frame check passes, and the
+   outline traces in the air. If the mill refuses it, the command set is the
+   question, not the code: set NC Code on a Windows PC and power-cycle to see
+   whether it stays.
+10. During that dry run: **STOP stops it.** The mill must not carry on with buffered
+    moves. How far it goes after the stop is the number to write down and compare
+    with VPanel's Stop on Windows. Run it again and open the lid: it stops. Pause
+    and Resume hold and continue.
+11. **Pull the mill's USB lead during a dry run**: the run stops and says so. Pull
+    the Arduino's during a dry run: the run stops and says so, and the job stops
+    being fed. Note how far the mill goes on what it had already buffered.
+12. Power-cycle the mill with no Windows PC in the loop and run step 9 again. Note
+    the spindle speed it uses with a real cut in air (the display on VPanel, or by
+    ear), since nothing on Linux can set it.
+13. A full Automatic run on the simulator's job in the air (Dry run ticked), then
+    one real board.
+
+When all of that holds, set `link_proven=True` for Linux in
+`gerber2rml/platform.py`, which takes the warning away, and update the README, the
+user guide and this section.
+
+### Levelling a board you prepared on a system with no link
 
 A height map is a file, so you do not lose levelling — only measuring.
 
-1. On the CNC PC, probe the bed as usual and use **Save CSV** to write the
-   grid to a file.
+1. On a computer connected to the mill, probe the bed as usual and use **Save
+   CSV** to write the grid to a file.
 2. Keep that CSV with the board's session files.
-3. On Linux, open the Bed leveling page and use **Load CSV**. Export as normal: the
+3. Elsewhere, open the Bed leveling page and use **Load CSV**. Export as normal: the
    toolpaths are warped through the loaded grid exactly as if you had probed
    them on this machine.
 
 A bed does not move between sessions, so one probe run serves every job on that
 sheet.
+
+## Running on macOS
+
+The disk image holds a normal app: drag it to Applications. The README says which
+image to pick and how to get past Gatekeeper the first time. Everything that
+prepares a job works as on any other system.
+
+The machine link is the same code as on Linux. macOS needs no permissions set up
+for the Arduino, and its port shows up as `/dev/cu.usbserial-…` or
+`/dev/cu.usbmodem…`. The job goes through a raw CUPS queue, added once:
+
+```bash
+lpinfo -v | grep -i roland         # find the mill's usb:// address
+sudo lpadmin -p SRM-20 -E -v 'usb://…that address…' -m raw
+```
+
+### Bench checklist: macOS
+
+Nothing here has been done yet: neither the app nor the link has been run on a
+real Mac. CI builds the disk image and starts the app on GitHub's Mac runners, and
+that is all the evidence there is. The first three need only a Mac.
+
+1. Download the image for your Mac, drag to Applications, and get past Gatekeeper
+   following the README. Note exactly what macOS shows, so the instructions can be
+   corrected.
+2. The window opens with the demo board. Load a Gerber folder and export. Compare
+   a file with the same export on Windows: they should be identical.
+3. The 3D simulator opens and draws. macOS only offers old OpenGL or newer core
+   profiles, so this is the check most likely to fail.
+4. Plug in the Arduino: the port list shows it first, labelled with its chip.
+   Connect: Linked, and the DRO reads. A CH340 needs macOS's built-in driver; if no
+   port appears at all, say which macOS version this is.
+5. `lpinfo -v | grep -i roland` shows the mill. If it does not, the Mac has no
+   route to send jobs, and the rest of the link is all that works.
+6. From there, the Linux checklist from step 5 on, with no bit fitted until step 8.
+   STOP, the pulled leads and the lid matter just as much here. A CUPS purge goes
+   through `cancel`, so STOP's distance may be longer than on Linux. Write it down.
+
+When all of that holds, set `link_proven=True` for macOS in
+`gerber2rml/platform.py`.
 
 ## Operations
 

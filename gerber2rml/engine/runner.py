@@ -16,10 +16,15 @@ job did not end where it was meant to.
 STOP is the reverse: purge what the spooler still holds, tell the machine to
 stop moving and drop its job, spindle off, lift. Lifting needs firmware v4
 (the abort lift used to cancel itself; hardware/srm20_spi_probe).
+
+So is losing either USB lead while a job runs. The job and its supervision are
+two separate cables, and the printer carries on feeding the mill whether or not
+anyone is still watching it: a failed read here must not just end this loop.
 """
 import math
 import time
 
+from gerber2rml import platform as plat
 from gerber2rml.engine import spi_probe
 
 
@@ -73,6 +78,18 @@ class JobRunner:
                       (self.origin[0] + end[0] / 100.0,
                        self.origin[1] + end[1] / 100.0))
         self.printer.send(program, name)
+        try:
+            return self._watch(name, timeout_s, progress, end_mm)
+        except RunStopped:
+            raise
+        except Exception as e:
+            self.stop()
+            raise RunStopped(
+                "the connection to the mill failed during %s (%s). The job was "
+                "stopped. If the mill is still moving, switch it off at its "
+                "own power switch" % (name, e)) from e
+
+    def _watch(self, name, timeout_s, progress, end_mm):
         t0 = time.monotonic()
         still_since = None
         paused = False
@@ -93,9 +110,7 @@ class JobRunner:
                 # What a refused program looks like: the mill holds in pause
                 # with its error bit up (RML sent to a mill set to NC Code).
                 self.stop()
-                raise RunStopped("the mill refused the job. In VPanel, "
-                                 "Setup ▸ Command Set must be NC Code; press "
-                                 "Cancel there to clear it")
+                raise RunStopped(plat.mill_refused_job_note())
             pos = spi_probe.query_position(self.ser)
             if progress is not None and pos:
                 progress(pos)

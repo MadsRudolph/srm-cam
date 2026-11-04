@@ -6,11 +6,14 @@ Build (from the repo root, with the miniconda env that has the GUI deps):
 
 Produces a one-folder app at dist/SRM-CAM/ (SRM-CAM.exe + _internal/).
 The Inno Setup script (packaging/installer.iss) wraps that folder into Setup.exe.
+On macOS the same folder is then wrapped into dist/SRM-CAM.app, which
+packaging/build_macos.sh puts on a disk image.
 
 One-folder (not one-file) is deliberate: faster cold start (no temp unpack of a
 ~400 MB archive every launch) and the installer bundles the folder anyway.
 """
 import sys
+import tomllib
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
@@ -81,7 +84,7 @@ exe = EXE(
     # PyInstaller only consumes an icon on Windows and macOS; on Linux the
     # AppImage takes its icon from the .desktop entry instead. Passing a .ico
     # there is ignored with a warning, and a spec should not ask for something
-    # it knows is meaningless.
+    # it knows is meaningless. On macOS the icon belongs to the bundle, below.
     icon=(str(ROOT / "packaging" / "srm-cam.ico")
           if sys.platform.startswith("win") else None),
 )
@@ -95,3 +98,25 @@ coll = COLLECT(
     upx_exclude=[],
     name="SRM-CAM",
 )
+
+if sys.platform == "darwin":
+    _version = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    app = BUNDLE(
+        coll,
+        name="SRM-CAM.app",
+        icon=str(ROOT / "packaging" / "srm-cam.icns"),
+        bundle_identifier="dev.madsrudolph.srm-cam",
+        version=_version,
+        info_plist={
+            "CFBundleName": "SRM-CAM",
+            "CFBundleDisplayName": "SRM-CAM",
+            "NSHighResolutionCapable": True,
+            # Follows the system's light/dark setting rather than forcing light.
+            "NSRequiresAquaSystemAppearance": False,
+            # numpy's wheel at the pinned version is tagged macosx_14_0 on both
+            # architectures, so anything older cannot load it. Better the
+            # Finder says so than a crash at startup. Raise this with the pins.
+            "LSMinimumSystemVersion": "14.0",
+        },
+    )

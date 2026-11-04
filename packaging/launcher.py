@@ -32,11 +32,22 @@ ORIGINAL_FLAG = "--original"
 # it does exactly what it always did.
 SETUP_SHEET_FLAG = "--setup-sheet"
 
+# Print the udev rules and stop. An AppImage is one sealed file, so this is how
+# a terminal gets at them; see README.md. Windows and macOS have nothing to
+# print, and say so.
+UDEV_RULE_FLAG = "--udev-rule"
+
 _FLAGS = (ORIGINAL_FLAG, SETUP_SHEET_FLAG)
 
 
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
+    if UDEV_RULE_FLAG in argv[1:]:
+        from gerber2rml import platform as plat
+        rules = plat.udev_rules()
+        print(rules if rules is not None else
+              "This system has no udev, and nothing to set up.", end="")
+        return 0
     original = ORIGINAL_FLAG in argv[1:]
     # Qt parses argv itself and warns about options it does not know, so the
     # ones meant for us never reach it.

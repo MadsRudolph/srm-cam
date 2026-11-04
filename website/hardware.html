@@ -69,8 +69,8 @@
 <h1>Hardware &amp; firmware</h1>
 <p class="lead">An Arduino Uno fitted to the SRM-20's SPI remote header lets SRM-CAM read where the head is, jog it, feel the bit touch the copper, probe the bed and zero Z. This page is what is fitted, how it talks, and how a touch is measured. The drawings are live.</p>
 
-<div class="note"><span class="t">Optional, and Windows-only</span>
-<p>Everything else — traces, drilling, cut-out, panels, double-sided registration, rework, the checks and every export — runs on a stock SRM-20 through VPanel with nothing fitted. The link itself runs on Windows only: on Linux the machine bar says so instead of showing controls. A height map is a file, so you can probe on the CNC PC, <span class="menu-path">Level the bed › Save…</span> the CSV, and <span class="menu-path">Load…</span> it anywhere to export levelled toolpaths.</p></div>
+<div class="note"><span class="t">Optional</span>
+<p>Everything else — traces, drilling, cut-out, panels, double-sided registration, rework, the checks and every export — runs on a stock SRM-20 through VPanel with nothing fitted. The link runs on Windows, and now on Linux and macOS, where it has not yet been proven on a real mill. A height map is a file, so you can probe on the CNC PC, <span class="menu-path">Level the bed › Save…</span> the CSV, and <span class="menu-path">Load…</span> it anywhere to export levelled toolpaths.</p></div>
 
 <h2 id="link">What is fitted, and how it talks</h2>
 <p>The Arduino is not listening in on the machine: it is the <strong>SPI master on the SRM-20's own remote header</strong>, speaking Roland's remote protocol through Roland's <code>SRM20SPIRemote</code> library (vendored in <code>hardware/</code>, with three small marked patches). It sits on an SPI shield plugged into the header, with slave-select on D9 and the ready line on D6.</p>

@@ -15,11 +15,11 @@
 #      publishes a draft GitHub Release with both installers + a SHA256
 #      checksum file attached; the appimage job waits for that release to
 #      exist (it needs: installer) and then adds the Linux build and its own
-#      checksum file to the same release
+#      checksum file to the same release; the dmg job does the same for macOS
 #   4. review the draft release and publish it
 #
 # Running it manually (Actions -> build -> Run workflow) produces the same
-# installer and AppImage as downloadable artifacts without creating a
+# installer, AppImage and disk images as downloadable artifacts without creating a
 # release — that is also the way to verify the build still works without
 # cutting a version.
 name: build installer
@@ -175,3 +175,90 @@ jobs:
           gh release upload "${{ github.ref_name }}" \
             dist_installer/SRM-CAM-*.AppImage \
             dist_installer/SHA256SUMS-linux.txt --clobber
+
+  dmg:
+    needs: installer          # same as appimage: this adds to the draft release
+    strategy:
+      fail-fast: false        # one architecture's failure says nothing of the other
+      matrix:
+        include:
+          # Two builds, because numpy, shapely and matplotlib ship no universal2
+          # wheels to make one from. macos-15-intel is the last Intel image
+          # GitHub has; it goes when the macOS 15 images do, in fall 2027. The
+          # Intel leg goes then too.
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check version consistency (and that it matches the tag)
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            python scripts/check_version.py "${{ github.ref_name }}"
+          else
+            python scripts/check_version.py
+          fi
+
+      - name: Build (PyInstaller + hdiutil)
+        run: packaging/build_macos.sh
+
+      - name: Record what the build actually installed
+        # The macOS lock was checked from Linux, not frozen on a Mac. This is
+        # the list to compare it with.
+        run: .build-venv/bin/python -m pip freeze
+
+      - name: Verify the disk image, and that the app inside it starts
+        run: |
+          f="dist_installer/SRM-CAM-macos-${{ matrix.arch }}.dmg"
+          [ -f "$f" ] || { echo "No disk image at $f"; exit 1; }
+          size=$(( $(stat -f%z "$f") / 1024 / 1024 ))
+          [ "$size" -ge 50 ] || { echo "Disk image is only ${size} MB - the Qt payload is probably missing"; exit 1; }
+          echo "Built $(basename "$f") - ${size} MB"
+          mnt="$(mktemp -d)"
+          hdiutil attach "$f" -nobrowse -readonly -mountpoint "$mnt"
+          [ -L "$mnt/Applications" ] || { echo "No Applications link to drag to"; exit 1; }
+          file "$mnt/SRM-CAM.app/Contents/MacOS/SRM-CAM"
+          file "$mnt/SRM-CAM.app/Contents/MacOS/SRM-CAM" | grep -q "${{ matrix.arch }}"
+          codesign --verify --deep --strict "$mnt/SRM-CAM.app"
+          "$mnt/SRM-CAM.app/Contents/MacOS/SRM-CAM" --udev-rule
+          # Offscreen, because a runner has no window server to speak of. Still
+          # running after 20 seconds means every import worked and the window
+          # was built; a bad bundle exits long before that.
+          QT_QPA_PLATFORM=offscreen SRM_CAM_NO_UPDATE_CHECK=1 \
+            "$mnt/SRM-CAM.app/Contents/MacOS/SRM-CAM" &
+          pid=$!
+          sleep 20
+          kill -0 "$pid" || { echo "The app exited during startup"; cat "$HOME/Documents/SRM-CAM/gui2.log" || true; exit 1; }
+          kill "$pid"
+          wait "$pid" || true
+          hdiutil detach "$mnt"
+
+      - name: Checksums
+        run: |
+          cd dist_installer
+          shasum -a 256 SRM-CAM-*.dmg > "SHA256SUMS-macos-${{ matrix.arch }}.txt"
+          cat "SHA256SUMS-macos-${{ matrix.arch }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SRM-CAM-dmg-${{ matrix.arch }}
+          path: |
+            dist_installer/SRM-CAM-*.dmg
+            dist_installer/SHA256SUMS-macos-*.txt
+          retention-days: 90
+
+      - name: Attach to the draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            dist_installer/SRM-CAM-*.dmg \
+            "dist_installer/SHA256SUMS-macos-${{ matrix.arch }}.txt" --clobber

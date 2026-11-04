@@ -26,6 +26,7 @@ it:
 """
 from dataclasses import dataclass, field
 
+from gerber2rml import platform as plat
 from gerber2rml.backends import BACKENDS
 from gerber2rml.config import drill_first
 
@@ -199,6 +200,23 @@ ORIGIN_NOTE = (
     "on G54 (not Machine or User). The dry run that follows holds the bit 5 mm "
     "above THIS zero, so it only means anything once the zero is set.")
 
+# The same step where there is no VPanel, so no G54 to zero: a step run from
+# here takes its depth from the probed surface.
+ORIGIN_NOTE_NO_VPANEL = (
+    "Only Z is ever measured. X and Y stay at the machine origin, which is what "
+    "the job assumes: find the copper's corner with the probe and use Set the "
+    "corner from the tool instead. The traces, the holes and the outline only "
+    "land on top of each other because every pass shares that one origin.\n\n"
+    "Press Probe Z with the bit on the machine bar, with the bit you are about "
+    "to cut with. Every depth is measured from that touch, and the dry run "
+    "holds the bit 5 mm above it.")
+
+
+def _origin_note():
+    return (ORIGIN_NOTE if plat.capabilities().vpanel
+            else ORIGIN_NOTE_NO_VPANEL)
+
+
 ONE_BIT_NOTE = (
     "One bit does this whole job — traces, holes and outline — so it never "
     "leaves the collet and Z stays where you zeroed it. There is no bit change "
@@ -332,9 +350,10 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     # dry run and told you to fit a bit afterwards.
     first_tool = drill_tool if double_sided else trace_tool
     seq.hand("origin", f"Fit the {tool_label(first_tool)}, set the Z origin",
-             "Z on the copper, in G54. Never re-zero XY: it stays at the "
-             "machine origin.",
-             tool=first_tool, note=ORIGIN_NOTE)
+             ("Z on the copper, in G54. Never re-zero XY: it stays at the "
+              "machine origin." if plat.capabilities().vpanel else
+              "Probe Z on the copper. XY stays at the machine origin."),
+             tool=first_tool, note=_origin_note())
 
     # -- step 0 is the same on both paths, and it is deliberately first -----
     seq.run("airpass", "Dry run", ordinal=0, op="airpass",
@@ -495,7 +514,7 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
         origin = plan.by_key("origin")
         origin.detail = (f"One {plan.tool_label} for the whole job. "
                          f"Z origin once, in G54. Never re-zero XY.")
-        origin.note = ORIGIN_NOTE + "\n\n" + ONE_BIT_NOTE
+        origin.note = _origin_note() + "\n\n" + ONE_BIT_NOTE
     return plan
 
 

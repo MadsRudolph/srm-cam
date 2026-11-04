@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting started — SRM-CAM guide</title>
-<meta name="description" content="Install SRM-CAM on Windows or Linux, learn the window, Novice and Pro, and the files KiCad has to give you.">
+<meta name="description" content="Install SRM-CAM on Windows, Linux or macOS, learn the window, Novice and Pro, and the files KiCad has to give you.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,12 +74,13 @@
 <div class="tbl-wrap"><table>
 <tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
 <tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive.</td></tr>
-<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. <strong>The machine link is Windows-only</strong>: prepare and export on Linux, send the files from VPanel on a Windows PC, and carry a probed height map over as a CSV.</td></tr>
+<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. The machine link is new here and <strong>not yet proven on a real mill</strong>: <span class="menu-path">Machine › Set up USB access</span> once, and see <a href="troubleshooting.html#linux">Linux and macOS</a>.</td></tr>
+<tr><td>macOS 14+</td><td><code>SRM-CAM-macos-arm64.dmg</code> (Apple Silicon) or <code>SRM-CAM-macos-x86_64.dmg</code> (Intel) from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td>Drag to Applications. It is unsigned, so the first time: try to open it, then <span class="menu-path">System Settings › Privacy &amp; Security › Open Anyway</span>. If it says the app is damaged, run <code>xattr -dr com.apple.quarantine /Applications/SRM-CAM.app</code> in Terminal. The machine link is <strong>not yet proven</strong> here either.</td></tr>
 <tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
 </table></div>
 
 <h3>No PC at the mill?</h3>
-<p>The lab's CNC PC has SRM-CAM and VPanel on it. If it isn't free, install both on your own <strong>Windows</strong> laptop (the link and VPanel are Windows-only) and plug in the two USB cables yourself.</p>
+<p>The lab's CNC PC has SRM-CAM and VPanel on it. If it isn't free, install both on your own <strong>Windows</strong> laptop and plug in the two USB cables yourself. VPanel is Windows-only. The link also runs on Linux and macOS, but that is new and not yet proven on a real mill, so a Windows laptop is the safe choice for now.</p>
 <figure class="anim" data-anim="laptop">
   <figcaption><span class="k">Two cables</span>The white USB is the mill, for VPanel; the black USB is the Arduino probe link, for SRM-CAM.</figcaption>
 </figure>
@@ -108,7 +109,7 @@
 </figure>
 <figure class="fig">
   <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected" loading="lazy">
-  <figcaption>The real window, on the setup step (a Linux screenshot, so the machine bar is a sentence: the link is Windows-only).</figcaption>
+  <figcaption>The real window, on the setup step (with nothing connected, so the machine bar is a sentence).</figcaption>
 </figure>
 <ul>
   <li><strong>The rail</strong> (left) is the plan. In Novice it is three rows. In Pro it is the whole run plan: the same order, and the same files, that the export writes. Numbered steps are files you send; the rows between them (fit the bit and set the Z origin, flip the board) are things you do by hand. Click any step at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. <span class="ui">Export the job</span> is at the bottom.</li>

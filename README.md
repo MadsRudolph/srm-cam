@@ -30,7 +30,8 @@ Doing it by hand in Pro has its own [13-minute video](https://youtu.be/aab9ItDjw
 
 **Just run it (Windows):** download the latest installer from
 [Releases](https://github.com/MadsRudolph/srm-cam/releases) and run
-`SRM-CAM-Setup-*.exe`. No Python needed.
+`SRM-CAM-Setup-*.exe`. No Python needed. [Linux](#linux-fedora-ubuntu-arch) and
+[macOS](#macos) are below.
 
 **From source:**
 
@@ -82,13 +83,55 @@ install -Dm644 packaging/srm-cam.desktop packaging/srm-cam-original.desktop ~/.l
 If the 3D views come up blank or the app will not start on a machine with no
 usable GPU driver — a VM, a remote session — run it with `GERBER2RML_GL=software`.
 
-**What Linux does not do:** the machine link — Connect, the DRO, jogging and
-bed probing over the Arduino — is Windows-only. Prepare the job on Linux,
-export, and send the files from VPanel on the CNC PC.
+**The machine link on Linux.** Connect, the DRO, jogging, probing, Automatic
+mode and STOP use the same code as on Windows. Two things need doing once:
 
-That costs less than it sounds, because a height map is a file. Probe the bed
-once on the CNC PC, export the grid as CSV, and load it on Linux to export
-levelled toolpaths exactly as if you had measured them there.
+```bash
+# let your login open the Arduino and the mill, and keep ModemManager off them
+./SRM-CAM-x86_64.AppImage --udev-rule | sudo tee /etc/udev/rules.d/60-srm-cam.rules
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+The app's **Machine ▸ Set up USB access** does the same with a password prompt.
+On Ubuntu, also run `sudo apt remove brltty`: it takes the CH340 chip on the
+lab's Uno for a braille display and the port vanishes.
+
+> **Not yet proven on a real SRM-20.** This has only been run against the
+> simulator and a software stand-in for the Arduino. The app says so when you
+> connect, until someone has worked through the
+> [bench checklist](docs/usage.md#bench-checklist-linux).
+
+There is no VPanel on Linux, which changes two things:
+
+- Run jobs with Automatic mode, or in Pro with **Machine ▸ Run this step on the
+  mill**, not by sending the exported files. Those depend on G54 Z, which only
+  VPanel can set.
+- The spindle speed and the mill's command set (NC Code) can only be changed
+  from VPanel, so set them once on a Windows PC. Roland's manual says the same
+  of the speed: it "cannot be specified from any application other than VPanel".
+
+### macOS
+
+Download the disk image for your Mac from the
+[latest release](https://github.com/MadsRudolph/srm-cam/releases/latest):
+`SRM-CAM-macos-arm64.dmg` for Apple Silicon (M1 and later),
+`SRM-CAM-macos-x86_64.dmg` for Intel. It needs macOS 14 or later. Open it and
+drag SRM-CAM onto Applications.
+
+The app is not signed with an Apple developer certificate, so the first launch
+is blocked. Try to open it once, then go to **System Settings ▸ Privacy &
+Security**, scroll down and press **Open Anyway**. If macOS says the app is
+damaged, which Apple Silicon Macs can do with a downloaded unsigned app, run this
+once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SRM-CAM.app
+```
+
+Preparing a job works as on any other system. The machine link uses the same
+code as Linux, and is **not yet proven on a real Mac or a real mill**. See
+[the checklist](docs/usage.md#bench-checklist-macos); it also covers the one-time
+printer setup a Mac needs.
 
 ## What it does
 

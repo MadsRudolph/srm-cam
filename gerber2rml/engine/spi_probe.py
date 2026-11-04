@@ -17,15 +17,73 @@ class ProbeError(RuntimeError):
     pass
 
 
+class PortAccessError(ProbeError):
+    """The port is there and the OS will not hand it over. The message is the
+    whole explanation, written for the person at the machine."""
+
+
+# How long a flush may wait for the port to take the bytes. They are normally
+# gone in a millisecond; on a wedged port, waiting longer changes nothing.
+FLUSH_LIMIT_S = 0.25
+
+
+class _BoundedFlushPort:
+    """A pyserial port whose ``flush`` gives up.
+
+    See :func:`gerber2rml.platform.serial_flush_can_hang`: POSIX ``flush`` is
+    ``tcdrain``, with no timeout, and STOP calls it from the GUI thread. The
+    write has already handed the bytes to the kernel, so all a flush adds is
+    waiting - and write_timeout below would not cover it."""
+    def __init__(self, ser):
+        self._ser = ser
+
+    def flush(self):
+        deadline = time.monotonic() + FLUSH_LIMIT_S
+        while time.monotonic() < deadline:
+            try:
+                if not self._ser.out_waiting:
+                    return
+            except Exception:
+                return
+            time.sleep(0.002)
+
+    def __getattr__(self, name):
+        return getattr(self._ser, name)
+
+
+def _access_refused(port, err):
+    """The sentence for an open that failed on permissions or a busy port, or
+    None for any other failure, which the caller reports as it always has."""
+    import errno
+    from gerber2rml import platform as plat
+    if err.errno == errno.EACCES:
+        return (plat.serial_permission_hint(port)
+                or f"{port} refused to open: permission denied.")
+    if err.errno in (errno.EBUSY, errno.EAGAIN, errno.EWOULDBLOCK):
+        return (f"{port} is already open in another program. Close the other "
+                f"copy of SRM-CAM, the Arduino Serial Monitor, or whatever "
+                f"else has it, and connect again.")
+    return None
+
+
 def _open_serial(port, baud, timeout):
     from gerber2rml.engine import simmachine
     if simmachine.is_sim(port):
         return simmachine.serial_for(port)
     import serial  # lazy: pyserial only needed when actually probing
+    from gerber2rml import platform as plat
     # write_timeout: the bar's STOP writes from the GUI thread, and a
     # blocking write on a wedged port would hang the one control that must
     # never hang.
-    return serial.Serial(port, baud, timeout=timeout, write_timeout=0.5)
+    try:
+        ser = serial.Serial(port, baud, timeout=timeout, write_timeout=0.5,
+                            **plat.serial_open_options())
+    except serial.SerialException as e:
+        why = _access_refused(port, e)
+        if why:
+            raise PortAccessError(why) from e
+        raise
+    return _BoundedFlushPort(ser) if plat.serial_flush_can_hang() else ser
 
 
 def _read_line(ser, deadline, should_abort=None):
@@ -46,12 +104,14 @@ def _read_line(ser, deadline, should_abort=None):
 
 def send_abort(ser):
     """Tell the prober to STOP descending and lift to safe Z (the firmware ``!``).
-    Safe to call any time; failures are swallowed (the caller is already aborting)."""
+    Safe to call any time; failures are swallowed (the caller is already aborting).
+    Returns whether the bytes left, for a caller that has to say so honestly."""
     try:
         ser.write(b"!\n")
         ser.flush()
     except Exception:
-        pass
+        return False
+    return True
 
 
 def _interp_drift(retouches, s):
@@ -549,12 +609,14 @@ def set_spindle(ser, rpm, timeout=3.0):
 
 def spindle_off(ser):
     """Stop the spindle, swallowing every failure (used on abort paths, where
-    the caller is already in trouble and must not be derailed)."""
+    the caller is already in trouble and must not be derailed). Returns whether
+    the bytes left."""
     try:
         ser.write(b"S 0\n")
         ser.flush()
     except Exception:
-        pass
+        return False
+    return True
 
 
 def suspend_job(ser, timeout=3.0):
@@ -578,13 +640,15 @@ def stop_moving_now(ser):
 
     The version to call when something has already gone wrong. Waiting for an
     ack while the machine is still travelling is the wrong trade: the byte is
-    picked up by the firmware's mid-move abort scan either way.
+    picked up by the firmware's mid-move abort scan either way. Returns whether
+    the bytes left.
     """
     try:
         ser.write(b"%\n")
         ser.flush()
     except Exception:
-        pass
+        return False
+    return True
 
 
 def cancel_job(ser, timeout=3.0):

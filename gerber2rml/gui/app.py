@@ -619,12 +619,9 @@ class MainWindow(QMainWindow):
         # — never a second code path, so the two modes cannot drift apart.
         self._pro_items = []
 
-        # Whether this OS has the Arduino machine link at all. Windows only,
-        # and the reason is in platform.capabilities(): the CNC PC is Windows,
-        # the link has only ever been run there, and shipping an unverified
-        # motion path to someone standing next to a spinning tool is not a
-        # trade worth making. Read once, here, so every site downstream asks
-        # the same question the same way.
+        # Whether this OS has the Arduino machine link at all; the answer and
+        # its reasons are in platform.capabilities(). Read once, here, so every
+        # site downstream asks the same question the same way.
         self._machine_link = plat.capabilities().machine_link
         # Where the machine controls go on a platform without the link.
         # Hidden, never in a layout, and never shown - but the widgets keep
@@ -961,11 +958,12 @@ class MainWindow(QMainWindow):
             "Serial port of the Arduino. Used by both Connect (live DRO) and "
             "the SPI bed probe."
             + (" Device Manager > Ports lists them."
-               if plat.capabilities().machine_link else ""))
+               if plat.default_serial_port() else ""))
         self.level_port_combo.setEditable(True)
         try:
             import serial.tools.list_ports
-            ports = [p.device for p in serial.tools.list_ports.comports()]
+            ports = [p.device for p in serial.tools.list_ports.comports()
+                     if plat.serial_port_can_be_a_board(p.device)]
             if ports:
                 self.level_port_combo.addItems(ports)
             else:
@@ -1850,7 +1848,8 @@ class MainWindow(QMainWindow):
                                self.level_show_chk, self.level_3d_btn,
                                stretch_first=False))
             _lvl_note = QLabel(
-                "Probing needs the machine link, which runs on Windows only. "
+                "Probing needs the machine link, which does not run on this "
+                "system (it runs on Windows, Linux and macOS). "
                 "Probe the bed on the CNC PC, save the grid as CSV, and load "
                 "it here with Load CSV — levelled export works the same off a "
                 "loaded map as off a probed one.")
@@ -4571,7 +4570,8 @@ class MainWindow(QMainWindow):
         try:
             import serial.tools.list_ports
             ports = [(pt.device, pt.hwid)
-                     for pt in serial.tools.list_ports.comports()]
+                     for pt in serial.tools.list_ports.comports()
+                     if plat.serial_port_can_be_a_board(pt.device)]
         except Exception:
             ports = []
 

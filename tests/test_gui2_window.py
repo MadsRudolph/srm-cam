@@ -895,8 +895,8 @@ def _sim_only_bar(monkeypatch, show_sim):
 
 def test_machine_bar_lists_only_the_simulator_where_the_link_does_not_run(
         qt_app, monkeypatch):
-    """Off Windows the real link stays off, but the simulator has no hardware
-    behind it: it is listed, and a real Arduino on the bus is not."""
+    """On a system with no link the simulator has no hardware behind it: it is
+    listed, and a real Arduino on the bus is not."""
     from gerber2rml.engine import simmachine
     bar = _sim_only_bar(monkeypatch, show_sim=True)
     ports = [bar.port_combo.itemData(i) for i in range(bar.port_combo.count())]
@@ -907,9 +907,9 @@ def test_machine_bar_lists_only_the_simulator_where_the_link_does_not_run(
 
 def test_the_simulator_is_listed_in_either_profile_without_the_link(
         qt_app, monkeypatch):
-    """Off Windows it is the one machine there is, so it is not kept behind
-    Pro and Automatic mode the way it is next to a real mill - and the bar
-    says why the list is that short."""
+    """There it is the one machine there is, so it is not kept behind Pro and
+    Automatic mode the way it is next to a real mill - and the bar says why the
+    list is that short."""
     from gerber2rml.engine import simmachine
     bar = _sim_only_bar(monkeypatch, show_sim=False)
     assert bar.port_combo.itemData(0) == simmachine.SIM_PORT

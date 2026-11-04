@@ -101,6 +101,33 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
 
+  macos:
+    # The only place this project runs on a real Mac, and no Mac has been near
+    # it yet, so it reports without gating: the first red here is information,
+    # not a broken shipment. Move it into the locked matrix once it has been
+    # green for a while.
+    if: github.event_name != 'schedule'
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packaging/requirements-lock-macos.txt
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r packaging/requirements-lock-macos.txt
+          python -m pip install pytest==9.1.1
+          python -m pip install -e . --no-deps
+
+      - name: Run tests
+        run: python -m pytest -q
+
   canary:
     # Early warning only — never gates a merge. fail-fast: false because
     # continue-on-error does not, by itself, stop a failure on one matrix leg

@@ -1,4 +1,8 @@
-# Packaging SRM-CAM into a Windows installer
+# Packaging SRM-CAM
+
+Three builds from one spec (`srm-cam.spec`): a Windows installer, a Linux
+AppImage (`build.sh`) and a macOS disk image ([below](#macos)). The rest of this
+page up to there is the Windows one, which the other two mirror.
 
 Turns the Python app into a downloadable **`SRM-CAM-Setup-<version>.exe`** that a
 user runs to install the program (Start-menu shortcut, optional desktop icon,
@@ -91,11 +95,80 @@ release — the way to confirm the build still works after a dependency bump.
 | File | Role |
 |---|---|
 | `build.ps1` | Orchestrator: venv → PyInstaller → Inno Setup |
+| `build.sh` | The same for Linux: venv → PyInstaller → AppImage |
+| `build_macos.sh` | The same for macOS: venv → PyInstaller → disk image |
 | `srm-cam.spec` | PyInstaller recipe (datas, hidden imports, excludes) |
 | `installer.iss` | Inno Setup recipe (shortcuts, uninstaller, AppId) |
 | `requirements-lock.txt` | **Pinned** deps — what the build actually installs |
+| `requirements-lock-linux.txt`, `requirements-lock-macos.txt` | The same, for those builds |
 | `requirements-build.txt` | Loose ranges the lock is regenerated from |
 | `launcher.py` | Frozen-app entry point → `gerber2rml.gui.app:main` |
+
+## macOS
+
+`packaging/build_macos.sh`, on a Mac, or the `dmg` job in
+`.github/workflows/build.yml` from anywhere. It makes `dist/SRM-CAM.app` with
+PyInstaller, and puts it with a link to `/Applications` on a compressed disk image
+with `hdiutil`: open it, drag the app across. Nothing else to install.
+
+| Output | For |
+|---|---|
+| `SRM-CAM-<version>-macos-arm64.dmg`, `SRM-CAM-macos-arm64.dmg` | Apple Silicon |
+| `SRM-CAM-<version>-macos-x86_64.dmg`, `SRM-CAM-macos-x86_64.dmg` | Intel |
+
+**Why two images and not one.** A universal2 app needs universal2 builds of every
+compiled package, and numpy, shapely and matplotlib publish separate arm64 and
+x86_64 wheels instead (PySide6 alone is universal2). So CI builds once on each.
+The Intel leg runs on `macos-15-intel`, the last Intel image GitHub offers; it goes
+in fall 2027, and the Intel build goes with it.
+
+**Oldest macOS: 14.** numpy's wheel at the pin is tagged `macosx_14_0` on both
+architectures, and `LSMinimumSystemVersion` in the spec says so, so the Finder
+refuses an older Mac with a message rather than the app crashing. PySide6 itself
+would go back to 13. Raising the numpy pin can raise this.
+
+**The lock.** `requirements-lock-macos.txt` is the Linux pins plus `macholib`, the
+one thing PyInstaller needs only on a Mac. It was checked from Linux with `pip
+install --dry-run --only-binary=:all: --platform macosx_15_0_arm64` (and `x86_64`):
+every pin has a wheel. It has not been frozen on a Mac. The `dmg` job prints `pip
+freeze`, which is the list to compare it with.
+
+**`packaging/srm-cam.icns`** comes from `gen_icon.py`, which writes the format
+itself, so regenerating it needs no Mac.
+
+### Gatekeeper, for an unsigned app
+
+The app is ad-hoc signed, which an Apple Silicon Mac requires before it will run
+anything, but it is not signed by a known developer or notarized by Apple. A student
+who downloads it through a browser gets one of two refusals on the first launch:
+
+- *"SRM-CAM" cannot be opened / Apple could not verify it.* Try to open it once, then
+  **System Settings ▸ Privacy & Security**, scroll down, **Open Anyway**. Since macOS
+  15, right-click ▸ Open no longer gets past this.
+- *"SRM-CAM" is damaged and can't be opened.* It is not damaged; this is how
+  quarantine meets an ad-hoc signature on Apple Silicon. In Terminal, once:
+  `xattr -dr com.apple.quarantine /Applications/SRM-CAM.app`
+
+No real Mac has been through this yet, so the exact wording is from Apple's behaviour
+as documented, not from watching it. Correct this section after the first real run.
+
+### What proper signing would need
+
+It would make both refusals go away, and needs a decision and money rather than code:
+
+1. **An Apple Developer Program membership**: US$99 a year, in a person's or an
+   organisation's name. DTU would need its D-U-N-S number for an organisation
+   account, and the certificate outlives a graduating student only if it does.
+2. A **Developer ID Application** certificate, exported as a `.p12`, in CI secrets.
+3. In the build: `codesign --force --deep --options runtime --timestamp --sign
+   "Developer ID Application: …" --entitlements <file>`. The hardened runtime needs
+   an entitlements file for Python and Qt: at least
+   `com.apple.security.cs.allow-unsigned-executable-memory` and
+   `com.apple.security.cs.disable-library-validation`.
+4. **Notarization**: `xcrun notarytool submit SRM-CAM.dmg --wait` with an app-specific
+   password or an API key in CI secrets, then `xcrun stapler staple SRM-CAM.dmg`.
+
+None of this is wired up, because there is nothing to sign with yet.
 
 ## Notes / gotchas
 

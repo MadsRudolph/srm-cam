@@ -39,7 +39,7 @@ from PySide6.QtGui import QAction, QKeySequence, QPainter, QColor
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                                QComboBox, QSizePolicy)
 
-from gerber2rml.gui2 import theme, widgets
+from gerber2rml.gui2 import theme, tier, widgets
 from gerber2rml.gui2.jogpad import JogPad
 from gerber2rml.engine import simmachine, spi_probe, stockfind
 from gerber2rml.engine.estimate import format_duration
@@ -58,9 +58,11 @@ SIM_ENTRY = ("SIM", "Simulated SRM-20 - no machine needed")
 SHOW_SIM = False
 
 # Where the real link does not run (platform.capabilities), the simulator is
-# the one machine there is - always listed, in either profile. It has no
-# hardware behind it, so the reason the link is Windows-only - an unverified
-# motion path next to a spinning tool - does not apply to it.
+# the one machine there is - always listed, in either profile.
+
+# Failed exchanges in a row before the link counts as gone. One can be noise on
+# the wire; the next poll is only POLL_MS away, so the second costs nothing.
+LOST_AFTER = 2
 
 
 def list_ports(sim_only=False):
@@ -79,7 +81,8 @@ def list_ports(sim_only=False):
                     "listed. Run the doctor to install the interface "
                     "dependencies.")
     try:
-        ports = [(p.device, p.hwid) for p in lp.comports()]
+        ports = [(p.device, p.hwid) for p in lp.comports()
+                 if plat.serial_port_can_be_a_board(p.device)]
     except Exception as e:                      # pragma: no cover - driver-specific
         return [], f"the serial ports could not be listed ({e.__class__.__name__})."
     sim = [SIM_ENTRY] if SHOW_SIM else []
@@ -89,7 +92,7 @@ def list_ports(sim_only=False):
             # practise on with the mill switched off.
             return sim, ""
         return [], ("no serial ports were found. Check the USB lead to the "
-                    "Arduino inside the machine.")
+                    "Arduino inside the machine." + plat.no_serial_ports_hint())
     return spi_probe.rank_ports(ports) + sim, ""
 
 
@@ -100,8 +103,10 @@ class _SerialGuard:
     may be writing a command of its own. pyserial on Windows gives each port
     ONE overlapped structure for writes, so two concurrent writes share it -
     the kind of native race that ends in a heap corruption, not an exception.
-    Reads stay unlocked: they have their own structure, and a stop must reach
-    the port while the worker sits in a long read."""
+    On POSIX the same two writes would merely interleave their bytes, which on
+    a line protocol is a different command. Reads stay unlocked: they have
+    their own structure, and a stop must reach the port while the worker sits
+    in a long read."""
     def __init__(self, ser):
         self._ser = ser
         self._lock = threading.Lock()
@@ -122,6 +127,9 @@ class MachineLink(QObject):
     request/response protocol. The exception is :meth:`stop_now`, which writes
     from whichever thread called it — see its docstring.
     """
+    # The ops that hold the worker for a whole job.
+    _OWNS_THE_PORT = ("stream", "run_step")
+
     linked = Signal(dict)
     unlinked = Signal(str)
     position = Signal(float, float, float, bool)
@@ -129,6 +137,8 @@ class MachineLink(QObject):
     op_done = Signal(str, object)
     op_failed = Signal(str, str)
     busy_changed = Signal(bool)
+    link_lost = Signal(str)       # from the worker: the board has gone
+    run_note = Signal(str)        # from the worker: a job's running commentary
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -155,6 +165,7 @@ class MachineLink(QObject):
         # auto-starts on motion, and a jog is motion we caused: the tracker
         # reads this to tell the two apart.
         self.last_jog_t = 0.0
+        self._fails = 0               # failed exchanges in a row (LOST_AFTER)
 
     # -- lifecycle ---------------------------------------------------------
     def is_connected(self):
@@ -241,8 +252,9 @@ class MachineLink(QObject):
         mid-move, and every failure is swallowed, because a stop that raises is
         worse than useless.
 
-        Returns True when the stop reached something: an open port, or a probe
-        run watching the abort event.
+        Returns True when the stop reached something: every byte handed to an
+        open port, or a probe run watching the abort event. False is a stop
+        that did not get through, and the button has to say so.
         """
         self._abort.set()
         self._paused = False
@@ -253,12 +265,13 @@ class MachineLink(QObject):
         ser = self._ser
         if ser is None:
             return self._external
-        spi_probe.stop_moving_now(ser)
-        spi_probe.spindle_off(ser)
-        spi_probe.send_abort(ser)
+        # All three, whatever the one before did: the spindle has to hear it
+        # even if the halt could not be written.
+        sent = [spi_probe.stop_moving_now(ser), spi_probe.spindle_off(ser),
+                spi_probe.send_abort(ser)]
         self.spindle_on = False
         self._spindle_ours = False
-        return True
+        return all(sent)
 
     def _drain(self):
         """Drop every queued command; a pending close is kept."""
@@ -326,15 +339,30 @@ class MachineLink(QObject):
                     result = fn(self._ser)
                     if name in ("zero_z", "touch") and result:
                         self.surface_z = float(result[2])
+                    if name != "poll":        # a poll judges its own answers
+                        self._fails = 0
                     self.op_done.emit(name, result)
             except Exception as e:
                 self.op_failed.emit(name, f"{e.__class__.__name__}: {e}")
                 if port is not None:
                     self._ser = None
+                elif isinstance(e, OSError):  # pyserial's errors are OSErrors
+                    self._link_trouble(str(e))
             finally:
                 self._busy = False
                 self._current = None
                 self.busy_changed.emit(False)
+
+    def _link_trouble(self, why):
+        """An exchange failed. A pulled USB lead does not announce itself: poll
+        failures are not worth a message one by one, so without counting them
+        the bar would say Linked, with a frozen readout and a STOP that reaches
+        nothing, for as long as anyone cared to look."""
+        self._fails += 1
+        if self._fails >= LOST_AFTER and self._ser is not None:
+            self._fails = 0
+            self._abort.set()             # whatever is in progress, ends
+            self.link_lost.emit(why)
 
     def current_op(self):
         """The name of the op the worker is inside, or None."""
@@ -343,13 +371,14 @@ class MachineLink(QObject):
     # -- hold ----------------------------------------------------------------
     # VPanel's Pause. Not a stop: the spindle keeps turning and the job
     # resumes where it was. Two paths, because two things can be running.
-    # A streamed job is inside one long op that owns the port, so it is held
-    # by a flag its loop polls; anything the machine runs from a VPanel file
-    # is held by the firmware's suspendJob, queued like any other command.
+    # A streamed job is inside one long op that owns the port, and so is a step
+    # run from here, so each is held by a flag its loop polls; anything the
+    # machine runs from a VPanel file is held by the firmware's suspendJob,
+    # queued like any other command.
     def pause(self):
         self._paused = True
-        if self.current_op() == "stream":
-            return True                 # the stream loop holds on the flag
+        if self.current_op() in self._OWNS_THE_PORT:
+            return True                 # the op's loop holds on the flag
         if self._ser is None:
             return False
         self.submit("pause", lambda ser: spi_probe.suspend_job(ser))
@@ -357,7 +386,7 @@ class MachineLink(QObject):
 
     def resume(self):
         self._paused = False
-        if self.current_op() == "stream":
+        if self.current_op() in self._OWNS_THE_PORT:
             return True
         if self._ser is None:
             return False
@@ -388,6 +417,10 @@ class MachineLink(QObject):
             self.last_status = st
             self.spindle_on = bool(st.get("spindle"))
             self.status.emit(st)
+        if pos or st:
+            self._fails = 0
+        else:
+            self._link_trouble("the Arduino stopped answering")
         return pos
 
     def jog_z(self, dz_mm):
@@ -669,9 +702,22 @@ class RunReadout(QWidget):
 OFFLINE_PRO = ("Everything except probing works without the link — export the "
                "files and send them from VPanel.")
 OFFLINE_NOVICE = "Connect the machine to run the board."
-# Where only the simulator can be connected (not Windows).
-OFFLINE_SIM_ONLY = ("The machine link runs on Windows only. Here the port "
-                    "list has the simulated mill, to practise a run on.")
+# Where there is no VPanel to send the files from (Linux, macOS).
+OFFLINE_PRO_NO_VPANEL = ("Connect to probe and run jobs from here. There is "
+                         "no VPanel on this system.")
+# Where only the simulator can be connected (no machine link on this system).
+OFFLINE_SIM_ONLY = ("The machine link runs on Windows, Linux and macOS, not "
+                    "here. The port list has the simulated mill, to practise "
+                    "a run on.")
+
+
+def offline_note(full, sim_only=False):
+    """The bar's sentence with no link, for this host and this tier."""
+    if sim_only:
+        return OFFLINE_SIM_ONLY
+    if not full:
+        return OFFLINE_NOVICE
+    return OFFLINE_PRO if plat.capabilities().vpanel else OFFLINE_PRO_NO_VPANEL
 
 
 class MachineBar(QWidget):
@@ -686,6 +732,7 @@ class MachineBar(QWidget):
     """
     jog_mode_changed = Signal(bool)
     message = Signal(str, str)          # (level, text) -> the window's log
+    _NO_LINK = "No machine link: "
 
     def __init__(self, link, parent=None):
         super().__init__(parent)
@@ -699,11 +746,10 @@ class MachineBar(QWidget):
                              theme.GAP_S)
         h.setSpacing(theme.GAP_M)
 
-        # Where the real link does not run (Linux, macOS), the bar is built
-        # all the same, but the only port it will list or open is the
-        # simulator: practising a run needs no hardware, and so none of the
-        # reasons the link is Windows-only. Real serial ports stay out of the
-        # list and are refused if one is asked for anyway.
+        # Where the real link does not run, the bar is built all the same, but
+        # the only port it will list or open is the simulator: practising a
+        # run needs no hardware. Real serial ports stay out of the list and
+        # are refused if one is asked for anyway.
         self.sim_only = not plat.capabilities().machine_link
 
         # -- link state --------------------------------------------------
@@ -728,7 +774,7 @@ class MachineBar(QWidget):
         # Not an empty toolbar full of grey buttons: a sentence saying what the
         # link is for and what still works without it, because a bare SRM-20
         # with VPanel is a fully supported setup and the app should say so.
-        self.offline_note = QLabel(OFFLINE_PRO)
+        self.offline_note = QLabel(offline_note(True))
         self.offline_note.setFont(theme.font("small"))
         self.offline_note.setStyleSheet(f"color: {theme.TEXT_3};")
         self.offline_note.setWordWrap(True)
@@ -853,6 +899,8 @@ class MachineBar(QWidget):
         link.status.connect(self._on_status)
         link.op_done.connect(self._on_done)
         link.op_failed.connect(self._on_failed)
+        link.link_lost.connect(self._on_link_lost)
+        link.run_note.connect(self._on_run_note)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(link.poll)
@@ -893,9 +941,16 @@ class MachineBar(QWidget):
         self.port_combo.setEnabled(bool(ports))
         self.connect_btn.setEnabled(bool(ports))
         if why:
+            # Novice exports nothing, and a system with no VPanel has nowhere
+            # to send it, so only Pro on the CNC PC gets the way round.
+            tail = (" Everything except probing works without it — export the "
+                    "files and send them from VPanel."
+                    if tier.is_full() and plat.capabilities().vpanel else "")
+            self.offline_note.setText(f"{self._NO_LINK}{why}{tail}")
+        elif self.offline_note.text().startswith(self._NO_LINK):
+            # Plugged in and rescanned: the reason is out of date.
             self.offline_note.setText(
-                f"No machine link: {why} Everything except probing works "
-                f"without it — export the files and send them from VPanel.")
+                offline_note(tier.is_full(), self.sim_only))
 
     # -- actions -----------------------------------------------------------
     def _do_toggle_connect(self):
@@ -913,6 +968,12 @@ class MachineBar(QWidget):
             self.link.connect_to(port)
 
     def _jog(self, direction):
+        # Queued behind a job, the step would run when the job ends, long after
+        # anyone remembered pressing it.
+        if getattr(self.link, "current_op", lambda: None)() == "run_step":
+            self.message.emit("warn", "A job is running. Pause or STOP it "
+                                      "before jogging.")
+            return
         if direction < 0 and self._touching:
             self.message.emit(
                 "warn", "The bit is already touching the copper, so jogging "
@@ -982,8 +1043,14 @@ class MachineBar(QWidget):
         if pad is not None:
             pad.keys_btn.setChecked(False)
         if self.link.can_stop_something():
-            self.link.stop_now()
+            reached = self.link.stop_now()
             self.spindle_btn.setChecked(False)
+            if reached is False:
+                self.message.emit(
+                    "fail", "STOP did not reach the machine: the link is not "
+                            "taking anything. Switch the mill off at its own "
+                            "power switch.")
+                return
             self.message.emit("warn", "STOP sent: move dropped, spindle off. "
                                       "Raise the bit with Page Up before the "
                                       "next move.")
@@ -1016,6 +1083,9 @@ class MachineBar(QWidget):
         self._timer.start(POLL_MS)
         self.message.emit("ok", f"Linked on {info['port']} "
                                 f"(firmware v{info['version']}).")
+        if (not plat.capabilities().link_proven
+                and not simmachine.is_sim(info["port"])):
+            self.message.emit("warn", plat.UNPROVEN_LINK_NOTE)
 
     def _on_unlinked(self, reason):
         self._timer.stop()
@@ -1037,6 +1107,22 @@ class MachineBar(QWidget):
         self.chip.setToolTip("")
         if reason and reason != "disconnected":
             self.message.emit("warn", f"Machine link closed: {reason}")
+
+    def _on_link_lost(self, why):
+        """Here on the GUI thread: the bar's signal handlers are bound methods,
+        so one emitted from the worker queues."""
+        self.link.disconnect_from("")
+        self.refresh_ports()              # plugged back in, it may be renamed
+        self.chip.set("Link lost", "fail")
+        self.message.emit(
+            "fail", f"The link to the mill was lost ({why}). STOP cannot reach "
+                    f"the machine any more. If it is still moving, switch it "
+                    f"off at its own power switch. A spindle the link started "
+                    f"stops by itself after 10 seconds, if the Arduino still "
+                    f"has power.")
+
+    def _on_run_note(self, text):
+        self.message.emit("info", text)
 
     def set_held_by_run(self, on):
         """Automatic mode has taken the port. "Offline" and a Connect button
@@ -1102,18 +1188,27 @@ class MachineBar(QWidget):
                 return
             self.message.emit(
                 "ok", f"Origin Z written to the machine at the copper "
-                      f"(machine Z {result[2]:.2f} mm). Check VPanel's G54 Z "
-                      f"once before the first job.")
+                      f"(machine Z {result[2]:.2f} mm)."
+                      + (" Check VPanel's G54 Z once before the first job."
+                         if plat.capabilities().vpanel else ""))
+        elif name == "run_step":
+            level, text = result
+            self.message.emit(level, text)
 
     def _on_failed(self, name, msg):
         if name == "connect":
             self.chip.set("Link failed", "fail")
             self.connect_btn.setEnabled(True)
             self.connect_btn.setText("Connect")
+            # A refusal comes with its own, complete explanation.
+            refused = msg.partition(spi_probe.PortAccessError.__name__ + ": ")[2]
+            others = ("VPanel, a serial monitor" if plat.capabilities().vpanel
+                      else "another SRM-CAM, a serial monitor")
             self.message.emit(
-                "fail", f"Could not open the machine link on "
+                "fail", refused or
+                        f"Could not open the machine link on "
                         f"{self.current_port()}: {msg}. Check the USB lead, "
-                        f"and that no other program (VPanel, a serial "
-                        f"monitor) has the port open.")
+                        f"and that no other program ({others}) has the port "
+                        f"open.")
         elif name != "poll":
             self.message.emit("warn", f"{name}: {msg}")

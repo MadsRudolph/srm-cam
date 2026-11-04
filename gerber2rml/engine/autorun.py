@@ -37,6 +37,7 @@ import math
 import threading
 import time
 
+from gerber2rml import platform as plat
 from gerber2rml.backends.gcode import render_incremental
 from gerber2rml.engine import spi_probe, stockfind
 from gerber2rml.engine.fidfind import find_hole_center, hole_test
@@ -156,6 +157,26 @@ def about(cx, cy, deg):
     a = math.radians(deg)
     c, s = math.cos(a), math.sin(a)
     return Transform(a, 1.0, cx - (c * cx - s * cy), cy - (s * cx + c * cy))
+
+
+def check_frame(runner, x, y):
+    """Move to (x, y) through G54 with Z at the top, and read the head back.
+    Every job's XY rests on G54 being machine (0, 0); if someone moved it, this
+    is where the run finds out - before anything cuts."""
+    prog = ("%%\nO0001\n(frame check)\nG21\nG91\nG28 Z0.\nG90\nG54\n"
+            "G0 X%s Y%s\nM30\n%%\n" % (_fmt(x), _fmt(y)))
+    try:
+        runner.run(prog, "frame check", end_mm=(x, y), timeout_s=120)
+    except RunStopped as e:
+        if str(e) != "the job ran past its time limit":
+            raise
+    pos = spi_probe.query_position(runner.ser)
+    if pos is None or math.hypot(pos[0] - x, pos[1] - y) > 0.1:
+        raise RunFailed(
+            "the head went to %s, not %.2f, %.2f. The mill's G54 X/Y origin is "
+            "not machine 0, 0 - %s." % (
+                "?" if pos is None else "%.2f, %.2f" % pos[:2], x, y,
+                plat.g54_moved_note()))
 
 
 class AutoRun:
@@ -572,27 +593,10 @@ class AutoRun:
 
     # -- jobs ----------------------------------------------------------------
     def _check_frame(self, x, y):
-        """Move to (x, y) through G54 with Z at the top, and read the head
-        back. Every job's XY rests on G54 being machine (0, 0); if someone
-        moved it, this is where the run finds out - before anything cuts."""
-        prog = ("%%\nO0001\n(frame check)\nG21\nG91\nG28 Z0.\nG90\nG54\n"
-                "G0 X%s Y%s\nM30\n%%\n" % (_fmt(x), _fmt(y)))
         self.ev.note("Checking where the mill's G54 origin is…")
-        try:
-            JobRunner(self.ser, self.printer, self.should_abort,
-                      self.should_pause, self.ev.note,
-                      **self.runner_opts).run(prog, "frame check",
-                                              end_mm=(x, y), timeout_s=120)
-        except RunStopped as e:
-            if str(e) != "the job ran past its time limit":
-                raise
-        pos = spi_probe.query_position(self.ser)
-        if pos is None or math.hypot(pos[0] - x, pos[1] - y) > 0.1:
-            raise RunFailed(
-                "the head went to %s, not %.2f, %.2f. The mill's G54 X/Y "
-                "origin is not machine 0, 0 - in VPanel, set G54 X/Y back to "
-                "machine 0, 0 (only Z is ever zeroed)." % (
-                    "?" if pos is None else "%.2f, %.2f" % pos[:2], x, y))
+        check_frame(JobRunner(self.ser, self.printer, self.should_abort,
+                              self.should_pause, self.ev.note,
+                              **self.runner_opts), x, y)
         self._frame_ok = True
 
     def _job(self, key, label, t, hmap, deeper=0.0, boxes=None):
