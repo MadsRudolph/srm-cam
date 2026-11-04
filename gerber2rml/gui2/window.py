@@ -48,6 +48,7 @@ from gerber2rml.naming import clean_name
 from gerber2rml.config import checked_job
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
+from gerber2rml.engine import soldermask
 from gerber2rml.engine import spoilboard
 
 FOIL_MM = 0.035        # copper foil on 1.6 mm FR-4; what a cut must break
@@ -350,6 +351,11 @@ class MainWindow(QMainWindow):
         self._exported = {}
         self._export_dir = None
         self._double = False
+        # The laser file for solder mask: off until asked for, and what the
+        # last write made of it, for the setup page to go on saying.
+        self._solder_mask = False
+        self._mask_shrink = soldermask.DEFAULT_SHRINK
+        self._mask_result = None
         self._registration = "fiducial"     # the lab standard; dowels drill the bed
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
@@ -2734,6 +2740,7 @@ class MainWindow(QMainWindow):
         self._paths_cache = {}
         self._exported = {}
         self._export_dir = None
+        self._mask_result = None
         self.traveller.clear_done()
         self.rework_page._clear()
         # Pads of the last board, measured on the last piece of copper.
@@ -3302,6 +3309,7 @@ class MainWindow(QMainWindow):
 
     def action_mirror(self, on):
         self.state.mirror = on
+        self._mask_result = None
         if self.state.boards:
             try:
                 self.state.reload()
@@ -3323,6 +3331,7 @@ class MainWindow(QMainWindow):
                              f"others off first.")
             return
         self._double = bool(on)
+        self._mask_result = None
         self._paths_cache = {}
         self.inspector.setup.registration_field.setVisible(
             tier.is_full() and self._double)
@@ -3795,22 +3804,119 @@ class MainWindow(QMainWindow):
         # are worth having and not worth failing an export over.
         extras = self._write_export_extras(self._export_dir)
         wear = self._note_tool_wear()
+        mask = (self.write_mask_to(self._export_dir)
+                if self._solder_mask else None)
         self.refresh_plan()
         self.sheet.show_plan(
             self.plan, name=st.name, out_dir=self._export_dir,
             machine=st.machine, leveled=level is not None,
             double_sided=self._double,
-            panel=st.panel_summary() if st.is_panel else None)
+            panel=st.panel_summary() if st.is_panel else None, mask=mask)
         self.centre.setCurrentWidget(self.sheet)
         total = self.plan.total_seconds
-        self.say("warn" if "WORN" in wear else "ok",
+        self.say("warn" if "WORN" in wear or (mask and mask[1]) else "ok",
                  f"{len(written)} files written"
                  + (f" · about {format_duration(total)} of cutting"
                     if total else "")
                  + (" · plus a picture and a summary of the board"
                     if extras else "")
-                 + wear)
+                 + (" · plus the solder mask file" if mask and mask[0] else "")
+                 + wear
+                 + (f" · Solder mask: {mask[1][0]}" if mask and mask[1] else ""))
         return written
+
+    # -------------------------------------------------------- the laser file
+    def action_solder_mask(self, on):
+        self._solder_mask = bool(on)
+        self.inspector.setup.sync_mask()
+        level, text = self.mask_status()
+        if on and level == "warn":
+            self.say("warn", text)
+
+    def action_mask_shrink(self, value):
+        self._mask_shrink = float(value)
+        self._mask_result = None
+        self.inspector.setup.sync_mask()
+
+    def mask_status(self):
+        """``(level, text)`` for the setup page: what the last write made,
+        else what one would, else why it could not."""
+        st = self.state
+        if st.gerber_dir is None:
+            return "info", "Load a Gerber folder first."
+        if self._mask_result is not None:
+            paths, notes = self._mask_result
+            bits = [f"Wrote {p.name}" for p in paths] + notes
+            return ("warn" if notes else "info"), ". ".join(bits)
+        missing = [m.gerber_dir for m in st.boards
+                   if soldermask.mask_layer_path(m.gerber_dir) is None]
+        if missing:
+            return "warn", (
+                f"No B.Mask Gerber in {missing[0].name}. In KiCad's Plot "
+                f"dialog tick B.Mask as well, plot into the same folder, and "
+                f"load it again.")
+        where = "one file per board" if st.is_panel else "one file"
+        how = ("Mirrored once, so do not flip it in the laser software."
+               if self._double or st.mirror else
+               "Not mirrored, because Mirror for bottom-up milling is off.")
+        when = ("Written with the export, and at Start in a run."
+                if tier.is_full() else "Written when you press Start.")
+        return "info", (f"Reads B.Mask and Edge.Cuts from the Gerber folder: "
+                        f"{where}. {how} {when}")
+
+    def write_mask_to(self, out_dir):
+        """Write the laser file or files into ``out_dir``.
+
+        Returns ``(paths, notes)``. Never raises: this runs after the machine
+        files are on disk or on the way to a run, and a board with no B.Mask
+        plotted must not cost either of those. ``notes`` carries what went
+        wrong, and what the operator should know about what went right.
+        """
+        st = self.state
+        paths, notes = [], []
+        # A panel can hold the same board twice; that is one drawing. Each
+        # board on the sheet goes on the laser cut out, so each has its own.
+        seen = set()
+        for m in st.boards:
+            if m.gerber_dir in seen:
+                continue
+            seen.add(m.gerber_dir)
+            name = clean_name(m.name) if st.is_panel else st.name
+            try:
+                done = soldermask.write_mask_files(
+                    m.gerber_dir, out_dir, name, shrink=self._mask_shrink,
+                    mirror=st.mirror, double_sided=self._double)
+            except soldermask.MaskError as e:
+                notes.append(str(e))
+                continue
+            except Exception as e:
+                notes.append(f"{name}'s file could not be written: {e}")
+                continue
+            for path, art in done:
+                paths.append(path)
+                self._exported[path.name] = path
+                notes += art.warnings()
+        self._mask_result = (paths, notes)
+        self.inspector.setup.sync_mask()
+        return paths, notes
+
+    def action_write_mask(self):
+        if self.state.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        d = QFileDialog.getExistingDirectory(
+            self, "Where should the laser file go?",
+            workspace.remembered_dir("out", "exports"))
+        if not d:
+            return
+        workspace.remember_dir("out", d)
+        paths, notes = self.write_mask_to(d)
+        if notes:
+            self.say("warn", notes[0])
+        else:
+            self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
+                           f"· Mirroring is in the name: do not flip it again "
+                           f"in the laser software.")
 
     def _write_export_extras(self, out_dir):
         """A picture of the stage and a board summary next to the machine
@@ -4013,6 +4119,7 @@ class MainWindow(QMainWindow):
             "cutout": asdict(self.state.cutout),
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
+            "solder_mask": self._solder_mask, "mask_shrink": self._mask_shrink,
             "fid_diameter": self._fid_diameter, "hold": self._hold,
             "flex_auto": self._flex_auto, "flex_mm": self._flex_mm,
             "fid_count": self._fid_count,
@@ -4153,6 +4260,12 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 setattr(self, attr, default)
         self.screwed = bool(data.get("screwed", False))
+        self._solder_mask = bool(data.get("solder_mask", False))
+        try:
+            self._mask_shrink = max(0.0, float(
+                data.get("mask_shrink", soldermask.DEFAULT_SHRINK)))
+        except (TypeError, ValueError):
+            self._mask_shrink = soldermask.DEFAULT_SHRINK
         stock = data.get("stock", self.stock)
         try:
             x, y, w, h = (float(v) for v in stock)

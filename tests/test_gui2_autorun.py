@@ -362,6 +362,24 @@ def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
     assert not (page.run_dir / "height_map_bottom.csv").exists()
 
 
+def test_ticked_a_run_leaves_the_laser_file_in_its_folder(win, qt_app):
+    """Novice has no export, so Start is where the solder mask file gets made."""
+    win.inspector.setup.solder_mask.setChecked(True)
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.on_stock_click(110.0, 80.0)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert (page.run_dir / "buck_mask_mirrored.dxf").exists()
+    assert _wait(qt_app, lambda: bool(done), 120), "the run never finished"
+    assert done[0][0], done[0][1]
+
+
 def test_start_at_lists_the_jobs(win, qt_app):
     win.select_step("autorun")
     page = win.autorun_page

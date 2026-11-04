@@ -628,6 +628,37 @@ class SetupPage(Page):
         self.ds_more = self._gather(self.ds_section, 1)
         self.add(self.ds_section)
 
+        # -- solder mask -------------------------------------------------
+        # Both tiers: Novice has no export, but its board gets ink just the
+        # same. The file is for the laser, so nothing the mill runs depends
+        # on this, and it stays off until asked for.
+        from gerber2rml.engine.soldermask import DEFAULT_SHRINK, MAX_SHRINK
+        self.mask_section = widgets.Section("Solder mask")
+        self.solder_mask = QCheckBox("Also make the laser file (DXF)")
+        self.solder_mask.setToolTip(
+            "For a board that gets solder mask after milling. Writes the pad "
+            "openings and the outline from this Gerber folder, mirrored like "
+            "the copper, for the fiber laser. It needs the B.Mask layer in "
+            "the folder.")
+        self.solder_mask.toggled.connect(ctl.action_solder_mask)
+        self.mask_section.add(self.solder_mask)
+        self.mask_shrink = num(DEFAULT_SHRINK, 0.0, MAX_SHRINK, 0.05, 2,
+                               self._on_mask_shrink, suffix=" mm")
+        self.mask_shrink_field = widgets.Field(
+            "Shrink by", self.mask_shrink,
+            help="Each opening, per side, so a small registration error "
+                 "between the mill and the laser leaves ink on the pad's edge "
+                 "and not bare copper beside it.")
+        self.mask_section.add(self.mask_shrink_field)
+        self.mask_note = widgets.hint("")
+        self.mask_section.add(self.mask_note)
+        self.mask_write_btn = widgets.button(
+            "Write the laser file now…", on=ctl.action_write_mask,
+            tip="Writes the file straight away, without exporting the job or "
+                "starting a run. Those write it as well while this is ticked.")
+        self.mask_section.add(self.mask_write_btn)
+        self.add(self.mask_section)
+
         # Novice's way on: the Setup page is the first of its three steps.
         self.next_btn = widgets.button(
             "Next: Run it →", kind="primary",
@@ -698,6 +729,9 @@ class SetupPage(Page):
 
     def _on_machine(self, text):
         self.ctl.action_machine(text)
+
+    def _on_mask_shrink(self, v):
+        self.ctl.action_mask_shrink(v)
 
     def _on_mirror(self, on):
         self.ctl.action_mirror(on)
@@ -893,7 +927,9 @@ class SetupPage(Page):
         # scheme the job was NOT using while its fields stayed hidden.
         for box, val in ((self.mirror, bool(st.mirror)),
                          (self.double, bool(getattr(ctl, "_double", False))),
-                         (self.screwed, bool(getattr(ctl, "screwed", False)))):
+                         (self.screwed, bool(getattr(ctl, "screwed", False))),
+                         (self.solder_mask,
+                          bool(getattr(ctl, "_solder_mask", False)))):
             box.blockSignals(True)
             box.setChecked(val)
             box.blockSignals(False)
@@ -905,6 +941,7 @@ class SetupPage(Page):
         self.machine.blockSignals(True)
         self.machine.setCurrentText(st.machine)
         self.machine.blockSignals(False)
+        self.sync_mask()
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.copper_more.setVisible(full)
@@ -939,6 +976,25 @@ class SetupPage(Page):
             f.setVisible(dowel and not grid)
         self.screw_row.setVisible(self.screwed.isChecked())
         self.screw_file_btn.setVisible(self.screwed.isChecked())
+
+    def sync_mask(self):
+        """The solder mask rows: only there once asked for, and saying what
+        the file will be, or why it cannot be made."""
+        ctl = self.ctl
+        on = bool(getattr(ctl, "_solder_mask", False))
+        self.mask_shrink.blockSignals(True)
+        self.mask_shrink.setValue(getattr(ctl, "_mask_shrink",
+                                          self.mask_shrink.value()))
+        self.mask_shrink.blockSignals(False)
+        for w in (self.mask_shrink_field, self.mask_note, self.mask_write_btn):
+            w.setVisible(on)
+        if not on:
+            return
+        level, text = ctl.mask_status()
+        self.mask_note.setText(text)
+        self.mask_note.setStyleSheet(
+            f"color: {theme.CAUTION};" if level == "warn" else "")
+        self.mask_write_btn.setEnabled(ctl.state.board is not None)
 
 
 # ---------------------------------------------------------------------------
