@@ -79,11 +79,29 @@
   <figcaption>The whole job, with chapters: <a href="https://youtu.be/rVPFPnBHoaY">watch on YouTube</a>. App screens are from the built-in simulator.</figcaption>
 </figure>
 
+<h2 id="export">Export from KiCad</h2>
+<ol class="steps">
+  <li><span class="st">Set the clearance before you route</span><span class="menu-path">Board Setup › Design Rules › Net Classes</span>: at least 0.8&nbsp;mm, the width of the bit. For finer boards, use the <a href="#small">ball mill profile</a>.</li>
+  <li><span class="st">Plot the Gerbers</span><span class="menu-path">File › Fabrication Outputs › Gerbers</span>: <strong>B.Cu</strong> and <strong>Edge.Cuts</strong>, plus <strong>F.Cu</strong> for double-sided, into one folder. If KiCad asks to refill the zones, say yes.</li>
+  <li><span class="st">Generate the drill files</span>Same dialog, <span class="ui">Generate Drill Files…</span>: Excellon, millimetres, into the same folder. Keep both files if KiCad writes two.</li>
+</ol>
+<div class="figs">
+  <figure class="fig">
+    <img src="img/kicad_plot.png" alt="KiCad's Plot dialog with F.Cu, B.Cu and Edge.Cuts ticked and Gerber format" loading="lazy">
+    <figcaption>Plot: Gerber format, the copper layers and Edge.Cuts, one output folder.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/kicad_drill.png" alt="KiCad's Generate Drill Files dialog with Excellon and millimetres" loading="lazy">
+    <figcaption>Drill files: Excellon, millimetres, into the same folder.</figcaption>
+  </figure>
+</div>
+<p>That folder is all SRM-CAM needs. The build-area plugin and more are on <a href="getting-started.html#kicad">Install &amp; KiCad</a>.</p>
+
 <h2 id="steps">The steps</h2>
 <ol class="steps">
   <li><span class="st">Plug in</span>Both USB cables: black (Arduino) and white (mill). Put the 0.8&nbsp;mm flat bit in the collet.</li>
   <li><span class="st">Copper in the corner</span>Slide the sheet under the tongue and into the bracket. Hold it down: see <a href="#hold">holding the copper</a>.</li>
-  <li><span class="st">Your board</span>Open the Gerber folder from KiCad. A board with copper on both layers is set up as <a href="#double">double-sided</a> by itself.</li>
+  <li><span class="st">Your board</span>Open the <a href="#export">Gerber folder from KiCad</a>. A board with copper on both layers is set up as <a href="#double">double-sided</a> by itself.</li>
   <li><span class="st">Check it</span>Red means something won't mill as drawn. See <a href="troubleshooting.html#narrow">spots that will be shorted</a>.</li>
   <li><span class="st">Run it</span>Type the sheet's measured <strong>W</strong> and <strong>H</strong>, and drag the board where you want it. Press <span class="ui">Connect</span>, close the lid, press <span class="ui">Start</span>.</li>
   <li><span class="st">Check, then cut out</span>The board comes forward and the run waits for you. <a href="#check">Check it</a>, close the lid and press <span class="ui">Cut it out</span>.</li>
@@ -207,6 +225,14 @@
   <li id="after"><strong>Each run's files:</strong> <code>Documents\SRM-CAM\runs</code> keeps its jobs, log and height map. <span class="ui">What the run made</span> opens them.</li>
   <li id="pro"><strong>Pro:</strong> <span class="menu-path">Interface › Pro</span> has everything by hand, and Automatic with extras such as a dry run: <span class="menu-path">Machine › Automatic mode</span>.</li>
 </ul>
+
+<h2 id="tidy">Leave it as you found it</h2>
+<p>Vacuum the chips, close the cover, clear the bench, and put your offcuts in the scrap box. The people who use this mill are the only ones who maintain it; DesignBuildLab doesn't. A clean, tidy area is how we keep being able to use it.</p>
+<div class="photos3">
+  <figure><img src="img/machine-left-tidy.jpg" alt="The SRM-20 with its cover closed and the bench around it tidy" loading="lazy"><figcaption>Machine closed, bed vacuumed.</figcaption></figure>
+  <figure><img src="img/bench-cleared.jpg" alt="The cleared bench with its cutting mat" loading="lazy"><figcaption>Bench cleared, tools put back.</figcaption></figure>
+  <figure><img src="img/scrap-box.jpg" alt="The scrap box with copper offcuts" loading="lazy"><figcaption>Offcuts in the scrap box.</figcaption></figure>
+</div>
 
 <p>Stuck? <a href="troubleshooting.html#automatic">Troubleshooting</a>.</p>
 
