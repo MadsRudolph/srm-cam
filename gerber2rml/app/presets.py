@@ -21,11 +21,9 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 BUILTIN_PRESETS = {
-    # The single profile we use: SRM-20 with one 0.8 mm flat endmill for
-    # everything — traces, drilling and cut-out — on a ~1.6 mm board. Drill and
-    # cut-out depth is 1.7 mm = 0.1 mm through into the spoilboard (not more, so
-    # we don't gouge the bed). Set the VPanel spindle to max (~7000 RPM); use a
-    # SOLID CARBIDE bit; run dust extraction + a mask for FR-4.
+    # The everyday profile: SRM-20 with one 0.8 mm flat endmill for everything,
+    # traces, drilling and cut-out, on a ~1.6 mm board. Set the VPanel spindle to
+    # max (~7000 RPM); use a SOLID CARBIDE bit; run dust extraction + a mask for FR-4.
     "SRM-20 0.8 mm flat (no 1/64\" bit): coarse traces + 0.8/1.0 drill + cutout": {
         "trace":  {"bit_diameter": 0.8, "cut_depth": 0.15, "offsets": 1,
                    "stepover": 0.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
@@ -35,20 +33,19 @@ BUILTIN_PRESETS = {
                    "tabs": 4, "tab_width": 1.5, "xy_feed": 4.0,
                    "plunge_feed": 1.0, "travel_z": 2.0},
     },
-    # V-bit (engraving) profile for tight SMD traces. Width-first: the 0.2 mm
-    # target width back-solves to a ~0.18 mm plunge on a 30 deg / 0.1 mm-tip bit,
-    # so it is HYPER-sensitive to surface flatness — always run it over a dense
-    # auto-bed-leveling mesh (see docs/archive/2026-06-30-vbit-engraving-support.md).
-    # Drill/cut-out still use the 0.8 mm flat bit (bit change between ops).
-    "SRM-20 V-bit 30deg / 0.1 mm tip: 0.2 mm SMD traces (LEVEL FIRST)": {
-        "trace":  {"tool_type": "vbit", "tip_diameter": 0.1, "included_angle": 30.0,
-                   "target_width": 0.2, "offsets": 1, "stepover": 0.5,
-                   "xy_feed": 3.0, "plunge_feed": 0.5, "travel_z": 2.0},
+    # The fine profile: one 0.8 mm ball mill for the whole job. At 0.08 mm deep it
+    # cuts a channel about 0.44 mm wide at the copper top, so the traces are told
+    # 0.44 to keep pads their drawn size. Gaps under 0.44 get one middle cut, which
+    # trims those pads. Measured on the mill, 4 Nov 2026: docs/bit-capabilities.md.
+    "SRM-20 0.8 mm ball mill: fine SMD traces + 0.8/1.0 drill + cutout": {
+        "trace":  {"bit_diameter": 0.44, "cut_depth": 0.08, "offsets": 1,
+                   "stepover": 0.5, "xy_feed": 3.0, "plunge_feed": 0.5,
+                   "travel_z": 2.0, "cut_pinches": True},
         "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.9,
-                   "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
+                   "xy_feed": 3.0, "plunge_feed": 0.5, "travel_z": 2.0},
         "cutout": {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.9,
-                   "tabs": 4, "tab_width": 1.5, "xy_feed": 4.0,
-                   "plunge_feed": 1.0, "travel_z": 2.0},
+                   "tabs": 4, "tab_width": 1.5, "xy_feed": 3.0,
+                   "plunge_feed": 0.5, "travel_z": 2.0},
     },
 }
 

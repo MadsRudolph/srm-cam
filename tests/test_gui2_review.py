@@ -157,12 +157,17 @@ def test_the_other_faces_map_is_read_with_its_own_apply_flag(loaded):
     assert lp.height_map(side="bottom") is None
 
 
+# No V-bit profile ships any more, but the tool type is still there to pick.
+VBIT_PROFILE = {"trace": {"tool_type": "vbit", "tip_diameter": 0.1, "included_angle": 30.0,
+                          "target_width": 0.2, "offsets": 1, "stepover": 0.5,
+                          "xy_feed": 3.0, "plunge_feed": 0.5, "travel_z": 2.0}}
+
+
 def test_the_flex_margin_reaches_a_vbit(loaded):
     """A V-bit's depth is back-solved from its width, so deepening cut_depth
     alone changed nothing while the page said the cut was deepened."""
     from gerber2rml.app import presets as pm
-    table = pm.load_presets()
-    pm.apply_preset(loaded.state, table[next(k for k in table if "V-bit" in k)])
+    pm.apply_preset(loaded.state, VBIT_PROFILE)
     loaded.action_hold("points")
     loaded.level_page._load_table({"rows": _domed(), "apply": True,
                                    "show": False})
@@ -176,9 +181,8 @@ def test_the_flex_margin_reaches_a_vbit(loaded):
 def test_the_flat_profile_undoes_the_vbit_profile(loaded):
     from gerber2rml.app import presets as pm
     table = pm.load_presets()
-    vbit = next(k for k in table if "V-bit" in k)
     flat = next(k for k in table if "flat" in k)
-    pm.apply_preset(loaded.state, table[vbit])
+    pm.apply_preset(loaded.state, VBIT_PROFILE)
     assert loaded.state.trace.tool_type == "vbit"
     pm.apply_preset(loaded.state, table[flat])
     assert loaded.state.trace.tool_type == "flat"
