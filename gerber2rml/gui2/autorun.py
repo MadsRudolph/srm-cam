@@ -883,6 +883,15 @@ class AutoRunPage(inspector.Page):
         ev.fit_sig.connect(self._on_fit)
         ev.job_sig.connect(self._on_job)
         self._new_run_dir()
+        # In the run's folder with its programs: Novice has no export to carry
+        # it, and a file that did not get made must not stop the run. The
+        # setup page keeps what it has to say.
+        if ctl._solder_mask and self.run_dir is not None:
+            paths, notes = ctl.write_mask_to(self.run_dir)
+            for p in paths:
+                self._log(f"Solder mask file: {p.name}")
+            for n in notes:
+                self._log(f"Solder mask: {n}")
         src = WindowSource(ctl, self._gui)
         src.keep_placement = datum is not None
         src.centre = self.centre_chk.isChecked()

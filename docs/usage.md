@@ -490,6 +490,57 @@ right one. The third catches it, but only if each pad is found by **which pin it
 is**, not by where it sits in the picture. Engine: `engine/boardfit.py`, reusing
 the rigid fit from `engine/fiducial.py`.
 
+## Solder mask: the laser file
+
+For a board that gets solder mask after milling. The operator's steps are on the
+guide's [Solder mask](../website/solder-mask.html) page; this is what the option does.
+
+**Solder mask › Also make the laser file (DXF)**, on the first page of the job in
+both Novice and Pro, off by default. While it is ticked the file is written:
+
+- by **Export the job** (Pro), beside the `.nc` files, and listed on the run sheet;
+- by **Start** on the Run it page, into the run's folder (`SRM-CAM/runs/...`);
+- by **Write the laser file now…**, any time, into a folder you pick.
+
+A problem with the file never costs the machine files or stops a run. It is said
+on the setup page, on the run sheet and in the run's log.
+
+| | |
+|---|---|
+| Read from | The loaded Gerber folder: `*-B_Mask.*` (or `.gbs`) and `*-Edge_Cuts.*` (or `.gm1`), not the `.kicad_pcb` |
+| Written | `<name>_mask_mirrored.dxf`, or `<name>_mask_not_mirrored.dxf` when **Mirror for bottom-up milling** is off |
+| Contents | Closed `LWPOLYLINE`s on layer `MASK_OPENINGS`, and the outline on layer `OUTLINE`, in mm at 1:1. The outline's lower-left corner is at 0, 0 |
+| Shrink | **Shrink by**, 0.10 mm per side by default, saved with the setup |
+
+**The board side** comes from the job, as it does for the copper: the loader always
+mills B.Cu, so a single-sided job reads B.Mask. No B.Mask in the folder is a message
+naming the fix, and an F.Mask found instead is named but not used. A laser board
+loaded through the F.Cu-renamed-to-B.Cu route above needs its F.Mask renamed the same
+way, with Mirror off, which gives an unmirrored file.
+
+A double-sided job gets one file per face, `<name>_mask_bottom_mirrored.dxf` and
+`<name>_mask_top_not_mirrored.dxf`. The workflow has not been tried on two faces. A
+panel gets one file per distinct board.
+
+**Mirroring.** KiCad plots every layer from the top, and the milled face lies copper
+side up on the laser as it did on the mill, so the mask is mirrored once with the
+same x → −x as `load_board`, the outline with it. Do not flip it again in the xTool
+software.
+
+**Pad shapes** are the apertures' real shapes, including rotated pads, so the
+loader's bounding-box approximation for obrounds and macros is not used here.
+Openings are shrunk after the layer is unioned, so an opening drawn in several pieces
+shrinks only at its real edge. An opening that vanishes in the shrink, or comes out
+under 0.20 mm wide, is reported with its position. Engine: `engine/soldermask.py`,
+with no new dependency: the DXF is written by hand.
+
+Checked against `kicad-cli pcb export dxf --mode-single -l "B.Mask,Edge.Cuts" --uc
+--ou mm --drill-shape-opt 0` at a pad clearance of -0.1, on a real board and on one
+pad of each shape (`tests/fixtures/mask_shapes`): the same openings, centres equal,
+worst difference between outlines of an opening 0.03 mm, which is KiCad's coarser
+arcs. KiCad's plot draws the outline as the two sides of its line width; this file
+has one line, on the board's edge.
+
 ## Double-sided boards
 
 Top/bottom passes align off machine-located holes, never the board edge. Tick
