@@ -142,8 +142,8 @@
 <h2>Tool profiles</h2>
 <p>A profile is the whole set of numbers for all three operations; <span class="ui">Apply profile</span> on <span class="menu-path">Set up the job › The tool</span> replaces them all. Built in:</p>
 <ul>
-  <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (1.7&nbsp;mm through, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
-  <li><strong>SRM-20 V-bit 30°, 0.1&nbsp;mm tip</strong>: 0.2&nbsp;mm traces for fine SMD work, with the 0.8&nbsp;mm bit for holes and outline. Level the bed first: a V-bit's width depends on its depth.</li>
+  <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (1.9&nbsp;mm deep, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
+  <li><strong>SRM-20 0.8&nbsp;mm ball mill</strong>: fine SMD work with one 0.8&nbsp;mm ball mill for the whole job. Traces are told 0.44&nbsp;mm and cut 0.08&nbsp;mm deep, with <span class="ui">Cut gaps too narrow for the bit (trims pads)</span> on. Holes and outline go 1.9&nbsp;mm deep, with four 1.5&nbsp;mm tabs. Keep levelling on: the cut's width depends on its depth.</li>
 </ul>
 <p><span class="ui">Save as…</span> (Pro) keeps your own in <code>~/.gerber2rml/presets.json</code>. A lab can share profiles in a <code>presets.json</code> beside the installed program (in a source checkout, <code>examples/presets.json</code>).</p>
 

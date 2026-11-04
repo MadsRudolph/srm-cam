@@ -171,7 +171,33 @@
 </table></div>
 
 <h2 id="small">How small can it go?</h2>
-<p>A cut can't be narrower than the bit, so the 0.8&nbsp;mm bit can't isolate IC pins. <code>examples/torture_60x30</code> tests gaps, trace widths and real footprints, and <code>nets.py</code> in that folder says what each bit should manage. Smaller bits haven't been tried yet.</p>
+<p>It depends on the bit. Pick the profile on <span class="menu-path">Set up the job › The tool</span>.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Use</th><th>When</th><th>Why</th></tr>
+<tr><td><strong>SRM-20 0.8&nbsp;mm flat</strong></td><td>Every gap is 0.8&nbsp;mm or more: through-hole parts and larger SMD.</td><td>The everyday profile, and the faster one.</td></tr>
+<tr><td><strong>SRM-20 0.8&nbsp;mm ball mill</strong></td><td>Gaps under 0.8&nbsp;mm: IC pins and small SMD.</td><td>The rounded tip cuts narrower when it only goes in 0.08&nbsp;mm.</td></tr>
+</table></div>
+<p>Fit the same bit the profile names for the whole job. Neither profile stops to change bits.</p>
+
+<h3 id="ballmill">What the ball mill can cut</h3>
+<p>Its channel is about 0.44&nbsp;mm wide at the top of the copper. Tested on <code>examples/torture_60x30</code>, these all metered good. They're the finest on that board, so the real limit may be lower:</p>
+<div class="tbl-wrap"><table>
+<tr><th>Finest gap</th><th>Finest trace</th></tr>
+<tr><td>0.20&nbsp;mm</td><td>0.15&nbsp;mm</td></tr>
+</table></div>
+<p>Copper isn't the limit on small parts: pads are. A gap under 0.44&nbsp;mm gets one cut down the middle, which trims both pads. A pad with a cut on each side ends up no wider than the pitch minus 0.44&nbsp;mm.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Part</th><th>Pad left, across the pins</th><th>Use it?</th></tr>
+<tr><td>SOIC 1.27, SOT-23, 0603</td><td>Full size</td><td>Yes</td></tr>
+<tr><td>0402</td><td>Full size, or trimmed by about 0.02&nbsp;mm</td><td>Yes</td></tr>
+<tr><td>TSSOP 0.65</td><td>About 0.21&nbsp;mm</td><td>Marginal</td></tr>
+<tr><td>0.5&nbsp;mm pitch</td><td>About 0.06&nbsp;mm</td><td>No</td></tr>
+</table></div>
+<ul>
+  <li><strong>Keep levelling on:</strong> a ball's cut gets wider the deeper it goes.</li>
+  <li><strong>Holes and outline:</strong> the same bit does them, 1.9&nbsp;mm deep. The drill starts straight after the traces without stopping, so stay at the machine.</li>
+  <li><strong>Not proven yet:</strong> how long a bit lasts, and pad widths measured in numbers at this setting. The flat bit hasn't been through the same test.</li>
+</ul>
 
 <h2 id="more">Good to know</h2>
 <ul>
