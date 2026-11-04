@@ -3,20 +3,35 @@ from gerber2rml.app.presets import load_presets, apply_preset, save_user_preset,
 from gerber2rml.app.state import ProjectState
 
 
-def test_builtin_presets_are_the_flat_and_vbit_profiles():
+def test_builtin_presets_are_the_flat_and_ball_mill_profiles():
     # We ship two profiles: the 0.8 mm flat endmill (default, first) and the
-    # V-bit engraver for tight SMD traces.
+    # 0.8 mm ball mill for fine SMD work.
     assert len(BUILTIN_PRESETS) == 2
     names = list(BUILTIN_PRESETS)
     assert all(n.startswith("SRM-20") for n in names)
     assert names[0].startswith("SRM-20 0.8 mm flat")     # default stays first
+    assert names[1].startswith("SRM-20 0.8 mm ball mill")
 
 
-def test_vbit_builtin_preset_is_width_first():
-    vbit = [p for n, p in BUILTIN_PRESETS.items() if "V-bit" in n][0]
-    assert vbit["trace"]["tool_type"] == "vbit"
-    assert vbit["trace"]["target_width"] == 0.2
-    assert vbit["trace"]["included_angle"] == 30.0
+def test_ball_mill_preset_holds_the_measured_settings():
+    ball = BUILTIN_PRESETS[list(BUILTIN_PRESETS)[1]]
+    assert ball["trace"]["bit_diameter"] == 0.44    # measured channel, not the shank
+    assert ball["trace"]["cut_depth"] == 0.08
+    assert ball["trace"]["cut_pinches"] is True
+    assert ball["drill"]["bit_diameter"] == 0.8     # real holes and outline
+    assert ball["drill"]["total_depth"] == 1.9
+    assert ball["cutout"]["total_depth"] == 1.9
+    assert ball["cutout"]["tabs"] == 4
+
+
+def test_ball_mill_preset_applies_every_field():
+    st = ProjectState()
+    apply_preset(st, BUILTIN_PRESETS[list(BUILTIN_PRESETS)[1]])
+    assert st.trace.tool_type == "flat"
+    assert st.trace.effective_diameter() == 0.44
+    assert st.trace.cut_pinches is True
+    assert st.drill.bit_diameter == 0.8
+    assert st.cutout.bit_diameter == 0.8
 
 
 def test_srm20_preset_depths_and_feeds():
