@@ -85,6 +85,10 @@
         <div class="nav-title">More</div>
         <a class="nav-link" href="feedback.html">Feedback</a>
       </div>
+      <div class="nav-group">
+        <div class="nav-title">After milling</div>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+      </div>
     </nav>
   </div>
 </aside>
@@ -119,6 +123,7 @@
 <tr><td><code>&lt;name&gt;_traces.nc</code></td><td>Isolation, mirrored for the bottom copper; warped to the height map when one is applied.</td></tr>
 <tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>The outline with four tabs. Always last.</td></tr>
 <tr><td><code>&lt;name&gt;_runplan.txt</code></td><td>The run sheet as text: order, bit per step, depths, times, where each board of a panel sits.</td></tr>
+<tr><td><code>&lt;name&gt;_mask_mirrored.dxf</code></td><td>For the laser, not the mill, and only when <span class="menu-path">Solder mask › Also make the laser file (DXF)</span> is ticked: the pad openings and the outline. See <a href="solder-mask.html">Solder mask</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_align.nc</code>, <code>_bottom_drill.nc</code>, <code>_bottom_traces.nc</code>, <code>_top_traces.nc</code></td><td>Double-sided, in that order, with the cut-out after the top traces. See <a href="double-sided.html">Double-sided boards</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_top_drill.nc</code></td><td>The blind holes finished from the top, on the measured flip.</td></tr>
 <tr><td><code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code></td><td>A rework program: the pass clipped to your boxes, each at its own depth. <a href="photo-and-rework.html">Rework</a>.</td></tr>
