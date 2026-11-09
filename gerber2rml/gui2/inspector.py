@@ -659,6 +659,28 @@ class SetupPage(Page):
         self.mask_section.add(self.mask_write_btn)
         self.add(self.mask_section)
 
+        # -- silkscreen --------------------------------------------------
+        # The solder mask's sibling: the same Gerber folder, a file for the
+        # laser, nothing the mill depends on. No shrink: a line of silk a
+        # little off costs nothing electrical.
+        self.silk_section = widgets.Section("Silkscreen")
+        self.silkscreen = QCheckBox("Also make the laser file (DXF)")
+        self.silkscreen.setToolTip(
+            "Writes the F.Silkscreen artwork and the outline from this Gerber "
+            "folder for the fiber laser, as KiCad drew it: the component side "
+            "lies face up on the laser, so it is not mirrored. It needs the "
+            "F.Silkscreen layer in the folder.")
+        self.silkscreen.toggled.connect(ctl.action_silkscreen)
+        self.silk_section.add(self.silkscreen)
+        self.silk_note = widgets.hint("")
+        self.silk_section.add(self.silk_note)
+        self.silk_write_btn = widgets.button(
+            "Write the silkscreen file now…", on=ctl.action_write_silk,
+            tip="Writes the file straight away, without exporting the job or "
+                "starting a run. Those write it as well while this is ticked.")
+        self.silk_section.add(self.silk_write_btn)
+        self.add(self.silk_section)
+
         # Novice's way on: the Setup page is the first of its three steps.
         self.next_btn = widgets.button(
             "Next: Run it →", kind="primary",
@@ -929,7 +951,9 @@ class SetupPage(Page):
                          (self.double, bool(getattr(ctl, "_double", False))),
                          (self.screwed, bool(getattr(ctl, "screwed", False))),
                          (self.solder_mask,
-                          bool(getattr(ctl, "_solder_mask", False)))):
+                          bool(getattr(ctl, "_solder_mask", False))),
+                         (self.silkscreen,
+                          bool(getattr(ctl, "_silkscreen", False)))):
             box.blockSignals(True)
             box.setChecked(val)
             box.blockSignals(False)
@@ -942,6 +966,7 @@ class SetupPage(Page):
         self.machine.setCurrentText(st.machine)
         self.machine.blockSignals(False)
         self.sync_mask()
+        self.sync_silk()
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.copper_more.setVisible(full)
@@ -995,6 +1020,20 @@ class SetupPage(Page):
         self.mask_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
         self.mask_write_btn.setEnabled(ctl.state.board is not None)
+
+    def sync_silk(self):
+        """The silkscreen rows, the same way as the solder mask's."""
+        ctl = self.ctl
+        on = bool(getattr(ctl, "_silkscreen", False))
+        for w in (self.silk_note, self.silk_write_btn):
+            w.setVisible(on)
+        if not on:
+            return
+        level, text = ctl.silk_status()
+        self.silk_note.setText(text)
+        self.silk_note.setStyleSheet(
+            f"color: {theme.CAUTION};" if level == "warn" else "")
+        self.silk_write_btn.setEnabled(ctl.state.board is not None)
 
 
 # ---------------------------------------------------------------------------

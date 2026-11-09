@@ -57,9 +57,11 @@ _SLIVER_MM2 = 1e-4        # what a shrink can leave behind that is not an openin
 
 LAYER_OPENINGS = "MASK_OPENINGS"
 LAYER_OUTLINE = "OUTLINE"
-# AutoCAD colour numbers: two that read apart from each other on a dark or light
+LAYER_SILKSCREEN = "SILKSCREEN"     # engine/silkscreen.py writes through here too
+# AutoCAD colour numbers: ones that read apart from each other on a dark or light
 # screen, so a reader that honours colours separates the outline by itself.
-_COLOUR = {LAYER_OPENINGS: 5, LAYER_OUTLINE: 1}    # blue, red
+_COLOUR = {LAYER_OPENINGS: 5, LAYER_OUTLINE: 1,     # blue, red
+           LAYER_SILKSCREEN: 3}                     # green
 
 _MASK_PATTERNS = {"bottom": ("*-B_Mask.*", "*.gbs"),
                   "top": ("*-F_Mask.*", "*.gts")}
@@ -304,14 +306,21 @@ def _table(name, handle, records=(), extra=()):
 
 def dxf_text(art):
     """The artwork as the text of a DXF file: mm, 1:1, two named layers."""
+    return shapes_dxf_text(art.openings, art.outline, LAYER_OPENINGS)
+
+
+def shapes_dxf_text(shapes, outline, fill_layer):
+    """Filled ``shapes`` on ``fill_layer`` and ``outline`` on its own layer, as
+    the text of a DXF file: mm, 1:1. ``fill_layer`` is one of the names in
+    :data:`_COLOUR`."""
     # Handles 1-2F are the fixed container; entities count up from there.
     h = 0x30
     entities = []
-    for poly in art.openings:
+    for poly in shapes:
         for ring in _rings(poly):
-            entities += _lwpolyline(ring, LAYER_OPENINGS, h)
+            entities += _lwpolyline(ring, fill_layer, h)
             h += 1
-    for ring in _rings(art.outline):
+    for ring in _rings(outline):
         entities += _lwpolyline(ring, LAYER_OUTLINE, h)
         h += 1
 
@@ -330,7 +339,7 @@ def dxf_text(art):
     tables += _table("LTYPE", 5, [ltype("ByBlock", 6), ltype("ByLayer", 7),
                                   ltype("Continuous", 8)])
     tables += _table("LAYER", 2, [_layer_record("0", 0x10),
-                                  _layer_record(LAYER_OPENINGS, 0x11),
+                                  _layer_record(fill_layer, 0x11),
                                   _layer_record(LAYER_OUTLINE, 0x12)])
     tables += _table("STYLE", 0x13, [[
         "0", "STYLE", "5", "14", "330", "13",

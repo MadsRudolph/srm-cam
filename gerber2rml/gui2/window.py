@@ -48,6 +48,7 @@ from gerber2rml.naming import clean_name
 from gerber2rml.config import checked_job
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
+from gerber2rml.engine import silkscreen
 from gerber2rml.engine import soldermask
 from gerber2rml.engine import spoilboard
 
@@ -356,6 +357,9 @@ class MainWindow(QMainWindow):
         self._solder_mask = False
         self._mask_shrink = soldermask.DEFAULT_SHRINK
         self._mask_result = None
+        # Its sibling for the silkscreen: the same, without a shrink.
+        self._silkscreen = False
+        self._silk_result = None
         self._registration = "fiducial"     # the lab standard; dowels drill the bed
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
@@ -2741,6 +2745,7 @@ class MainWindow(QMainWindow):
         self._exported = {}
         self._export_dir = None
         self._mask_result = None
+        self._silk_result = None
         self.traveller.clear_done()
         self.rework_page._clear()
         # Pads of the last board, measured on the last piece of copper.
@@ -3332,6 +3337,7 @@ class MainWindow(QMainWindow):
             return
         self._double = bool(on)
         self._mask_result = None
+        self._silk_result = None
         self._paths_cache = {}
         self.inspector.setup.registration_field.setVisible(
             tier.is_full() and self._double)
@@ -3806,23 +3812,29 @@ class MainWindow(QMainWindow):
         wear = self._note_tool_wear()
         mask = (self.write_mask_to(self._export_dir)
                 if self._solder_mask else None)
+        silk = (self.write_silk_to(self._export_dir)
+                if self._silkscreen else None)
         self.refresh_plan()
         self.sheet.show_plan(
             self.plan, name=st.name, out_dir=self._export_dir,
             machine=st.machine, leveled=level is not None,
             double_sided=self._double,
-            panel=st.panel_summary() if st.is_panel else None, mask=mask)
+            panel=st.panel_summary() if st.is_panel else None, mask=mask,
+            silk=silk)
         self.centre.setCurrentWidget(self.sheet)
         total = self.plan.total_seconds
-        self.say("warn" if "WORN" in wear or (mask and mask[1]) else "ok",
+        self.say("warn" if "WORN" in wear or (mask and mask[1])
+                 or (silk and silk[1]) else "ok",
                  f"{len(written)} files written"
                  + (f" · about {format_duration(total)} of cutting"
                     if total else "")
                  + (" · plus a picture and a summary of the board"
                     if extras else "")
                  + (" · plus the solder mask file" if mask and mask[0] else "")
+                 + (" · plus the silkscreen file" if silk and silk[0] else "")
                  + wear
-                 + (f" · Solder mask: {mask[1][0]}" if mask and mask[1] else ""))
+                 + (f" · Solder mask: {mask[1][0]}" if mask and mask[1] else "")
+                 + (f" · Silkscreen: {silk[1][0]}" if silk and silk[1] else ""))
         return written
 
     # -------------------------------------------------------- the laser file
@@ -3917,6 +3929,88 @@ class MainWindow(QMainWindow):
             self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
                            f"· Mirroring is in the name: do not flip it again "
                            f"in the laser software.")
+
+    # ---------------------------------------------------- the silkscreen file
+    def action_silkscreen(self, on):
+        self._silkscreen = bool(on)
+        self.inspector.setup.sync_silk()
+        level, text = self.silk_status()
+        if on and level == "warn":
+            self.say("warn", text)
+
+    def silk_status(self):
+        """``(level, text)`` for the setup page: what the last write made,
+        else what one would, else why it could not."""
+        st = self.state
+        if st.gerber_dir is None:
+            return "info", "Load a Gerber folder first."
+        if self._silk_result is not None:
+            paths, notes = self._silk_result
+            bits = [f"Wrote {p.name}" for p in paths] + notes
+            return ("warn" if notes else "info"), ". ".join(bits)
+        missing = [m.gerber_dir for m in st.boards
+                   if silkscreen.silk_layer_path(m.gerber_dir) is None]
+        if missing:
+            return "warn", (
+                f"No F.Silkscreen Gerber in {missing[0].name}. In KiCad's Plot "
+                f"dialog tick F.Silkscreen as well, plot into the same folder, "
+                f"and load it again.")
+        where = "one file per board" if st.is_panel else "one file"
+        bottom = (" A double-sided job also gets B.Silkscreen, mirrored, when "
+                  "the folder has any." if self._double else "")
+        when = ("Written with the export, and at Start in a run."
+                if tier.is_full() else "Written when you press Start.")
+        return "info", (f"Reads F.Silkscreen and Edge.Cuts from the Gerber "
+                        f"folder: {where}. Not mirrored: the component side "
+                        f"lies face up on the laser.{bottom} {when}")
+
+    def write_silk_to(self, out_dir):
+        """Write the silkscreen file or files into ``out_dir``.
+
+        Returns ``(paths, notes)`` and never raises, for the same reason as
+        :meth:`write_mask_to`: the machine files come first.
+        """
+        st = self.state
+        paths, notes = [], []
+        seen = set()
+        for m in st.boards:
+            if m.gerber_dir in seen:
+                continue
+            seen.add(m.gerber_dir)
+            name = clean_name(m.name) if st.is_panel else st.name
+            try:
+                done = silkscreen.write_silk_files(
+                    m.gerber_dir, out_dir, name, double_sided=self._double)
+            except silkscreen.SilkError as e:
+                notes.append(str(e))
+                continue
+            except Exception as e:
+                notes.append(f"{name}'s silkscreen file could not be written: {e}")
+                continue
+            for path, art in done:
+                paths.append(path)
+                self._exported[path.name] = path
+                notes += art.warnings()
+        self._silk_result = (paths, notes)
+        self.inspector.setup.sync_silk()
+        return paths, notes
+
+    def action_write_silk(self):
+        if self.state.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        d = QFileDialog.getExistingDirectory(
+            self, "Where should the silkscreen file go?",
+            workspace.remembered_dir("out", "exports"))
+        if not d:
+            return
+        workspace.remember_dir("out", d)
+        paths, notes = self.write_silk_to(d)
+        if notes:
+            self.say("warn", notes[0])
+        else:
+            self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
+                           f"· The face and the mirroring are in the name.")
 
     def _write_export_extras(self, out_dir):
         """A picture of the stage and a board summary next to the machine
@@ -4120,6 +4214,7 @@ class MainWindow(QMainWindow):
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
             "solder_mask": self._solder_mask, "mask_shrink": self._mask_shrink,
+            "silkscreen": self._silkscreen,
             "fid_diameter": self._fid_diameter, "hold": self._hold,
             "flex_auto": self._flex_auto, "flex_mm": self._flex_mm,
             "fid_count": self._fid_count,
@@ -4261,6 +4356,7 @@ class MainWindow(QMainWindow):
                 setattr(self, attr, default)
         self.screwed = bool(data.get("screwed", False))
         self._solder_mask = bool(data.get("solder_mask", False))
+        self._silkscreen = bool(data.get("silkscreen", False))
         try:
             self._mask_shrink = max(0.0, float(
                 data.get("mask_shrink", soldermask.DEFAULT_SHRINK)))

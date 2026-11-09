@@ -541,6 +541,38 @@ worst difference between outlines of an opening 0.03 mm, which is KiCad's coarse
 arcs. KiCad's plot draws the outline as the two sides of its line width; this file
 has one line, on the board's edge.
 
+## Silkscreen: the laser file
+
+For a board whose component side gets its silkscreen marked by the fiber laser
+after milling. It works like the solder mask file above and shares its reader and
+DXF writer.
+
+**Silkscreen › Also make the laser file (DXF)**, on the first page of the job in
+both Novice and Pro, off by default. While it is ticked the file is written by
+**Export the job**, by **Start** into the run's folder, and by **Write the
+silkscreen file now…**. A problem with it never costs the machine files or stops a
+run.
+
+| | |
+|---|---|
+| Read from | The loaded Gerber folder: `*-F_Silkscreen.*` (or `.gto`) and `*-Edge_Cuts.*` (or `.gm1`) |
+| Written | `<name>_silk_top_not_mirrored.dxf` |
+| Contents | Closed `LWPOLYLINE`s on layer `SILKSCREEN`, and the outline on layer `OUTLINE`, in mm at 1:1. The outline's lower-left corner is at 0, 0 |
+
+**Not mirrored**, whatever **Mirror for bottom-up milling** says. The mill cuts B.Cu;
+the silkscreen goes on the other face, which lies face up on the laser exactly as
+KiCad plotted it. This is the same file as the kicad-cli flow's `_silk_top.dxf`.
+
+A double-sided job also gets `<name>_silk_bottom_mirrored.dxf` when the folder has a
+B.Silkscreen with something on it. An empty or missing B.Silkscreen is normal and
+writes nothing. A panel gets one file per distinct board.
+
+**Shapes.** Silkscreen is drawn with round pens, so each stroke is buffered to its
+real width and the strokes are unioned: overlapping lines become one shape, and the
+inside of a letter like O stays a loop of its own, which the laser's fill leaves
+unmarked. Nothing is shrunk. Artwork past the board edge is cut off at the outline
+and the clipped area is reported. Engine: `engine/silkscreen.py`.
+
 ## Double-sided boards
 
 Top/bottom passes align off machine-located holes, never the board edge. Tick
