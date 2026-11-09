@@ -892,6 +892,12 @@ class AutoRunPage(inspector.Page):
                 self._log(f"Solder mask file: {p.name}")
             for n in notes:
                 self._log(f"Solder mask: {n}")
+        if ctl._silkscreen and self.run_dir is not None:
+            paths, notes = ctl.write_silk_to(self.run_dir)
+            for p in paths:
+                self._log(f"Silkscreen file: {p.name}")
+            for n in notes:
+                self._log(f"Silkscreen: {n}")
         src = WindowSource(ctl, self._gui)
         src.keep_placement = datum is not None
         src.centre = self.centre_chk.isChecked()

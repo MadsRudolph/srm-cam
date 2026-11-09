@@ -93,12 +93,12 @@ class RunSheet(QWidget):
         return self._text
 
     def show_plan(self, plan, *, name, out_dir, machine, leveled=False,
-                  double_sided=False, panel=None, mask=None):
+                  double_sided=False, panel=None, mask=None, silk=None):
         """``panel``: ``[(name, x, y, rotate)]`` for a sheet carrying several
         boards - each one's front-left corner in machine mm, printed so the
         operator can check the boards sit where the files expect them.
         ``mask``: ``(paths, notes)`` from writing the solder mask file, when
-        that was asked for."""
+        that was asked for. ``silk``: the same, for the silkscreen file."""
         page = QWidget()
         page.setObjectName("sheetPage")
         page.setStyleSheet(f"QWidget#sheetPage {{ background: {theme.INK}; }}")
@@ -240,7 +240,11 @@ class RunSheet(QWidget):
             v.addWidget(foot)
 
         if mask:
-            self._mask_block(v, mask, lines)
+            self._laser_block(v, mask, lines,
+                              "For the laser, after milling: solder mask")
+        if silk:
+            self._laser_block(v, silk, lines,
+                              "For the laser, after milling: silkscreen")
 
         wrap.addWidget(doc)
         wrap.addStretch(1)
@@ -250,19 +254,19 @@ class RunSheet(QWidget):
         self.head.setText(f"{name} — exported")
 
     # -- pieces ------------------------------------------------------------
-    def _mask_block(self, v, mask, lines):
-        """Not a step: the mill never sees this file. It sits under the run,
+    def _laser_block(self, v, result, lines, title):
+        """Not a step: the mill never sees these files. They sit under the run,
         where the folder's other files are accounted for."""
-        paths, notes = mask
+        paths, notes = result
         v.addSpacing(theme.GAP_S)
         v.addWidget(self._rule())
         v.addSpacing(theme.GAP_S)
-        head = QLabel("For the laser, after milling: solder mask")
+        head = QLabel(title)
         head.setFont(theme.font("label"))
         head.setStyleSheet(f"color: {theme.SHEET_INK_2}; background: transparent;")
         v.addWidget(head)
         lines.append("")
-        lines.append("For the laser, after milling: solder mask")
+        lines.append(title)
         for p in paths:
             f = QLabel(p.name)
             f.setFont(theme.font("small", mono=True))
