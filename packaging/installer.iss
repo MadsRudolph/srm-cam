@@ -7,7 +7,7 @@
 ; or just run packaging\build.ps1 which does PyInstaller + this in one go.
 
 #define MyAppName "SRM-CAM"
-#define MyAppVersion "0.12.0"
+#define MyAppVersion "0.13.0"
 #define MyAppPublisher "DTU 62768 team"
 #define MyAppExeName "SRM-CAM.exe"
 
