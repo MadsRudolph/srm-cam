@@ -71,3 +71,22 @@ def test_short_ring_shorter_than_ramp_still_valid():
     out = apply_lead_in([_square_ring(side=0.3)], ramp_len=5.0)[0]
     assert abs(min(m.z for m in out) - CZ) < 1e-9          # reaches full depth
     assert out[0].rapid                                     # still starts with a rapid
+
+
+def test_fast_approach_rapids_down_and_feeds_only_the_last_bit():
+    from gerber2rml.engine.leadin import fast_approach, FAST_APPROACH
+    from gerber2rml.toolpath import Move
+    ring = [Move(0, 0, 2.0, rapid=True), Move(0, 0, -0.08),
+            Move(1, 0, -0.08), Move(1, 0, 2.0, rapid=True)]
+    out = fast_approach([ring])[0]
+    assert out[1] == Move(0, 0, FAST_APPROACH, rapid=True)
+    assert out[2] == Move(0, 0, -0.08)
+    assert out[3:] == ring[2:]
+
+
+def test_fast_approach_leaves_peck_reentries_alone():
+    from gerber2rml.engine.leadin import fast_approach
+    from gerber2rml.toolpath import Move
+    peck = [Move(0, 0, 0.2, rapid=True), Move(0, 0, -1.0),
+            Move(0, 0, -0.8, rapid=True), Move(0, 0, -1.9)]
+    assert fast_approach([peck])[0] == peck
