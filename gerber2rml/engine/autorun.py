@@ -42,6 +42,7 @@ from gerber2rml.engine import spi_probe, stockfind
 from gerber2rml.engine.fidfind import find_hole_center, hole_test
 from gerber2rml.engine.fiducial import (Transform, apply_to_toolpaths,
                                         fit_transform, residuals)
+from gerber2rml.engine.leadin import fast_approach
 from gerber2rml.engine.leveling import HeightMap, apply_leveling, probe_points
 from gerber2rml.engine.runner import JobRunner, RunStopped
 from gerber2rml.engine.spi_probe import ProbeError
@@ -613,6 +614,9 @@ class AutoRun:
                 # Only the cutting moves go down; travel stays where it was.
                 paths = [[Move(m.x, m.y, m.z - deeper if m.z < 0 else m.z,
                                rapid=m.rapid) for m in tp] for tp in paths]
+            # Rapid down to just above the copper; only the last bit of each
+            # plunge is fed. On nominal Z, so before the levelling.
+            paths = fast_approach(paths)
             if hmap is not None:
                 paths = apply_leveling(paths, hmap)
             # A dry run is the whole job in the air: the spindle off AND

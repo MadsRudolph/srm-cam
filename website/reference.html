@@ -159,7 +159,7 @@
 <tr><td>Bit diameter</td><td>all</td><td>The cutter's width, and what the shorts check measures against.</td></tr>
 <tr><td>Cut depth</td><td>traces</td><td>Just through the 35&nbsp;µm foil; the rest is margin for an uneven surface.</td></tr>
 <tr><td>Isolation passes, pass overlap</td><td>traces</td><td>Channels per track (<code>-1</code> clears all the background copper); how far each extra pass steps across.</td></tr>
-<tr><td>Cut gaps too narrow for the bit</td><td>traces</td><td>Send the cutter down gaps narrower than the bit anyway, trimming both pads, instead of leaving them shorted.</td></tr>
+<tr><td>Cut gaps too narrow for the bit</td><td>traces</td><td>Send the cutter down gaps narrower than the bit anyway, trimming both pads, instead of leaving them shorted. Each gap is cut as part of the outline that passes it, with no extra lift or plunge.</td></tr>
 <tr><td>Tip width, included angle, cut width</td><td>traces</td><td>A V-bit's depth is worked out from the width asked for.</td></tr>
 <tr><td>Depth through, bite per peck</td><td>drill, cut-out</td><td>Through the board plus the overshoot into the spoilboard; how much per plunge.</td></tr>
 <tr><td>One bit for every hole size</td><td>drill</td><td>Plunge the holes that fit, mill the larger ones as circles. Off: one file per diameter.</td></tr>
