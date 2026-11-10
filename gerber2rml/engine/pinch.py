@@ -261,19 +261,97 @@ def pinch_centrelines(copper, job, width=None):
     return lines
 
 
+def _line_toolpath(cs, cut_z, travel_z):
+    sx, sy = cs[0]
+    tp = [Move(sx, sy, travel_z, rapid=True), Move(sx, sy, cut_z)]
+    for (x, y) in cs[1:]:
+        tp.append(Move(x, y, cut_z))
+    tp.append(Move(cs[-1][0], cs[-1][1], travel_z, rapid=True))
+    return tp
+
+
 def pinch_cuts(copper, job, width=None):
     """Toolpaths that sever every gap too narrow for the cutter to enter."""
     cut_z, travel_z = -job.effective_cut_depth(), job.travel_z
-    paths = []
-    for line in pinch_centrelines(copper, job, width=width):
+    return [_line_toolpath(list(line.coords), cut_z, travel_z)
+            for line in pinch_centrelines(copper, job, width=width)]
+
+
+SPLICE_SPARE_MM2 = 1e-4   # copper a joined cut may take beyond what the
+                          # ring and the gap cut take anyway: none, to the
+                          # area's rounding
+
+
+def splice_pinches(rings, lines, copper, r):
+    """Fold each gap cut into the isolation ring that passes its mouth.
+
+    A gap too narrow for the cutter merges its two islands into one outline,
+    and that outline's ring runs past both ends of the gap. So rather than a
+    separate cut - lift, cross the board, creep down from travel height, cut a
+    millimetre, lift again - the ring turns into the gap where it passes it,
+    runs to the far end and back at cutting depth, and carries on. The swept
+    copper is the same; the lifts, the plunges and the trips are gone, and a
+    run stopped part-way can no longer have lost every gap cut at once.
+
+    ``rings`` are closed coordinate lists, ``lines`` the gap centrelines from
+    :func:`pinch_centrelines`. Returns ``(rings, leftover_lines)``: a gap whose
+    ends do not both sit in a ring's own cut, or whose way in would take any
+    copper the two cuts do not take anyway, is left as its own cut.
+    """
+    from shapely.strtree import STRtree
+    if not lines or not rings:
+        return rings, list(lines)
+    ring_lines = [LineString(c) for c in rings]
+    tree = STRtree(ring_lines)
+    splices = {}
+    leftover = []
+    for line in lines:
         cs = list(line.coords)
-        sx, sy = cs[0]
-        tp = [Move(sx, sy, travel_z, rapid=True), Move(sx, sy, cut_z)]
-        for (x, y) in cs[1:]:
-            tp.append(Move(x, y, cut_z))
-        tp.append(Move(cs[-1][0], cs[-1][1], travel_z, rapid=True))
-        paths.append(tp)
-    return paths
+        best = None
+        for end in (0, -1):
+            e = Point(cs[end])
+            for k in tree.query(e.buffer(r * 1.5)):
+                k = int(k)
+                d = ring_lines[k].distance(e)
+                if d <= r + 1e-6 and (best is None or d < best[0]):
+                    best = (d, k, end)
+        if best is None:
+            leftover.append(line)
+            continue
+        d, k, end = best
+        ring = ring_lines[k]
+        e = Point(cs[end])
+        s = ring.project(e)
+        p = ring.interpolate(s)
+        path = cs if end == 0 else cs[::-1]
+        way_in = [(p.x, p.y)] + path
+        excursion = way_in + path[-2::-1] + [(p.x, p.y)]
+        if d > 1e-9:
+            extra = (LineString([(p.x, p.y), path[0]]).buffer(r)
+                     .difference(line.buffer(r)).difference(ring.buffer(r))
+                     .intersection(copper))
+            if extra.area > SPLICE_SPARE_MM2:
+                leftover.append(line)
+                continue
+        splices.setdefault(k, []).append((s, excursion))
+    out = []
+    for k, coords in enumerate(rings):
+        if k not in splices:
+            out.append(coords)
+            continue
+        todo = sorted(splices[k], key=lambda t: t[0])
+        new, along, i = [coords[0]], 0.0, 0
+        for a, b in zip(coords, coords[1:]):
+            seg = math.dist(a, b)
+            while i < len(todo) and todo[i][0] <= along + seg + 1e-9:
+                new.extend(todo[i][1])
+                i += 1
+            new.append(b)
+            along += seg
+        for _s, exc in todo[i:]:           # rounding at the very end
+            new.extend(exc)
+        out.append(new)
+    return out, leftover
 
 
 def pinch_losses(copper, job, width=None, threshold=0.35):
