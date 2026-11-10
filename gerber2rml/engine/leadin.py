@@ -110,3 +110,35 @@ def _ramp_one(tp, ramp_len, clearance):
 
     out.extend(tp[j:])                             # original retract / trailing rapids
     return out
+
+
+FAST_APPROACH = 0.3      # mm above the surface (Z0) a plunge starts feeding from
+
+
+def fast_approach(paths, clearance=FAST_APPROACH):
+    """Rapid down to ``clearance`` above the surface before every plunge.
+
+    A path that drops from travel height straight to cutting depth does the
+    whole drop at the plunge feed: on the ball mill's 0.5 mm/s that was 2 mm
+    of air per cut, and 26 of a traces face's 54 minutes (2026-11-10). The
+    automatic run touches the copper electrically and levels to it, so the
+    height the bit stops at is known to a few hundredths; only the last
+    ``clearance`` has to be a feed.
+
+    A pure transform like :func:`apply_lead_in`, on nominal Z (surface = 0),
+    so it goes in BEFORE the levelling and warps with everything else.
+    Moves already below ``clearance``, such as a drill's peck re-entries, are
+    left alone.
+    """
+    out = []
+    for tp in paths:
+        new = []
+        for k, m in enumerate(tp):
+            if k and not m.rapid and m.z < clearance - EPS:
+                prev = tp[k - 1]
+                if (abs(m.x - prev.x) < EPS and abs(m.y - prev.y) < EPS
+                        and prev.z > clearance + EPS):
+                    new.append(Move(m.x, m.y, clearance, rapid=True))
+            new.append(m)
+        out.append(new)
+    return out

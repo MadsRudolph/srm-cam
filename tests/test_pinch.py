@@ -13,6 +13,7 @@ from gerber2rml.config import TraceJob
 from gerber2rml.engine import pinch
 from gerber2rml.engine.drc import isolation_pairs
 from gerber2rml.engine.traces import isolate
+from gerber2rml.toolpath import sweep
 
 BIT = 0.8
 
@@ -22,10 +23,8 @@ def _swept(paths, r):
     areas = []
     for tp in paths:
         cut = [(m.x, m.y) for m in tp if not m.rapid]
-        if len(cut) == 1:
-            cut = cut * 2
-        if len(cut) >= 2:
-            areas.append(LineString(cut).buffer(r))
+        if cut:
+            areas.append(sweep(cut, r))
     return unary_union(areas) if areas else None
 
 
@@ -92,7 +91,8 @@ def test_the_override_is_off_unless_it_is_asked_for():
     off = TraceJob(bit_diameter=BIT, offsets=2)
     on = TraceJob(bit_diameter=BIT, offsets=2, cut_pinches=True)
     assert TraceJob().cut_pinches is False
-    assert len(isolate(copper, on)) > len(isolate(copper, off))
+    moves = lambda job: sum(len(tp) for tp in isolate(copper, job))
+    assert moves(on) > moves(off)
 
 
 def test_no_island_is_ever_cut_in_two():
@@ -191,3 +191,30 @@ def test_the_passes_on_a_real_board_are_not_jagged():
             turn = abs(math.degrees(math.atan2(math.sin(two - one),
                                                math.cos(two - one))))
             assert turn < 90, f"the cut doubles back on itself ({turn:.0f} deg)"
+
+
+def test_gap_cuts_are_folded_into_the_ring_that_passes_them():
+    """No lift, no plunge, no trip across the board for a gap cut: the ring
+    that runs past the gap turns into it and back. Same metal removed."""
+    copper, a, b = _two_pads(0.45)
+    job = TraceJob(bit_diameter=BIT, offsets=2, cut_pinches=True)
+    paths = isolate(copper, job)
+    plain = isolate(copper, TraceJob(bit_diameter=BIT, offsets=2))
+    assert len(paths) == len(plain), "a gap cut was left as its own pass"
+    assert not _joined(copper, job, a, b)
+
+
+def test_folding_takes_no_copper_the_separate_cuts_did_not():
+    from gerber2rml.app.panel import read_board
+    from gerber2rml.engine.traces import _rings, _ring_to_toolpath
+    copper = read_board("tests/fixtures/mosfet_test").board().copper
+    job = TraceJob(bit_diameter=BIT, offsets=2, cut_pinches=True)
+    r = BIT / 2.0
+    rings = [c for i in range(2) for c in _rings(copper.buffer(r + i * r))]
+    separate = ([_ring_to_toolpath(c, -0.15, 2.0) for c in rings]
+                + pinch.pinch_cuts(copper, job))
+    folded = isolate(copper, job)
+    old, new = _swept(separate, r), _swept(folded, r)
+    assert copper.intersection(new.difference(old)).area < 1e-3
+    assert copper.intersection(old.difference(new)).area < 1e-3
+    assert len(folded) < len(separate)

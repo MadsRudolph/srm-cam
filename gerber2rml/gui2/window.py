@@ -2398,8 +2398,8 @@ class MainWindow(QMainWindow):
         A pass that cannot be built comes back as None so the caller can say
         it was not checked rather than pretend it passed.
         """
-        from shapely.geometry import LineString, Point
         from shapely.ops import unary_union
+        from gerber2rml.toolpath import sweep
         sweeps = {}
         for step in (self.plan or []):
             if step.op not in ("traces", "top_traces", "drill", "cutout",
@@ -2423,10 +2423,8 @@ class MainWindow(QMainWindow):
             parts = []
             for tp in paths:
                 pts = [(m.x, m.y) for m in tp if not m.rapid]
-                if len(pts) >= 2:
-                    parts.append(LineString(pts).buffer(r))
-                elif pts:
-                    parts.append(Point(pts[0]).buffer(r))
+                if pts:
+                    parts.append(sweep(pts, r))
             sweeps[step.op] = unary_union(parts) if parts else None
         return sweeps
 
