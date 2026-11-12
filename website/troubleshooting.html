@@ -159,6 +159,12 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <p><span class="k">Cause</span>The sheet springs under the bit. The light probe touch measures it floating; the cutter pushes it down.</p>
 <p><span class="k">Fix</span>Press on the copper there. If it gives, tape it down under the board area. Then recut in boxes at <a href="automatic.html#check">the check</a>, or use <a href="automatic.html#startat">Start at</a>.</p>
 </div></details>
+<details class="ts-item" id="no-driver" data-cat="machine" data-q="printer is not installed driver roland srm-20 vpanel does not recognize the machine unspecified usb not found connect">
+<summary>&ldquo;The Roland SRM-20 printer is not installed on this PC&rdquo;</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The Roland driver is not installed, or it was installed with the mill plugged in too early, so Windows has no printer called <em>Roland SRM-20</em>. VPanel also fails to see the mill in that case.</p>
+<p><span class="k">Fix</span>Open <span class="menu-path">Control Panel &rsaquo; View devices and printers</span>: the SRM-20 has to be under <strong>Printers</strong>. If it is missing or shown as <em>Unspecified</em>, unplug the USB cable, uninstall the driver, restart, and install it again in Roland's order, with the cable connected last. Steps and downloads: <a href="getting-started.html#roland">Required before first use</a>.</p>
+</div></details>
 <details class="ts-item" id="auto-refused" data-cat="machine" data-q="the mill refused the job command set nc code rml pause error vpanel cancel automatic">
 <summary>“The mill refused the job”</summary>
 <div class="ts-body">

@@ -26,6 +26,39 @@ Copper on both sides: **[the double-sided video](https://youtu.be/nmh9I9FdkqI)**
 The written version is [Mill a board](https://madsrudolph.github.io/srm-cam/automatic.html).
 Doing it by hand in Pro has its own [13-minute video](https://youtu.be/aab9ItDjwt0).
 
+## Required before first use: Roland's driver and VPanel
+
+SRM-CAM **cannot talk to the SRM-20 without Roland's driver**. The driver makes
+the mill appear in Windows as a printer called *Roland SRM-20*, and SRM-CAM sends
+the job to that printer (without it, Start stops with "The Roland SRM-20 printer
+is not installed on this PC"). You also need Roland's **VPanel**, the mill's own
+control program: the Pro workflow plays the exported files from it, and the
+settings SRM-CAM relies on (command set NC Code, G54 origin) live in it.
+
+Download both from Roland DG's official SRM-20 page, on the **Software** tab:
+[downloadcenter.rolanddg.com/SRM-20](https://downloadcenter.rolanddg.com/SRM-20#software)
+
+| Download | Pick | Notes |
+|---|---|---|
+| **monoFab Driver** | Windows 10 64-bit, Ver. 2.12 (2024-10-17) | Ver. 2.11+ supports Windows 11 and 10 (the Windows 10 folder serves both); 8 and 7 are not supported. |
+| **VPanel for SRM-20** | Installer, Ver. 1.10 | 32-bit, runs on 64-bit Windows. |
+
+Roland makes you accept its licence before each download, so there is no direct
+file link to paste. Install **the driver first, and keep the mill's USB cable
+unplugged until the installer sequence says so**:
+
+1. Unzip the driver, open `WIN10X64` (or `WIN10X86` on 32-bit Windows 10), run `SETUP64.exe` (or `SETUP.exe`) as administrator.
+2. Click **Install**, choose model **SRM-20** and port **USB**, click **Start**, and follow the installer.
+3. Only now: power the mill on, wait for the light to stay lit, and plug in the USB cable that came with it (no hub, no extension).
+4. Check that the SRM-20 is listed under *Control Panel > View devices and printers > Printers*.
+5. Unzip VPanel, run `setup.exe`. Start it with the mill already switched on, and set Setup > Command Set to NC Code.
+
+These steps follow Roland's own
+[startup guide](https://startup.rolanddg.com/monoFab/SRM-20/SRM-20_EN/sp_welcome_on_en.html);
+the full version, with troubleshooting, is in the
+[user guide](https://madsrudolph.github.io/srm-cam/getting-started.html#roland).
+Windows only: on Linux you can prepare and export, then send the files from a Windows PC.
+
 ## Install
 
 **Just run it (Windows):** download the latest installer from

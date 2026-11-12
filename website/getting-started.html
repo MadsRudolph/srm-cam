@@ -72,9 +72,48 @@
 <div class="content">
 
 <h1>Install &amp; KiCad</h1>
-<p class="lead">Install SRM-CAM, learn the four regions of the window and Novice and Pro, and get the right files out of KiCad. Then go on to <a href="automatic.html">Mill a board</a>.</p>
+<p class="lead">First Roland's driver and VPanel (<a href="#roland">required, once per PC</a>), then SRM-CAM. Learn the four regions of the window and Novice and Pro, and get the right files out of KiCad. Then go on to <a href="automatic.html">Mill a board</a>.</p>
 
-<h2 id="install">Install</h2>
+<h2 id="roland">Required before first use: Roland's driver and VPanel</h2>
+<div class="danger"><span class="t">SRM-CAM does not work on its own</span>
+<p>SRM-CAM cannot talk to the SRM-20 until the Roland <strong>driver</strong> is installed. Windows needs it to see the mill at all. When the driver is installed, the mill shows up as a printer called <em>Roland SRM-20</em>, and SRM-CAM sends the job to that printer. Without it, <span class="ui">Start</span> stops with <em>&ldquo;The Roland SRM-20 printer is not installed on this PC&rdquo;</em>.</p>
+<p>You also need Roland's <strong>VPanel</strong>. It is the mill's own control program: the Pro workflow plays the exported files from it, and the machine settings SRM-CAM relies on live in it (command set <span class="ui">NC Code</span>, the G54 origin). Download both from Roland <strong>before you plug the mill into the PC</strong>.</p></div>
+
+<h3>Download</h3>
+<p>Both are on Roland DG's official download page for the SRM-20 (the monoFab SRM-20). Open it on the <span class="ui">Software</span> tab:</p>
+<p><a href="https://downloadcenter.rolanddg.com/SRM-20#software"><strong>downloadcenter.rolanddg.com/SRM-20</strong></a></p>
+<div class="tbl-wrap"><table>
+<tr><th>Download</th><th>Pick this one</th><th>Notes</th></tr>
+<tr><td><strong>monoFab Driver</strong></td><td>Windows 10 64-bit, Ver.&nbsp;2.12 (2024-10-17). On a 32-bit Windows 10, the 32-bit one.</td><td>This is the SRM-20's driver; Roland calls it the monoFab Driver. Ver.&nbsp;2.11 and later support <strong>Windows 11</strong> and 10 (Roland's guide uses the Windows 10 folder for both). Windows 8 and 7 are no longer supported. Ver.&nbsp;2.11 also fixed jobs not being output after a 2024 Windows update, so do not use an older driver.</td></tr>
+<tr><td><strong>VPanel for SRM-20</strong></td><td><em>Installer</em>, Ver.&nbsp;1.10 (2015-07-01)</td><td>A 32-bit program, which runs on 64-bit Windows 10 and 11. The <em>Updater</em> beside it is for upgrading an older VPanel.</td></tr>
+</table></div>
+<p>Roland asks you to accept its software licence before each download, so there is no file link to paste here: click through on Roland's page. You get a zip file for each. Roland's own step-by-step guide is the <a href="https://startup.rolanddg.com/monoFab/SRM-20/SRM-20_EN/sp_welcome_on_en.html">Roland DG startup page for the SRM-20</a>, and the steps below follow it.</p>
+
+<h3>1 &middot; Install the driver first</h3>
+<p>The order matters. <strong>Do not connect the mill's USB cable to the PC until step 8.</strong> Plugging it in early can make the driver impossible to install.</p>
+<ol class="steps">
+  <li><span class="st">Log on as an administrator</span>If an older driver for the SRM-20 is installed, uninstall it first (Roland says to do this before installing 2.12): run <code>SETUP64.exe</code> from the old driver's folder, click <span class="ui">Uninstall</span>, pick the machine, click <span class="ui">Start</span> and restart the PC.</li>
+  <li><span class="st">Unzip the driver</span>Unzip the file you downloaded and open the folder it makes.</li>
+  <li><span class="st">Open the folder for your Windows</span><code>WIN10X64</code> for 64-bit Windows 11 and 10, <code>WIN10X86</code> for 32-bit Windows 10. The wrong folder cannot install the driver.</li>
+  <li><span class="st">Run the setup</span>Double-click <code>SETUP64.exe</code> (64-bit) or <code>SETUP.exe</code> (32-bit). If Windows asks <em>User Account Control</em>, click <span class="ui">Yes</span>.</li>
+  <li><span class="st">Pick the model</span>Click <span class="ui">Install</span>, choose <strong>SRM-20</strong> as the <em>Model</em> and <strong>USB</strong> as the port, and click <span class="ui">Start</span>.</li>
+  <li><span class="st">Follow the installer</span>Accept the licence, click <span class="ui">Install</span> (once in the installer, once in the Windows security window), then <span class="ui">Finish</span>.</li>
+  <li><span class="st">Power the mill</span>Plug in the mill's power cable and AC adapter, close the front cover and press the power button. Wait until the green light stops flashing and stays lit: that is the start-up finished.</li>
+  <li><span class="st">Now connect the USB cable</span>Use the <strong>USB cable that came with the mill</strong> (the white one), straight into the PC: no USB hub and no extension cable. Windows finishes installing the driver. Do not unplug it until that is done.</li>
+  <li><span class="st">Check it</span>Open <span class="menu-path">Control Panel &rsaquo; View devices and printers</span>. The SRM-20 must be listed under <strong>Printers</strong>. If it is not, or it shows as <em>Unspecified</em>, see <a href="troubleshooting.html#no-driver">Troubleshooting</a>.</li>
+</ol>
+
+<h3>2 &middot; Install VPanel</h3>
+<ol class="steps">
+  <li><span class="st">Unzip and run</span>Unzip the VPanel file, double-click <code>setup.exe</code> in the folder, and follow the installer.</li>
+  <li><span class="st">Start it in the right order</span>Close the mill's front cover, switch the mill on and wait for the light to stay lit, then open <span class="menu-path">Start &rsaquo; VPanel for SRM-20</span>. If VPanel was opened with the mill off, switch the mill on and click <span class="ui">Retry</span>.</li>
+  <li><span class="st">Set it up</span>In VPanel, <span class="menu-path">Setup &rsaquo; Command Set</span> must be <span class="ui">NC Code</span> and the G54 X/Y origin must be machine 0,&nbsp;0. SRM-CAM checks both before it cuts; see <a href="automatic.html#steps">Mill a board</a>.</li>
+</ol>
+
+<div class="warn"><span class="t">Windows only</span>
+<p>The driver, VPanel and the link to the mill are all Windows. On Linux you can prepare and export, then send the files from VPanel on a Windows PC.</p></div>
+
+<h2 id="install">Install SRM-CAM</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
 <tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive.</td></tr>
