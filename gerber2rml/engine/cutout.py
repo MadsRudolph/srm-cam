@@ -1,7 +1,8 @@
 """Board cutout: outline -> outward-offset cut with holding tabs.
 
 One board is one ring, offset outward by the cutter's radius so the board
-comes out at its drawn size. A panel of several boards is cut island by
+comes out at its drawn size. A window drawn inside the board is cut too, with
+the tool inside it, before the ring that frees the board. A panel of several boards is cut island by
 island, with two exceptions that make a panel cuttable from a sheet it only
 just fits on:
 
@@ -274,6 +275,30 @@ def _segments_with_tabs_open(pieces, tabs, tab_width):
     return segments
 
 
+def _windows(poly):
+    """The cut paths of the windows inside a board, ordered across it.
+
+    ``poly`` is the board already grown by the cutter's radius, so each of its
+    holes is the window shrunk by that radius: the line the tool's centre
+    follows to cut the window at its drawn size. Each starts in a corner, and
+    none gets tabs: the slug is waste, and it is still held by the tape the
+    board is held by."""
+    holes = sorted(poly.interiors, key=lambda h: (h.bounds[0], h.bounds[1]))
+    return [list(_start_at_corner(h).coords) for h in holes]
+
+
+def _warn_lost_windows(group, outer, bit):
+    """Say so when a window is too small for the cutter to enter: growing
+    the board by the cutter's radius closed it, and it will not be cut."""
+    drawn = sum(len(p.interiors) for p in group)
+    kept = sum(len(p.interiors) for p in _islands(outer))
+    if kept < drawn:
+        import warnings
+        warnings.warn(
+            f"{drawn - kept} window(s) in the outline are narrower than the "
+            f"{bit} mm cut-out bit and will not be cut", stacklevel=3)
+
+
 def cut_outline(outline, job, stock=None, edge_tol=SHEET_EDGE_MM):
     """Cut round ``outline`` - every island of it - to ``job.total_depth`` in
     passes of ``job.cut_depth``, leaving ``job.tabs`` tabs per island.
@@ -281,6 +306,10 @@ def cut_outline(outline, job, stock=None, edge_tol=SHEET_EDGE_MM):
     ``stock`` is the copper sheet as ``(x0, y0, x1, y1)``, when the operator
     has declared one: where an island's edge lies on the sheet's edge, within
     ``edge_tol`` either side, that part of the ring is left out.
+
+    Windows inside an island (holes in the outline: Edge.Cuts loops drawn
+    inside the board) are cut with the tool inside them, before the island's
+    own ring, while the board is still held all round.
 
     Islands closer together than the cutter get one channel between them,
     cut first and to full depth while everything is still held, and then one
@@ -294,8 +323,12 @@ def cut_outline(outline, job, stock=None, edge_tol=SHEET_EDGE_MM):
 
     def cut(segments):
         depth = 0.0
-        while depth < job.total_depth:
+        # The tolerance stops 3 x 0.6 = 1.7999999 from earning a fourth
+        # lap, at the same depth, around the whole board.
+        while depth < job.total_depth - 1e-6:
             depth = min(depth + job.cut_depth, job.total_depth)
+            if job.total_depth - depth < 1e-6:
+                depth = job.total_depth
             for seg in segments:
                 sx, sy = seg[0]
                 tp = [Move(sx, sy, job.travel_z, rapid=True), Move(sx, sy, -depth)]
@@ -311,7 +344,10 @@ def cut_outline(outline, job, stock=None, edge_tol=SHEET_EDGE_MM):
         if seps:
             cut(seps)
         outer = unary_union([p.buffer(r) for p in group])
+        _warn_lost_windows(group, outer, job.bit_diameter)
         for poly in _islands(outer):
+            for hole in _windows(poly):
+                cut([hole])
             ring = LineString(poly.exterior.coords)
             if band is None:
                 segments = _segments_with_tabs(ring, job.tabs, job.tab_width)
