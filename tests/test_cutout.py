@@ -107,6 +107,48 @@ def test_a_round_board_still_gets_its_tabs():
     assert len(tabs) >= 3      # a tab on the ring's start point reads as two halves
 
 
+def _carrier():
+    """60 x 40 board with two 7 x 7 windows, like the stencil carrier."""
+    from shapely.geometry import Polygon
+    w = lambda cx, cy: [(cx - 3.5, cy - 3.5), (cx + 3.5, cy - 3.5),
+                        (cx + 3.5, cy + 3.5), (cx - 3.5, cy + 3.5)]
+    return Polygon([(0, 0), (60, 0), (60, 40), (0, 40)],
+                   [w(12, 11), w(48, 29)])
+
+
+def test_windows_inside_the_board_are_cut_with_the_tool_inside_them():
+    job = CutoutJob(bit_diameter=0.8, tabs=0, cut_depth=0.6, total_depth=0.6)
+    paths = cut_outline(_carrier(), job)
+    assert len(paths) == 3                  # two windows + the outer ring
+    for tp, (cx, cy) in zip(paths[:2], [(12, 11), (48, 29)]):
+        xs = [m.x for m in tp if not m.rapid]
+        ys = [m.y for m in tp if not m.rapid]
+        # tool centre 0.4 mm inside each edge, so the window comes out 7 x 7
+        assert min(xs) == pytest.approx(cx - 3.1) and max(xs) == pytest.approx(cx + 3.1)
+        assert min(ys) == pytest.approx(cy - 3.1) and max(ys) == pytest.approx(cy + 3.1)
+        assert (xs[0], ys[0]) == (xs[-1], ys[-1])   # a closed loop
+
+
+def test_windows_are_cut_to_full_depth_before_the_board_is_freed():
+    job = CutoutJob(bit_diameter=0.8, tabs=4, cut_depth=0.6, total_depth=1.8)
+    paths = cut_outline(_carrier(), job)
+    inside = lambda tp: all(0 < m.x < 60 and 0 < m.y < 40 for m in tp)
+    kinds = [inside(tp) for tp in paths]
+    assert kinds[:6] == [True] * 6          # 2 windows x 3 passes, first
+    assert not any(kinds[6:])               # then the outer ring with its tabs
+    assert min(m.z for tp in paths[:6] for m in tp) == pytest.approx(-1.8)
+
+
+def test_a_window_narrower_than_the_bit_is_skipped_with_a_warning():
+    from shapely.geometry import Polygon
+    board = Polygon([(0, 0), (20, 0), (20, 20), (0, 20)],
+                    [[(10, 10), (10.5, 10), (10.5, 10.5), (10, 10.5)]])
+    job = CutoutJob(bit_diameter=0.8, tabs=0, cut_depth=0.6, total_depth=0.6)
+    with pytest.warns(UserWarning, match="narrower than"):
+        paths = cut_outline(board, job)
+    assert len(paths) == 1                  # just the outer ring
+
+
 def test_a_tiny_board_still_keeps_its_tabs_off_the_corners():
     outline = box(0, 0, 4, 4)
     tabs = _tabs(outline, CutoutJob(tabs=4, **JOB))
