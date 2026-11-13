@@ -160,6 +160,76 @@ def test_levelling_can_be_left_out():
     assert not probed
     assert ("level", "done") in log.steps
 
+class WholeStockBoard(Board):
+    """A 100 x 80 board used whole: the stock IS the board. Only a 10 x 10
+    window in the middle is cut; nothing is cut along the edge."""
+
+    def __init__(self, size=(100.0, 80.0)):
+        super().__init__(False)
+        self.size = size
+        self.margin = None
+
+    def place(self, pose, margin_mm):
+        self.margin = margin_mm
+        super().place(pose, margin_mm)
+
+    def bottom_steps(self):
+        return [("cutout", "Cut-out")]
+
+    def toolpaths(self, key):
+        p = self._p
+        c = [p(45, 35), p(55, 35), p(55, 45), p(45, 45), p(45, 35)]
+        return ([[Move(*c[0], 2, rapid=True)] + [Move(x, y, -1.9) for x, y in c]
+                 + [Move(*c[-1], 2, rapid=True)]], 4.0, 1.0)
+
+    def area(self, side):
+        return (*self._p(0, 0), *self._p(*self.size))
+
+    extent = area
+
+
+def _whole(size=(100.0, 80.0), **kw):
+    m = sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=1.2,
+                   size=(100000, 80000))
+    ser = spi_probe.open_link("SIM")
+    board, log = WholeStockBoard(size), Log()
+    run = AutoRun(ser, sm.printer(), board, log, click_mm=(90, 70),
+                  stock_mm=(100, 80), double=False, runner_opts=FAST, **kw)
+    return board, log, run
+
+
+def test_a_board_the_size_of_the_stock_is_placed_on_it_without_a_margin():
+    board, log, run = _whole()
+    probed = []
+    log.level = lambda *a: probed.append(a)
+    assert run.run() is True
+    assert run.whole and board.margin == 0.0
+    assert [k for k, s in log.steps if s == "done"][-1] == "cutout"
+    # what is cut, not the stock's edge, is what gets probed and checked
+    x0, y0, x1, y1 = run._work
+    assert (x1 - x0, y1 - y0) == pytest.approx((10.8, 10.8))
+
+
+def test_a_whole_stock_board_cut_away_from_the_tongue_passes_the_keepout():
+    # The tongue lies over the stock's front edge: the board covers it, the
+    # window in the middle does not.
+    board, log, run = _whole(level=False)
+    run.keepout = (41.3 + 2.5, 27.8 - 1, 41.3 + 26, 27.8 + 5)
+    assert run.run() is True
+
+
+def test_a_board_a_little_bigger_than_the_stock_still_counts_as_the_stock():
+    board, log, run = _whole(size=(100.3, 80.2), level=False)
+    assert run.run() is True and run.whole
+
+
+def test_a_board_clearly_bigger_than_the_stock_is_still_refused():
+    board, log, run = _whole(size=(104.0, 80.0), level=False)
+    with pytest.raises(RunFailed, match="bigger piece"):
+        run.run()
+    assert not run.whole
+
+
 def test_a_dry_run_keeps_the_bit_in_the_air():
     from tests.test_gcode_incremental import _walk
     m, ser, board, log, run = _run(False, level=False, dry_run=True)
