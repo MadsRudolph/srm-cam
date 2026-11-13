@@ -2813,6 +2813,12 @@ class MainWindow(QMainWindow):
         cx, cy, _w, _h = self.stock
         self.stock = (cx if x is None else x, cy if y is None else y, w, h)
         self._stock_set = True
+        # The cut-out leaves out what lies on the sheet's edge, so it is the
+        # one toolpath the sheet changes: drop it, or the preview keeps a ring
+        # the cut no longer has.
+        for s in (self.plan.steps if self.plan is not None else []):
+            if s.op == "cutout":
+                self._paths_cache.pop(s.key, None)
         if show is not None:
             self.show_stock = bool(show)
         self._draw_screws()

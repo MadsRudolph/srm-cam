@@ -39,6 +39,7 @@ import time
 
 from gerber2rml.backends.gcode import render_incremental
 from gerber2rml.engine import spi_probe, stockfind
+from gerber2rml.engine.cutout import SHEET_EDGE_MM
 from gerber2rml.engine.fidfind import find_hole_center, hole_test
 from gerber2rml.engine.fiducial import (Transform, apply_to_toolpaths,
                                         fit_transform, residuals)
@@ -152,6 +153,13 @@ class Events:
         return ("go", 0.0)
 
 
+def fills_stock(bw, bh, sw, sh, tol=SHEET_EDGE_MM):
+    """True when a ``bw`` x ``bh`` board is the ``sw`` x ``sh`` piece of stock
+    itself: each side within ``tol``, the same tolerance the cut-out uses to
+    call a board edge "on the sheet's edge" and leave it uncut."""
+    return abs(bw - sw) <= tol and abs(bh - sh) <= tol
+
+
 def about(cx, cy, deg):
     """The rotation by ``deg`` about (cx, cy), as a :class:`Transform`."""
     a = math.radians(deg)
@@ -192,6 +200,8 @@ class AutoRun:
         self.fit = None
         self.z_surf = None           # machine Z of the copper, mm
         self._frame_ok = False
+        self.whole = False           # the board is the whole piece of stock
+        self._work = None            # what the bit cuts then, nominal mm
 
     # -- the sequence --------------------------------------------------------
     def run(self):
@@ -201,11 +211,27 @@ class AutoRun:
 
     def _sequence(self):
         self._find_stock("stock")
-        self.src.place(self.pose, self.margin)
-        self.rotation = about(self.pose.x, self.pose.y, self.pose.angle)
-        x0, y0, x1, y1 = self.src.extent("bottom")
         p = self.pose
-        need = (x1 - x0 + 2 * self.margin, y1 - y0 + 2 * self.margin)
+        x0, y0, x1, y1 = self.src.extent("bottom")
+        self.whole = not self.double and fills_stock(x1 - x0, y1 - y0, p.w, p.h)
+        self.src.place(self.pose, 0.0 if self.whole else self.margin)
+        self.rotation = about(self.pose.x, self.pose.y, self.pose.angle)
+        if self.whole:
+            # The board IS the piece of stock: its edge is the stock's edge
+            # and is not cut (the cut-out leaves out what lies on the sheet's
+            # edge). What has to land on the copper, clear of the bracket, is
+            # what the bit cuts, so that is what the gates below look at.
+            self.ev.note("The board is the whole piece of stock: its edge is "
+                         "left as it is, and only what lies inside it is cut.")
+            reach = self._cut_reach(self.src.bottom_steps())
+            if reach is None:
+                raise RunFailed("the board fills the stock, and there is "
+                                "nothing inside it to cut.")
+            x0, y0, x1, y1 = self._work = reach
+        else:
+            x0, y0, x1, y1 = self.src.extent("bottom")
+        need = ((0.0, 0.0) if self.whole else
+                (x1 - x0 + 2 * self.margin, y1 - y0 + 2 * self.margin))
         if need[0] > p.w or need[1] > p.h:
             raise RunFailed("the job needs %.1f × %.1f mm of stock with its "
                             "margins, and this stock is %.1f × %.1f mm. Use a "
@@ -386,7 +412,24 @@ class AutoRun:
         """The job, and the bit along its edge, clear of the bracket's probe
         tongue."""
         if self.keepout is not None:
-            self._clear_of_keepout(*self.src.extent(side))
+            self._clear_of_keepout(*(self._work if self.whole
+                                     else self.src.extent(side)))
+
+    def _cut_reach(self, steps):
+        """``(x0, y0, x1, y1)`` the bit's edge reaches while cutting in
+        ``steps`` (moves below the surface), or None when nothing cuts."""
+        xs, ys = [], []
+        for key, _label in steps:
+            paths = self.src.toolpaths(key)[0]
+            for tp in paths:
+                for m in tp:
+                    if not m.rapid and m.z < 0:
+                        xs.append(m.x)
+                        ys.append(m.y)
+        if not xs:
+            return None
+        r = self.bit / 2.0
+        return min(xs) - r, min(ys) - r, max(xs) + r, max(ys) + r
 
     def _clear_of_keepout(self, x0, y0, x1, y1, when=""):
         if self.keepout is None:
@@ -405,7 +448,10 @@ class AutoRun:
             return self._guard(key, lambda: self._flat(side))
 
         def go():
-            x0, y0, x1, y1 = self.src.area(side)
+            # A whole-stock board is probed over what is cut, not out at the
+            # stock's edge, where the bracket's tongue lies over the copper.
+            x0, y0, x1, y1 = (self._work if self.whole and side == "bottom"
+                              else self.src.area(side))
             nx, ny = LEVEL_GRID
             nominal = probe_points((x0, y0, x1, y1), nx, ny, margin=2.0)
             pts = [t.apply(*p) if t else p for p in nominal]
