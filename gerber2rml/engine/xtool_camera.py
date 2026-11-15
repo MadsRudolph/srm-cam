@@ -68,14 +68,22 @@ class Calibration:
         return (self.n - 1) * GRID_MM
 
     # -- the picture -----------------------------------------------------
-    def rectify(self, rgb, px_per_mm=4):
+    def rectify(self, rgb, px_per_mm=4, offset=(0.0, 0.0)):
         """``rgb`` (h, w, 3) uint8 photo -> a bed map, ``px_per_mm`` pixels
-        per mm, row 0 at Y 0 and column 0 at X 0 of the laser's coordinates."""
+        per mm, row 0 at Y 0 and column 0 at X 0 of the laser's coordinates.
+
+        ``offset`` is the camera's own error, learned from a real cut: where a
+        hole the laser cut at P shows up, minus P. The factory grid on the
+        lab's machine shows everything about (-0.55, -0.85) mm off. Each pixel
+        of the map is taken from that far off in the photo, so the map lands
+        on what the fiber really cuts."""
         h, w = rgb.shape[:2]
         sw, sh = self.src_size
         size = int(round(self.extent_mm * px_per_mm))
         mm = np.arange(size) / px_per_mm
         X, Y = np.meshgrid(mm, mm)
+        X = X + offset[0]
+        Y = Y + offset[1]
         e = self.extent_mm
         f = self._bilinear(self.grid, (e - X) / GRID_MM, (e - Y) / GRID_MM)
         px = np.clip(np.rint(f[..., 0] * w / sw).astype(int), 0, w - 1)
