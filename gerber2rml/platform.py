@@ -13,6 +13,7 @@ Tests inject ``"win32"`` or ``"linux"`` and so run identically on any host.
 stdlib only, and no Qt. This module is imported by ``gui2/app.py`` before
 PySide6 is imported - that import is precisely what it exists to survive.
 """
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -30,6 +31,10 @@ def _is_windows(platform=None):
     return _plat(platform).startswith("win")
 
 
+def _is_macos(platform=None):
+    return _plat(platform) == MACOS
+
+
 @dataclass(frozen=True)
 class Capabilities:
     """What the host OS supports.
@@ -44,13 +49,18 @@ def capabilities(platform=None):
     """What this OS supports.
 
     ``machine_link`` is the Arduino serial link - connect, DRO, jog, bed
-    probing, firmware flashing. Windows only, deliberately: the CNC PC is
-    Windows, the link has only ever been run there, and shipping an unverified
-    motion path to someone standing next to a spinning tool is not a trade
-    worth making. Losing it costs less than it looks, because a height map is
-    a file: measure the bed once on the CNC PC and carry the CSV.
+    probing, firmware flashing. Windows and macOS. Windows because the CNC PC
+    is Windows and the link was built there. macOS because a lab runs its
+    SRM-20 from a Mac: pyserial and the Arduino's USB VID ranking are the same
+    code there, and the mill itself is reached through a raw CUPS queue (see
+    ``engine/rmlspool.py``) in place of the Windows spooler. Linux stays off,
+    deliberately: the link has never been run there, and shipping an
+    unverified motion path to someone standing next to a spinning tool is not
+    a trade worth making. Losing it costs less than it looks, because a
+    height map is a file: measure the bed once on the CNC PC and carry the CSV.
     """
-    return Capabilities(machine_link=_is_windows(platform))
+    return Capabilities(
+        machine_link=_is_windows(platform) or _is_macos(platform))
 
 
 # What to put on screen where the machine controls would have been.
@@ -62,10 +72,42 @@ def capabilities(platform=None):
 # that still works, because "probe once on the CNC PC and carry the CSV" is the
 # whole Linux levelling workflow and nobody would guess it.
 NO_MACHINE_LINK_NOTE = (
-    "The machine link runs on Windows only, so there is no "
+    "The machine link runs on Windows and macOS only, so there is no "
     "Connect here. Prepare the job, export, and send the files "
     "from VPanel on the CNC PC — or load a height map "
     "measured there to export levelled toolpaths.")
+
+
+def qt_style(platform=None):
+    """The Qt widget style to build the stylesheet on, or None for Qt's own.
+
+    "Fusion" on macOS: the native macOS style places check-box indicators
+    where its own drawing expects them, so the stylesheet's 15 px box comes
+    out clipped at the bottom. Fusion honours the stylesheet's geometry, as
+    the Windows style does. Elsewhere the default is left alone.
+    """
+    return "Fusion" if _is_macos(platform) else None
+
+
+def handoff_address(platform=None, uid=None, tmp=None):
+    """Where a running SRM-CAM listens for "open this board".
+
+    The KiCad plugin and a second launch both send a path here, so a board
+    opens in the window that is already up instead of a second copy. A named
+    pipe on Windows; elsewhere a socket file in the per-user temp folder,
+    named by user id so two accounts on one PC never reach each other.
+    """
+    if _is_windows(platform):
+        import getpass
+        try:
+            user = getpass.getuser()
+        except Exception:                       # noqa: BLE001 - no name
+            user = "user"
+        return f"SRM-CAM-{user}"
+    import tempfile
+    uid = os.getuid() if uid is None else uid
+    tmp = tempfile.gettempdir() if tmp is None else tmp
+    return str(PurePosixPath(tmp) / f"srm-cam-{uid}.sock")
 
 
 def default_serial_port(platform=None):
@@ -112,7 +154,9 @@ def serial_permission_hint(device, platform=None, stat_fn=None, group_fn=None):
     ``grp`` is POSIX-only stdlib - importing it at module scope would break the
     Windows build, so it is imported inside the branch.
     """
-    if _is_windows(platform):
+    if _is_windows(platform) or _is_macos(platform):
+        # macOS: /dev/cu.* nodes are world read-write and there is no
+        # usermod; a refused port there means another program holds it.
         return None
     import os
     stat_fn = os.stat if stat_fn is None else stat_fn

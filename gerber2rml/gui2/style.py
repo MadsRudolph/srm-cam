@@ -331,11 +331,21 @@ def stylesheet():
     """The rendered QSS. Every ``$NAME`` resolves to a :mod:`theme` token."""
     values = {k: v for k, v in vars(theme).items()
               if k.isupper() and isinstance(v, (str, int, float))}
+    # The whole fallback list, not just its first name. With only the first
+    # (a Windows face), a Mac or Linux box that lacks it fell through to the
+    # system font instead of the next face on the list - so every button was
+    # set in a full-width face where a condensed one was meant, and the
+    # machine bar came out 120 px wider than the window it was sized for.
+    # theme.font() already hands Qt the list; this makes the stylesheet agree.
+    # The template wraps each token in quotes, hence the '", "' joiner.
+    def fams(names):
+        return '", "'.join(names)
+
     values.update(
-        BODY=theme.BODY_FAMILY[0],
-        LABEL=theme.LABEL_FAMILY[0],
-        DISPLAY=theme.DISPLAY_FAMILY[0],
-        MONO=theme.MONO_FAMILY[0],
+        BODY=fams(theme.BODY_FAMILY),
+        LABEL=fams(theme.LABEL_FAMILY),
+        DISPLAY=fams(theme.DISPLAY_FAMILY),
+        MONO=fams(theme.MONO_FAMILY),
         SIZE_BODY=round(theme.SIZE_BODY),
         SIZE_SMALL=round(theme.SIZE_SMALL),
         SIZE_HEAD=round(theme.SIZE_HEAD),
@@ -346,3 +356,39 @@ def stylesheet():
 
 
 STYLESHEET = stylesheet()
+
+
+# The arrows above are CSS border triangles, which Qt does not draw as
+# triangles: it paints a small bar. These rules replace them with SVG files,
+# written once into ``folder`` (Qt's stylesheet takes a file, not a string).
+_ARROW_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="{w}" '
+              'height="{h}" viewBox="0 0 {w} {h}"><path d="{d}" '
+              'fill="{fill}"/></svg>')
+
+
+def arrow_rules(folder):
+    """QSS that draws the combo and spin-box arrows from SVG files in
+    ``folder``, writing them there. Append it after :data:`STYLESHEET`."""
+    from pathlib import Path
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    shapes = {"down": (8, 5, "M0 0H8L4 5Z"), "up": (6, 4, "M0 4H6L3 0Z"),
+              "down-small": (6, 4, "M0 0H6L3 4Z")}
+    url = {}
+    for name, (w, h, d) in shapes.items():
+        f = folder / f"{name}.svg"
+        svg = _ARROW_SVG.format(w=w, h=h, d=d, fill=theme.TEXT_2)
+        if not f.is_file() or f.read_text(encoding="utf-8") != svg:
+            f.write_text(svg, encoding="utf-8")
+        url[name] = f.as_posix()
+    return f"""
+QComboBox::down-arrow {{
+    image: url("{url['down']}"); width: 8px; height: 5px; border: none;
+}}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    image: url("{url['up']}"); width: 6px; height: 4px; border: none;
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    image: url("{url['down-small']}"); width: 6px; height: 4px; border: none;
+}}
+"""

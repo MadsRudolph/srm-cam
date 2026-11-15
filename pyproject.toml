@@ -25,6 +25,9 @@ gui = [
     "PyOpenGL>=3.1",
     "pyserial>=3.5",   # SPI bed-probing over the Arduino serial link
     "qrcode>=7.0",     # phone photo hand-off QR (matrix only, no PIL)
+    # The mill's own settings over USB control transfers (engine/millsetup.py).
+    # Not on Windows: the Roland driver owns the device there, and VPanel runs.
+    "pyusb>=1.2; sys_platform != 'win32'",
 ]
 
 [project.scripts]
@@ -44,5 +47,6 @@ include = ["gerber2rml*"]
 
 [tool.pytest.ini_options]
 markers = [
+    "exact_pads: load oval and macro pads as their true shapes, as the app does, opting out of the conftest fixture that keeps the bounding boxes the fixtures were made with",
     "host_capabilities: read gerber2rml.platform.capabilities() as the HOST reports it, opting out of the conftest fixture that pins the machine link on for every other test",
 ]

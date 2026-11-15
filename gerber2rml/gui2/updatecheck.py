@@ -44,8 +44,67 @@ class Probe(QThread):
             pass
 
 
-def result_sheet(parent, result):
-    """The dialog for an answer. Returned unshown so a test can read it."""
+def mac_checkout(frozen=None, meipass=None, here=None):
+    """The source checkout this Mac copy was built from, or None.
+
+    The releases on GitHub are Windows and Linux files; a Mac copy is built
+    from a checkout (packaging/build-macos.sh), so updating it means
+    rebuilding there. A frozen build carries the path in build_info.json;
+    a source run is the checkout itself.
+    """
+    import json
+    import sys
+    from pathlib import Path
+    from gerber2rml import platform as plat
+    if not plat._is_macos():
+        return None
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    if frozen:
+        base = Path(meipass or getattr(sys, "_MEIPASS", ""))
+        try:
+            repo = Path(json.loads((base / "build_info.json").read_text(
+                encoding="utf-8"))["repo"])
+        except (OSError, ValueError, KeyError):
+            return None
+    else:
+        repo = Path(here or __file__).resolve().parents[2]
+    script = repo / "packaging" / "update-macos.sh"
+    return repo if script.is_file() and (repo / ".git").exists() else None
+
+
+def run_mac_update(repo):
+    """Open Terminal on packaging/update-macos.sh --install for ``repo``."""
+    import os
+    import shlex
+    import tempfile
+    fd, path = tempfile.mkstemp(prefix="srm-cam-update-", suffix=".command")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("#!/bin/bash\n"
+                f"cd {shlex.quote(str(repo))} && "
+                "packaging/update-macos.sh --install\n")
+    os.chmod(path, 0o755)
+    QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+
+def result_sheet(parent, result, checkout=None):
+    """The dialog for an answer. Returned unshown so a test can read it.
+
+    ``checkout`` is :func:`mac_checkout`'s answer: given, an update is
+    offered as a rebuild there instead of a download."""
+    repo = checkout if result.status == updates.UPDATE else None
+    if repo is not None:
+        d = dialogs.Sheet(parent, f"SRM-CAM {result.latest} is available",
+                          width=560)
+        d.say(f"You are running {__version__}. This Mac copy is built from "
+              f"the source in {repo}, so updating means rebuilding it there.")
+        d.say("Update now opens Terminal: it fetches the new version, runs "
+              "the tests, builds the app and installs it in Applications. "
+              "Quit SRM-CAM when it asks.", small=True)
+        d.act("Not now", on=d.reject)
+        d.act("Update now", kind="primary",
+              on=lambda: (run_mac_update(repo), d.accept()), default=True)
+        d.setObjectName("updateSheet")
+        return d
     if result.status == updates.UPDATE:
         d = dialogs.Sheet(parent, f"SRM-CAM {result.latest} is available",
                           width=560)
@@ -87,7 +146,7 @@ def check_now(parent, fetch=None):
         result = updates.check(__version__, fetch=fetch)
     finally:
         QApplication.restoreOverrideCursor()
-    result_sheet(parent, result).exec()
+    result_sheet(parent, result, mac_checkout()).exec()
     return result
 
 
@@ -105,7 +164,7 @@ def announce(parent, result, settings=None):
     if not updates.should_announce(result, dismissed_version(settings)):
         return False
     settings.setValue(DISMISSED_KEY, result.latest)
-    result_sheet(parent, result).exec()
+    result_sheet(parent, result, mac_checkout()).exec()
     return True
 
 

@@ -28,7 +28,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QTableWidget, QTableWidgetItem, QCheckBox,
                                QHeaderView, QFileDialog, QProgressBar,
-                               QAbstractItemView)
+                               QAbstractItemView, QDoubleSpinBox)
 
 from gerber2rml.gui2 import dialogs, theme, widgets, inspector, tier
 from gerber2rml.engine import leveling as lv
@@ -182,6 +182,29 @@ class LevelPage(inspector.Page):
         h.addWidget(QLabel("up"))
         h.addStretch(1)
         grid.add(row)
+        # How far in from the board's edge the outer points sit. One setting
+        # for this grid and the automatic run's (Run it): where the clamps
+        # are does not depend on which of the two is probing.
+        from gerber2rml.gui2 import workspace
+        mrow = QWidget()
+        mh = QHBoxLayout(mrow)
+        mh.setContentsMargins(0, 0, 0, 0)
+        mh.setSpacing(theme.GAP_S)
+        mh.addWidget(QLabel("Points this far in from the edge"))
+        self.margin = QDoubleSpinBox()
+        self.margin.setRange(0.5, 40.0)
+        self.margin.setDecimals(1)
+        self.margin.setSuffix(" mm")
+        self.margin.setKeyboardTracking(False)
+        self.margin.setValue(self._saved_margin())
+        self.margin.setToolTip(
+            "How far the grid's outer points are kept from the board's "
+            "edge. Raise it to keep the probe off clamps on the edge. The "
+            "automatic run uses the same number.")
+        self.margin.valueChanged.connect(self._margin_changed)
+        mh.addWidget(self.margin)
+        mh.addStretch(1)
+        grid.add(mrow)
         grid.add(widgets.button(
             "Build the grid over the board", on=self._build,
             tip="Lays probe points over the board's footprint, inset from the "
@@ -340,6 +363,31 @@ class LevelPage(inspector.Page):
         self.top_hint.setVisible(dowel)
 
     # -- grid --------------------------------------------------------------
+    @staticmethod
+    def _saved_margin():
+        from gerber2rml.gui2 import workspace
+        try:
+            return float(workspace.setting("autorun/level_margin", "") or 2.0)
+        except ValueError:
+            return 2.0
+
+    def _margin_changed(self, v):
+        """Remember it, and move a grid that has not been measured yet. One
+        that has is left alone: its numbers belong to the points they were
+        taken at, and Build makes a new one."""
+        from gerber2rml.gui2 import workspace
+        workspace.set_setting("autorun/level_margin", "%.1f" % v)
+        if self._points and not any(self._measured()):
+            self._build()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        m = self._saved_margin()         # Run it may have changed it
+        if abs(m - self.margin.value()) > 1e-6:
+            self.margin.blockSignals(True)
+            self.margin.setValue(m)
+            self.margin.blockSignals(False)
+
     def _build(self):
         # Machine coordinates, from the controller. On a double-sided job the
         # layout shifts the board to make room for the registration holes, so
@@ -356,7 +404,8 @@ class LevelPage(inspector.Page):
             self.ctl.say("warn", "None of the job is on copper the machine "
                                  "can reach — see the checks.")
             return
-        self._points = lv.probe_points(b, self.nx.value(), self.ny.value())
+        self._points = lv.probe_points(b, self.nx.value(), self.ny.value(),
+                                       margin=self.margin.value())
         self.table.blockSignals(True)
         self.table.setRowCount(len(self._points))
         for r, (x, y) in enumerate(self._points):

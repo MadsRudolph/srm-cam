@@ -119,12 +119,14 @@ class Stage(QWidget):
     hovered = Signal(object)                     # (x, y) mm, or None on leave
     frame_changed = Signal(str)
     region_added = Signal(float, float, float, float)   # a box dragged in mm
+    box_clicked = Signal(float, float)   # a click, not a drag, in box mode (mm)
     board_picked = Signal(int)                   # pressed on one board of a panel
     pin_moved = Signal(int, float, float)        # a reference pin dropped, in mm
     measured = Signal(object)                    # (length, dx, dy) mm, or None
     pad_picked = Signal(float, float)            # clicked a pad to measure, mm
     stock_picked = Signal(float, float)          # clicked roughly on the stock
     bracket_moved = Signal(float, float)         # bracket dropped: its corner, mm
+    nogo_picked = Signal(int, object)            # right-clicked a zone: index, global pos
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,6 +163,7 @@ class Stage(QWidget):
         self._screws = []
         self._screw_grid = []
         self._regions = []
+        self._nogo = []                   # [(x0, y0, x1, y1)] mm, no-go zones
         self._stock = None                # (x, y, w, h) mm
         self._photo = None                # (QImage, (x0, y0, x1, y1)) in mm
         self._mesh = None                 # (QImage, rect, span) height map
@@ -214,6 +217,9 @@ class Stage(QWidget):
         self._pan_from = None
         self._pan_start = None
         self._dragging = False
+        # (dx, dy) -> (dx, dy): pulls a board drag into a place it should
+        # snap to (the bracket's corner, gui2/autorun.py), or None.
+        self._place_snap = None
         self._drag_from = None
         self._drag_place0 = None
         self._box_from = None
@@ -393,6 +399,31 @@ class Stage(QWidget):
         self._regions = regions
         self._invalidate()
         self.update()
+
+    def set_nogo(self, zones):
+        """No-go zones in machine mm: boxes ``(x0, y0, x1, y1)`` and
+        clamps ``(cx, cy, d)``.
+
+        Their own list, not more ``regions``: Rework and the run's re-cut
+        boxes each replace those wholesale, and a clamp does not stop being
+        there because another page drew something.
+        """
+        zones = [tuple(z) for z in (zones or [])]
+        if zones == self._nogo:
+            return
+        self._nogo = zones
+        self._invalidate()
+        self.update()
+
+    def nogo_at(self, p):
+        """Index of the no-go zone under ``p`` (mm), the last drawn first -
+        that is the one on top - or None."""
+        x, y = (p.x(), p.y()) if hasattr(p, "x") else p
+        from gerber2rml.engine.nogo import zone_contains
+        for i in range(len(self._nogo) - 1, -1, -1):
+            if zone_contains(self._nogo[i], x, y):
+                return i
+        return None
 
     def set_level_mesh(self, image, rect, span):
         """The measured surface, as a heatmap over the board's footprint.
@@ -942,8 +973,13 @@ class Stage(QWidget):
             # a full-bed double-sided board that is hundreds of milliseconds per
             # mouse event, so the board crawled behind the cursor. Translating
             # cached paths is a transform, and costs nothing.
-            self._drag_offset = (p.x() - self._drag_from.x(),
-                                 p.y() - self._drag_from.y())
+            off = (p.x() - self._drag_from.x(), p.y() - self._drag_from.y())
+            if self._place_snap is not None and self._drag_member is None:
+                try:
+                    off = tuple(self._place_snap(*off))
+                except Exception:               # noqa: BLE001 - never the drag
+                    pass
+            self._drag_offset = off
             self.placement_dragging.emit(*self._drag_offset)
             self.update()
             return
@@ -962,6 +998,13 @@ class Stage(QWidget):
         # and leave the pan armed with a closed-hand cursor.
         button = e.button()
         if button in (Qt.MiddleButton, Qt.RightButton):
+            # The right button pans. Pressed and let go on the spot it is a
+            # click, and on a no-go zone that click is "this one": the page
+            # offers to delete it. Four pixels of slack - a hand is not a
+            # tripod.
+            start = getattr(self, "_pan_start", None)
+            still = (start is not None and
+                     (e.position() - start).manhattanLength() <= 4)
             if self._panning:
                 self._panning = False
                 self._invalidate()
@@ -969,6 +1012,10 @@ class Stage(QWidget):
                 # A repaint, not just a cache drop: without it the last frame
                 # of the pan stayed on screen with a bare band down one edge.
                 self.update()
+            if button == Qt.RightButton and still:
+                i = self.nogo_at(self.to_mm(e.position()))
+                if i is not None:
+                    self.nogo_picked.emit(i, e.globalPosition().toPoint())
             return
         if button != Qt.LeftButton:
             return
@@ -982,6 +1029,8 @@ class Stage(QWidget):
             # nothing a 0.8 mm cutter could usefully be asked to re-do.
             if abs(a.x() - b.x()) > 1.0 and abs(a.y() - b.y()) > 1.0:
                 self.region_added.emit(a.x(), a.y(), b.x(), b.y())
+            elif abs(a.x() - b.x()) <= 1.0 and abs(a.y() - b.y()) <= 1.0:
+                self.box_clicked.emit(b.x(), b.y())
             self.update()
             return
         if self._pin_drag_idx is not None:
@@ -1124,6 +1173,10 @@ class Stage(QWidget):
     # position it can be screwed into, and that is what is drawn while it
     # moves. The drop is one signal, with the corner it was dropped at.
     # ======================================================================
+    def set_place_snap(self, fn):
+        """Snap a dragged board with ``fn(dx, dy) -> (dx, dy)``; None: off."""
+        self._place_snap = fn
+
     def set_bracket(self, outline, screws=(), inside=None, snap=None):
         """The bracket's L (machine mm), its screw centres, its inside corner
         and ``snap(x, y) -> (outline, screws, inside) | None``. ``outline``
@@ -1509,6 +1562,34 @@ class Stage(QWidget):
             p.drawText(c + QPointF(2, -4), m.name)
 
     def _paint_regions(self, p):
+        # No-go zones: filled heavier than a rework box and crossed corner
+        # to corner, so one is never mistaken for a place work will be done.
+        for z in self._nogo:
+            pen = QPen(QColor(theme.DANGER), 0)
+            pen.setCosmetic(True)
+            if len(z) in (3, 5):
+                # A clamp: its disc and, screwed into a bed hole, the
+                # thumbscrew's 14.4 mm head on that hole.
+                cx, cy, d = z[:3]
+                r = QRectF(cx - d / 2.0, cy - d / 2.0, d, d)
+                p.setPen(pen)
+                p.setBrush(QColor(theme.alpha(theme.DANGER, 0.28)))
+                p.drawEllipse(r)
+                if len(z) == 5:
+                    sx, sy = z[3], z[4]
+                    p.setBrush(QColor(theme.alpha(theme.DANGER, 0.45)))
+                    p.drawEllipse(QPointF(sx, sy), 7.2, 7.2)
+                    p.drawLine(QPointF(sx - 3, sy), QPointF(sx + 3, sy))
+                    p.drawLine(QPointF(sx, sy - 3), QPointF(sx, sy + 3))
+                continue
+            x0, y0, x1, y1 = z
+            r = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
+            p.fillRect(r, theme.alpha(theme.DANGER, 0.28))
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(r)
+            p.drawLine(r.topLeft(), r.bottomRight())
+            p.drawLine(r.topRight(), r.bottomLeft())
         for (x0, y0, x1, y1, colour) in self._regions:
             r = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
             p.fillRect(r, theme.alpha(colour, 0.16))
