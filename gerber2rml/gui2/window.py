@@ -4053,8 +4053,16 @@ class MainWindow(QMainWindow):
                     gerber_dir, side=side, kerf=self._stencil_kerf, mirror=mirror))
             except stencil.StencilError as e:
                 notes.append(str(e))
+        if not arts and not self._double:
+            # A board made elsewhere has its parts on the top: F.Paste, drawn
+            # as plotted, since that face lies up when the stencil goes on.
+            try:
+                arts.append(stencil.build_stencil(
+                    gerber_dir, side="top", kerf=self._stencil_kerf, mirror=False))
+            except stencil.StencilError as e:
+                notes.append(str(e))
         # A face with no paste is normal when another face has some.
-        return arts, ([] if arts else notes)
+        return arts, ([] if arts else notes[:1])
 
     def stencil_status(self):
         st = self.state
