@@ -404,6 +404,11 @@ def avoid(paths, rects, inside):
         a, b = out[i - 1][-1], out[i][0]
         travel = max(m.z for m in out[i])
         way = _round((a.x, a.y), (b.x, b.y), checked, inside)
+        if way == []:
+            # No single dog-leg does it - two clamps in a row, say. The
+            # corner-to-corner router (engine/nogo.py) finds what there is.
+            from gerber2rml.engine.nogo import route
+            way = route((a.x, a.y), (b.x, b.y), checked, inside) or []
         if way:
             out[i] = ([Move(x, y, travel, rapid=True) for x, y in way]
                       + list(out[i]))

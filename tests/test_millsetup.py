@@ -28,7 +28,7 @@ JOGGING = IDLE[:1] + b"\x09" + IDLE[2:]
 class FakeMill:
     """An SRM-20's settings channel: registers, a header, a live block."""
 
-    def __init__(self, live=IDLE, lag=0, slow=0):
+    def __init__(self, live=IDLE, lag=0, slow=0, flag=0):
         self.reg = {
             0x3100: H("01"),                          # NC Code
             0x3200: H("00 00 00"),
@@ -42,6 +42,7 @@ class FakeMill:
         self.live = bytearray(live)
         self.lag = lag               # polls that still show the old percent
         self.slow = slow             # headers that say "not ready yet" first
+        self.flag = flag             # bits the fifth byte carries all along
         self._unready = 0
         self.sent = []               # (register, value) of every request
         self._answer = b""
@@ -76,7 +77,8 @@ class FakeMill:
                               0x40 if self._unready % 2 else 0x20, 0, 0, 0])
             saving, self._saving = self._saving, 0
             return bytes([0x82, self.live[1], self.live[2], 0x01,
-                          0x20 if saving else 0, 0, 0, len(self._answer)])
+                          (0x20 if saving else 0) | self.flag, 0, 0,
+                          len(self._answer)])
         if value == 0x0003:
             assert payload >= max(len(self._answer), 3)
             return self._answer
@@ -146,6 +148,36 @@ def test_an_answer_that_is_not_ready_yet_is_waited_for():
     assert millsetup.g54_origin(mill, ) == (0.0, 0.0, -55.64)
     assert millsetup.command_set(mill) == "nc"
     assert millsetup.set_command_set(mill, nc=False, **FAST) == "rml"
+
+
+def test_a_mill_that_is_only_moving_is_not_taken_for_busy():
+    """The fifth byte read 04 for as long as a run was moving the head, with
+    the answer waiting. Waiting for 00 gave "the mill took the request but
+    stayed busy" - and "the mill's settings could not be read" on screen,
+    with the mill switched on (the lab mill, 2026-11-15)."""
+    mill = FakeMill(flag=0x04)
+    assert millsetup.command_set(mill) == "nc"
+    assert millsetup.g54_origin(mill) == (0.0, 0.0, -55.64)
+    assert millsetup.set_spindle_percent(mill, 60, **FAST) == 60
+
+
+def test_a_header_asked_before_the_mill_has_begun_is_asked_again():
+    """Idle and empty is what the header says before the request has been
+    looked at. That is not "no answer"."""
+    class Late(FakeMill):
+        def __init__(self):
+            super().__init__()
+            self.early = 0
+
+        def ctrl_transfer(self, rtype, request, value, index, payload):
+            if rtype == 0x41:
+                self.early = 2
+            if rtype == 0xC1 and value == 0x0001 and self.early:
+                self.early -= 1
+                return bytes([0x82, 0, 0, 0x01, 0, 0, 0, 0])
+            return super().ctrl_transfer(rtype, request, value, index, payload)
+
+    assert millsetup.command_set(Late()) == "nc"
 
 
 def test_status_reads_position_and_the_sliders():

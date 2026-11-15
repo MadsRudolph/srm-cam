@@ -176,6 +176,99 @@ Copper on F.Cu makes a board double-sided when it is opened. Unticking
 so a board whose F.Cu only shows where wire links go stays single-sided
 every time it is sent from KiCad.
 
+## Clamps: no-go zones
+
+The automatic run knows the corner bracket, because the app draws it. It
+knows nothing else that stands above the copper. On 2026-11-15 that cost two
+bits: the surface probe touches 2 mm in from the board's edge, which on a
+board as big as its sheet is where the clamps are, and it goes from touch to
+touch in a straight line a few millimetres up.
+
+On **Run it**, *Mark a clamp (no-go zone)* arms the bed: drag a box round
+each clamp, screw head or knob. The zones are kept with this computer (the
+fixture does not move between boards) and are drawn red and crossed.
+**Right-click** a zone to delete it; *Clear zones* removes them all.
+
+The checks say at once when work lies in a zone - *Work lies in a no-go
+zone*, with which zone and what is in it - so the board or the clamp can be
+moved before Start. That check reads the geometry (the edges of both layers'
+copper, since a cut runs along an edge and a pour may lie under a clamp
+untouched; every hole and reference hole); the run has the last word, from
+its real toolpaths. With zones set, the run (`engine/autorun.py`):
+
+- moves a surface touch that would land in a zone (or within 2 mm of one
+  plus the bit's radius) to the nearest free spot, up to 15 mm away and
+  still inside the grid; its height is entered at the grid point all the
+  same. A touch with no free spot near is not made and takes the height of
+  the nearest one that was; with fewer than half left the run stops rather
+  than guess;
+- leads the head **round** a zone wherever a move between two touches, or
+  to a reference hole, would cross it: corner to corner at the height it is
+  at, staying on the stock and off the bracket (`engine/nogo.py`). Only when
+  the zones leave no way round on the stock does it go over, at the top of
+  Z, and the log says so;
+- for a board **left in the sheet**, treats a clamp as it treats the
+  bracket's tongue: isolation under it is left uncut and the bit led round,
+  once the passes, milled out on paper, are seen to join no nets. A poured
+  board has an isolation pass all the way round, 0.1 mm inside its edge -
+  exactly where clamps hold a board as big as its sheet - and that pass
+  joins nothing. If leaving it out would put two nets on one piece of
+  copper, the run refuses and names them. The checks show this as a
+  warning, *Isolation in a no-go zone will be left uncut*;
+- leads a job's **travel** round the zones too: the hop from one hole to
+  the next, from one trace to the next, is the run's own choice of line and
+  is re-routed (`nogo.detour`) at the height it travels at. The first run
+  with zones refused to drill because the straight line between two corner
+  holes clipped a clamp's corner; that is not a reason to refuse;
+- refuses, before anything is cut, any job that still has a move through a
+  zone: a **cut** in one - a hole, or a trace on a board that is cut out -
+  or travel with no way round;
+- refuses to start if the spot where the copper's height is touched (15 mm
+  in from the bracket's corner) or a reference hole is in a zone;
+- needs the stock in the bracket: found by its edges, the probe feels along
+  exactly where clamps sit.
+
+*Levelling: touches this far in from the edge* (under *Probe the surface
+first*, and as *Points this far in from the edge* on the Level page - one
+setting for both) sets how far the outer surface touches are kept from the
+board's edge: 2 mm by default, more to keep them off clamps on the edge. The
+height map carries its outer rows out to the edge.
+
+While Run it is open the bed shows where the run will touch: the twelve
+points, moved by the margin, by the board being dragged, and off any zone
+drawn over one - worked out by the same function the run uses
+(`engine/autorun.py`, `level_grid` and `level_targets`), so what is drawn is
+what is done.
+
+Not covered: the Pro workflow's own bed-levelling grid, and jogging by hand.
+
+## The first touch on the copper
+
+Probe Z, Zero Z and the run's first touch drop fast and then feel. The fast
+part runs at the machine's rapid (about 19 mm/s), which the firmware's
+stop-on-touch cannot bring to rest inside the copper - a first Probe Z on
+this Mac drove a bit into the stock, aimed at a "usual" copper height for a
+"usual" bit. Now (`stockfind.drop_to_hint`):
+
+- with no height measured on this computer, there is **no fast drop**: it
+  feels its way down from where the bit is, 6 mm at a touch. Jog the bit to
+  a few millimetres above the copper first and it takes seconds;
+- a height measured in this session is dropped to 5 mm above, as before;
+- a height saved on another day is dropped to **15 mm** above, because the
+  bit may have been changed: how far it sticks out of the collet moves the
+  copper in machine Z by exactly that much.
+
+The Arduino firmware is unchanged.
+
+## A board bigger than the sheet
+
+With *Leave the board in the sheet (no cut-out)* the outline is not cut, so
+it may hang off the copper: only the work has to be on it. The copper check
+and the run both measure what is cut - both layers' copper, the holes, the
+reference holes - instead of the outline, the surface touches stay on the
+sheet, and the board stays where it was dragged. A trace or a hole off the
+copper is refused as before.
+
 ## The mill: a raw CUPS queue (once per Mac)
 
 On Windows the Roland driver installs the mill as a printer and jobs are

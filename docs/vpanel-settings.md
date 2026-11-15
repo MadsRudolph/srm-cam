@@ -69,7 +69,7 @@ VPanel polls about five times a second. The 56 bytes:
 | 0 | `82` | constant |
 | 1 | busy: `09` during a jog, `01` while the spindle runs up or down | `jog`, both spindle captures. Bits not mapped |
 | 2 | spindle on | `01` from the start command to the stop |
-| 4 | `20` or `40` while the mill works on the last request | every write; every fast read |
+| 4 | bits `20`/`40`: the mill is working on the last request. Bit `04`: unknown - it came and went while a run moved the head, with a valid answer waiting, and is not a reason to wait | every write; every fast read; a read during a run |
 | 7 | `30`, the length of what follows | constant |
 | 8–19 | X, Y, Z, machine coordinates | follows every jog; matched VPanel's display |
 | 32–35 | spindle reading | see "Spindle speed" |
