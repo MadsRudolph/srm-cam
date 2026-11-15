@@ -84,16 +84,16 @@ def stencil_paths(art, origin, only=None):
     return holes, outline
 
 
-def rotated(art, quarter_turns):
-    """The artwork turned clockwise as seen on the bed, by 90 degrees a step,
-    with its outline's corner back at (0, 0)."""
+def rotated(art, quarter_turns, degrees=0.0):
+    """The artwork turned clockwise as seen on the bed, by 90 degrees a step
+    and ``degrees`` more, with its outline's bounding box back at (0, 0)."""
     from dataclasses import replace as _replace
     from shapely.affinity import rotate, translate
-    q = quarter_turns % 4
-    if not q:
+    angle = (quarter_turns % 4) * 90 + degrees
+    if abs(angle % 360) < 1e-9:
         return art
     # The artwork frame is Y up; clockwise on the Y-down bed is negative here.
-    turn = lambda g: rotate(g, -90 * q, origin=(0, 0))
+    turn = lambda g: rotate(g, -angle, origin=(0, 0))
     outline = turn(art.outline)
     x0, y0, _, _ = outline.bounds
     move = lambda g: translate(g, -x0, -y0)

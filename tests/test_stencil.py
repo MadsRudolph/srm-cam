@@ -397,3 +397,31 @@ def test_the_laser_page_selects_turns_and_keeps_presets(qt_app, monkeypatch, art
     assert d.preset.findText("mine") < 0
     QSettings(*sl._SETTINGS).clear()
     d.close()
+
+
+def test_align_finds_a_moved_and_turned_stencil(qt_app, art):
+    """Holes drawn dark on bright foil 4.3 mm right, 2.6 mm down and 1.5 degrees
+    clockwise of where the stencil thinks they are come back to within a
+    quarter of a millimetre and a few tenths of a degree."""
+    import numpy as np
+    from gerber2rml.engine import xtool_camera as cam
+    ppm = 8
+    holes, _ = xtool.stencil_paths(art, (60.0, 70.0))
+    c = np.array([q for p in holes for q in p]).mean(axis=0)
+    truth = [[(x + 4.3, y + 2.6) for x, y in p] for p in cam._turn(holes, c, 1.5)]
+    size = int(160 * ppm)
+    ink = cam._raster(truth, (0, 0), (size, size), ppm)
+    rgb = np.repeat((220 - 160 * ink)[..., None], 3, axis=2).astype(np.uint8)
+    a = cam.align(rgb, ppm, holes)
+    assert a.ok and a.found == a.total
+    assert (a.dx, a.dy) == pytest.approx((4.3, 2.6), abs=0.25)
+    assert a.turn == pytest.approx(1.5, abs=0.3)
+
+
+def test_align_says_no_on_a_blank_photo(qt_app, art):
+    import numpy as np
+    from gerber2rml.engine import xtool_camera as cam
+    holes, _ = xtool.stencil_paths(art, (60.0, 70.0))
+    rng = np.random.default_rng(1)
+    rgb = (200 + rng.integers(0, 20, (1280, 1280, 3))).astype(np.uint8)
+    assert not cam.align(rgb, 8, holes).ok

@@ -647,7 +647,28 @@ several; Ctrl or Shift adds to the selection. **Cut** becomes **Cut N selected**
 it cuts only those holes, with the same recipe, and does not mark the outline
 again. Hovering over a hole shows its size.
 
-**Recipes.** The **Recipe** card holds power, speed, frequency, passes, per burst,
+**Align after moving the foil.** If the foil or board has been lifted and put
+back, for example to push out slugs before a re-cut:
+1. Drag the stencil roughly onto it.
+2. Press **Align**. It takes a photo and finds the holes already cut, which
+   show up as dark spots in bright foil or burned marks on FR4.
+3. The stencil is moved and turned onto them, including small angles. If the
+   board went back a quarter turn round, the other three orientations are
+   tried as well.
+4. The status says how many holes it found. Nothing moves unless at least 85 %
+   of them are found.
+
+On the lab's machine, two different starting points landed within 0.01 mm of
+each other and within 0.25 mm of where the holes were cut. Use **Show where**
+before cutting.
+
+**Recipes.** The Recipe section only shows the preset. **Adjust the numbers**
+folds out power, speed, frequency, passes, per burst, rest, zones and the
+outline mark. It says when they differ from the preset, and it holds **Save as
+preset…** and **Delete preset**. The two built-in presets are **0.1 mm 304
+stainless**, which is the proven one, and **Marking test (1 pass)**.
+
+**Recipes (detail).** The **Recipe** card holds power, speed, frequency, passes, per burst,
 rest, zones and the outline mark. There are two built-in presets:
 **0.1 mm 304 stainless**, which is the proven one, and **Marking test (1 pass)**.
 **Save…** keeps your own under a name, and **Delete** removes it.
