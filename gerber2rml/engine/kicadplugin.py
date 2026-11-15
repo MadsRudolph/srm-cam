@@ -85,7 +85,7 @@ def launch_info(executable=None, frozen=None, platform=None, address=None):
     exe = Path(executable)
     if (frozen and len(exe.parents) > 2 and exe.parents[1].name == "Contents"
             and exe.parents[2].suffix == ".app"):
-        app = str(exe.parents[2])
+        app = exe.parents[2].as_posix()      # .app bundles exist only on macOS
     return {"argv": argv, "app": app,
             "address": address or plat.handoff_address(platform)}
 

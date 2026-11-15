@@ -190,26 +190,37 @@ def test_a_fast_drop_stops_on_copper_higher_than_it_was_told():
     assert m.pos[2] >= surface
 
 
-def test_with_no_known_height_there_is_no_fast_drop_at_all():
-    """It used to drop at the machine's rapid towards "the lab's usual"
-    copper height, relying on stop-on-touch. On 2026-11-15 a bit seated
-    further out than usual reached the copper first and was driven into it.
-    A height nobody measured is not somewhere to aim 19 mm/s."""
+def test_with_no_known_height_the_drop_clears_the_longest_bit(monkeypatch):
+    """No measured height: fast to the lab's copper plus the most a bit can
+    sit out of the collet, plus spare - never all the way down by feel, and
+    never at the copper itself (2026-11-15: a bit seated further out than
+    usual was driven into the stock by a drop aimed at the usual height)."""
     m, surface, ser = _probe_port(0)
+    monkeypatch.setattr(stockfind, "LAB_COPPER_UM", surface)
     said = []
     assert stockfind.drop_to_hint(ser, None, note=said.append) is True
-    assert m.pos[2] == 0                       # it did not move
-    assert not any("Dropping fast" in s for s in said)
-    assert any("feeling down" in s for s in said)
-    # The copper is still found - step by step, from the top.
+    assert m.pos[2] == surface + stockfind.STALE_ABOVE_UM
+    assert stockfind.STALE_ABOVE_UM > stockfind.BIT_SPREAD_UM
+    assert not any("higher than expected" in s for s in said)
     z = stockfind.seek_surface(ser, 100000, 80000, note=said.append,
                                hint_um=None)
     assert z == pytest.approx(surface, abs=50)
-    assert not any("Dropping fast" in s for s in said)
+
+
+def test_with_no_known_height_a_bit_1cm_long_still_stops_short(monkeypatch):
+    """The copper 10 mm higher in machine Z than the lab's usual - the
+    longest bit there is. The drop ends above it."""
+    m, surface, ser = _probe_port(0)
+    monkeypatch.setattr(stockfind, "LAB_COPPER_UM",
+                        surface - stockfind.BIT_SPREAD_UM)
+    said = []
+    assert stockfind.drop_to_hint(ser, None, note=said.append)
+    assert m.pos[2] > surface
+    assert not any("higher than expected" in s for s in said)
 
 
 def test_a_height_from_another_day_is_stopped_well_short_of():
-    """15 mm above, not 5: the bit may have been changed since."""
+    """12 mm above, not 5: the bit may have been changed since."""
     m, surface, ser = _probe_port(0)
     assert stockfind.drop_to_hint(ser, surface)
     assert m.pos[2] == surface + stockfind.STALE_ABOVE_UM
@@ -235,10 +246,13 @@ def test_a_bit_10_mm_longer_than_last_time_is_not_reached_by_the_drop():
 
 
 
-def test_older_firmware_with_no_known_height_does_not_drop_blind(monkeypatch):
+def test_older_firmware_with_no_known_height_drops_to_the_same_spot(
+        monkeypatch):
+    """No stop-on-touch to fall back on - and none needed: the drop ends
+    above the copper whatever bit is in."""
     m, surface, ser = _probe_port(0)
+    monkeypatch.setattr(stockfind, "LAB_COPPER_UM", surface)
     monkeypatch.setattr(spi_probe, "firmware_version",
                         lambda s, timeout=1.5: (4, {"timedmove"}))
-    said = []
-    assert stockfind.drop_to_hint(ser, None, note=said.append)
-    assert m.pos[2] == 0 and "feeling down" in said[0]
+    assert stockfind.drop_to_hint(ser, None)
+    assert m.pos[2] == surface + stockfind.STALE_ABOVE_UM

@@ -50,9 +50,14 @@ CHECK_UM = 5000              # how far inside the far edges copper is checked
 TRAVEL_UM = 10000            # lift above the copper between spots; the jog adds
                              # 5 more: 15 mm clears the DTU fixture knobs
 TOUCH_BACK_UM = 3000         # up this far after a fast descent touched early
-STALE_ABOVE_UM = 15000       # the same for a height from another day: a bit
-                             # seated further out puts the copper that much
-                             # higher in machine Z, and nothing here can know
+LAB_COPPER_UM = -57200       # the lab's copper in machine Z with a bit seated
+                             # as usual. The copper never changes height; the
+                             # bit does, by how far it sits out of the collet
+BIT_SPREAD_UM = 10000        # how far that is from usual, either way (Mads:
+                             # +-1 cm at most)
+STALE_ABOVE_UM = BIT_SPREAD_UM + 2000   # a first drop stops this far above
+                             # the lab's copper: 2 mm short of it with the
+                             # longest bit there is
 HINT_ABOVE_UM = 5000         # a remembered surface: drop fast to this far above it,
                              # inside the probe's 6 mm reach, so one probe finds it
 
@@ -146,33 +151,36 @@ def drop_to_hint(ser, hint_um, should_abort=None, note=None, fresh=False):
     firmware's stop-on-touch cannot bring that to rest inside the copper: on
     2026-11-15 a first Probe Z drove a 0.8 mm bit into the stock. There was
     no measured height on that computer yet, and the drop was aimed at "the
-    lab's usual" one - right for a usual bit, 5 mm too low for that one. So:
+    lab's usual" one - right for a usual bit, 5 mm too low for that one.
 
-    * with no measured height there is no fast drop at all. The caller feels
-      its way down from where the head is (6 mm at a touch); jogging the bit
-      to a few millimetres above the copper first is what makes that quick;
+    Feeling all the way down from the top is no answer either (50 mm at 6 mm
+    a touch). The copper is always at the same height; only the bit moves,
+    by at most ``BIT_SPREAD_UM`` either way. So:
+
     * a height measured in this session (``fresh``) is dropped to
-      ``HINT_ABOVE_UM`` above, as before - same bit, same stock;
-    * a height saved on another day is dropped to ``STALE_ABOVE_UM`` above:
-      the bit may have been changed since, and how far it sticks out of the
-      collet moves the copper in machine Z by exactly that much.
+      ``HINT_ABOVE_UM`` above - same bit, same stock;
+    * otherwise - no height, or one saved on another day with a bit that
+      may have been changed since - the drop stops ``STALE_ABOVE_UM`` above
+      the lab's copper (or above the saved height, if that is higher):
+      clear of the copper with the longest bit there is, and a few touches
+      above it with the shortest.
 
     Stop-on-touch (firmware v5) stays on for the drop as the last resort it
-    always was; it is no longer the plan."""
+    always was; it is not the plan."""
     note = note or (lambda _m: None)
     _ver, feats = spi_probe.firmware_version(ser)
     stops = "touchstop" in feats
-    if hint_um is None:
-        note("No copper height has been measured here yet: feeling down "
-             "from where the bit is. Jog it to a few millimetres above the "
-             "copper first and this is quick.")
-        return True
-    above = HINT_ABOVE_UM if fresh else STALE_ABOVE_UM
+    if fresh and hint_um is not None:
+        target_um, above = int(hint_um), HINT_ABOVE_UM
+    else:
+        target_um = LAB_COPPER_UM if hint_um is None else max(
+            LAB_COPPER_UM, int(hint_um))
+        above = STALE_ABOVE_UM
     pos = spi_probe.query_position(ser)
     if pos is None:
         note("Fast drop skipped: cannot read where the head is.")
         return False
-    target = min(0, int(hint_um) + above)
+    target = min(0, target_um + above)
     z = pos[2] * 1000
     if z <= target + 500:
         return True

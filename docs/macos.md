@@ -184,10 +184,19 @@ bits: the surface probe touches 2 mm in from the board's edge, which on a
 board as big as its sheet is where the clamps are, and it goes from touch to
 touch in a straight line a few millimetres up.
 
-On **Run it**, *Mark a clamp (no-go zone)* arms the bed: drag a box round
-each clamp, screw head or knob. The zones are kept with this computer (the
-fixture does not move between boards) and are drawn red and crossed.
-**Right-click** a zone to delete it; *Clear zones* removes them all.
+On **Run it**, *Mark a clamp (no-go zone)* arms the bed:
+
+- **click the bed hole** a clamp is screwed into: the lab's printed cam
+  clamp (26 mm disc, screw 5.5 mm off centre, from
+  `hardware/probe_bracket/hold_down.py`) is turned **clockwise** onto the
+  stock's edge - the first touch going clockwise, so tightening the
+  thumbscrew presses it on - with its 2 mm lip over the copper; the bit
+  keeps 1 mm from it. Place the real clamp the same way;
+- **drag** a box round anything else (screw head, knob); 2 mm from that.
+
+The zones last only until SRM-CAM is closed - the clamps come off with
+every board - and are drawn red. **Right-click** a zone to delete it at
+once; *Clear zones* removes them all.
 
 The checks say at once when work lies in a zone - *Work lies in a no-go
 zone*, with which zone and what is in it - so the board or the clamp can be
@@ -250,13 +259,11 @@ stop-on-touch cannot bring to rest inside the copper - a first Probe Z on
 this Mac drove a bit into the stock, aimed at a "usual" copper height for a
 "usual" bit. Now (`stockfind.drop_to_hint`):
 
-- with no height measured on this computer, there is **no fast drop**: it
-  feels its way down from where the bit is, 6 mm at a touch. Jog the bit to
-  a few millimetres above the copper first and it takes seconds;
 - a height measured in this session is dropped to 5 mm above, as before;
-- a height saved on another day is dropped to **15 mm** above, because the
-  bit may have been changed: how far it sticks out of the collet moves the
-  copper in machine Z by exactly that much.
+- otherwise (no height, or one from another day) the fast drop stops **12 mm**
+  above the lab's copper (`LAB_COPPER_UM`): the copper never changes height,
+  and a bit sits at most ±10 mm from usual in the collet. Then it feels down,
+  6 mm a touch.
 
 The Arduino firmware is unchanged.
 

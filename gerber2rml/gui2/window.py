@@ -482,6 +482,7 @@ class MainWindow(QMainWindow):
         self.stage.screw_picked.connect(self._on_screw_click)
         self.stage.hovered.connect(self._on_hover)
         self.stage.region_added.connect(self._on_region)
+        self.stage.box_clicked.connect(self._on_box_click)
         self.stage.board_picked.connect(self.action_select_board)
         self.stage.pin_moved.connect(self._on_pin_moved)
         self.stage.measured.connect(self._on_measured)
@@ -5028,6 +5029,9 @@ class MainWindow(QMainWindow):
         self.refresh_checks()
         self.refresh_preview()
         self.inspector.setup.sync()
+        # The KiCad plugin checks a board's rules against this cutter.
+        from gerber2rml.gui2 import kicadsetup
+        kicadsetup.sync_tools(self)
 
     def _on_frame(self, which):
         self.stage.set_frame(which)
@@ -5223,6 +5227,12 @@ class MainWindow(QMainWindow):
             self.autorun_page.add_box(x0, y0, x1, y1)
         else:
             self.rework_page.add_region(x0, y0, x1, y1)
+
+    def _on_box_click(self, x, y):
+        # A click while marking clamps puts one there; elsewhere it is
+        # nothing, as it always was.
+        if self.autorun_page.nogo_btn.isChecked():
+            self.autorun_page.add_clamp(x, y)
 
     def action_help(self):
         d = dialogs.Sheet(self, "How this works", width=620)

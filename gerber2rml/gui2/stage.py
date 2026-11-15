@@ -119,6 +119,7 @@ class Stage(QWidget):
     hovered = Signal(object)                     # (x, y) mm, or None on leave
     frame_changed = Signal(str)
     region_added = Signal(float, float, float, float)   # a box dragged in mm
+    box_clicked = Signal(float, float)   # a click, not a drag, in box mode (mm)
     board_picked = Signal(int)                   # pressed on one board of a panel
     pin_moved = Signal(int, float, float)        # a reference pin dropped, in mm
     measured = Signal(object)                    # (length, dx, dy) mm, or None
@@ -400,7 +401,8 @@ class Stage(QWidget):
         self.update()
 
     def set_nogo(self, zones):
-        """No-go zones: ``[(x0, y0, x1, y1), ...]`` in machine mm.
+        """No-go zones in machine mm: boxes ``(x0, y0, x1, y1)`` and
+        clamps ``(cx, cy, d)``.
 
         Their own list, not more ``regions``: Rework and the run's re-cut
         boxes each replace those wholesale, and a clamp does not stop being
@@ -417,9 +419,9 @@ class Stage(QWidget):
         """Index of the no-go zone under ``p`` (mm), the last drawn first -
         that is the one on top - or None."""
         x, y = (p.x(), p.y()) if hasattr(p, "x") else p
+        from gerber2rml.engine.nogo import zone_contains
         for i in range(len(self._nogo) - 1, -1, -1):
-            x0, y0, x1, y1 = self._nogo[i]
-            if x0 <= x <= x1 and y0 <= y <= y1:
+            if zone_contains(self._nogo[i], x, y):
                 return i
         return None
 
@@ -1027,6 +1029,8 @@ class Stage(QWidget):
             # nothing a 0.8 mm cutter could usefully be asked to re-do.
             if abs(a.x() - b.x()) > 1.0 and abs(a.y() - b.y()) > 1.0:
                 self.region_added.emit(a.x(), a.y(), b.x(), b.y())
+            elif abs(a.x() - b.x()) <= 1.0 and abs(a.y() - b.y()) <= 1.0:
+                self.box_clicked.emit(b.x(), b.y())
             self.update()
             return
         if self._pin_drag_idx is not None:
@@ -1560,11 +1564,27 @@ class Stage(QWidget):
     def _paint_regions(self, p):
         # No-go zones: filled heavier than a rework box and crossed corner
         # to corner, so one is never mistaken for a place work will be done.
-        for (x0, y0, x1, y1) in self._nogo:
-            r = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
-            p.fillRect(r, theme.alpha(theme.DANGER, 0.28))
+        for z in self._nogo:
             pen = QPen(QColor(theme.DANGER), 0)
             pen.setCosmetic(True)
+            if len(z) in (3, 5):
+                # A clamp: its disc and, screwed into a bed hole, the
+                # thumbscrew's 14.4 mm head on that hole.
+                cx, cy, d = z[:3]
+                r = QRectF(cx - d / 2.0, cy - d / 2.0, d, d)
+                p.setPen(pen)
+                p.setBrush(QColor(theme.alpha(theme.DANGER, 0.28)))
+                p.drawEllipse(r)
+                if len(z) == 5:
+                    sx, sy = z[3], z[4]
+                    p.setBrush(QColor(theme.alpha(theme.DANGER, 0.45)))
+                    p.drawEllipse(QPointF(sx, sy), 7.2, 7.2)
+                    p.drawLine(QPointF(sx - 3, sy), QPointF(sx + 3, sy))
+                    p.drawLine(QPointF(sx, sy - 3), QPointF(sx, sy + 3))
+                continue
+            x0, y0, x1, y1 = z
+            r = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
+            p.fillRect(r, theme.alpha(theme.DANGER, 0.28))
             p.setPen(pen)
             p.setBrush(Qt.NoBrush)
             p.drawRect(r)

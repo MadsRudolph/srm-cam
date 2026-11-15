@@ -66,7 +66,7 @@ PLACE_MARGIN_MM = 3.0        # a board placed for you: this far in from the edge
 # A no-go zone is a clamp somebody drew a box round by eye, on a picture of
 # the bed. The tool's edge is kept this far from the box as drawn, so a box
 # a millimetre or two tight still does not cost a bit.
-NOGO_CLEAR_MM = 2.0
+from gerber2rml.engine.nogo import NOGO_CLEAR_MM  # noqa: E402
 
 
 # A surface touch that would land in a no-go zone is moved to the nearest
@@ -343,8 +343,10 @@ class AutoRun:
 
     @staticmethod
     def _rects(zones):
-        return [(min(r[0], r[2]), min(r[1], r[3]),
-                 max(r[0], r[2]), max(r[1], r[3])) for r in (zones or [])]
+        """Boxes ``(x0, y0, x1, y1)`` and clamps ``(cx, cy, d)``, kept
+        in one form (engine/nogo.py)."""
+        from gerber2rml.engine.nogo import normal
+        return [normal(r) for r in (zones or [])]
 
     # -- the sequence --------------------------------------------------------
     def run(self):
@@ -762,10 +764,9 @@ class AutoRun:
         return self.bit / 2.0 + NOGO_CLEAR_MM
 
     def _nogo_boxes(self):
-        from shapely.geometry import box
+        from gerber2rml.engine.nogo import zone_shape
         g = self._nogo_grow()
-        return [box(r[0] - g, r[1] - g, r[2] + g, r[3] + g)
-                for r in self.nogo]
+        return [zone_shape(r, g) for r in self.nogo]
 
     def _in_nogo(self, x, y):
         """Is the tool, standing at (x, y), in or too near a no-go zone?"""
@@ -798,16 +799,14 @@ class AutoRun:
         """Points to pass through from ``a`` to ``b`` so that no no-go zone
         and no part of the bracket is entered: ``[]`` when the straight
         line is clear, None when there is no way round on the stock."""
-        from shapely.geometry import box
-        from gerber2rml.engine.nogo import route
+        from gerber2rml.engine.nogo import route, zone_shape
         inside = self._inside()
         if inside is None:
             return None
         # _zones() carries the no-go zones too for a board left in the
         # sheet; twice in the list is the same wall.
         zones = self._nogo_boxes() + [
-            box(r[0] - g, r[1] - g, r[2] + g, r[3] + g)
-            for r, g in self._zones()]
+            zone_shape(r, g) for r, g in self._zones()]
         return route(a, b, zones, inside)
 
     def _lead(self, a, way):
@@ -875,11 +874,9 @@ class AutoRun:
         Z at the top (``G28``) and comes down on its first point."""
         if not self.nogo:
             return paths
-        from shapely.geometry import box
-        from gerber2rml.engine.nogo import detour
+        from gerber2rml.engine.nogo import detour, zone_shape
         zones = self._nogo_boxes() + [
-            box(r[0] - g, r[1] - g, r[2] + g, r[3] + g)
-            for r, g in self._zones()]
+            zone_shape(r, g) for r, g in self._zones()]
         out, _led = detour(paths, zones, self._inside())
         return out
 

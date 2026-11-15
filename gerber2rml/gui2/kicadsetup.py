@@ -33,6 +33,24 @@ def _launch_info(parent):
     return info
 
 
+def sync_tools(parent):
+    """Tell the KiCad plugin about the cutter and drill now in use, when they
+    have changed since it was last told. Its design-rule check asks for the
+    cutter's width: written only at launch, it kept the 0.8 mm of whatever
+    profile came up first, and a board for the 0.44 mm ball mill was refused.
+    Best effort, and cheap when nothing changed."""
+    try:
+        info = _launch_info(parent)
+        tools = (info.get("cutter_mm"), info.get("drill_mm"))
+        if tools == getattr(parent, "_kicad_tools", None):
+            return False
+        kicadplugin.refresh_launch_info(plugin_dirs(), info)
+        parent._kicad_tools = tools
+        return True
+    except Exception:                                # noqa: BLE001 - a nicety
+        return False
+
+
 def plugin_dirs():
     dirs = []
     for root in kicadplugin.config_roots():
