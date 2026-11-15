@@ -28,11 +28,16 @@ def _finish(rings, copper, job, cut_z, travel_z):
     cut that cannot be folded in stays its own pass, after the rings, so the
     ordinary isolation is cut first and the deliberate damage happens on
     copper that is already free."""
+    from gerber2rml.engine.pinch import pinch_centrelines, splice_pinches
     left = []
-    if getattr(job, "cut_pinches", False):
-        from gerber2rml.engine.pinch import pinch_centrelines, splice_pinches
-        rings, left = splice_pinches(rings, pinch_centrelines(copper, job),
-                                     copper, job.effective_diameter() / 2.0)
+    lines = (pinch_centrelines(copper, job)
+             if getattr(job, "cut_pinches", False) else [])
+    # A gap exactly the cutter's width is cut whether or not the job asked
+    # for the narrow ones: it costs no copper, and no ordinary pass enters it.
+    lines += pinch_centrelines(copper, job, exact=True)
+    if lines:
+        rings, left = splice_pinches(rings, lines, copper,
+                                     job.effective_diameter() / 2.0)
     paths = [_ring_to_toolpath(c, cut_z, travel_z) for c in rings]
     if left:
         from gerber2rml.engine.pinch import _line_toolpath

@@ -48,12 +48,21 @@ def test_a_growing_list_takes_all_the_vertical_slack(app):
 def test_without_grow_an_expanding_widget_only_shares_it(app):
     # The band under the tier sheet's list: Qt deals slack between an
     # expanding widget and the stretch below it. grow=True is the fix.
+    #
+    # Without grow the list stops at its own size hint and the stretch below
+    # takes the rest. Qt makes that hint 24 lines of the widget's font, so
+    # where it lands depends on the face: 312 px with the Windows default,
+    # 360 px with the macOS one. The sheet is therefore made tall enough
+    # (400 px of slack) that the hint is passed whichever font is in use; at
+    # 200 px the macOS list had not reached its hint yet and looked as if it
+    # were taking everything.
     sa = _rows()
     d = _sheet(app, sa, grow=False)
     before = sa.height()
-    d.resize(400, 500)
+    d.resize(400, 700)
     app.processEvents()
-    assert before < sa.height() < before + 190, (before, sa.height())
+    assert before < sa.height() < before + 390, (before, sa.height())
+    assert sa.height() <= sa.sizeHint().height()
     d.close()
 
 
