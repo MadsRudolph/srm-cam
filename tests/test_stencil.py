@@ -291,3 +291,27 @@ def test_no_dot_is_a_sentence():
     from gerber2rml.engine.xtool_camera import CameraError
     with pytest.raises(CameraError, match="No dot"):
         _fake_calibration().find_dot(np.zeros((1000, 1000, 3), np.uint8))
+
+
+def test_a_top_only_board_falls_back_to_f_paste(qt_app, monkeypatch, tmp_path):
+    """Parts on the top, as on a fab-made board: B.Paste is empty, F.Paste has
+    them, so the stencil is F.Paste and not mirrored."""
+    monkeypatch.setenv("SRM_CAM_MODE", "pro")
+    from gerber2rml.gui2.window import MainWindow
+    src = tmp_path / "top"
+    src.mkdir()
+    for p in WROOM.iterdir():
+        name = p.name
+        if "B_Paste" in name:
+            name = name.replace("B_Paste", "F_Paste").replace(".gbp", ".gtp")
+        elif "F_Paste" in name:
+            name = name.replace("F_Paste", "B_Paste").replace(".gtp", ".gbp")
+        (src / name).write_bytes(p.read_bytes())
+    w = MainWindow()
+    try:
+        w.load_folder(str(src))
+        arts, notes = w._stencil_arts(src)
+        assert len(arts) == 1 and arts[0].side == "top" and not arts[0].mirrored
+        assert len(arts[0].apertures) == 47 and notes == []
+    finally:
+        w.close()
