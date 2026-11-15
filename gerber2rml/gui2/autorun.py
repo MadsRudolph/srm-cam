@@ -87,9 +87,45 @@ class WindowSource(ar.JobSource):
         self.keep_placement = False      # the outline is real: keep the board
         self.centre = False              # centre it on the stock found
 
+    def copper_nets(self, side="bottom", fitted=True):
+        """One face's copper where it is cut, and its nets, for the run's
+        proof that what it leaves uncut joins nothing. The top is given
+        through the measured flip, or as the layout has it (``fitted``
+        False) for the check made before the flip."""
+        def go():
+            w = self.w
+            b = w.state.board
+            if side == "top":
+                g = w._ds_layout().top_copper
+                nets = w._nets_aligned(getattr(b, "copper_top_nets", None),
+                                       b.copper_top, g)
+                return (w._fit_geom(g) if fitted else g), nets
+            if w._double:
+                g = w._ds_layout().bottom_copper
+                return g, w._nets_aligned(getattr(b, "copper_nets", None),
+                                          b.copper, g)
+            return b.copper, getattr(b, "copper_nets", None)
+        return self.gui(go)
+
+    def nominal_top(self, key):
+        """A top-side job's toolpaths as the layout has them, with no
+        measured flip applied - whatever fit an earlier run left behind."""
+        def go():
+            w = self.w
+            keep = w._top_fit
+            w._top_fit = None
+            try:
+                return w._toolpaths_for(w.plan.by_key(key))[0]
+            finally:
+                w._top_fit = keep
+        return self.gui(go)
+
     def _plan_steps(self):
         steps = [s for s in self.w.plan.steps
                  if s.kind == "run" and s.op != "airpass"]
+        if getattr(self.w, "_no_cutout", False):
+            # The board stays in the sheet: there is no cut-out to run.
+            steps = [s for s in steps if s.op != "cutout"]
         keys = [s.key for s in self.w.plan.steps]
         if "flip" not in keys:
             return steps, []
@@ -342,7 +378,24 @@ class AutoRunPage(inspector.Page):
         self.bracket_lbl = widgets.hint(
             "Drag the bracket on the bed to the holes it is screwed into.")
         dl.addWidget(self.bracket_lbl)
+        # The board goes into the bracket's corner by itself, snaps back
+        # into it when dragged near, and this puts it back there.
+        self.reset_btn = widgets.button(
+            "Reset position",
+            tip="Put the board back in the bracket's corner of the stock, "
+                "%g mm in from its edges and clear of the probe tongue."
+                % ar.PLACE_MARGIN_MM,
+            on=self.reset_position)
+        rrow = QWidget()
+        rh = QHBoxLayout(rrow)
+        rh.setContentsMargins(0, 0, 0, 0)
+        rh.addWidget(self.reset_btn)
+        rh.addStretch(1)
+        dl.addWidget(rrow)
         stock.add(self.datum_box)
+        # True until the board is put somewhere by hand: a board just loaded
+        # goes into the corner when this page opens.
+        self._auto_place = True
         self.pick_btn = widgets.button(
             "Click where it is",
             tip="Then click on the stage, anywhere on the stock. The probe "
@@ -371,6 +424,50 @@ class AutoRunPage(inspector.Page):
             % ar.PLACE_MARGIN_MM)
         self.centre_chk.toggled.connect(self._centre_changed)
         stock.add(self.centre_chk)
+
+        self.nocut_chk = QCheckBox("Leave the board in the sheet (no "
+                                   "cut-out)")
+        self.nocut_chk.setToolTip(
+            "For a board about as big as the sheet. Nothing is cut round "
+            "its outline, so it needs no room for that: it is put against "
+            "the two edges away from the bracket and may reach right up to "
+            "the bracket, even under its probe tongue. Any isolation that "
+            "would be under the tongue is left uncut and the bit goes round "
+            "it - but the run first works out that this joins no nets, and "
+            "does not start if it would. A hole under the tongue stops it "
+            "too.\n"
+            "A double-sided board is centred across the sheet, and its top "
+            "is checked the same way before anything is cut, laid where the "
+            "flip will put it. A reference hole that lands under the bracket "
+            "then is not used; three have to be reachable.")
+        self.nocut_chk.toggled.connect(self._nocut_changed)
+        stock.add(self.nocut_chk)
+
+        # Where a double-sided board's reference holes go. Three ways, the
+        # same three as on Your board in Pro; here because a sheet barely
+        # bigger than the board is discovered on this page.
+        self.ref_row = QWidget()
+        rr = QHBoxLayout(self.ref_row)
+        rr.setContentsMargins(0, 0, 0, 0)
+        rr.setSpacing(theme.GAP_S)
+        rr.addWidget(QLabel("Reference holes"))
+        self.ref_box = QComboBox()
+        self.ref_box.addItem("In the waste, outside the board", "waste")
+        self.ref_box.addItem("Inside the board's corners", "onboard")
+        self.ref_box.addItem("The board's own mounting holes", "mounting")
+        self.ref_box.setToolTip(
+            "A double-sided board is found again after the flip by small "
+            "reference holes the probe drops into.\n"
+            "In the waste: %g mm outside the corners - a clean board, but "
+            "the sheet must be that much bigger all round.\n"
+            "Inside the corners: the same distance inside, and they stay in "
+            "the finished board - for a sheet barely bigger than the board.\n"
+            "The board's own mounting holes: nothing extra is drilled. Needs "
+            "at least two holes of one size, wide enough for the bit, at "
+            "opposite ends of the board." % ctl._fid_offset)
+        self.ref_box.currentIndexChanged.connect(self._ref_holes_changed)
+        rr.addWidget(self.ref_box, 1)
+        stock.add(self.ref_row)
 
         self.level_chk = QCheckBox("Probe the surface first (bed levelling)")
         self.level_chk.setChecked(True)
@@ -563,6 +660,12 @@ class AutoRunPage(inspector.Page):
         if not full:
             self.where.setCurrentIndex(self.where.findData("bracket"))
             self.dry_chk.setChecked(False)
+        # The bracket is on every step in Novice and only here in Pro.
+        if getattr(self.ctl, "inspector", None) is not None:
+            if self._everywhere():
+                self._sync_outline()
+            elif not self._on_this_page():
+                self._draw_bracket(False)
 
     def _where_changed(self, *_):
         on = self.bracket()
@@ -622,12 +725,17 @@ class AutoRunPage(inspector.Page):
         stage = getattr(self.ctl, "stage", None)
         if stage is None:
             return
+        if hasattr(stage, "set_place_snap"):
+            stage.set_place_snap(self._place_snap if on else None)
         if not on:
             stage.set_bracket(None)
             return
         b = self._bracket
+        # Dragged to other holes only from this page; elsewhere it is the
+        # picture of where the stock goes, and stays put.
         stage.set_bracket(b.outline(), b.screw_points(), b.inside_corner(),
-                          self._snap_view(b.corner))
+                          self._snap_view(b.corner) if self._on_this_page()
+                          else None)
 
     def _datum_from_head(self):
         pos = getattr(self.ctl, "_last_xyz", None)
@@ -664,9 +772,178 @@ class AutoRunPage(inspector.Page):
             spin.setValue(v)
             spin.blockSignals(False)
 
+    def board_loaded(self):
+        """A new board: it goes into the corner when this page next opens."""
+        self._auto_place = True
+
+    def board_opened(self):
+        """The operator opened a board - from KiCad, the dialog, the demo.
+        In Novice the stock IS in the bracket, so the sheet and the L are
+        what the board was opened onto: drawn, and the board put in the
+        corner, at once and on every step. (Not from ``load_folder`` itself:
+        a programmatic load leaves the placement it was given, which is what
+        keeps the two tiers' exports the same.)"""
+        self._sync_outline()
+
+    def _everywhere(self):
+        """Is the bracket part of the picture on every step? In Novice, where
+        there is no other way to hold the stock, once there is a board."""
+        from gerber2rml.gui2 import tier
+        return (not tier.is_full() and self.bracket()
+                and getattr(self.ctl.state, "board", None) is not None)
+
+    def _on_this_page(self):
+        insp = getattr(self.ctl, "inspector", None)
+        return insp is not None and insp.stack.currentWidget() is self
+
+    def board_placed(self):
+        """A placement restored from a setup is meant: leave it."""
+        self._auto_place = False
+
+    def no_cutout(self):
+        """Is the board left in the sheet? Only with the stock in the
+        bracket: that is what its checks are made against."""
+        return bool(getattr(self.ctl, "_no_cutout", False)) and self.bracket()
+
+    def _nocut_changed(self, on):
+        ctl = self.ctl
+        if bool(getattr(ctl, "_no_cutout", False)) == bool(on):
+            return
+        ctl.set_no_cutout(bool(on))
+        self._sync_nocut()
+        if self._thread is None:
+            self._fill_rows()
+        if self.bracket() and not self.centre_chk.isChecked():
+            self._auto_place = True
+            self.place_in_corner()
+
+    def _sync_nocut(self):
+        ctl = self.ctl
+        self.nocut_chk.setVisible(self.bracket())
+        self.nocut_chk.blockSignals(True)
+        self.nocut_chk.setChecked(bool(getattr(ctl, "_no_cutout", False)))
+        self.nocut_chk.blockSignals(False)
+        # Nothing to stop before when nothing is cut out.
+        self.check_chk.setEnabled(not self.no_cutout())
+
+    def _corner_args(self):
+        """What :func:`bracket.corner_place` needs, or None without a board."""
+        ctl = self.ctl
+        if ctl.state.board is None or ctl.work_extent() is None:
+            return None
+        bit = ctl.state.drill.bit_diameter
+        return dict(corner=self._bracket.corner, stock=tuple(ctl.stock),
+                    keepout=self._bracket.keepout(), bit_mm=bit,
+                    margin_mm=ar.PLACE_MARGIN_MM)
+
+    def place_in_corner(self, say=False):
+        """Put the board in the bracket's corner of the outline. Says when the
+        stock typed is too small for it to sit there whole."""
+        args = self._corner_args()
+        if args is None:
+            return
+        ctl, st = self.ctl, self.ctl.state
+        b = ctl.work_extent()
+        if self.no_cutout():
+            # Not cut out: against the edges AWAY from the bracket, and it
+            # needs no more sheet than its own size.
+            nx, ny = br.far_place(args["corner"], args["stock"], b,
+                                  flipped=bool(ctl._double))
+            need = (b[2] - b[0], b[3] - b[1])
+        else:
+            nx, ny = br.corner_place(extent=b, **args)
+            need = br.stock_needed(extent=b, **args)
+        if abs(nx - b[0]) > 1e-6 or abs(ny - b[1]) > 1e-6:
+            ctl.action_place(st.place_x + nx - b[0], st.place_y + ny - b[1])
+        _sx, _sy, sw, sh = args["stock"]
+        short = need[0] > sw + 1e-6 or need[1] > sh + 1e-6
+        # Said once per sheet and board, not on every digit typed.
+        key = (round(sw, 1), round(sh, 1), round(need[0], 1),
+               round(need[1], 1))
+        if short and (say or key != getattr(self, "_short_said", None)):
+            self._short_said = key
+            # What the board itself may measure: the sheet less what the
+            # margins, the tongue and any outside reference holes take.
+            o = ctl.work_bounds() or b
+            max_w = sw - (need[0] - (o[2] - o[0]))
+            max_h = sh - (need[1] - (o[3] - o[1]))
+            more = ""
+            if self.no_cutout():
+                ctl.say("warn", "The board is %.1f × %.1f mm and the sheet "
+                                "%.0f × %.0f mm: it does not fit on it."
+                                % (need[0], need[1], sw, sh))
+                return
+            more = (" Or leave the board in the sheet (below): with no "
+                    "cut-out it needs no room round it.")
+            if (ctl._double and ctl._registration == "fiducial"
+                    and ctl._fid_placement == "waste"):
+                more += (" Reference holes inside the corners, or the "
+                         "board's own mounting holes (below), need less "
+                         "room; a single-sided board needs none.")
+            ctl.say("warn", "The board does not fit in the corner of a "
+                            "%.0f × %.0f mm sheet clear of the probe tongue: "
+                            "it needs at least %.1f × %.1f mm. In KiCad, make "
+                            "the outline at most %.1f × %.1f mm.%s"
+                            % (sw, sh, need[0], need[1], max_w, max_h, more))
+        elif not short and say:
+            ctl.say("ok", "The board is back in the bracket's corner.")
+
+    def reset_position(self):
+        """The button: back into the corner, and kept there."""
+        if self.centre_chk.isChecked():
+            self.centre_chk.blockSignals(True)
+            self.centre_chk.setChecked(False)
+            self.centre_chk.blockSignals(False)
+            from gerber2rml.gui2 import workspace
+            workspace.set_setting("autorun/centre", False)
+        self._auto_place = True
+        self.place_in_corner(say=True)
+
+    def _ref_holes_changed(self, *_):
+        ctl = self.ctl
+        want = self.ref_box.currentData()
+        if want is None or ctl.reference_holes() == want:
+            return
+        ctl.action_fiducial_layout(ctl._fid_count, want, ctl._fid_offset)
+        ctl.inspector.setup.sync()
+        self._sync_ref_holes()                   # back, if it was refused
+        if self.bracket() and not self.centre_chk.isChecked():
+            self.place_in_corner()
+
+    def _sync_ref_holes(self):
+        ctl = self.ctl
+        self.ref_row.setVisible(bool(ctl._double)
+                                and ctl._registration == "fiducial")
+        i = self.ref_box.findData(ctl.reference_holes())
+        self.ref_box.blockSignals(True)
+        # Hand-placed pins (Pro) are none of the three: shown as they are,
+        # and not changed from here.
+        self.ref_box.setEnabled(i >= 0)
+        if i >= 0:
+            self.ref_box.setCurrentIndex(i)
+        self.ref_box.blockSignals(False)
+
+    def _place_snap(self, dx, dy):
+        """For the stage: a drag of the board, pulled into the corner on
+        each axis it comes near."""
+        args = self._corner_args()
+        if args is None or self.centre_chk.isChecked():
+            return dx, dy
+        b = self.ctl.work_extent()
+        if self.no_cutout():
+            nx, ny = br.far_place(args["corner"], args["stock"], b,
+                                  flipped=bool(self.ctl._double))
+            if abs(b[0] + dx - nx) <= br.SNAP_MM:
+                dx = nx - b[0]
+            if abs(b[1] + dy - ny) <= br.SNAP_MM:
+                dy = ny - b[1]
+            return dx, dy
+        return br.snap_offset(extent=b, dx=dx, dy=dy, **args)
+
     def board_dragged(self):
         """The operator put the board somewhere by hand. "Centre" would move
         it away again at Start, so it goes off, and says so."""
+        self._auto_place = False
         if self.centre_chk.isChecked():
             self.centre_chk.setChecked(False)
             self.ctl.say("info", "Centring is off: the board stays where you "
@@ -693,17 +970,29 @@ class AutoRunPage(inspector.Page):
             return
         if tier.is_full():
             return
-        if (b[0] < sx or b[1] < sy or b[2] > sx + sw or b[3] > sy + sh):
+        off = b[0] < sx or b[1] < sy or b[2] > sx + sw or b[3] > sy + sh
+        if self.bracket():
+            # In the bracket the board belongs in its corner: a new board
+            # goes there, and so does one that has been dragged off.
+            if self._auto_place or off:
+                self.place_in_corner()
+            return
+        if off:
             ctl.action_place(st.place_x + sx + ar.PLACE_MARGIN_MM - b[0],
                              st.place_y + sy + ar.PLACE_MARGIN_MM - b[1])
 
     def _sync_outline(self, *_):
         # Only while this page is the one open: it must not move the sheet
-        # under someone working on another step.
-        insp = getattr(self.ctl, "inspector", None)
-        if insp is None or insp.stack.currentWidget() is not self:
+        # under someone working on another step. Novice is the exception -
+        # its stock is always in the bracket, so the sheet is there, and the
+        # board on it, from the moment a board is loaded.
+        if getattr(self.ctl, "inspector", None) is None:
+            return
+        if not self._on_this_page() and not self._everywhere():
             return
         w, h = self.w_spin.value(), self.h_spin.value()
+        self._sync_ref_holes()
+        self._sync_nocut()
         self._draw_bracket(self.bracket())
         if self.bracket():
             x, y, c = self.datum()
@@ -825,7 +1114,10 @@ class AutoRunPage(inspector.Page):
 
     def hideEvent(self, e):
         super().hideEvent(e)
-        self._draw_bracket(False)
+        # The stack still has this page as current while it hides: redraw
+        # once the next one is up, so the bracket stays (Novice) but can no
+        # longer be dragged, or goes (Pro).
+        QTimer.singleShot(0, lambda: self._draw_bracket(self._everywhere()))
         if self.pick_btn.isChecked():
             self.pick_btn.setChecked(False)      # leaving the page disarms it
 
@@ -851,18 +1143,36 @@ class AutoRunPage(inspector.Page):
             printer = simmachine.printer()
         else:
             from gerber2rml.engine import rmlspool
-            name = rmlspool.find_mill()
+            if rmlspool.MACOS:
+                from gerber2rml.gui2 import macmill
+                name = macmill.find_or_setup(self.window())
+            else:
+                name = rmlspool.find_mill()
             if name is None:
                 ctl.say("fail", "The Roland SRM-20 printer is not installed on "
-                                "this PC, so there is nothing to send jobs to.")
+                                "this PC, so there is nothing to send jobs to."
+                        + (" " + rmlspool.CUPS_SETUP_HINT
+                           if rmlspool.MACOS else ""))
                 return
             printer = rmlspool.SpoolPrinter(name)
+            if rmlspool.MACOS and not macmill.preflight(self.window(),
+                                                        printer):
+                return
+            if rmlspool.MACOS:
+                # The mill's own settings, which used to need VPanel on a
+                # Windows PC: the command set is put right and said in the
+                # log; a run that would stop at the frame check asks first.
+                from gerber2rml.gui2 import millsettings
+                if not millsettings.preflight(self.window(), say=ctl.say):
+                    return
         if ctl._double:
             # Fiducials are the alignment, flipped left to right, and wide
             # enough for the probe bit to drop into.
             ctl._registration = "fiducial"
             ctl._fid_flip = "vertical"
-            ctl._fid_diameter = round(ctl.state.drill.bit_diameter + 0.8, 2)
+            if not ctl._fid_mounting:      # those have the size they have
+                ctl._fid_diameter = round(ctl.state.drill.bit_diameter + 0.8,
+                                          2)
             ctl.refresh_plan()
         ctl.show_auto_face(False)
         size = (self.w_spin.value(), self.h_spin.value())
@@ -909,6 +1219,7 @@ class AutoRunPage(inspector.Page):
         level = self.level_chk.isChecked()
         dry = self.dry_chk.isChecked()
         check_cut = self.check_chk.isChecked()
+        no_cut = self.no_cutout() and datum is not None
         start_at = self.start_box.currentData()
         from gerber2rml.gui2 import workspace
         try:
@@ -930,7 +1241,13 @@ class AutoRunPage(inspector.Page):
                                  datum=datum, dry_run=dry,
                                  keepout=(self._bracket.keepout()
                                           if datum is not None else None),
-                                 check_cut=check_cut, start_at=start_at)
+                                 arms=(self._bracket.arms()
+                                       if datum is not None else None),
+                                 leave_under=no_cut,
+                                 margin_mm=(0.0 if no_cut
+                                            else ar.PLACE_MARGIN_MM),
+                                 check_cut=check_cut and not no_cut,
+                                 start_at=start_at)
                 try:
                     ok = run.run()
                 finally:

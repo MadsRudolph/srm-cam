@@ -214,6 +214,9 @@ class Stage(QWidget):
         self._pan_from = None
         self._pan_start = None
         self._dragging = False
+        # (dx, dy) -> (dx, dy): pulls a board drag into a place it should
+        # snap to (the bracket's corner, gui2/autorun.py), or None.
+        self._place_snap = None
         self._drag_from = None
         self._drag_place0 = None
         self._box_from = None
@@ -942,8 +945,13 @@ class Stage(QWidget):
             # a full-bed double-sided board that is hundreds of milliseconds per
             # mouse event, so the board crawled behind the cursor. Translating
             # cached paths is a transform, and costs nothing.
-            self._drag_offset = (p.x() - self._drag_from.x(),
-                                 p.y() - self._drag_from.y())
+            off = (p.x() - self._drag_from.x(), p.y() - self._drag_from.y())
+            if self._place_snap is not None and self._drag_member is None:
+                try:
+                    off = tuple(self._place_snap(*off))
+                except Exception:               # noqa: BLE001 - never the drag
+                    pass
+            self._drag_offset = off
             self.placement_dragging.emit(*self._drag_offset)
             self.update()
             return
@@ -1124,6 +1132,10 @@ class Stage(QWidget):
     # position it can be screwed into, and that is what is drawn while it
     # moves. The drop is one signal, with the corner it was dropped at.
     # ======================================================================
+    def set_place_snap(self, fn):
+        """Snap a dragged board with ``fn(dx, dy) -> (dx, dy)``; None: off."""
+        self._place_snap = fn
+
     def set_bracket(self, outline, screws=(), inside=None, snap=None):
         """The bracket's L (machine mm), its screw centres, its inside corner
         and ``snap(x, y) -> (outline, screws, inside) | None``. ``outline``

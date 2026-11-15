@@ -576,6 +576,7 @@ class SetupPage(Page):
         self.fid_place = QComboBox()
         self.fid_place.addItem("In the waste, outside the board", "waste")
         self.fid_place.addItem("On the board, inside its corners", "onboard")
+        self.fid_place.addItem("The board's own mounting holes", "mounting")
         self.fid_place.addItem("Where I drag them on the stage", "manual")
         self.fid_place.setToolTip(
             "Where the four reference holes go." + chr(10) + chr(10) +
@@ -584,6 +585,9 @@ class SetupPage(Page):
             "On the board: the holes stay in the finished board, which is what "
             "you want when the stock is barely bigger than the design - a "
             "full-bed board has no waste to put them in." + chr(10) +
+            "The board's own mounting holes: nothing extra is drilled - "
+            "the app picks holes the board already has, at least two of one "
+            "size, wide enough for the bit and far apart." + chr(10) +
             "Where I drag them: each pin goes wherever you put it on the "
             "stage - for a big board with waste on only some edges, where "
             "neither corner scheme fits the stock.")
@@ -799,7 +803,8 @@ class SetupPage(Page):
         self.fid_count.setValue(int(getattr(ctl, "_fid_count", 4)))
         self.fid_count.blockSignals(False)
         self.fid_place.blockSignals(True)
-        want = getattr(ctl, "_fid_placement", "waste")
+        want = ("mounting" if getattr(ctl, "_fid_mounting", False)
+                else getattr(ctl, "_fid_placement", "waste"))
         i = self.fid_place.findData(want)
         if i >= 0:
             self.fid_place.setCurrentIndex(i)
@@ -981,11 +986,15 @@ class SetupPage(Page):
         fiducial = (full and self.double.isChecked()
                     and self.registration.currentData() == "fiducial")
         manual = self.fid_place.currentData() == "manual"
-        for f in (self.fid_dia_field, self.fid_place_field,
-                  self.fid_count_field, self.fid_flip_field):
+        mounting = self.fid_place.currentData() == "mounting"
+        for f in (self.fid_place_field, self.fid_flip_field):
             f.setVisible(fiducial)
+        # The board's own holes have their own size and number.
+        for f in (self.fid_dia_field, self.fid_count_field):
+            f.setVisible(fiducial and not mounting)
         # The offset places the corner schemes; a hand-placed hole has none.
-        self.fid_offset_field.setVisible(fiducial and not manual)
+        self.fid_offset_field.setVisible(fiducial and not manual
+                                         and not mounting)
         self.fid_manual_hint.setVisible(fiducial and manual)
         dowel = (full and self.double.isChecked()
                  and self.registration.currentData() == "dowel")

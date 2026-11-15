@@ -164,13 +164,18 @@ SCRIM = "#000000"           # dialog backdrops, drawn with alpha in code
 # ships with Windows 10/11; Cascadia ships with Windows Terminal and VS. The
 # fallbacks keep the app honest on a machine (or a CI box) without them —
 # nothing below depends on a family existing, only on the *scale*.
+# The macOS entries (DIN Alternate/Condensed, Avenir Next Condensed, Helvetica
+# Neue, Menlo) ship with every Mac and keep the DIN-and-grotesque look there.
 DISPLAY_FAMILY = ["Bahnschrift SemiBold Condensed", "Bahnschrift SemiBold",
-                  "Franklin Gothic Medium", "DIN Alternate", "Oswald",
-                  "Segoe UI Semibold", "Sans Serif"]
+                  "Franklin Gothic Medium", "DIN Alternate", "DIN Condensed",
+                  "Oswald", "Segoe UI Semibold", "Sans Serif"]
 LABEL_FAMILY = ["Bahnschrift SemiCondensed", "Bahnschrift",
-                "Franklin Gothic Medium", "Segoe UI", "Sans Serif"]
-BODY_FAMILY = ["Segoe UI Variable Text", "Segoe UI", "Inter", "Sans Serif"]
-MONO_FAMILY = ["Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Monospace"]
+                "Franklin Gothic Medium", "Segoe UI", "Avenir Next Condensed",
+                "Sans Serif"]
+BODY_FAMILY = ["Segoe UI Variable Text", "Segoe UI", "Inter", "SF Pro Text",
+               "Helvetica Neue", "Sans Serif"]
+MONO_FAMILY = ["Cascadia Mono", "Consolas", "DejaVu Sans Mono", "SF Mono",
+               "Menlo", "Monospace"]
 
 # The scale. Named by ROLE so a size change is one decision, not forty.
 # The span (10 → 34) is the point: the first interface's entire UI lives

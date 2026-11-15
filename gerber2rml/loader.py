@@ -137,6 +137,7 @@ from gerbonara.apertures import (
 )
 from shapely import set_precision
 from shapely.affinity import scale, translate as _translate
+from shapely.strtree import STRtree
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import polygonize, unary_union
@@ -158,6 +159,15 @@ class Board:
     outline: BaseGeometry   # shapely geometry — board perimeter polygon
     holes: list             # drill hits as (x, y, diameter) in mm
     copper_top: BaseGeometry = None  # shapely geometry — union of all F.Cu shapes (empty if absent)
+    # The net names found on each polygon of ``copper``, as a list of sets in
+    # the order of ``copper.geoms`` - or None when the Gerber carries none
+    # (no X2 attributes) or the copper is not a set of polygons. Two islands
+    # of ONE net - the pieces of a GND pour, say - are not a short however
+    # close they sit, and only the net names can tell (engine/drc.py).
+    # Moving, turning and mirroring keep the order, so the list stays true.
+    copper_nets: list = None
+    # The same for ``copper_top``.
+    copper_top_nets: list = None
 
 
 # ---------------------------------------------------------------------------
@@ -176,34 +186,118 @@ def _rect_aperture(flash) -> object:
     return box(x - w / 2, y - h / 2, x + w / 2, y + h / 2)
 
 
-def _obround_aperture(flash) -> object:
-    """ObroundAperture Flash → approximated as a box (v1 approximation).
+# How far a flattened arc may sit from the true one, mm. Well under anything
+# a 0.8 mm cutter or the clearance check can tell apart.
+_ARC_TOLERANCE = 0.005
 
-    True obround = rectangle with semicircular ends.  A box slightly
-    over-estimates the copper area, which is conservative for isolation
-    milling.
+# "exact": oval and macro pads are their true shapes. "boxes": their bounding
+# boxes, which is what this module did until it was found to invent shorts
+# (see _flash_shape). Kept selectable because the test suite's fixtures and
+# golden files were made with the boxes; tests/conftest.py pins it for them.
+PAD_SHAPES = "exact"
+
+
+def _flash_shape(flash) -> object:
+    """The flash's TRUE shape, from gerbonara's own primitives.
+
+    An oval pad is an oval and a rounded rectangle has round corners. Drawing
+    them as their bounding boxes (what this did before) puts copper in corners
+    where there is none: beside a 2 mm oval the phantom corner reaches 0.41 mm
+    further than the pad, so a track KiCad placed a legal 0.5 mm away read as
+    0.09 mm away - a "short" the clearance check reported and the isolation
+    pass then could not cut between. Dark primitives are joined, clear ones
+    cut out (a pad's own hole).
     """
+    from gerbonara import graphic_primitives as gp
+    from gerbonara.utils import MM
+    dark, clear = [], []
+    for prim in flash.to_primitives(unit=MM):
+        if isinstance(prim, gp.Circle):
+            geom = Point(prim.x, prim.y).buffer(prim.r)
+        else:
+            poly = prim.to_arc_poly().approximate_arcs(
+                max_error=_ARC_TOLERANCE)
+            geom = Polygon(poly.outline).buffer(0)
+        if geom.is_empty:
+            continue
+        (dark if prim.polarity_dark else clear).append(geom)
+    if not dark:
+        raise ValueError("flash has no dark primitives")
+    shape = unary_union(dark)
+    return shape.difference(unary_union(clear)) if clear else shape
+
+
+def _bounding_box_shape(flash) -> object:
+    """The fallback when a flash's own shape cannot be built: its box."""
+    (xmin_off, ymin_off), (xmax_off, ymax_off) = \
+        flash.aperture.bounding_box(unit='mm')
+    return box(flash.x + xmin_off, flash.y + ymin_off,
+               flash.x + xmax_off, flash.y + ymax_off)
+
+
+def _obround_aperture(flash) -> object:
+    """ObroundAperture Flash → a rectangle with semicircular ends."""
+    if PAD_SHAPES == "exact":
+        try:
+            return _flash_shape(flash)
+        except Exception:
+            pass
     x, y = flash.x, flash.y
     w, h = flash.aperture.w, flash.aperture.h
     return box(x - w / 2, y - h / 2, x + w / 2, y + h / 2)
 
 
 def _macro_aperture(flash) -> object:
-    """ApertureMacroInstance Flash → bounding-box approximation.
-
-    gerbonara's bounding_box(unit='mm') returns
-    ``((xmin_offset, ymin_offset), (xmax_offset, ymax_offset))`` relative to
-    the flash centre.  This gives a conservative (slightly over-sized) polygon
-    that is safe for isolation milling.
-    """
-    x, y = flash.x, flash.y
-    ap = flash.aperture
+    """ApertureMacroInstance Flash → the macro's real outline (KiCad's
+    RoundRect, rotated ovals, chamfered and custom pads)."""
+    if PAD_SHAPES == "exact":
+        try:
+            return _flash_shape(flash)
+        except Exception:
+            pass
     try:
-        (xmin_off, ymin_off), (xmax_off, ymax_off) = ap.bounding_box(unit='mm')
-        return box(x + xmin_off, y + ymin_off, x + xmax_off, y + ymax_off)
+        return _bounding_box_shape(flash)
     except Exception:
         # Absolute fallback: 1 mm circle if bounding_box fails
-        return Point(x, y).buffer(0.5)
+        return Point(flash.x, flash.y).buffer(0.5)
+
+
+def _copper_nets(layer, copper):
+    """Which nets sit on which polygon of ``copper``: a list of sets aligned
+    with ``copper.geoms``, or None.
+
+    KiCad writes each pad's and track's net as a Gerber X2 object attribute
+    (``%TO.N,GND*%``). A zone fill carries none that gerbonara keeps, but it
+    is one polygon with the pads and tracks it connects, and those say what
+    it is. "N/C" (no-connect pins) and an empty name are not nets.
+    """
+    polys = list(getattr(copper, "geoms", []))
+    if len(polys) < 2:
+        return None
+    tree = STRtree(polys)
+    nets = [set() for _ in polys]
+    found = False
+    for obj in layer.objects:
+        attrs = getattr(obj, "attrs", None)
+        if not isinstance(attrs, dict):
+            continue
+        name = attrs.get(".N")
+        name = name[0] if isinstance(name, (tuple, list)) and name else name
+        if not name or name == "N/C":
+            continue
+        kind = type(obj).__name__
+        if kind == "Flash":
+            pt = Point(obj.x, obj.y)
+        elif kind == "Line":
+            pt = Point((obj.x1 + obj.x2) / 2.0, (obj.y1 + obj.y2) / 2.0)
+        else:
+            continue
+        for i in tree.query(pt):
+            if polys[int(i)].covers(pt):
+                nets[int(i)].add(str(name))
+                found = True
+                break
+    return nets if found else None
 
 
 def _flash_to_shapely(flash) -> object | None:
@@ -468,14 +562,28 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
         )
 
     # ---- Bottom copper ----
-    copper = _copper_to_shapely(GerberFile.open(str(bcu_path)))
+    bcu_layer = GerberFile.open(str(bcu_path))
+    copper = _copper_to_shapely(bcu_layer)
+    try:
+        # With the pads as boxes the board is being loaded the old way, for
+        # the tests written against it: no net names then either.
+        copper_nets = (_copper_nets(bcu_layer, copper)
+                       if PAD_SHAPES == "exact" else None)
+    except Exception:                    # the nets are a refinement, never a
+        copper_nets = None               # reason not to load a board
 
     # ---- Top copper (F.Cu) — optional ----
-    copper_top = (
-        _copper_to_shapely(GerberFile.open(str(fcu_path)))
-        if fcu_path is not None
-        else Polygon()
-    )
+    copper_top_nets = None
+    if fcu_path is not None:
+        fcu_layer = GerberFile.open(str(fcu_path))
+        copper_top = _copper_to_shapely(fcu_layer)
+        try:
+            copper_top_nets = (_copper_nets(fcu_layer, copper_top)
+                               if PAD_SHAPES == "exact" else None)
+        except Exception:
+            copper_top_nets = None
+    else:
+        copper_top = Polygon()
 
     # ---- Outline ----
     outline = _outline_to_shapely(GerberFile.open(str(edge_path)))
@@ -498,7 +606,9 @@ def load_board(folder: Path | str, *, mirror: bool = True) -> Board:
         copper_top = scale(copper_top, xfact=-1, yfact=1, origin=(0, 0))
         holes = [(-x, y, d) for x, y, d in holes]
 
-    return Board(copper=copper, outline=outline, holes=holes, copper_top=copper_top)
+    return Board(copper=copper, outline=outline, holes=holes,
+                 copper_top=copper_top, copper_nets=copper_nets,
+                 copper_top_nets=copper_top_nets)
 
 
 def rotate_board(board: Board, angle: float, origin=(0, 0)) -> Board:
@@ -527,6 +637,8 @@ def rotate_board(board: Board, angle: float, origin=(0, 0)) -> Board:
         outline=_rotate(board.outline, angle, origin=origin),
         holes=[_rot_hole(*h) for h in board.holes],
         copper_top=_rotate(ct, angle, origin=origin),
+        copper_nets=board.copper_nets,
+        copper_top_nets=board.copper_top_nets,
     )
 
 
@@ -543,6 +655,8 @@ def translate_board(board: Board, dx: float, dy: float) -> Board:
         outline=_translate(board.outline, xoff=dx, yoff=dy),
         holes=[(x + dx, y + dy, d) for (x, y, d) in board.holes],
         copper_top=_translate(ct, xoff=dx, yoff=dy),
+        copper_nets=board.copper_nets,
+        copper_top_nets=board.copper_top_nets,
     )
 
 
@@ -562,4 +676,6 @@ def place_in_positive_quadrant(board: Board, margin: float = 2.0) -> Board:
         outline=_translate(board.outline, xoff=dx, yoff=dy),
         holes=[(x + dx, y + dy, d) for (x, y, d) in board.holes],
         copper_top=_translate(copper_top, xoff=dx, yoff=dy),
+        copper_nets=board.copper_nets,
+        copper_top_nets=board.copper_top_nets,
     )

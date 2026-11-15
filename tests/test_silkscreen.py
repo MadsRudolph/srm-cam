@@ -107,7 +107,11 @@ def test_the_top_is_never_mirrored_and_the_bottom_is():
                   for p in top.shapes)
     got = sorted((round(p.centroid.x, 3), round(p.centroid.y, 3))
                  for p in flipped.shapes)
-    assert got == pytest.approx(want, abs=2e-3)
+    # Pair by pair: pytest.approx compares a flat sequence of numbers and,
+    # from pytest 9, refuses a list of (x, y) tuples outright.
+    assert len(got) == len(want)
+    for g, e in zip(got, want):
+        assert g == pytest.approx(e, abs=2e-3)
 
 
 # ---------------------------------------------------------- double-sided

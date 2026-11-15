@@ -92,11 +92,30 @@ def main(argv=None):
     base.setFamilies(theme.BODY_FAMILY)
     base.setPointSizeF(theme.SIZE_BODY * 0.75)
     app.setFont(base)
-    app.setStyleSheet(style.STYLESHEET)
+
+    # A board or setup on the command line goes to a window that is already
+    # up, if there is one: that is how the KiCad plugin's button and a second
+    # double-click both land in the copy that holds the serial port.
+    from gerber2rml.gui2 import handoff
+    wanted = handoff.paths_in(list(argv or sys.argv))
+    if wanted:
+        try:
+            if handoff.forward(wanted[0]) is not None:
+                return 0
+        except Exception:                       # noqa: BLE001 - start anyway
+            traceback.print_exc()
+
+    from gerber2rml import platform as plat
+    if plat.qt_style():
+        app.setStyle(plat.qt_style())
+    app.setStyleSheet(style.STYLESHEET + _arrow_rules(style))
 
     try:
         w = MainWindow()
+        w.remember_board_choices = True
         w.show()
+        w.raise_()
+        w.activateWindow()
     except Exception:
         traceback.print_exc()
         _panic("SRM-CAM could not build its window.", log)
@@ -105,15 +124,32 @@ def main(argv=None):
     # takes the whole timeout to fail, and that must never delay the window.
     # The KiCad offer first, once per plugin version and only where KiCad
     # is; the update probe after it, so the two never stack.
-    # A setup named on the command line opens as File ▸ Load would.
-    setups = [a for a in (argv or sys.argv)[1:]
-              if a.lower().endswith(".srmcam") and os.path.isfile(a)]
-    if setups:
-        QTimer.singleShot(0, lambda: w.load_setup(setups[0]))
+    # A setup or Gerber folder named on the command line opens as File ▸
+    # Load or Open would.
+    if wanted:
+        QTimer.singleShot(0, lambda: w.open_from_outside(wanted[0]))
+    try:
+        w._handoff = handoff.Server(w.open_from_outside, parent=w)
+        w._handoff.listen()
+    except Exception:                           # noqa: BLE001 - a nicety
+        traceback.print_exc()
     QTimer.singleShot(800, w.maybe_offer_kicad_plugin)
     if not os.environ.get("SRM_CAM_NO_UPDATE_CHECK"):
         QTimer.singleShot(1500, w.start_update_check)
     return app.exec()
+
+
+def _arrow_rules(style):
+    """The drop-down and spin-box arrows as images, or "" if they cannot be
+    written. Qt draws the stylesheet's CSS-border triangles as bars."""
+    try:
+        from PySide6.QtCore import QStandardPaths
+        cache = QStandardPaths.writableLocation(
+            QStandardPaths.CacheLocation) or ""
+        return style.arrow_rules(Path(cache) / "arrows") if cache else ""
+    except Exception:                           # noqa: BLE001 - cosmetic
+        traceback.print_exc()
+        return ""
 
 
 def _panic(headline, log):

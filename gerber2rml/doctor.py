@@ -6,6 +6,7 @@ Run it after pulling::
     python -m gerber2rml.doctor          # check, then install anything missing
     python -m gerber2rml.doctor --check  # only report, don't install
     python -m gerber2rml.doctor --dev    # also include the test (dev) extras
+    python -m gerber2rml.doctor --setup-mill  # macOS: the SRM-20 CUPS queue
 
 This module imports ONLY the standard library, so it works on a fresh checkout
 where none of the third-party packages are installed yet. The required packages
@@ -114,7 +115,19 @@ def main(argv=None):
                     help="only report what's missing; don't install anything")
     ap.add_argument("--dev", action="store_true",
                     help="also include the dev (pytest) extras")
+    ap.add_argument("--setup-mill", action="store_true",
+                    help="macOS: make the raw CUPS queue SRM-20 that jobs "
+                         "are sent to (mill on, USB in; asks for sudo)")
     args = ap.parse_args(argv)
+
+    if args.setup_mill:
+        from gerber2rml.engine import rmlspool
+        try:
+            rmlspool.setup_mill_queue()
+        except rmlspool.SpoolError as e:
+            print(f"Setting up the mill queue failed: {e}")
+            return 1
+        return 0
 
     if sys.version_info < (3, 10):
         print(f"WARNING: Python {sys.version_info.major}.{sys.version_info.minor} "

@@ -1850,7 +1850,7 @@ class MainWindow(QMainWindow):
                                self.level_show_chk, self.level_3d_btn,
                                stretch_first=False))
             _lvl_note = QLabel(
-                "Probing needs the machine link, which runs on Windows only. "
+                "Probing needs the machine link, which runs on Windows and macOS only. "
                 "Probe the bed on the CNC PC, save the grid as CSV, and load "
                 "it here with Load CSV — levelled export works the same off a "
                 "loaded map as off a probed one.")

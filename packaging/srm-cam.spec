@@ -6,6 +6,7 @@ Build (from the repo root, with the miniconda env that has the GUI deps):
 
 Produces a one-folder app at dist/SRM-CAM/ (SRM-CAM.exe + _internal/).
 The Inno Setup script (packaging/installer.iss) wraps that folder into Setup.exe.
+On macOS it also wraps the folder into dist/SRM-CAM.app (packaging/build-macos.sh).
 
 One-folder (not one-file) is deliberate: faster cold start (no temp unpack of a
 ~400 MB archive every launch) and the installer bundles the folder anyway.
@@ -27,6 +28,14 @@ if DEMO.is_dir():
     for f in DEMO.iterdir():
         if f.is_file():
             datas.append((str(f), "examples/preload_example"))
+# macOS: where this build was made from, so Help > Check for updates can
+# rebuild it from the same checkout (gui2/updatecheck.py).
+if sys.platform == "darwin":
+    import json
+    _info = ROOT / "build" / "macos" / "build_info.json"
+    _info.parent.mkdir(parents=True, exist_ok=True)
+    _info.write_text(json.dumps({"repo": str(ROOT)}), encoding="utf-8")
+    datas.append((str(_info), "."))
 # window/taskbar icon (the exe icon below covers the desktop shortcut)
 datas.append((str(ROOT / "packaging" / "srm-cam-256.png"), "assets"))
 # the KiCad build-area plugin, so the installed app can offer to set it up.
@@ -44,10 +53,26 @@ hiddenimports += collect_submodules("OpenGL")      # PyOpenGL platform/back ends
 hiddenimports += collect_submodules("gerbonara")
 hiddenimports += ["qrcode"]                        # phone photo QR (function-level import)
 
+# ---- macOS: pyusb and the libusb it loads --------------------------------
+# engine/millsetup.py reads and sets the mill's own settings over USB control
+# transfers. pyusb is imported inside a function and loads libusb by name at
+# run time, so PyInstaller sees neither: the module is named here and the
+# library is copied in beside the executable, where millsetup looks first.
+# Without Homebrew's libusb the app still builds; the Machine menu then says
+# what is missing instead of reading the mill.
+binaries = []
+if sys.platform == "darwin":
+    hiddenimports += ["usb", "usb.core", "usb.backend.libusb1"]
+    for _lib in (Path("/opt/homebrew/lib/libusb-1.0.0.dylib"),
+                 Path("/usr/local/lib/libusb-1.0.0.dylib")):
+        if _lib.is_file():
+            binaries.append((str(_lib), "."))
+            break
+
 a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -95,3 +120,25 @@ coll = COLLECT(
     upx_exclude=[],
     name="SRM-CAM",
 )
+
+# ---- macOS: wrap the folder into an .app ---------------------------------
+# build-macos.sh makes the .icns (sips + iconutil) into build/macos/ first;
+# without it the bundle simply gets the default icon.
+if sys.platform == "darwin":
+    import tomllib
+    _icns = ROOT / "build" / "macos" / "srm-cam.icns"
+    _version = tomllib.loads((ROOT / "pyproject.toml").read_text(
+        encoding="utf-8"))["project"]["version"]
+    app = BUNDLE(
+        coll,
+        name="SRM-CAM.app",
+        icon=str(_icns) if _icns.is_file() else None,
+        bundle_identifier="io.github.madsrudolph.srm-cam",
+        version=_version,
+        info_plist={
+            "CFBundleDisplayName": "SRM-CAM",
+            "CFBundleShortVersionString": _version,
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "11.0",
+        },
+    )
