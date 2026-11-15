@@ -425,3 +425,21 @@ def test_align_says_no_on_a_blank_photo(qt_app, art):
     rng = np.random.default_rng(1)
     rgb = (200 + rng.integers(0, 20, (1280, 1280, 3))).astype(np.uint8)
     assert not cam.align(rgb, 8, holes).ok
+
+
+def test_the_stencil_can_be_outlined_or_hidden(qt_app, monkeypatch, art):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
+    d = sl.StencilLaserDialog(art, laser=xtool.F1Ultra("127.0.0.1", 1, timeout=1))
+    d.set_look("outlines")
+    assert d.item.isVisible()
+    assert all(h.brush().style() == Qt.NoBrush for h in d.item.holes)
+    QTest.keyClick(d.view, Qt.Key_H)
+    assert d.look == "hidden" and not d.item.isVisible()
+    assert not d._focus_mark.isVisible()
+    QTest.keyClick(d.view, Qt.Key_H)
+    assert d.look == "filled" and d.item.isVisible()
+    assert all(h.brush().style() != Qt.NoBrush for h in d.item.holes)
+    d.close()

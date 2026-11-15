@@ -133,7 +133,25 @@ class _StencilItem(QGraphicsPathItem):
         s.addRect(self.path().boundingRect())
         return s
 
-    def paint_holes(self, selected, active=None):
+    def paint_holes(self, selected, active=None, look="filled"):
+        """``look``: "filled" (the stencil as it will be), "outlines" (thin
+        lines only, so the photo shows through every hole), "hidden"."""
+        self.setVisible(look != "hidden")
+        self.setBrush(QBrush(_c(theme.INK, 0.62 if look == "filled" else 0.0)))
+        if look == "outlines":
+            for hole in self.holes:
+                if active is not None and hole.index in active:
+                    edge, w = _c(theme.TOOL), 2.0
+                elif hole.index in selected:
+                    edge, w = _c(theme.PATH_FAR), 2.0
+                else:
+                    edge, w = _c(theme.PATH, 0.95), 1.2
+                hole.setBrush(QBrush(Qt.NoBrush))
+                pen = QPen(edge)
+                pen.setCosmetic(True)
+                pen.setWidthF(w)
+                hole.setPen(pen)
+            return
         dim = bool(selected) or active is not None
         for hole in self.holes:
             if active is not None and hole.index in active:
@@ -230,6 +248,9 @@ class _BedView(QGraphicsView):
         if d:
             self.nudge.emit(*d)
             return
+        if e.key() == Qt.Key_H:
+            e.ignore()                  # the page's: show or hide the stencil
+            return
         super().keyPressEvent(e)
 
     def contextMenuEvent(self, e):
@@ -314,7 +335,8 @@ class _Legend(QFrame):
             t = widgets.micro(text)
             t.setStyleSheet(f"color: {theme.TEXT_3}; background: transparent;")
             r = _row(sw, t, None, gap=7)
-            r.setStyleSheet("background: transparent;")
+            r.setObjectName("legendRow")
+            r.setStyleSheet("QWidget#legendRow { background: transparent; }")
             v.addWidget(r)
 
 
@@ -330,6 +352,7 @@ class StencilLaserDialog(QDialog):
         self.base_art = art
         self.turns = 0
         self.fine = 0.0                     # degrees on top of the quarter turns
+        self.look = "filled"
         self.art = art
         self.laser = laser or xtool.F1Ultra()
         self._cal = None
@@ -400,11 +423,18 @@ class StencilLaserDialog(QDialog):
         self.all_btn = widgets.button("All", kind="ghost", on=self.select_all)
         self.none_btn = widgets.button("None", kind="ghost", on=self.select_none)
         fit = widgets.button("Fit", on=self.view.fit, tip="Show the whole bed")
+        self.look_switch = widgets.Segmented([
+            ("filled", "Filled", "The stencil as it will be cut"),
+            ("outlines", "Outlines", "Thin outlines only: see the photo through "
+                                     "every hole, to spot pads that need more"),
+            ("hidden", "Hidden", "Only the photo (H)")], "filled")
+        self.look_switch.changed.connect(self.set_look)
         self.link = widgets.Chip("Laser not asked yet", "idle")
         for w in (brand, widgets.vrule(), self.photo_btn, self.focus_btn,
                   self.align_btn,
                   widgets.vrule(), self.mode, self.all_btn, self.none_btn,
-                  widgets.vrule(), self.rot_l, self.rot_r, fit):
+                  widgets.vrule(), self.rot_l, self.rot_r, fit,
+                  widgets.vrule(), self.look_switch):
             hh.addWidget(w)
         hh.addStretch(1)
         hh.addWidget(self.link)
@@ -785,10 +815,22 @@ class StencilLaserDialog(QDialog):
         self.selected.clear()
         self._paint()
 
+    def set_look(self, look):
+        self.look = look
+        self.look_switch.set_current(look)
+        self._focus_mark.setVisible(look != "hidden")
+        self._paint()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_H and not e.modifiers():
+            self.set_look("filled" if self.look == "hidden" else "hidden")
+            return
+        super().keyPressEvent(e)
+
     def _paint(self, active=None):
         if self.item is None:
             return
-        self.item.paint_holes(self.selected, active)
+        self.item.paint_holes(self.selected, active, self.look)
         n, total = len(self.selected), len(self.art.apertures)
         self.sel_read.set(f"{n} / {total}" if n else f"{total}")
         self.sel_read.set_label("Selected" if n else "Holes")
@@ -1101,7 +1143,7 @@ class StencilLaserDialog(QDialog):
 
     def _paint_active(self, active):
         if self.item is not None:
-            self.item.paint_holes(self.selected, active)
+            self.item.paint_holes(self.selected, active, self.look)
 
     def _start(self, fn, text, done=None):
         self._say(text)
