@@ -315,3 +315,85 @@ def test_a_top_only_board_falls_back_to_f_paste(qt_app, monkeypatch, tmp_path):
         assert len(arts[0].apertures) == 47 and notes == []
     finally:
         w.close()
+
+
+# ---------------------------------------------------------------- placing and re-cutting
+
+def test_a_quarter_turn_swaps_the_size_and_keeps_every_hole(art):
+    r = xtool.rotated(art, 1)
+    assert r.size == pytest.approx((art.size[1], art.size[0]))
+    x0, y0, _, _ = r.outline.bounds
+    assert (round(x0, 6), round(y0, 6)) == (0, 0)
+    assert len(r.apertures) == len(art.apertures)
+    assert sorted(round(p.area, 4) for p in r.apertures) == sorted(
+        round(p.area, 4) for p in art.apertures)
+    assert xtool.rotated(art, 4) is art
+
+
+def test_clockwise_on_the_bed(art):
+    """A point near the top-left corner on the bed goes to the top-right."""
+    from shapely.geometry import Point
+    w, h = art.size
+    probe = stencil.StencilArtwork(side="bottom", source=None, mirrored=False,
+                                   kerf=0, foil=0.1, outline=art.outline,
+                                   apertures=[Point(1, h - 1).buffer(0.5)])
+    (hole,), _ = xtool.stencil_paths(xtool.rotated(probe, 1), (0, 0))
+    cx, cy = xtool._centroid(hole)
+    assert (cx, cy) == pytest.approx((h - 1, 1), abs=0.05)
+
+
+def test_only_the_chosen_holes_are_cut(art):
+    holes, outline = xtool.stencil_paths(art, (50, 60), only={0, 5, 7})
+    assert len(holes) == 3
+    job = xtool.stencil_job(holes, outline)
+    assert sum(job.zones) == 3
+
+
+def test_the_timeline_covers_every_burst(art):
+    holes, outline = xtool.stencil_paths(art, (50, 60))
+    r = xtool.Recipe()
+    job = xtool.stencil_job(holes, outline, r)
+    assert len(job.timeline) == r.rounds * len(job.zones) + 1
+    assert job.timeline[-1][1] == pytest.approx(job.seconds)
+    assert job.at(0.0)[1] == 0 and job.at(job.seconds - 1e-3)[0] == -1
+    assert [len(z) for z in job.zone_paths] == job.zones
+
+
+def test_focus_points_snap_to_the_factory_grid():
+    assert xtool.snap_to_grid((83.6, 121.2)) == (80.0, 120.0)
+    assert xtool.snap_to_grid((-4, 300)) == (0.0, 220.0)
+
+
+def test_the_laser_page_selects_turns_and_keeps_presets(qt_app, monkeypatch, art):
+    from PySide6.QtCore import QRectF, QSettings
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
+    QSettings(*sl._SETTINGS).clear()
+    d = sl.StencilLaserDialog(art, laser=xtool.F1Ultra("127.0.0.1", 1, timeout=1))
+    d.x.setValue(50)
+    d.y.setValue(60)
+    # a box round the whole stencil picks every hole; a re-cut has no outline mark
+    d._boxed(QRectF(40, 50, 60, 60), False)
+    assert len(d.selected) == 47 and d.cut_btn.text() == "Cut 47 selected"
+    d.select_none()
+    d._boxed(QRectF(40, 50, 60, 60), False)
+    d.selected = {0, 1}
+    holes, _ = d._holes()
+    assert len(holes) == 2
+    # a quarter turn keeps the middle where it was
+    c = d.centre()
+    d.rotate(1)
+    assert d.art.size == pytest.approx((36.0, 40.0)) and d.centre() == pytest.approx(c)
+    assert not d.selected
+    # a saved preset comes back
+    d.passes.setValue(42)
+    monkeypatch.setattr(sl.QInputDialog, "getText", lambda *a, **k: ("mine", True))
+    d.save_preset()
+    d.preset.setCurrentText("0.1 mm 304 stainless")
+    assert d.passes.value() == 30
+    d.preset.setCurrentText("mine")
+    assert d.passes.value() == 42 and d.del_btn.isEnabled()
+    d.delete_preset()
+    assert d.preset.findText("mine") < 0
+    QSettings(*sl._SETTINGS).clear()
+    d.close()
