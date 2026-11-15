@@ -375,6 +375,7 @@ class MainWindow(QMainWindow):
         # The board is left in the sheet: Automatic mode cuts nothing round
         # its outline (gui2/autorun.py, "Leave the board in the sheet").
         self._no_cutout = False
+        self._edge_memo, self._edge_notes = {}, {}   # see _edge_free
         self._fid_offset = 4.0
         # Which way the board is physically turned over. The fit cannot tell:
         # a rectangle of corner holes matches equally well either way, so a
@@ -1715,8 +1716,13 @@ class MainWindow(QMainWindow):
                 return (cut_outline(st.board.outline, self.cutting_cutout(),
                                     stock=self.declared_stock()),
                         None, st.cutout.bit_diameter)
-            return (isolate(st.board.copper, self.cutting_trace(),
-                            outline=st.board.outline), None, width)
+            return (self._edge_free(
+                        step.key,
+                        isolate(st.board.copper, self.cutting_trace(),
+                                outline=st.board.outline),
+                        st.board.outline, st.board.copper,
+                        getattr(st.board, "copper_nets", None)),
+                    None, width)
         lay = self._ds_layout()
         if lay is None:
             return [], None, width
@@ -1735,11 +1741,81 @@ class MainWindow(QMainWindow):
                     None, st.cutout.bit_diameter)
         tj = self.cutting_trace()
         if step.op == "top_traces":
-            return (self._fit_paths(
-                        isolate(lay.top_copper, tj, outline=lay.top_outline)),
-                    None, width)
-        return (isolate(lay.bottom_copper, tj, outline=lay.outline),
+            top = self._edge_free(
+                step.key, isolate(lay.top_copper, tj, outline=lay.top_outline),
+                lay.top_outline, lay.top_copper,
+                self._nets_aligned(getattr(st.board, "copper_top_nets", None),
+                                   st.board.copper_top, lay.top_copper))
+            return self._fit_paths(top), None, width
+        return (self._edge_free(
+                    step.key, isolate(lay.bottom_copper, tj,
+                                      outline=lay.outline),
+                    lay.outline, lay.bottom_copper,
+                    self._nets_aligned(getattr(st.board, "copper_nets", None),
+                                       st.board.copper, lay.bottom_copper)),
                 None, width)
+
+    def _edge_free(self, key, paths, outline, copper, nets):
+        """An isolation pass without the part along the board's edge, when
+        the board is left in the sheet - and only when leaving it out is
+        proved to join no nets (engine/bracket.py, ``leave_edge``).
+
+        Here, where the toolpaths are made, so that the picture on the bed,
+        the time estimate, the exported file and the automatic run are all
+        the same passes. Proved by milling both versions out of the sheet on
+        paper and comparing which nets share a piece of copper: if leaving
+        the edge uncut joins any that the whole pass keeps apart, the whole
+        pass is used and the checks say why. Without net names in the
+        Gerbers every piece of copper counts as its own net, which is the
+        careful reading: a track that would be left joined to the pour
+        keeps the edge pass.
+        """
+        if not self._no_cutout or outline is None or outline.is_empty:
+            self._edge_notes.pop(key, None)
+            return paths
+        from gerber2rml.engine.bracket import joined_nets, leave_edge
+        band = self.state.trace.effective_diameter()
+        memo_key = (key, outline.bounds, copper.bounds, round(band, 4),
+                    len(paths), sum(len(tp) for tp in paths))
+        hit = self._edge_memo.get(key)
+        if hit is not None and hit[0] == memo_key:
+            return hit[1]
+        trimmed, uncut = leave_edge(paths, outline, band)
+        result = paths
+        if uncut <= 0.0:
+            self._edge_notes.pop(key, None)
+        else:
+            sheet = outline.buffer(5.0)     # the copper beyond the outline
+            r = band / 2.0
+            before = [set(j) for j in joined_nets(copper, nets, paths,
+                                                  sheet, r)]
+            joined = [j for j in joined_nets(copper, nets, trimmed, sheet, r)
+                      if not any(set(j) <= b for b in before)]
+            self._edge_notes[key] = (uncut, joined)
+            if not joined:
+                result = trimmed
+        self._edge_memo[key] = (memo_key, result)
+        return result
+
+    def _edge_checks(self):
+        """What became of the isolation along the board's edge."""
+        out = []
+        for key, (uncut, joined) in sorted(self._edge_notes.items()):
+            if joined:
+                out.append(diag.Check(
+                    "warn", "The edge pass is kept",
+                    "the board is left in the sheet, but leaving out the "
+                    "isolation along its edge would put these on one piece "
+                    "of copper: %s. So that pass is cut as usual."
+                    % "; ".join(" + ".join(j) for j in joined)))
+            else:
+                out.append(diag.Check(
+                    "ok", "The board's edge is left uncut",
+                    "%.0f mm of isolation along the board's edge is left "
+                    "out: the board stays in the sheet, so there is no edge "
+                    "to isolate from. Milled out on paper, it joins no "
+                    "nets." % uncut))
+        return out[:1] if out and all(c.level == "ok" for c in out) else out
 
     def _ds_layout(self):
         """The double-sided layout at the current placement.
@@ -2095,6 +2171,7 @@ class MainWindow(QMainWindow):
             return
         checks += self._gap_checks()
         checks += self._stock_checks()
+        checks += self._edge_checks()
         checks += self._nogo_checks()
         # The run page draws where the surface will be touched; that moves
         # with the board, and this is what runs when the board has moved.
@@ -2434,6 +2511,22 @@ class MainWindow(QMainWindow):
                 f"to spare."))
         return out
 
+    def _cut_edges(self, copper, board):
+        """The copper edges an isolation pass runs along. All of them - or,
+        for a board left in the sheet, all but those along the board's own
+        edge, where nothing is cut any more (:meth:`_edge_free`)."""
+        edges = copper.boundary
+        if (self._no_cutout and board.outline is not None
+                and not board.outline.is_empty
+                and not any(j for _u, j in self._edge_notes.values())):
+            band = self.state.trace.effective_diameter()
+            # A pass is the cutter's radius off the copper it isolates: one
+            # within ``band`` of the board's edge belongs to copper within
+            # band + radius of it.
+            edges = edges.difference(
+                board.outline.boundary.buffer(band * 1.5))
+        return edges
+
     def _nogo_checks(self):
         """Is any of the work in a no-go zone?
 
@@ -2473,7 +2566,7 @@ class MainWindow(QMainWindow):
                 ("bottom copper", board.copper),
                 ("top copper", getattr(board, "copper_top", None)))
                 if geom is not None and not geom.is_empty
-                and geom.boundary.intersects(zone)]
+                and self._cut_edges(geom, board).intersects(zone)]
             what = []
             holes = sum(1 for x, y, _d in (board.holes or [])
                         if zone.intersects(Point(x, y)))
@@ -2825,6 +2918,10 @@ class MainWindow(QMainWindow):
     def set_no_cutout(self, on):
         """Leave the board in the sheet, or cut it out as usual."""
         self._no_cutout = bool(on)
+        # The isolation along the board's edge is cut or not by this: the
+        # passes on the bed are another set of passes now.
+        self._paths_cache = {}
+        self._edge_memo, self._edge_notes = {}, {}
         if self.remember_board_choices and self.state.board is not None:
             workspace.set_setting(self._nocut_key(),
                                   "yes" if on else "no")
@@ -2921,6 +3018,7 @@ class MainWindow(QMainWindow):
         # The last board's mounting holes are not this board's.
         self._leave_mounting_holes()
         self._no_cutout = False
+        self._edge_memo, self._edge_notes = {}, {}
         from gerber2rml.loader import gerber_stem
         self._custom_name = False
         try:

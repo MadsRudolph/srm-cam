@@ -262,12 +262,38 @@ The Arduino firmware is unchanged.
 
 ## A board bigger than the sheet
 
-With *Leave the board in the sheet (no cut-out)* the outline is not cut, so
-it may hang off the copper: only the work has to be on it. The copper check
+With *Leave the board in the sheet (no cut-out)* the board has no edge, and
+the isolation along it is not cut either. A ground pour stops half a
+millimetre short of the outline, and isolating the pour means a pass all the
+way round the board, 0.1 mm inside an edge that is never cut free - minutes
+of cutting, under every clamp on the sheet's edge, to separate the pour from
+more copper. That pass is left out where the toolpaths are made
+(`bracket.leave_edge`, `window._edge_free`), so the bed, the time estimate,
+the exported file and the run all show the same passes. It is left out only
+when milling both versions out of the sheet on paper shows the same nets on
+the same pieces of copper; if a track at the very edge would end up joined
+to the pour, the whole pass is kept and the checks say which nets.
+
+The outline is not cut, so it may also hang off the copper: only the work
+has to be on it. The copper check
 and the run both measure what is cut - both layers' copper, the holes, the
 reference holes - instead of the outline, the surface touches stay on the
 sheet, and the board stays where it was dragged. A trace or a hole off the
 copper is refused as before.
+
+## How far, and how long still
+
+While an automatic run is going, **Run it** shows a bar and one line under
+it: the step in hand, the percentage, the time left, the time of day it
+should be done, and how long it has taken so far. The same line is on the
+machine bar, so it is seen from every page.
+
+The time left starts from the planned feeds and corrects itself: once a step
+has finished, how long it really took against its estimate is applied to
+everything still to come (`gui2/runclock.py`). The clock stops while the run
+waits for a person - at the flip, and at the check before the cut-out - and
+a step that runs past its estimate says "at least" rather than counting down
+to a time that has already gone.
 
 ## The mill: a raw CUPS queue (once per Mac)
 

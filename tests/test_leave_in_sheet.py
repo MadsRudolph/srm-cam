@@ -386,3 +386,55 @@ def test_a_hole_under_a_clamp_stops_the_run_even_left_in_the_sheet():
     run._check_keepout("bottom")
     with pytest.raises(ar.RunFailed, match="Drill Run would take the bit"):
         run._check_nogo("bottom")
+
+
+# -- no edge to isolate from ---------------------------------------------------
+#
+# A board left in the sheet has no edge. A pour's own outline is still an
+# isolation pass all the way round it, a groove along a perimeter that is
+# never cut free.
+
+BOARD = box(32.29, 28.93, 186.79, 124.93)       # the pour board's outline
+
+
+def _cuts(paths):
+    return [(m.x, m.y) for tp in paths for m in tp if not m.rapid]
+
+
+def test_the_isolation_along_the_boards_edge_is_left_out():
+    copper, nets, paths = _pour_board()
+    kept, uncut = br.leave_edge(paths, BOARD, 0.8)
+    assert uncut > 400.0                          # most of the perimeter
+    edge = BOARD.boundary.buffer(0.8 - 1e-6)
+    from shapely.geometry import Point
+    assert not any(edge.contains(Point(x, y)) for x, y in _cuts(kept))
+    # The track in the middle is isolated exactly as before.
+    track = box(100, 60, 130, 70).buffer(0.5)
+    assert ([p for p in _cuts(kept) if track.contains(Point(*p))]
+            == [p for p in _cuts(paths) if track.contains(Point(*p))])
+
+
+def test_leaving_the_edge_out_joins_no_nets_on_a_poured_board():
+    copper, nets, paths = _pour_board()
+    kept, _uncut = br.leave_edge(paths, BOARD, 0.8)
+    sheet = BOARD.buffer(5.0)
+    assert br.joined_nets(copper, nets, kept, sheet, 0.4) == \
+        br.joined_nets(copper, nets, paths, sheet, 0.4) == []
+
+
+def test_a_track_at_the_very_edge_would_be_joined_to_the_pour():
+    """A RESET track 0.4 mm from the board's edge: its outer pass is in the
+    band too. Left out, the track and the pour are one piece of copper
+    through the sheet beyond - which is why the caller has to check."""
+    copper, nets, paths = _pour_board(extra=box(170, 123.73, 180, 124.53))
+    kept, _uncut = br.leave_edge(paths, BOARD, 0.8)
+    sheet = BOARD.buffer(5.0)
+    assert br.joined_nets(copper, nets, paths, sheet, 0.4) == []
+    joined = br.joined_nets(copper, nets, kept, sheet, 0.4)
+    assert joined and {"GND", "RESET"} <= set(joined[0])
+
+
+def test_paths_away_from_the_edge_come_back_as_they_went_in():
+    inner = [_cut((100, 60), (130, 60))]
+    assert br.leave_edge(inner, BOARD, 0.8) == (inner, 0.0)
+    assert br.leave_edge([], BOARD, 0.8) == ([], 0.0)

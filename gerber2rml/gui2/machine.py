@@ -1091,6 +1091,17 @@ class MachineBar(QWidget):
             self.offline_note.setText(getattr(self, "_note_before",
                                               self.offline_note.text()))
 
+    def set_run_progress(self, text):
+        """How far the automatic run has got, on the bar, where it is seen
+        from every page: the run holds the machine, so the readouts are
+        gone and this line is what the bar has to say. Empty puts back the
+        plain "the run has the machine"."""
+        if not self.connect_btn.isEnabled():        # only while a run holds it
+            # "The run has the machine" stays: it is why Connect is grey.
+            self.offline_note.setText(
+                "The run has the machine. "
+                + (text + ". " if text else "") + "STOP or Esc stops it.")
+
     def _on_position(self, x, y, z, touch):
         self.dro_x.set(f"{x:8.2f}")
         self.dro_y.set(f"{y:8.2f}")

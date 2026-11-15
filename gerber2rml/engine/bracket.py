@@ -415,6 +415,59 @@ def avoid(paths, rects, inside):
     return out, uncut
 
 
+def leave_edge(paths, outline, band):
+    """``paths`` without the isolation that runs along the board's edge.
+
+    A board that is cut out needs its edge; one left in the sheet has none.
+    Its outline is a line on a drawing, and the copper beyond it is the same
+    sheet. But a ground pour stops half a millimetre short of that line, and
+    isolating the pour means a pass all the way round it - a groove along
+    the whole perimeter of a board that was never going to be cut free,
+    0.1 mm inside an edge that is not there. It takes minutes, it runs
+    under every clamp on the sheet's edge, and it separates the pour from
+    nothing but more copper.
+
+    So every cutting move whose centre is within ``band`` mm of the
+    outline's boundary is taken out (the pass lifts before it and comes
+    down after, as :func:`avoid` does it). ``band`` is the cutter's width:
+    nearer the edge than that, there is no room for anything between the
+    pass and the edge that the pass could be isolating from.
+
+    Returns ``(paths, uncut_mm)``. Whether leaving it out joins two nets is
+    for the caller to prove (:func:`joined_nets`) before it believes this.
+    """
+    from shapely.geometry import LineString, Point
+    from gerber2rml.toolpath import Move
+    if outline is None or outline.is_empty or not paths:
+        return paths, 0.0
+    zone = outline.boundary.buffer(band)
+    out, uncut = [], 0.0
+    for tp in paths:
+        cut = [m for m in tp if not m.rapid]
+        if len(cut) < 2:
+            out.append(tp)
+            continue
+        line = LineString([(m.x, m.y) for m in cut])
+        if not line.intersects(zone):
+            out.append(tp)
+            continue
+        travel = max(m.z for m in tp)
+        depth = min(m.z for m in cut)
+        kept = line.difference(zone)
+        parts = [g for g in getattr(kept, "geoms", [kept])
+                 if g.geom_type == "LineString" and g.length > 0.05]
+        parts.sort(key=lambda g: line.project(Point(g.coords[0])))
+        uncut += line.length - sum(g.length for g in parts)
+        for g in parts:
+            cs = list(g.coords)
+            new = [Move(cs[0][0], cs[0][1], travel, rapid=True),
+                   Move(cs[0][0], cs[0][1], depth)]
+            new += [Move(x, y, depth) for x, y in cs[1:]]
+            new.append(Move(cs[-1][0], cs[-1][1], travel, rapid=True))
+            out.append(new)
+    return out, uncut
+
+
 def joined_nets(copper, nets, paths, sheet, radius):
     """Mill ``paths`` out of ``sheet`` and say which nets are left on one
     piece of copper: ``[[name, name, ...], ...]``, empty when every net
