@@ -20,10 +20,11 @@ A request with no value asks for a register; one with a value sets it. The
 never reads data without asking the header first. Numbers are little-endian
 32-bit, lengths in microns.
 
-The header's fifth byte is the one thing the captures could not teach. It is
-``20`` or ``40`` while the mill is still working on the last request, with a
-length of zero, and ``00`` once the answer is there - a few milliseconds
-later. VPanel was captured through a USB-over-network link that put 70 ms
+The header's fifth byte is the one thing the captures could not teach. It
+carries ``20`` or ``40`` while the mill is still working on the last request,
+with a length of zero, and neither once the answer is there - a few
+milliseconds later. (Other bits come and go for other reasons; see
+``_WORKING``.) VPanel was captured through a USB-over-network link that put 70 ms
 between any two transfers, so it never once saw the mill unready. Straight
 down a cable from a Mac, four requests in five did (the lab mill,
 2026-11-15: 128 of 160). Hence :func:`_ready`, which every read and every
@@ -61,6 +62,16 @@ _HEADER = 0x0001         # wValue: the 8-byte status header
 _DATA = 0x0003           # wValue: the bytes the last request asked for
 _LIVE = 0x0100           # wValue: header + live block, what VPanel polls
 _HELLO = 0x0002          # wValue: 01 00 34 12 from an SRM-20
+
+# The header's fifth byte, bit by bit - as far as it is known. 20 and 40 are
+# "still working on the last request": seen after every write and after most
+# fast reads, always with a length of zero, gone within milliseconds. 04 is
+# something else: it came and went while the head was being moved by a run
+# (2026-11-15), with a valid answer waiting the whole time. Waiting for the
+# whole byte to read 00 took that for "busy" and gave up on a mill that was
+# only moving - "the mill's settings could not be read", with the mill on.
+# So only the two bits known to mean busy are waited for.
+_WORKING = 0x60
 
 REG_COMMAND_SET = 0x3100         # read: 00 RML-1, 01 NC Code
 REG_SET_COMMAND_SET = 0x3101     # write: the same byte
@@ -105,20 +116,27 @@ def _header(dev):
     return h
 
 
-def _ready(dev, wait_s=2.0, sleep=time.sleep, clock=time.monotonic):
+def _ready(dev, wait_s=2.0, sleep=time.sleep, clock=time.monotonic,
+           answer=False):
     """The header once the mill has finished with the last request.
 
-    Asked again every few milliseconds until its fifth byte is ``00``; the
-    longest wait measured was 7 ms for a read and 150 ms for a write. A mill
-    that never gets there is reported and left alone - not asked for data it
-    has not announced, and not sent anything more.
+    Asked again every few milliseconds until neither "working" bit is set;
+    the longest wait measured was 7 ms for a read and 150 ms for a write.
+    With ``answer`` (a read) it also waits, briefly, for a length: a header
+    asked for before the mill has even begun on the request reads idle and
+    empty, and taking that for "no answer" would leave the real one unread
+    for the next request to trip over. A mill that never gets there is
+    reported and left alone - not asked for data it has not announced, and
+    not sent anything more.
     """
-    deadline = clock() + wait_s
+    start = clock()
+    deadline = start + wait_s
     while True:
         h = _header(dev)
-        if h[4] == 0:
-            return h
-        if clock() >= deadline:
+        if not h[4] & _WORKING:
+            if not answer or h[7] or clock() - start >= 0.25:
+                return h
+        elif clock() >= deadline:
             raise SetupError("the mill took the request but stayed busy; "
                              "nothing more was sent")
         sleep(0.005)
@@ -141,7 +159,7 @@ def read_register(dev, reg, **timing):
     one; so does this.
     """
     _request(dev, reg)
-    n = _ready(dev, **timing)[7]
+    n = _ready(dev, answer=True, **timing)[7]
     if n == 0:
         return b""
     return bytes(_transfer(dev, _IN, _DATA, max(n, 3)))[:n]
