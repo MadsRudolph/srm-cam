@@ -155,6 +155,7 @@ class MachineLink(QObject):
         # auto-starts on motion, and a jog is motion we caused: the tracker
         # reads this to tell the two apart.
         self.last_jog_t = 0.0
+        self.last_move_error = None   # why the last jog failed, or None
 
     # -- lifecycle ---------------------------------------------------------
     def is_connected(self):
@@ -392,8 +393,9 @@ class MachineLink(QObject):
 
     def jog_z(self, dz_mm):
         def op(ser):
-            return spi_probe.timed_move(ser, dz_um=int(round(dz_mm * 1000)),
-                                        should_abort=self.should_abort)
+            return self._moved(spi_probe.timed_move, ser,
+                               dz_um=int(round(dz_mm * 1000)),
+                               should_abort=self.should_abort)
         self.last_jog_t = time.time()
         self.clear_abort()
         self.submit("jog_z", op)
@@ -425,10 +427,24 @@ class MachineLink(QObject):
                 dx, dy, dz = self._jog_pending
                 self._jog_pending = [0.0, 0.0, 0.0]
                 self._jog_queued = False
-            return spi_probe.timed_move(
+            return self._moved(
+                spi_probe.timed_move,
                 ser, int(round(dx * 1000)), int(round(dy * 1000)),
                 int(round(dz * 1000)), should_abort=self.should_abort)
         self.submit("jog_by", op)
+
+    def _moved(self, move, *a, **kw):
+        """Run one ``timed_move`` and keep the board's reason when it fails.
+
+        A failed move returns None and nothing else, and the bar used to drop
+        that on the floor: a board that never answered (no sketch on it, the
+        mill off, the SPI lead out) looked exactly like a click that was never
+        made. ``last_move_error`` is what the bar's sentence is built from."""
+        why = []
+        result = move(*a, last_error=why, **kw)
+        self.last_move_error = None if result else (why[0] if why
+                                                    else "no reply")
+        return result
 
     def _forget_jog(self):
         """Steps not sent yet: dropped with the command that would send them,
@@ -439,8 +455,10 @@ class MachineLink(QObject):
 
     def jog_to(self, x_mm, y_mm):
         def op(ser):
-            return spi_probe.jog_to(ser, int(round(x_mm * 1000)),
-                                    int(round(y_mm * 1000)))
+            ok = spi_probe.jog_to(ser, int(round(x_mm * 1000)),
+                                  int(round(y_mm * 1000)))
+            self.last_move_error = None if ok else "no reply"
+            return ok
         self.last_jog_t = time.time()
         self.clear_abort()
         self.submit("jog_xy", op)
@@ -463,10 +481,25 @@ class MachineLink(QObject):
 
     def zero_z(self):
         hint = self.copper_hint_um()
+        fresh = self.surface_z is not None
 
         def op(ser):
-            if not stockfind.drop_to_hint(ser, hint, self.should_abort):
-                return None
+            if fresh:
+                if not stockfind.drop_to_hint(ser, hint, self.should_abort,
+                                              fresh=True):
+                    return None
+            else:
+                # No height from this session: the fast drop stops well
+                # short (or is not made at all), and Zero Z's own touch only
+                # reaches 6 mm. So the copper is found first, gently, and
+                # the zero is taken from just above it.
+                if stockfind.touch_from_anywhere(ser, hint,
+                                                 self.should_abort) is None:
+                    return None
+                if spi_probe.timed_move(
+                        ser, dz_um=stockfind.TOUCH_BACK_UM,
+                        should_abort=self.should_abort) is None:
+                    return None
             return spi_probe.zero_z(ser, should_abort=self.should_abort)
         self.clear_abort()
         self.submit("zero_z", op)
@@ -485,9 +518,13 @@ class MachineLink(QObject):
 
     def touch_off(self):
         hint = self.copper_hint_um()
+        # This session's own touch, or one saved on another day - when the
+        # bit may have been another, seated differently (drop_to_hint).
+        fresh = self.surface_z is not None
 
         def op(ser):
-            return stockfind.touch_from_anywhere(ser, hint, self.should_abort)
+            return stockfind.touch_from_anywhere(ser, hint, self.should_abort,
+                                                 fresh=fresh)
         self.clear_abort()
         self.submit("touch", op)
 
@@ -669,9 +706,9 @@ class RunReadout(QWidget):
 OFFLINE_PRO = ("Everything except probing works without the link — export the "
                "files and send them from VPanel.")
 OFFLINE_NOVICE = "Connect the machine to run the board."
-# Where only the simulator can be connected (not Windows).
-OFFLINE_SIM_ONLY = ("The machine link runs on Windows only. Here the port "
-                    "list has the simulated mill, to practise a run on.")
+# Where only the simulator can be connected (not Windows or macOS).
+OFFLINE_SIM_ONLY = ("The machine link runs on Windows and macOS only. Here "
+                    "the port list has the simulated mill, to practise a run on.")
 
 
 class MachineBar(QWidget):
@@ -1016,6 +1053,7 @@ class MachineBar(QWidget):
         self._timer.start(POLL_MS)
         self.message.emit("ok", f"Linked on {info['port']} "
                                 f"(firmware v{info['version']}).")
+        QTimer.singleShot(4000, self._check_answering)
 
     def _on_unlinked(self, reason):
         self._timer.stop()
@@ -1053,6 +1091,17 @@ class MachineBar(QWidget):
             self.offline_note.setText(getattr(self, "_note_before",
                                               self.offline_note.text()))
 
+    def set_run_progress(self, text):
+        """How far the automatic run has got, on the bar, where it is seen
+        from every page: the run holds the machine, so the readouts are
+        gone and this line is what the bar has to say. Empty puts back the
+        plain "the run has the machine"."""
+        if not self.connect_btn.isEnabled():        # only while a run holds it
+            # "The run has the machine" stays: it is why Connect is grey.
+            self.offline_note.setText(
+                "The run has the machine. "
+                + (text + ". " if text else "") + "STOP or Esc stops it.")
+
     def _on_position(self, x, y, z, touch):
         self.dro_x.set(f"{x:8.2f}")
         self.dro_y.set(f"{y:8.2f}")
@@ -1081,6 +1130,11 @@ class MachineBar(QWidget):
     def _on_done(self, name, result):
         """The two touches report here. The link has already recorded the
         surface height on a good contact; this is the sentence for it."""
+        if name in ("jog_xy", "jog_by", "jog_z"):
+            # A STOP ends a move on purpose; that is not a failure to report.
+            if not result and not self.link.should_abort():
+                self._say_move_failed()
+            return
         if name == "touch":
             if not result:
                 self.message.emit(
@@ -1104,6 +1158,44 @@ class MachineBar(QWidget):
                 "ok", f"Origin Z written to the machine at the copper "
                       f"(machine Z {result[2]:.2f} mm). Check VPanel's G54 Z "
                       f"once before the first job.")
+
+    def _say_move_failed(self):
+        """The head did not move, and why - as far as the link can tell.
+
+        Connecting only opens the serial port: any USB serial device links,
+        whatever is on the other end. So the first place a dead link shows is
+        here, and "nothing happened" is not an answer anyone can act on."""
+        why = getattr(self.link, "last_move_error", None) or "no reply"
+        if self.link.last_position is None:
+            self.message.emit(
+                "fail", "The machine did not move, and no position has come "
+                        "back since connecting: the port is open but nothing "
+                        "on it answers. Check that this is the Arduino with "
+                        "the SRM-CAM sketch on it "
+                        "(hardware/srm20_spi_probe), that the mill is switched on, and that "
+                        "the SPI lead is in the mill's expansion port.")
+        elif why == "no reply":
+            self.message.emit(
+                "warn", "The machine did not answer the move. Check that the "
+                        "mill is on, its lid is closed and it is not paused "
+                        "or showing an error.")
+        else:
+            self.message.emit(
+                "warn", f"The machine refused the move ({why}). Check that "
+                        f"the lid is closed and the mill is not paused or "
+                        f"showing an error.")
+
+    def _check_answering(self):
+        """A few seconds after linking: has anything answered at all?"""
+        if self.link.is_connected() and self.link.last_position is None \
+                and not self.link.is_busy():
+            self.chip.set("No answer", "warn")
+            self.message.emit(
+                "warn", "The port is open, but no position is coming back. "
+                        "Jog, probe and the readout will not work until the "
+                        "board answers: check that it is the Arduino with "
+                        "the SRM-CAM sketch, that the mill is on and that "
+                        "the SPI lead is in.")
 
     def _on_failed(self, name, msg):
         if name == "connect":

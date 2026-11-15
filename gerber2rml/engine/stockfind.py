@@ -49,9 +49,15 @@ REREF_UM = 20000
 CHECK_UM = 5000              # how far inside the far edges copper is checked
 TRAVEL_UM = 10000            # lift above the copper between spots; the jog adds
                              # 5 more: 15 mm clears the DTU fixture knobs
-LAB_COPPER_UM = -57200       # the lab's copper with a usual bit: only ever used
-                             # by a descent that stops on touch (firmware v5)
 TOUCH_BACK_UM = 3000         # up this far after a fast descent touched early
+LAB_COPPER_UM = -57200       # the lab's copper in machine Z with a bit seated
+                             # as usual. The copper never changes height; the
+                             # bit does, by how far it sits out of the collet
+BIT_SPREAD_UM = 10000        # how far that is from usual, either way (Mads:
+                             # +-1 cm at most)
+STALE_ABOVE_UM = BIT_SPREAD_UM + 2000   # a first drop stops this far above
+                             # the lab's copper: 2 mm short of it with the
+                             # longest bit there is
 HINT_ABOVE_UM = 5000         # a remembered surface: drop fast to this far above it,
                              # inside the probe's 6 mm reach, so one probe finds it
 
@@ -105,7 +111,7 @@ def travel(ser, x_um, y_um, should_abort=None, surface_um=None):
 
 
 def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
-                 hint_um=None):
+                 hint_um=None, hint_fresh=False):
     """Go to (x, y) and find the copper below it. Returns its machine Z (um).
 
     ``hint_um`` is where the copper was last time (the bed and fixture do
@@ -115,7 +121,7 @@ def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
     on down as usual."""
     note = note or (lambda _m: None)
     travel(ser, x_um, y_um, should_abort)
-    drop_to_hint(ser, hint_um, should_abort, note)
+    drop_to_hint(ser, hint_um, should_abort, note, fresh=hint_fresh)
     while True:
         r = _cmd(ser, "D", should_abort, 5.0)
         if not r or not r.startswith("D "):
@@ -137,26 +143,44 @@ def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
                              should_abort=should_abort)
 
 
-def drop_to_hint(ser, hint_um, should_abort=None, note=None):
-    """Fast down from wherever the head is to ``HINT_ABOVE_UM`` above where
-    the copper was last time. Never moves up. False if the move failed.
+def drop_to_hint(ser, hint_um, should_abort=None, note=None, fresh=False):
+    """Fast down from wherever the head is to just above where the copper
+    was MEASURED to be. Never moves up. False if the move failed.
 
-    Firmware v5 halts this at the first touch, so it can run with no remembered
-    height too, on the lab's usual one. Older firmware cannot: it only drops on
-    a remembered height, and copper higher than that gets hit."""
+    The fast move runs at the machine's own rapid, about 19 mm/s, and the
+    firmware's stop-on-touch cannot bring that to rest inside the copper: on
+    2026-11-15 a first Probe Z drove a 0.8 mm bit into the stock. There was
+    no measured height on that computer yet, and the drop was aimed at "the
+    lab's usual" one - right for a usual bit, 5 mm too low for that one.
+
+    Feeling all the way down from the top is no answer either (50 mm at 6 mm
+    a touch). The copper is always at the same height; only the bit moves,
+    by at most ``BIT_SPREAD_UM`` either way. So:
+
+    * a height measured in this session (``fresh``) is dropped to
+      ``HINT_ABOVE_UM`` above - same bit, same stock;
+    * otherwise - no height, or one saved on another day with a bit that
+      may have been changed since - the drop stops ``STALE_ABOVE_UM`` above
+      the lab's copper (or above the saved height, if that is higher):
+      clear of the copper with the longest bit there is, and a few touches
+      above it with the shortest.
+
+    Stop-on-touch (firmware v5) stays on for the drop as the last resort it
+    always was; it is not the plan."""
     note = note or (lambda _m: None)
     _ver, feats = spi_probe.firmware_version(ser)
     stops = "touchstop" in feats
-    if hint_um is None:
-        if not stops:
-            note("No copper height known yet: feeling down from here.")
-            return True
-        hint_um = LAB_COPPER_UM
+    if fresh and hint_um is not None:
+        target_um, above = int(hint_um), HINT_ABOVE_UM
+    else:
+        target_um = LAB_COPPER_UM if hint_um is None else max(
+            LAB_COPPER_UM, int(hint_um))
+        above = STALE_ABOVE_UM
     pos = spi_probe.query_position(ser)
     if pos is None:
         note("Fast drop skipped: cannot read where the head is.")
         return False
-    target = min(0, int(hint_um) + HINT_ABOVE_UM)
+    target = min(0, target_um + above)
     z = pos[2] * 1000
     if z <= target + 500:
         return True
@@ -178,7 +202,7 @@ def drop_to_hint(ser, hint_um, should_abort=None, note=None):
     return True
 
 
-def touch_from_anywhere(ser, hint_um=None, should_abort=None):
+def touch_from_anywhere(ser, hint_um=None, should_abort=None, fresh=False):
     """Find the copper under the head from any height, without moving XY.
 
     Fast to just above ``hint_um`` when the copper's height is known. After
@@ -186,7 +210,7 @@ def touch_from_anywhere(ser, hint_um=None, should_abort=None):
     and comes back up empty, so the next starts ``DROP_STEP_UM`` lower. Returns
     ``(x_mm, y_mm, z_mm)``, or None if it stopped without one."""
     try:
-        if not drop_to_hint(ser, hint_um, should_abort):
+        if not drop_to_hint(ser, hint_um, should_abort, fresh=fresh):
             return None
         pos = spi_probe.query_position(ser)
         if pos is None:
@@ -301,7 +325,7 @@ def _cross(l1, l2):
 
 def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
                note=None, bed_mm=(203.2, 152.4), rows=None, holes=False,
-               checks=None, measure=False, hint_mm=None):
+               checks=None, measure=False, hint_mm=None, hint_fresh=False):
     """Find the stock the operator clicked on. Returns a :class:`StockPose`.
 
     ``click_mm`` is the clicked machine (x, y); ``size_mm`` the (w, h) the
@@ -318,7 +342,8 @@ def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
     must be (default: 5 mm in from the right and back edges, half-way along).
     ``measure`` walks to the right and back edges when the size is wrong -
     off by default, because those walks cross edges nobody chose.
-    ``hint_mm`` is the copper's machine Z last time (see :func:`seek_surface`).
+    ``hint_mm`` is the copper's machine Z last time (see :func:`seek_surface`),
+    ``hint_fresh`` whether that was measured in this run (:func:`drop_to_hint`).
 
     A flat bit touches with its whole end, so it still reads copper until
     its centre is a radius past the edge: every edge is measured that much
@@ -340,7 +365,8 @@ def find_stock(ser, click_mm, size_mm, bit_mm=0.8, should_abort=None,
         left_at = [(cx, cy), (cx, cy + sp)]
         front_at = [(cx, cy), (cx + sp, cy)]
     surface = seek_surface(ser, cx, cy, should_abort, note,
-                           None if hint_mm is None else int(hint_mm * 1000))
+                           None if hint_mm is None else int(hint_mm * 1000),
+                           hint_fresh=hint_fresh)
     note("Finding the left edge…")
     left = []
     for x, y in left_at:
@@ -396,8 +422,19 @@ def datum_outline(datum_mm, corner, size_mm):
             dy if "front" in corner else dy - h)
 
 
+def datum_touch(datum_mm, corner, size_mm):
+    """Where :func:`from_datum` touches the copper, machine mm: 15 mm in from
+    the bracket's corner along both edges, or the middle of a smaller piece.
+    Its own function so the run can check the spot before the head goes."""
+    w, h = size_mm
+    dx, dy = datum_mm
+    inset = min(15.0, w / 2.0, h / 2.0)
+    return (dx + (inset if "left" in corner else -inset),
+            dy + (inset if "front" in corner else -inset))
+
+
 def from_datum(ser, datum_mm, corner, size_mm, should_abort=None, note=None,
-               hint_mm=None):
+               hint_mm=None, hint_fresh=False):
     """The stock pushed into a fixed corner bracket: its outline is that
     corner and the typed size, so only the copper's height is measured - one
     touch, 15 mm in from the bracket corner (always copper, whatever the
@@ -411,13 +448,11 @@ def from_datum(ser, datum_mm, corner, size_mm, should_abort=None, note=None,
     w, h = size_mm
     dx, dy = datum_mm
     x0, y0 = datum_outline(datum_mm, corner, size_mm)
-    left, front = "left" in corner, "front" in corner
-    inset = min(15.0, w / 2.0, h / 2.0)
-    sx = dx + (inset if left else -inset)
-    sy = dy + (inset if front else -inset)
+    sx, sy = datum_touch(datum_mm, corner, size_mm)
     note("Touching the copper at X %.1f, Y %.1f…" % (sx, sy))
     z = seek_surface(ser, int(sx * 1000), int(sy * 1000), should_abort, note,
-                     None if hint_mm is None else int(hint_mm * 1000))
+                     None if hint_mm is None else int(hint_mm * 1000),
+                           hint_fresh=hint_fresh)
     return StockPose(x0, y0, 0.0, w, h, z / 1000.0)
 
 

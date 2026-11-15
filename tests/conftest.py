@@ -122,6 +122,26 @@ def qt_app():
 
 
 @pytest.fixture(autouse=True)
+def _pads_as_boxes(request, monkeypatch):
+    """Run the suite on the pad shapes its fixtures were made with.
+
+    The loader used to draw oval and rounded pads as their bounding boxes,
+    which invents copper in the corners - and with it the thirteen "shorts"
+    on tests/fixtures/mosfet_test that the narrow-gap tests are written
+    around, and the golden files. The app now loads true shapes
+    (gerber2rml.loader.PAD_SHAPES); these tests are about what is done with
+    a short once there is one, so they keep the board that has them. Tests
+    marked ``exact_pads`` see the loader as the app does.
+    """
+    if "exact_pads" in request.keywords:
+        yield
+        return
+    from gerber2rml import loader
+    monkeypatch.setattr(loader, "PAD_SHAPES", "boxes")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _machine_link_present(request, monkeypatch):
     """Run the suite as if the host had the machine link.
 

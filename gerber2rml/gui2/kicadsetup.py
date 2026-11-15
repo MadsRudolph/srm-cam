@@ -16,6 +16,39 @@ from gerber2rml.gui2 import dialogs, tier
 
 DECLINED_KEY = "kicad/declined_plugin_version"
 MENU_LOCATION = "Tools → External Plugins → Show SRM-20 build area"
+SEND_LOCATION = "Tools → External Plugins → Send to SRM-CAM"
+
+
+def _launch_info(parent):
+    """Where this app is, and the cutter and drill it works with - the
+    plugin's design-rule check needs those
+    (kicad-plugin/srm20area/rules.py)."""
+    info = kicadplugin.launch_info()
+    try:
+        info["cutter_mm"] = round(
+            float(parent.state.trace.effective_diameter()), 3)
+        info["drill_mm"] = round(float(parent.state.drill.bit_diameter), 3)
+    except Exception:                                # noqa: BLE001 - optional
+        pass
+    return info
+
+
+def sync_tools(parent):
+    """Tell the KiCad plugin about the cutter and drill now in use, when they
+    have changed since it was last told. Its design-rule check asks for the
+    cutter's width: written only at launch, it kept the 0.8 mm of whatever
+    profile came up first, and a board for the 0.44 mm ball mill was refused.
+    Best effort, and cheap when nothing changed."""
+    try:
+        info = _launch_info(parent)
+        tools = (info.get("cutter_mm"), info.get("drill_mm"))
+        if tools == getattr(parent, "_kicad_tools", None):
+            return False
+        kicadplugin.refresh_launch_info(plugin_dirs(), info)
+        parent._kicad_tools = tools
+        return True
+    except Exception:                                # noqa: BLE001 - a nicety
+        return False
 
 
 def plugin_dirs():
@@ -42,9 +75,12 @@ def setup(parent, settings=None):
         return []
 
     done, failed = [], []
+    info = _launch_info(parent)
     for dir_ in dirs:
         try:
-            done.append(kicadplugin.install(kicadplugin.bundled_source(), dir_))
+            dest = kicadplugin.install(kicadplugin.bundled_source(), dir_)
+            kicadplugin.write_launch_info(dest, info)
+            done.append(dest)
         except Exception as e:                       # noqa: BLE001 - permissions, mostly
             failed.append(f"{dir_}\n    {e}")
 
@@ -61,6 +97,9 @@ def setup(parent, settings=None):
     d.say(f"Restart KiCad, then find it in the PCB editor under "
           f"{MENU_LOCATION}. It draws the build area on User.Drawings and "
           "says whether the board fits.")
+    d.say(f"Beside it is {SEND_LOCATION}: it plots the board and opens it "
+          "here, ready to run. It first checks that the board's design "
+          "rules suit the cutter, and offers to set them.")
     d.say("Installed to:\n" + "\n".join(f"    {p}" for p in done),
           small=True, mono=True)
     if failed:
@@ -88,13 +127,19 @@ def maybe_offer(parent, settings=None):
     """The launch offer. True if it was shown. Best-effort throughout: a
     locked-down profile or an unreadable folder must not stop the app."""
     settings = settings or tier._settings()
+    try:
+        # Keep "Send to SRM-CAM" pointing at this copy of the app, wherever
+        # it has been moved since the plugin was installed.
+        kicadplugin.refresh_launch_info(plugin_dirs(), _launch_info(parent))
+    except Exception:                                # noqa: BLE001 - never at launch
+        pass
     if not should_offer(settings):
         return False
     d = dialogs.Sheet(parent, "Add the SRM-20 button to KiCad?", width=560)
-    d.say("KiCad is installed on this PC. SRM-CAM can add a button to its "
-          "PCB editor that draws the mill's build area and says whether "
+    d.say("KiCad is installed on this PC. SRM-CAM can add two buttons to its "
+          "PCB editor: one draws the mill's build area and says whether "
           "your board fits, while there is still time to change it rather "
-          "than at the machine.")
+          "than at the machine; the other sends the board straight here.")
     d.say("You can do this later from the KiCad menu.", small=True)
     d.setObjectName("kicadOffer")
     out = {"go": False}
@@ -105,6 +150,11 @@ def maybe_offer(parent, settings=None):
 
     d.act("Not now", on=d.reject)
     d.act("Add it", kind="primary", on=go, default=True)
+    # In front of the window, never behind it: a modal sheet nobody can see
+    # leaves the whole app looking frozen.
+    d.show()
+    d.raise_()
+    d.activateWindow()
     d.exec()
     if out["go"]:
         setup(parent, settings)

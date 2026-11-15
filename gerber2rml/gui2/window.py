@@ -349,6 +349,7 @@ class MainWindow(QMainWindow):
         self._shorts = []
         self._eaten = []         # pads a cut-it-anyway pass takes most of
         self._gaps = None        # copper gaps too narrow for the cutter
+        self._corners = None     # ...and inside corners it cannot reach into
         self._exported = {}
         self._export_dir = None
         self._double = False
@@ -368,6 +369,13 @@ class MainWindow(QMainWindow):
         self._fid_diameter = 1.6
         self._fid_count = 4
         self._fid_placement = "waste"      # "waste" | "onboard" | "manual"
+        # The manual places are the board's own mounting holes, chosen by
+        # the app (engine/mountfid.py), not pins dragged by hand.
+        self._fid_mounting = False
+        # The board is left in the sheet: Automatic mode cuts nothing round
+        # its outline (gui2/autorun.py, "Leave the board in the sheet").
+        self._no_cutout = False
+        self._edge_memo, self._edge_notes = {}, {}   # see _edge_free
         self._fid_offset = 4.0
         # Which way the board is physically turned over. The fit cannot tell:
         # a rectangle of corner holes matches equally well either way, so a
@@ -474,6 +482,7 @@ class MainWindow(QMainWindow):
         self.stage.screw_picked.connect(self._on_screw_click)
         self.stage.hovered.connect(self._on_hover)
         self.stage.region_added.connect(self._on_region)
+        self.stage.box_clicked.connect(self._on_box_click)
         self.stage.board_picked.connect(self.action_select_board)
         self.stage.pin_moved.connect(self._on_pin_moved)
         self.stage.measured.connect(self._on_measured)
@@ -513,6 +522,7 @@ class MainWindow(QMainWindow):
                                                     AutoRunPage(self))
         self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
         self.stage.bracket_moved.connect(self.autorun_page.on_bracket_moved)
+        self.stage.nogo_picked.connect(self.autorun_page.on_nogo_picked)
         self.split.addWidget(self.inspector)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
@@ -780,6 +790,19 @@ class MainWindow(QMainWindow):
         self._act(v, "Simulate a file in 3D…", self.action_sim_file)
 
         m = mb.addMenu("&Machine")
+        from gerber2rml.engine import rmlspool
+        if rmlspool.MACOS:
+            from gerber2rml.gui2 import macmill
+            self._act(m, "Set up the mill on this Mac…",
+                      lambda: macmill.setup_sheet(self))
+        if not rmlspool.WINDOWS:
+            # Command Set and the spindle speed, which otherwise need VPanel
+            # on a Windows PC. Not offered on Windows: the Roland driver owns
+            # the device there and VPanel is at hand (engine/millsetup.py).
+            from gerber2rml.gui2 import millsettings
+            self._act(m, "The mill's settings…",
+                      lambda: millsettings.settings_sheet(self))
+            m.addSeparator()
         self._act(m, "Rescan the serial ports", self.bar.refresh_ports)
         self._act(m, "Connect / disconnect", self.bar._toggle_connect, "Ctrl+L")
         m.addSeparator()
@@ -1097,6 +1120,53 @@ class MainWindow(QMainWindow):
         ys = [y + s * d / 2.0 for _x, y, d in lay.align_holes for s in (-1, 1)]
         return (min(b[0], *xs), min(b[1], *ys), max(b[2], *xs), max(b[3], *ys))
 
+    def work_reach(self):
+        """What has to be ON the copper, ``(x0, y0, x1, y1)`` machine mm.
+
+        Cut out, that is the whole job: :meth:`work_extent`, outline and
+        all. Left in the sheet, the outline is not cut and may hang off the
+        piece - a board drawn bigger than the copper it is made on, slid
+        until the part that matters is on it. Then only what is cut counts:
+        the copper of both layers (the top is drawn where the design has
+        it, as the bottom is), the holes, and the reference holes, each by
+        where the tool's centre goes. The run measures the same from its
+        toolpaths before it starts (engine/autorun.py, ``_reach``); this is
+        the cheap version, for a check that is redrawn as the board is
+        dragged.
+        """
+        ext = self.work_extent()
+        board = self.state.board
+        if ext is None or not self._no_cutout or board is None:
+            return ext
+        r = self.state.trace.effective_diameter() / 2.0
+        boxes = []
+        for g in (board.copper, getattr(board, "copper_top", None)):
+            if g is not None and not g.is_empty:
+                b = g.bounds
+                boxes.append((b[0] - r, b[1] - r, b[2] + r, b[3] + r))
+        for x, y, _d in (board.holes or []):
+            boxes.append((x, y, x, y))
+        if not boxes:
+            return ext
+        x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+        # The board's own frame to the bed's: a double-sided layout moves
+        # the board to make room for its reference holes.
+        wb = self.work_bounds()
+        base = (board.outline if board.outline is not None
+                else board.copper).bounds
+        dx, dy = wb[0] - base[0], wb[1] - base[1]
+        x0, y0, x1, y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
+        if self._double and self._registration == "fiducial":
+            lay = self._ds_layout()
+            for hx, hy, d in (lay.align_holes if lay is not None else []):
+                x0, y0 = min(x0, hx - d / 2.0), min(y0, hy - d / 2.0)
+                x1, y1 = max(x1, hx + d / 2.0), max(y1, hy + d / 2.0)
+        # Never beyond the outline's own extent: copper a hair over the
+        # board edge is the outline check's business, not this one's.
+        return (max(x0, ext[0]), max(y0, ext[1]),
+                min(x1, ext[2]), min(y1, ext[3]))
+
     def _on_machine_position(self, x, y, z, touch):
         # The bar shows the RAW machine readout, VPanel-equal. Everything
         # drawn on the design - the bit, its trail, the run tracking, the 3D
@@ -1395,7 +1465,9 @@ class MainWindow(QMainWindow):
                           (getattr(getattr(self, "autorun_page", None),
                                    "pick_btn", None), "stock"),
                           (getattr(getattr(self, "autorun_page", None),
-                                   "box_btn", None), "box")):
+                                   "box_btn", None), "box"),
+                          (getattr(getattr(self, "autorun_page", None),
+                                   "nogo_btn", None), "box")):
             if box is not None and mode != owns and box.isChecked():
                 box.blockSignals(True)
                 box.setChecked(False)
@@ -1645,8 +1717,13 @@ class MainWindow(QMainWindow):
                 return (cut_outline(st.board.outline, self.cutting_cutout(),
                                     stock=self.declared_stock()),
                         None, st.cutout.bit_diameter)
-            return (isolate(st.board.copper, self.cutting_trace(),
-                            outline=st.board.outline), None, width)
+            return (self._edge_free(
+                        step.key,
+                        isolate(st.board.copper, self.cutting_trace(),
+                                outline=st.board.outline),
+                        st.board.outline, st.board.copper,
+                        getattr(st.board, "copper_nets", None)),
+                    None, width)
         lay = self._ds_layout()
         if lay is None:
             return [], None, width
@@ -1665,11 +1742,81 @@ class MainWindow(QMainWindow):
                     None, st.cutout.bit_diameter)
         tj = self.cutting_trace()
         if step.op == "top_traces":
-            return (self._fit_paths(
-                        isolate(lay.top_copper, tj, outline=lay.top_outline)),
-                    None, width)
-        return (isolate(lay.bottom_copper, tj, outline=lay.outline),
+            top = self._edge_free(
+                step.key, isolate(lay.top_copper, tj, outline=lay.top_outline),
+                lay.top_outline, lay.top_copper,
+                self._nets_aligned(getattr(st.board, "copper_top_nets", None),
+                                   st.board.copper_top, lay.top_copper))
+            return self._fit_paths(top), None, width
+        return (self._edge_free(
+                    step.key, isolate(lay.bottom_copper, tj,
+                                      outline=lay.outline),
+                    lay.outline, lay.bottom_copper,
+                    self._nets_aligned(getattr(st.board, "copper_nets", None),
+                                       st.board.copper, lay.bottom_copper)),
                 None, width)
+
+    def _edge_free(self, key, paths, outline, copper, nets):
+        """An isolation pass without the part along the board's edge, when
+        the board is left in the sheet - and only when leaving it out is
+        proved to join no nets (engine/bracket.py, ``leave_edge``).
+
+        Here, where the toolpaths are made, so that the picture on the bed,
+        the time estimate, the exported file and the automatic run are all
+        the same passes. Proved by milling both versions out of the sheet on
+        paper and comparing which nets share a piece of copper: if leaving
+        the edge uncut joins any that the whole pass keeps apart, the whole
+        pass is used and the checks say why. Without net names in the
+        Gerbers every piece of copper counts as its own net, which is the
+        careful reading: a track that would be left joined to the pour
+        keeps the edge pass.
+        """
+        if not self._no_cutout or outline is None or outline.is_empty:
+            self._edge_notes.pop(key, None)
+            return paths
+        from gerber2rml.engine.bracket import joined_nets, leave_edge
+        band = self.state.trace.effective_diameter()
+        memo_key = (key, outline.bounds, copper.bounds, round(band, 4),
+                    len(paths), sum(len(tp) for tp in paths))
+        hit = self._edge_memo.get(key)
+        if hit is not None and hit[0] == memo_key:
+            return hit[1]
+        trimmed, uncut = leave_edge(paths, outline, band)
+        result = paths
+        if uncut <= 0.0:
+            self._edge_notes.pop(key, None)
+        else:
+            sheet = outline.buffer(5.0)     # the copper beyond the outline
+            r = band / 2.0
+            before = [set(j) for j in joined_nets(copper, nets, paths,
+                                                  sheet, r)]
+            joined = [j for j in joined_nets(copper, nets, trimmed, sheet, r)
+                      if not any(set(j) <= b for b in before)]
+            self._edge_notes[key] = (uncut, joined)
+            if not joined:
+                result = trimmed
+        self._edge_memo[key] = (memo_key, result)
+        return result
+
+    def _edge_checks(self):
+        """What became of the isolation along the board's edge."""
+        out = []
+        for key, (uncut, joined) in sorted(self._edge_notes.items()):
+            if joined:
+                out.append(diag.Check(
+                    "warn", "The edge pass is kept",
+                    "the board is left in the sheet, but leaving out the "
+                    "isolation along its edge would put these on one piece "
+                    "of copper: %s. So that pass is cut as usual."
+                    % "; ".join(" + ".join(j) for j in joined)))
+            else:
+                out.append(diag.Check(
+                    "ok", "The board's edge is left uncut",
+                    "%.0f mm of isolation along the board's edge is left "
+                    "out: the board stays in the sheet, so there is no edge "
+                    "to isolate from. Milled out on paper, it joins no "
+                    "nets." % uncut))
+        return out[:1] if out and all(c.level == "ok" for c in out) else out
 
     def _ds_layout(self):
         """The double-sided layout at the current placement.
@@ -1858,7 +2005,11 @@ class MainWindow(QMainWindow):
         self.stage.set_screws(picks, reach)
 
     def _draw_shorts(self, step):
-        if step.op in ("traces", "top_traces") and self.state.board is not None:
+        # Novice has no Traces step to look at: its "Check it" is where the
+        # finding is read, so that is where the marks are.
+        here = (step.op in ("traces", "top_traces")
+                or (step.key == "checks" and not tier.is_full()))
+        if here and self.state.board is not None:
             self.stage.set_shorts(self._shorts)
             self.stage.set_gaps(self._gaps)
         else:
@@ -1902,31 +2053,79 @@ class MainWindow(QMainWindow):
         self.stage.set_legend(legend)
 
     # ------------------------------------------------------------ the checks
+    def _cut_copper(self):
+        """The bottom copper in the frame the stage draws and the job cuts:
+        the double-sided layout's when there is one, else the board's own."""
+        if self._double:
+            try:
+                lay = self._ds_layout()
+            except Exception:                   # noqa: BLE001 - no layout yet
+                lay = None
+            copper = getattr(lay, "bottom_copper", None)
+            if copper is not None and not copper.is_empty:
+                return copper
+        return self.state.board.copper
+
+    def _cut_nets(self, copper):
+        """The net names for ``copper``'s polygons, or None when they cannot
+        be trusted to line up: the board's list is in its own copper's order,
+        and the double-sided layout's copper is a second copy of it, moved.
+        It is used only when polygon for polygon they are the same shapes."""
+        return self._nets_aligned(
+            getattr(self.state.board, "copper_nets", None),
+            self.state.board.copper, copper)
+
+    @staticmethod
+    def _nets_aligned(nets, mine, theirs):
+        """``nets`` (in the order of ``mine``'s polygons) if ``theirs`` is
+        the same polygons in the same order, moved; else None."""
+        if nets is None or mine is None or theirs is None:
+            return None
+        a = list(getattr(mine, "geoms", []))
+        b = list(getattr(theirs, "geoms", []))
+        if len(nets) != len(a) or len(a) != len(b):
+            return None
+        if any(abs(p.area - q.area) > 1e-6 for p, q in zip(a, b)):
+            return None
+        return nets
+
     def refresh_checks(self):
         st = self.state
         if st.board is None:
             self._checks, self._shorts, self._gaps = [], [], None
+            self._corners = None
             self.inspector.checks.set_checks([])
             self.traveller.clear_finding()
             return
+        # The copper where it is DRAWN and cut. A double-sided job's layout
+        # moves the board over to make room for its reference holes, and marks
+        # worked out on the unmoved board landed beside it on the stage.
+        copper = self._cut_copper()
         try:
-            self._shorts = isolation_bridges(st.board.copper,
-                                             st.trace.effective_diameter())
+            self._shorts = isolation_bridges(copper,
+                                             st.trace.effective_diameter(),
+                                             nets=self._cut_nets(copper))
         except Exception:
             self._shorts = []           # a DRC that crashes must not block work
         self._eaten = []
         if self._shorts and st.trace.cut_pinches:
             try:
                 from gerber2rml.engine.pinch import pinch_losses
-                self._eaten = pinch_losses(st.board.copper, st.trace)
+                self._eaten = pinch_losses(copper, st.trace)
             except Exception:
                 self._eaten = []        # ...and neither must this one
         try:
             from gerber2rml.analysis import find_narrow_gaps
-            self._gaps = find_narrow_gaps(st.board.copper, st.board.outline,
-                                          st.trace.effective_diameter())
+            from gerber2rml.engine.drc import EXACT_FIT_MM
+            # Less the exact-fit allowance: a gap the cutter's own width is
+            # cut down its middle, not left red.
+            from gerber2rml.analysis import split_narrow_gaps
+            self._gaps, self._corners = split_narrow_gaps(
+                find_narrow_gaps(copper, st.board.outline,
+                                 st.trace.effective_diameter() - EXACT_FIT_MM),
+                copper)
         except Exception:
-            self._gaps = None
+            self._gaps, self._corners = None, None
         dowel_depth = None
         if (self._double and self._registration == "dowel"
                 and self._dowel_mode == "fresh"):
@@ -1973,6 +2172,13 @@ class MainWindow(QMainWindow):
             return
         checks += self._gap_checks()
         checks += self._stock_checks()
+        checks += self._edge_checks()
+        checks += self._nogo_checks()
+        # The run page draws where the surface will be touched; that moves
+        # with the board, and this is what runs when the board has moved.
+        page = getattr(self, "autorun_page", None)
+        if page is not None:
+            page._show_touches()
         checks += self._panel_checks()
         checks += self._two_sided_depth_check()
         checks += self._screw_checks()
@@ -1993,11 +2199,22 @@ class MainWindow(QMainWindow):
         bridging and for a design that relied on the gap.
         """
         gaps = self._gaps
-        if gaps is None or gaps.is_empty:
-            return []
-        n = len(gaps.geoms) if hasattr(gaps, "geoms") else 1
+        corners = getattr(self, "_corners", None)
         bit = self.state.trace.effective_diameter()
-        return [diag.Check(
+        out = []
+        if corners is not None and not corners.is_empty:
+            k = len(corners.geoms) if hasattr(corners, "geoms") else 1
+            out.append(diag.Check(
+                "ok",
+                f"{k} inside corner{'s' if k != 1 else ''} left as copper",
+                f"where a track meets another at an angle, the round "
+                f"{bit:.2f} mm cutter cannot reach into the point. That "
+                f"copper stays, as part of the track it is the corner of: "
+                f"nothing is joined that was apart."))
+        if gaps is None or gaps.is_empty:
+            return out
+        n = len(gaps.geoms) if hasattr(gaps, "geoms") else 1
+        return out + [diag.Check(
             "warn",
             f"{n} copper gap{'s' if n != 1 else ''} too narrow to isolate",
             f"drawn red on the traces view: clearance narrower than the "
@@ -2257,7 +2474,8 @@ class MainWindow(QMainWindow):
                 "warn", "Part of the copper is out of reach",
                 "the sheet sits " + " and ".join(bits) + ". The spindle cannot "
                 "get there, so nothing may be placed on that part of it."))
-        wb = self.work_bounds()
+        # Left in the sheet, the outline is not cut: only the work counts.
+        wb = self.work_reach() if self._no_cutout else self.work_bounds()
         if wb is None:
             return out
         x0, y0, x1, y1 = wb
@@ -2292,6 +2510,111 @@ class MainWindow(QMainWindow):
                 f"nearest edge has "
                 f"{min(x0 - sx, sx + sw - x1, y0 - sy, sy + sh - y1):.1f} mm "
                 f"to spare."))
+        return out
+
+    def _cut_edges(self, copper, board):
+        """The copper edges an isolation pass runs along. All of them - or,
+        for a board left in the sheet, all but those along the board's own
+        edge, where nothing is cut any more (:meth:`_edge_free`)."""
+        edges = copper.boundary
+        if (self._no_cutout and board.outline is not None
+                and not board.outline.is_empty
+                and not any(j for _u, j in self._edge_notes.values())):
+            band = self.state.trace.effective_diameter()
+            # A pass is the cutter's radius off the copper it isolates: one
+            # within ``band`` of the board's edge belongs to copper within
+            # band + radius of it.
+            edges = edges.difference(
+                board.outline.boundary.buffer(band * 1.5))
+        return edges
+
+    def _nogo_checks(self):
+        """Is any of the work in a no-go zone?
+
+        The run refuses such a job when it starts, from its real toolpaths
+        (engine/autorun.py, ``_check_nogo``). That is the last word, and it
+        comes late: after the board has been placed, the clamps put on and
+        Start pressed. This says it while the board can still be dragged.
+
+        Measured from the geometry, so that it can be redrawn with every
+        drag: a cut runs along the EDGE of copper, so it is the copper's
+        edges that count - a pour may lie under a clamp untouched - plus
+        every hole and reference hole. Both layers, each where the design
+        has it. The clearance is the run's own.
+        """
+        page = getattr(self, "autorun_page", None)
+        zones = page.nogo() if page is not None else []
+        board = self.state.board
+        if not zones or board is None or self.work_bounds() is None:
+            return []
+        from shapely.geometry import Point, box
+        from gerber2rml.engine.autorun import NOGO_CLEAR_MM
+        r = self.state.trace.effective_diameter() / 2.0
+        wb = self.work_bounds()
+        base = (board.outline if board.outline is not None
+                else board.copper).bounds
+        dx, dy = wb[0] - base[0], wb[1] - base[1]
+        hard, soft = [], []
+        for n, z in enumerate(zones, 1):
+            # In the board's own frame, grown to where the cutter's EDGE
+            # may not come: the tool's radius is in the cut, not the zone.
+            g = NOGO_CLEAR_MM + r
+            zone = box(z[0] - dx - g, z[1] - dy - g,
+                       z[2] - dx + g, z[3] - dy + g)
+            where = "zone %d (X %.0f-%.0f, Y %.0f-%.0f)" % (
+                n, z[0], z[2], z[1], z[3])
+            edges = [name for name, geom in (
+                ("bottom copper", board.copper),
+                ("top copper", getattr(board, "copper_top", None)))
+                if geom is not None and not geom.is_empty
+                and self._cut_edges(geom, board).intersects(zone)]
+            what = []
+            holes = sum(1 for x, y, _d in (board.holes or [])
+                        if zone.intersects(Point(x, y)))
+            if holes:
+                what.append("%d hole%s" % (holes, "" if holes == 1 else "s"))
+            if self._double and self._registration == "fiducial":
+                lay = self._ds_layout()
+                refs = sum(1 for hx, hy, _d in
+                           (lay.align_holes if lay is not None else [])
+                           if zone.intersects(Point(hx - dx, hy - dy)))
+                if refs:
+                    what.append("%d reference hole%s"
+                                % (refs, "" if refs == 1 else "s"))
+            if edges and not self._no_cutout:
+                what = edges + what
+            elif edges:
+                soft.append("%s: %s" % (where, ", ".join(edges)))
+            if what:
+                hard.append("%s: %s" % (where, ", ".join(what)))
+        out = []
+        if hard:
+            out.append(diag.Check(
+                "fail", "Work lies in a no-go zone",
+                "; ".join(hard) + ". The bit would hit what is there, and "
+                "the run will refuse to start. Move the board or the clamp, "
+                "or delete the zone (right-click it) if nothing is there."
+                + ("" if self._no_cutout else
+                   " With Leave the board in the sheet, isolation under a "
+                   "clamp is left uncut instead, where that joins no nets.")))
+        if soft:
+            # Left in the sheet, isolation under a clamp is not cut: the
+            # run takes that length out, leads the bit round, and proves on
+            # paper that no two nets end up on one piece of copper - a
+            # pour's own outline along the board's edge is the usual case.
+            # It refuses only if they would.
+            out.append(diag.Check(
+                "warn", "Isolation in a no-go zone will be left uncut",
+                "; ".join(soft) + ". The run leaves out the isolation "
+                "there and goes round - if that joins no nets, which it "
+                "checks before it cuts anything, and stops if it would. A "
+                "ground pour's edge along the board's edge joins nothing."))
+        if not out:
+            out.append(diag.Check(
+                "ok", "The work is clear of the no-go zones",
+                "%d zone%s on the bed, nothing to cut within %.0f mm of one."
+                % (len(zones), "" if len(zones) == 1 else "s",
+                   NOGO_CLEAR_MM)))
         return out
 
     def _panel_checks(self):
@@ -2541,6 +2864,7 @@ class MainWindow(QMainWindow):
         if d:
             self.load_folder(d)
             self._detect_sides()
+            self.autorun_page.board_opened()
 
     def show_auto_face(self, top):
         """Automatic mode has one step on the rail and two faces: once the
@@ -2564,9 +2888,100 @@ class MainWindow(QMainWindow):
         top = board.copper_top
         two = (top is not None and not top.is_empty
                and board.copper is not None and not board.copper.is_empty)
-        self.inspector.setup.double.setChecked(two)
+        # What the operator said about THIS board last time beats the guess:
+        # F.Cu is also where people draw wire links on a single-sided board,
+        # and a board sent from KiCad again must not turn double-sided again.
+        said = (workspace.setting(self._sides_key(), "")
+                if self.remember_board_choices else "")
+        self._detecting_sides = True
+        try:
+            if said in ("single", "double"):
+                self.inspector.setup.double.setChecked(said == "double")
+                if two and said == "single":
+                    self.say("info", "Copper on both layers, but you set this "
+                                     "board up as single-sided: kept so.")
+                return
+            self.inspector.setup.double.setChecked(two)
+        finally:
+            self._detecting_sides = False
+            self._restore_reference_holes()
         if two:
-            self.say("info", "Copper on both layers: set up as double-sided.")
+            self.say("info", "Copper on both layers: set up as double-sided. "
+                             "Untick it on Your board if the top is not "
+                             "milled; that is remembered for this board.")
+
+    def _sides_key(self):
+        """The setting that remembers one board folder's single/double."""
+        import hashlib
+        folder = str(workspace.remembered_dir("gerber") or "")
+        return "sides/" + hashlib.sha1(folder.encode("utf-8")).hexdigest()[:16]
+
+    def set_no_cutout(self, on):
+        """Leave the board in the sheet, or cut it out as usual."""
+        self._no_cutout = bool(on)
+        # The isolation along the board's edge is cut or not by this: the
+        # passes on the bed are another set of passes now.
+        self._paths_cache = {}
+        self._edge_memo, self._edge_notes = {}, {}
+        if self.remember_board_choices and self.state.board is not None:
+            workspace.set_setting(self._nocut_key(),
+                                  "yes" if on else "no")
+
+    def _nocut_key(self):
+        return "nocut/" + self._sides_key().split("/", 1)[1]
+
+    def _refs_key(self):
+        """...and where that board's reference holes go."""
+        return "refs/" + self._sides_key().split("/", 1)[1]
+
+    def _restore_reference_holes(self):
+        """A board opened again gets the reference holes it had: the waste,
+        inside the corners, or its own mounting holes."""
+        if not self.remember_board_choices:
+            return
+        self._no_cutout = workspace.setting(self._nocut_key(), "") == "yes"
+        said = workspace.setting(self._refs_key(), "")
+        self._restoring_refs = True
+        try:
+            if said == "mounting":
+                self.use_mounting_holes(quiet=True)
+            elif said in ("waste", "onboard") and (
+                    said != self._fid_placement or self._fid_mounting):
+                self.action_fiducial_layout(4, said, self._fid_offset)
+        finally:
+            self._restoring_refs = False
+        self.inspector.setup.sync()
+
+    # Whether what the operator says about a board - single or double
+    # sided, where its reference holes go - is remembered for its folder and
+    # given back when it is opened again. On in the app (gui2/app.py); off
+    # for a window built by anything else, so a test or a script neither
+    # reads nor leaves choices in the user's settings.
+    remember_board_choices = False
+
+    def open_from_outside(self, path):
+        """A board or setup handed over by the KiCad plugin or a second
+        launch (gui2/handoff.py). Returns False, and loads nothing, while a
+        run is going: swapping the board under a cutting mill is not an
+        "open". Otherwise it is exactly File ▸ Open (or Load setup)."""
+        page = getattr(self, "autorun_page", None)
+        if page is not None and getattr(page, "_thread", None) is not None:
+            self.say("warn", "A run is in progress, so the board from KiCad "
+                             "was not loaded. Send it again when it is done.")
+            QApplication.alert(self)
+            return False
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)
+        if str(path).lower().endswith(".srmcam"):
+            self.load_setup(path)
+        else:
+            self.load_folder(path)
+            self._detect_sides()
+            self.autorun_page.board_opened()
+        return True
 
     def action_open_demo(self):
         if not DEMO.exists():
@@ -2580,6 +2995,7 @@ class MainWindow(QMainWindow):
                                   "examples folder to be writable.")
                 return
         self.load_folder(str(DEMO))
+        self.autorun_page.board_opened()
 
     def load_folder(self, folder):
         """Programmatic load — the dialog path and the tests both come here."""
@@ -2600,6 +3016,10 @@ class MainWindow(QMainWindow):
         self._top_fit = None
         self._fid_measured = []
         self._stock_turn = None
+        # The last board's mounting holes are not this board's.
+        self._leave_mounting_holes()
+        self._no_cutout = False
+        self._edge_memo, self._edge_notes = {}, {}
         from gerber2rml.loader import gerber_stem
         self._custom_name = False
         try:
@@ -2615,6 +3035,7 @@ class MainWindow(QMainWindow):
         self.refresh_checks()
         self.select_step("setup")
         self.stage.fit_work()
+        self.autorun_page.board_loaded()
         self.say("ok", f"Loaded {self.state.name} — "
                        f"{len(self.state.board.holes)} holes.")
 
@@ -3340,6 +3761,11 @@ class MainWindow(QMainWindow):
                              f"others off first.")
             return
         self._double = bool(on)
+        if self.remember_board_choices \
+                and not getattr(self, "_detecting_sides", False) \
+                and self.state.board is not None:
+            workspace.set_setting(self._sides_key(),
+                                  "double" if on else "single")
         self._mask_result = None
         self._silk_result = None
         self._paths_cache = {}
@@ -3461,7 +3887,90 @@ class MainWindow(QMainWindow):
             return self._fid_flip
         return _axis_of(self.dowel_spec())
 
+    def reference_holes(self):
+        """Where the reference holes are, as the choice the operator made:
+        "waste", "onboard", "mounting" or "manual"."""
+        return "mounting" if self._fid_mounting else self._fid_placement
+
+    def mounting_holes(self):
+        """The board's own holes that can be the reference holes, as
+        ``([[x, y], ...], diameter)`` - design frame, from the framed board
+        box's lower-left, which is what a manual FiducialSpec takes - or
+        None when the board has none that will do."""
+        from gerber2rml.doublesided import (preview_layout_double_sided,
+                                            FiducialSpec)
+        from gerber2rml.engine import mountfid
+        st = self.state
+        if st.board is None or st.gerber_dir is None:
+            return None
+        try:
+            lay = preview_layout_double_sided(
+                st.gerber_dir, dowels=self.dowel_spec(),
+                offset=(st.place_x, st.place_y), rotate=st.rotate,
+                registration="fiducial",
+                fiducials=FiducialSpec(placement="onboard"))
+        except Exception:                       # noqa: BLE001 - not a board
+            return None
+        picked = mountfid.pick(lay.holes, lay.outline.bounds,
+                               bit_mm=st.drill.bit_diameter)
+        if not picked:
+            return None
+        fx0, fy0 = lay.frame0
+        return [[x - fx0, y - fy0] for x, y, _d in picked], picked[0][2]
+
+    def use_mounting_holes(self, quiet=False):
+        """Make the board's mounting holes the reference holes. False, and
+        nothing changed, when it has none that will do."""
+        from gerber2rml.engine import mountfid
+        got = self.mounting_holes()
+        if got is None:
+            if not quiet:
+                lo = mountfid.min_diameter(self.state.drill.bit_diameter)
+                self.say("warn", "This board has no holes that can be the "
+                                 "reference holes. It takes at least two of "
+                                 "one size, %.1f to %.1f mm across, at "
+                                 "opposite ends of the board."
+                                 % (lo, mountfid.MAX_D))
+            return False
+        self._fid_points, self._fid_diameter = got
+        self._fid_count = len(self._fid_points)
+        self._fid_placement = "manual"
+        self._fid_mounting = True
+        self._fid_changed()
+        if not quiet:
+            self.say("ok", "%d of the board's own %.1f mm holes are the "
+                           "reference holes: nothing extra is drilled."
+                           % (self._fid_count, self._fid_diameter))
+        return True
+
+    def _leave_mounting_holes(self):
+        """Back to drilled reference holes: their own size and count."""
+        if self._fid_mounting:
+            self._fid_mounting = False
+            self._fid_points = []
+            self._fid_count = 4
+            self._fid_diameter = round(self.state.drill.bit_diameter + 0.8, 2)
+            self._fid_placement = "waste"
+
+    def _fid_changed(self):
+        self._layout_base = None
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
+
     def action_fiducial_layout(self, count, placement, offset):
+        if self.remember_board_choices \
+                and not getattr(self, "_restoring_refs", False) \
+                and self.state.board is not None:
+            workspace.set_setting(self._refs_key(), placement)
+        if placement == "mounting":
+            if not self.use_mounting_holes():
+                self.inspector.setup.sync()      # the box goes back
+            return
+        if self._fid_mounting:
+            self._leave_mounting_holes()
+            count = self._fid_count
         self._fid_count = int(count)
         self._fid_placement = placement
         self._fid_offset = float(offset)
@@ -3538,6 +4047,7 @@ class MainWindow(QMainWindow):
         back into a design-frame point (see :meth:`_on_pin_moved`)."""
         return (self._double and self._registration == "fiducial"
                 and self._fid_placement == "manual"
+                and not self._fid_mounting
                 and self.state.board is not None)
 
     def _on_pin_moved(self, index, x, y):
@@ -4223,6 +4733,7 @@ class MainWindow(QMainWindow):
             "flex_auto": self._flex_auto, "flex_mm": self._flex_mm,
             "fid_count": self._fid_count,
             "fid_placement": self._fid_placement,
+            "fid_mounting": self._fid_mounting,
             "fid_offset": self._fid_offset,
             "fid_flip": self._fid_flip, "fid_scale": self._fid_scale,
             "fid_points": [list(p) for p in self._fid_points],
@@ -4343,6 +4854,8 @@ class MainWindow(QMainWindow):
             # Hand-placed holes without their places are not a placement.
             self._fid_placement = "waste"
             foreign.append("the hand-placed reference holes")
+        self._fid_mounting = (bool(data.get("fid_mounting", False))
+                              and self._fid_placement == "manual")
         self._dowel_mode = "grid" if data.get("dowel_mode") == "grid" else "fresh"
         self._dowel_edges = ("leftright" if data.get("dowel_edges") == "leftright"
                              else "topbottom")
@@ -4423,6 +4936,7 @@ class MainWindow(QMainWindow):
             px, py = data.get("place", [0, 0])
             st.set_rotation(data.get("rotate", 0))
             st.set_placement(px, py)
+            self.autorun_page.board_placed()
         self._paths_cache = {}
         setup = self.inspector.setup
         # Signals blocked: a thickness that differs from the spinbox fired the
@@ -4515,6 +5029,9 @@ class MainWindow(QMainWindow):
         self.refresh_checks()
         self.refresh_preview()
         self.inspector.setup.sync()
+        # The KiCad plugin checks a board's rules against this cutter.
+        from gerber2rml.gui2 import kicadsetup
+        kicadsetup.sync_tools(self)
 
     def _on_frame(self, which):
         self.stage.set_frame(which)
@@ -4704,10 +5221,18 @@ class MainWindow(QMainWindow):
     def _on_region(self, x0, y0, x1, y1):
         # The run's check before the cut-out borrows the boxes while it
         # waits; every other time they are Rework's.
-        if self.autorun_page.box_btn.isChecked():
+        if self.autorun_page.nogo_btn.isChecked():
+            self.autorun_page.add_nogo(x0, y0, x1, y1)
+        elif self.autorun_page.box_btn.isChecked():
             self.autorun_page.add_box(x0, y0, x1, y1)
         else:
             self.rework_page.add_region(x0, y0, x1, y1)
+
+    def _on_box_click(self, x, y):
+        # A click while marking clamps puts one there; elsewhere it is
+        # nothing, as it always was.
+        if self.autorun_page.nogo_btn.isChecked():
+            self.autorun_page.add_clamp(x, y)
 
     def action_help(self):
         d = dialogs.Sheet(self, "How this works", width=620)

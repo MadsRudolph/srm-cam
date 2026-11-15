@@ -8,6 +8,7 @@ Every test that needs a machine drives a fake link - nothing here opens a
 serial port - and the bar is built with the link capability forced on, so
 the same tests mean the same thing on the CNC PC and on Linux.
 """
+import sys
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -246,7 +247,13 @@ def test_the_bar_stays_one_row_with_stop_last_and_whole(bar, qt_app):
     bar.run.set_run("Isolation traces", 0.42, 200)
     bar._on_position(120.0, 100.0, -1.0, True)
     qt_app.processEvents()
-    assert bar.minimumSizeHint().width() <= 1280, bar.minimumSizeHint().width()
+    # 1280 with the faces the interface was drawn in. macOS has none of them
+    # and sets the bar in its fallbacks (Avenir Next Condensed, Helvetica
+    # Neue), which run about 2 % wider: 1308. There the budget is the one the
+    # header is held to below - what fits the 1400 px window the app opens at.
+    budget = 1333 if sys.platform == "darwin" else 1280
+    assert bar.minimumSizeHint().width() <= budget, \
+        bar.minimumSizeHint().width()
     assert bar.live.sizeHint().height() <= theme.BAR_H
     lay = bar.layout()
     last = lay.itemAt(lay.count() - 1).widget()

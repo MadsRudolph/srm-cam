@@ -693,3 +693,186 @@ def test_once_turned_over_the_bed_shows_the_top_and_drops_the_old_map(
         qt_app.processEvents()
     assert drawn[-1].equals(lay.outline)
 
+
+
+def test_the_boards_own_holes_are_the_reference_holes_through_a_flip(
+        win, qt_app, monkeypatch):
+    """Mounting holes instead of drilled fiducials: nothing extra is cut,
+    and the top is still found from them after the flip. The fixture's
+    widest far-apart holes are 1.52 mm, so the room asked for the bit is
+    eased a hair for this run."""
+    from gerber2rml.engine import mountfid
+    monkeypatch.setattr(mountfid, "ROOM_FOR_BIT", 0.7)
+    win.action_double_sided(True)
+    assert win.use_mounting_holes()
+    assert win.reference_holes() == "mounting" and win._fid_count == 2
+    assert win._fid_diameter == pytest.approx(1.52)
+    lay = win._ds_layout()
+    at = {(round(x, 2), round(y, 2)) for x, y, _d in lay.holes}
+    for x, y, d in lay.align_holes:              # each IS one of its holes
+        assert (round(x, 2), round(y, 2)) in at and d == pytest.approx(1.52)
+    assert not win._pins_draggable()             # not pins to pull about
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page._sync_outline()               # what showing the page does
+    assert page.ref_box.currentData() == "mounting"
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.on_stock_click(110.0, 80.0)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert win._fid_diameter == pytest.approx(1.52)   # Start kept their size
+    assert _wait(qt_app, lambda: not page.flip_btn.isHidden(), 120), \
+        page.status.text()
+    page._flipped()
+    assert _wait(qt_app, lambda: bool(done), 180), "the run never finished"
+    assert done[0][0], done[0][1]
+    assert win._top_fit is not None
+    assert sum(m is not None for m in win._fid_measured) == 2
+
+
+def test_a_board_without_mounting_holes_keeps_its_reference_holes(win):
+    win.action_double_sided(True)
+    before = (win._fid_placement, win._fid_count, win._fid_diameter)
+    said = []
+    win.say = lambda level, text: said.append((level, text))
+    assert win.use_mounting_holes() is False     # 2.0 mm pair is 28 mm apart
+    assert (win._fid_placement, win._fid_count, win._fid_diameter) == before
+    assert said and said[-1][0] == "warn"
+    win.action_fiducial_layout(4, "mounting", 4.0)
+    assert win.reference_holes() == "waste"
+
+
+def test_leaving_mounting_holes_restores_drilled_ones(win, monkeypatch):
+    from gerber2rml.engine import mountfid
+    monkeypatch.setattr(mountfid, "ROOM_FOR_BIT", 0.7)
+    win.action_double_sided(True)
+    assert win.use_mounting_holes()
+    win.action_fiducial_layout(win._fid_count, "waste", 4.0)
+    assert win.reference_holes() == "waste" and win._fid_count == 4
+    assert win._fid_diameter == pytest.approx(1.6)
+    assert len(win._ds_layout().align_holes) == 4
+
+
+def _tight_sheet(win, qt_app):
+    """The 104 mm fixture board on a 106 mm sheet in the lab's bracket: no
+    room for margins, a cut-out, or to keep clear of the tongue."""
+    x, y = br.DEFAULT.inside_corner()
+    sm.machine(speedup=1e6, angle_deg=0.0, size=(106000, 106000),
+               corner=(int(round((x - 106) * 1000)),
+                       int(round((y - 106) * 1000))))
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.centre_chk.setChecked(False)
+    page.w_spin.setValue(106)
+    page.h_spin.setValue(106)
+    page.level_chk.setChecked(False)
+    page._sync_outline()
+    return page
+
+
+def test_cut_out_as_usual_a_sheet_the_boards_size_is_refused(win, qt_app):
+    page = _tight_sheet(win, qt_app)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 120)
+    assert not done[0][0]
+    assert "stock" in done[0][1]
+
+
+def test_left_in_the_sheet_it_runs_with_no_cut_out_right_up_to_the_bracket(
+        win, qt_app, monkeypatch):
+    page = _tight_sheet(win, qt_app)
+    page.nocut_chk.setChecked(True)
+    assert win._no_cutout and not page.check_chk.isEnabled()
+    assert not any("cutout" in k for k, _t in page._plan_rows())
+    b, (sx, sy, sw, sh) = win.work_extent(), win.stock
+    assert (b[0], b[1]) == pytest.approx((sx, sy))     # the far corner
+    kx0, ky0, kx1, ky1 = br.DEFAULT.keepout()
+    assert b[3] > ky0 and b[2] > kx0                   # it IS under the tongue
+    jobs = []
+    real = ar.AutoRun._job
+
+    def spy(self, key, *a, **k):
+        jobs.append(key)
+        return real(self, key, *a, **k)
+    monkeypatch.setattr(ar.AutoRun, "_job", spy)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 180), "the run never finished"
+    assert done[0][0], done[0][1]
+    assert jobs and not any("cutout" in k for k in jobs)
+    page.nocut_chk.setChecked(False)                   # as it was found
+    assert not win._no_cutout
+    assert any("cutout" in k for k, _t in page._plan_rows())
+
+
+def test_the_box_is_there_with_the_bracket_either_number_of_faces(win):
+    page = win.autorun_page
+    page.nocut_chk.setChecked(True)
+    assert page.no_cutout() is False                   # found by its edges
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    assert page.no_cutout() is True
+    win.action_double_sided(True)
+    page._sync_nocut()
+    assert page.no_cutout() is True                    # two faces as well
+    assert not page.nocut_chk.isHidden() and page.nocut_chk.isEnabled()
+    assert not any("cutout" in k for k, _t in page._plan_rows())
+    win.action_double_sided(False)
+    page.nocut_chk.setChecked(False)
+
+
+def test_left_in_the_sheet_a_double_sided_board_is_flipped_and_finished(
+        win, qt_app, monkeypatch):
+    """Both faces, no cut-out: 1 mm of sheet each side of the 104 mm board,
+    its reference holes inside its corners."""
+    x, y = br.DEFAULT.inside_corner()
+    sm.machine(speedup=1e6, angle_deg=0.0, size=(106000, 114000),
+               corner=(int(round((x - 106) * 1000)),
+                       int(round((y - 114) * 1000))))
+    win.action_double_sided(True)
+    win.action_fiducial_layout(4, "onboard", 4.0)
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.where.setCurrentIndex(page.where.findData("bracket"))
+    page.set_bracket(br.DEFAULT)
+    page.centre_chk.setChecked(False)
+    page.w_spin.setValue(106)
+    page.h_spin.setValue(114)
+    page.level_chk.setChecked(False)
+    page._sync_outline()
+    page.nocut_chk.setChecked(True)
+    b, (sx, sy, sw, sh) = win.work_extent(), win.stock
+    assert b[0] - sx == pytest.approx(sx + sw - b[2])  # centred across it
+    assert b[1] == pytest.approx(sy)                   # and at the front
+    jobs = []
+    real = ar.AutoRun._job
+
+    def spy(self, key, *a, **k):
+        jobs.append(key)
+        return real(self, key, *a, **k)
+    monkeypatch.setattr(ar.AutoRun, "_job", spy)
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: not page.flip_btn.isHidden() or bool(done),
+                 120), page.status.text()
+    assert not done, done
+    page._flipped()
+    assert _wait(qt_app, lambda: bool(done), 180), "the run never finished"
+    assert done[0][0], done[0][1]
+    assert win._top_fit is not None
+    assert any("top" in k for k in jobs)
+    assert not any("cutout" in k for k in jobs)
+    page.nocut_chk.setChecked(False)

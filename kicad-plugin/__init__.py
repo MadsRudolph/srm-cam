@@ -17,3 +17,12 @@ except Exception:      # never break PCB editor startup over a plugin error
     import traceback
     sys.stderr.write("SRM-20 build area failed to register:\n")
     traceback.print_exc()
+
+try:
+    from action_send_to_srmcam import SendToSRMCAMAction, SRM20RulesAction
+    SendToSRMCAMAction().register()
+    SRM20RulesAction().register()
+except Exception:      # the same rule for the second button
+    import traceback
+    sys.stderr.write("Send to SRM-CAM failed to register:\n")
+    traceback.print_exc()

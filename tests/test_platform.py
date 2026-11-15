@@ -10,10 +10,17 @@ from pathlib import Path
 from gerber2rml import platform as plat
 
 
-def test_machine_link_is_windows_only():
+def test_machine_link_is_windows_and_macos_only():
     assert plat.capabilities("win32").machine_link is True
     assert plat.capabilities("linux").machine_link is False
-    assert plat.capabilities("darwin").machine_link is False
+    assert plat.capabilities("darwin").machine_link is True
+
+
+def test_qt_style_is_fusion_on_macos_only():
+    """The macOS style clips the stylesheet's check-box indicator."""
+    assert plat.qt_style("darwin") == "Fusion"
+    assert plat.qt_style("win32") is None
+    assert plat.qt_style("linux") is None
 
 
 def test_default_serial_port_is_com5_on_windows():
@@ -43,7 +50,8 @@ def test_reveal_has_no_command_off_windows():
 @pytest.mark.host_capabilities
 def test_capabilities_defaults_to_the_running_host():
     import sys
-    assert plat.capabilities().machine_link == sys.platform.startswith("win")
+    assert plat.capabilities().machine_link == (
+        sys.platform.startswith("win") or sys.platform == "darwin")
 
 
 def test_permission_hint_names_the_group_the_device_actually_has():
@@ -71,6 +79,16 @@ def test_permission_hint_says_dialout_when_that_is_the_group():
 def test_permission_hint_is_silent_on_windows():
     """Windows has no group to join; a hint here would be noise."""
     assert plat.serial_permission_hint("COM5", "win32") is None
+
+
+def test_permission_hint_is_silent_on_macos():
+    """macOS has no dialout group and no usermod; the cu.* nodes are
+    world-writable, so suggesting a group join would be wrong advice."""
+    hint = plat.serial_permission_hint(
+        "/dev/cu.usbmodem1101", "darwin",
+        stat_fn=lambda p: type("st", (), {"st_gid": 0})(),
+        group_fn=lambda gid: "wheel")
+    assert hint is None
 
 
 def test_permission_hint_survives_a_device_that_is_not_there():

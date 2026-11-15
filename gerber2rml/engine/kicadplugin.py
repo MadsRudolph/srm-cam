@@ -68,6 +68,47 @@ def install(source, plugins_dir):
     return dest
 
 
+# What the plugin's "Send to SRM-CAM" button reads to find this app
+# (kicad-plugin/srm20area/sendto.py). Written at install and refreshed at
+# every launch, so moving the app (into /Applications, say) is picked up.
+LAUNCH_FILE = "launch.json"
+
+
+def launch_info(executable=None, frozen=None, platform=None, address=None):
+    """How to start this SRM-CAM and where a running one listens."""
+    from gerber2rml import platform as plat
+    executable = sys.executable if executable is None else executable
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    argv = ([executable] if frozen
+            else [executable, "-m", "gerber2rml.gui2"])
+    app = None
+    exe = Path(executable)
+    if (frozen and len(exe.parents) > 2 and exe.parents[1].name == "Contents"
+            and exe.parents[2].suffix == ".app"):
+        app = exe.parents[2].as_posix()      # .app bundles exist only on macOS
+    return {"argv": argv, "app": app,
+            "address": address or plat.handoff_address(platform)}
+
+
+def write_launch_info(installed, info):
+    """Write ``info`` into an installed plugin folder."""
+    import json
+    (Path(installed) / LAUNCH_FILE).write_text(
+        json.dumps(info, indent=2), encoding="utf-8")
+
+
+def refresh_launch_info(plugins_dirs, info):
+    """Rewrite ``info`` into every installed copy of the plugin. Best
+    effort: a folder that cannot be written keeps what it had."""
+    for d in plugins_dirs:
+        dest = Path(d) / PLUGIN_DIRNAME
+        if dest.is_dir():
+            try:
+                write_launch_info(dest, info)
+            except OSError:
+                pass
+
+
 MISSING, OUTDATED, CURRENT = "missing", "outdated", "current"
 
 

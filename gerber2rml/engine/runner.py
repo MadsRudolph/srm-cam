@@ -50,7 +50,7 @@ class JobRunner:
 
     def __init__(self, ser, printer, should_abort, should_pause=None,
                  note=None, still_s=2.0, poll_s=0.3, origin_mm=(0.0, 0.0),
-                 settled_s=20.0):
+                 settled_s=20.0, stall_s=30.0):
         self.ser = ser
         self.printer = printer
         self.should_abort = should_abort
@@ -59,6 +59,9 @@ class JobRunner:
         self.still_s = still_s
         self.poll_s = poll_s
         self.settled_s = settled_s
+        # A job the queue holds while the mill never moves: switched off,
+        # unplugged, or a print queue that stopped itself. Said once.
+        self.stall_s = stall_s
         self.origin = origin_mm
 
     def run(self, program, name, timeout_s=6 * 3600, progress=None,
@@ -77,6 +80,7 @@ class JobRunner:
         still_since = None
         paused = False
         last_pos, settled_since = None, time.monotonic()
+        stalled_since, stall_told = None, False
         while True:
             if self.should_abort():
                 self.stop()
@@ -95,12 +99,26 @@ class JobRunner:
                 self.stop()
                 raise RunStopped("the mill refused the job. In VPanel, "
                                  "Setup ▸ Command Set must be NC Code; press "
-                                 "Cancel there to clear it")
+                                 "Cancel there to clear it. Without VPanel, "
+                                 "Machine ▸ The mill's settings… reads and "
+                                 "sets the command set")
             pos = spi_probe.query_position(self.ser)
             if progress is not None and pos:
                 progress(pos)
             moving = bool(st.get("moving"))
             queued = self.printer.pending()
+            if queued and not moving and not paused:
+                stalled_since = stalled_since or time.monotonic()
+                if (not stall_told
+                        and time.monotonic() - stalled_since >= self.stall_s):
+                    stall_told = True
+                    self.note(
+                        "%s: the job has waited in the print queue for %d s "
+                        "and the mill has not moved. Is it switched on, its "
+                        "USB cable in, and the queue not paused?"
+                        % (name, self.stall_s))
+            else:
+                stalled_since = None
             at_end = (end_mm is None or pos is None or
                       math.dist(pos[:2], end_mm) < 0.3)
             if not paused and not moving and not queued and at_end:
