@@ -329,6 +329,7 @@ class StencilLaserDialog(QDialog):
         super().__init__(parent)
         self.base_art = art
         self.turns = 0
+        self.fine = 0.0                     # degrees on top of the quarter turns
         self.art = art
         self.laser = laser or xtool.F1Ultra()
         self._cal = None
@@ -388,6 +389,10 @@ class StencilLaserDialog(QDialog):
             "Autofocus", on=lambda: self.autofocus(),
             tip="Measure the height under the focus point with the blue dot "
                 "and move the head")
+        self.align_btn = widgets.button(
+            "Align", on=self.align,
+            tip="Photo, then find the holes already cut and put the stencil "
+                "back on them: after the foil or board has been moved")
         self.rot_l = widgets.button("Turn left", on=lambda: self.rotate(-1),
                                     tip="A quarter turn anticlockwise")
         self.rot_r = widgets.button("Turn right", on=lambda: self.rotate(1),
@@ -397,6 +402,7 @@ class StencilLaserDialog(QDialog):
         fit = widgets.button("Fit", on=self.view.fit, tip="Show the whole bed")
         self.link = widgets.Chip("Laser not asked yet", "idle")
         for w in (brand, widgets.vrule(), self.photo_btn, self.focus_btn,
+                  self.align_btn,
                   widgets.vrule(), self.mode, self.all_btn, self.none_btn,
                   widgets.vrule(), self.rot_l, self.rot_r, fit):
             hh.addWidget(w)
@@ -459,10 +465,12 @@ class StencilLaserDialog(QDialog):
         s = widgets.Section("Recipe")
         self.preset = QComboBox()
         self.preset.currentTextChanged.connect(self._load_preset)
-        self.save_btn = widgets.button("Save as…", on=self.save_preset)
-        self.del_btn = widgets.button("Delete", kind="ghost", on=self.delete_preset)
-        s.add(widgets.Field("Preset", self.preset))
-        s.add(_row(None, self.save_btn, self.del_btn))
+        s.add(self.preset)
+        self.recipe_lbl = widgets.hint("")
+        s.add(self.recipe_lbl)
+        # The numbers live under a fold: pick a preset and cut; open it only
+        # to tweak one, and save the tweak as a preset of its own.
+        self.recipe_more = widgets.Disclosure("Adjust the numbers", key="stencil-recipe")
         r = xtool.DEFAULT_RECIPE
         self.power = _spin(r.power, 1, 100, 1, 0)
         self.speed = _spin(r.speed, 10, 5000, 10, 0)
@@ -480,12 +488,15 @@ class StencilLaserDialog(QDialog):
                                  ("Per burst", self.burst, "passes"),
                                  ("Rest", self.rest, "s"),
                                  ("Zones", self.zones, "")):
-            s.add(widgets.Field(label, wdg, unit=unit))
+            self.recipe_more.body.addWidget(widgets.Field(label, wdg, unit=unit))
             wdg.valueChanged.connect(self._recipe_changed)
-        s.add(self.mark)
+        self.recipe_more.body.addWidget(self.mark)
         self.mark.toggled.connect(self._recipe_changed)
-        self.recipe_lbl = widgets.hint("")
-        s.add(self.recipe_lbl)
+        self.save_btn = widgets.button("Save as preset…", on=self.save_preset)
+        self.del_btn = widgets.button("Delete preset", kind="ghost",
+                                      on=self.delete_preset)
+        self.recipe_more.body.addWidget(_row(None, self.save_btn, self.del_btn))
+        s.add(self.recipe_more)
         pv.addWidget(s)
         pv.addStretch(1)
 
@@ -645,7 +656,8 @@ class StencilLaserDialog(QDialog):
         self.item.setPos(*keep)
         self._syncing = False
         w, h = self.art.size
-        turned = f" · turned {90 * self.turns}°" if self.turns else ""
+        angle = (90 * self.turns + self.fine) % 360
+        turned = f" · turned {angle:.1f}°".replace(".0°", "°") if abs(angle) > 1e-6 else ""
         self.size_lbl.setText(
             f"{len(self.art.apertures)} holes · {w:.1f} × {h:.1f} mm · "
             f"{'mirrored' if self.art.mirrored else 'not mirrored'} · kerf "
@@ -654,16 +666,26 @@ class StencilLaserDialog(QDialog):
         self._place_focus_mark()
 
     def rotate(self, step):
+        self._turn_to(self.turns + step, self.fine)
+
+    def _turn_to(self, turns, fine):
+        """Turn the stencil about its middle, keeping the middle where it is."""
         cx, cy = self.centre()
-        self.turns = (self.turns + step) % 4
-        self.art = xtool.rotated(self.base_art, self.turns)
+        self.turns = turns % 4
+        self.fine = fine
+        self.art = xtool.rotated(self.base_art, self.turns, self.fine)
         self.selected.clear()
         w, h = self.art.size
         self._syncing = True
-        self.x.setValue(round(cx - w / 2, 2))
-        self.y.setValue(round(cy - h / 2, 2))
+        self.x.setValue(round(cx - w / 2, 3))
+        self.y.setValue(round(cy - h / 2, 3))
         self._syncing = False
         self._build_item()
+
+    @staticmethod
+    def _middle(paths):
+        import numpy as np
+        return np.array([q for p in paths for q in p], float).mean(axis=0)
 
     def origin(self):
         return self.x.value(), self.y.value()
@@ -817,7 +839,12 @@ class StencilLaserDialog(QDialog):
         if self._syncing_recipe:
             return
         r = self.recipe()
-        self.recipe_lbl.setText(
+        presets, _ = self._presets()
+        chosen = presets.get(self.preset.currentText())
+        changed = chosen is not None and any(
+            float(chosen[f]) != float(getattr(r, f)) for f in _RECIPE_FIELDS
+            if f not in ("mark_power",))
+        self.recipe_lbl.setText(("Changed from the preset · " if changed else "") +
             f"{r.rounds} round{'' if r.rounds == 1 else 's'} of "
             f"{r.passes_per_burst} pass{'' if r.passes_per_burst == 1 else 'es'} "
             f"per zone" + (f", {r.rest_s:g} s laser-off after each" if r.rest_s else ""))
@@ -910,11 +937,55 @@ class StencilLaserDialog(QDialog):
             self._cal = self.laser.calibration()
         return self._cal
 
-    def _photo(self):
+    def _photo(self, px_per_mm=_PX_PER_MM):
         from gerber2rml.engine.xtool_camera import decode_jpeg
         cal = self._calibration()
         self.laser.lights(True)
-        return cal.rectify(decode_jpeg(self.laser.snap()), _PX_PER_MM)
+        return cal.rectify(decode_jpeg(self.laser.snap()), px_per_mm)
+
+    def align(self):
+        """Find the holes already cut and put the stencil back on them. Tries the
+        stencil as it is, then the other three quarter turns, in case the board
+        went back the other way round."""
+        from gerber2rml.engine import xtool_camera as cam
+        cx, cy = self.centre()
+        candidates = []
+        for k in range(4):
+            art = xtool.rotated(self.base_art, self.turns + k, self.fine)
+            w, h = art.size
+            holes, _ = xtool.stencil_paths(art, (cx - w / 2, cy - h / 2))
+            candidates.append((k, holes))
+        hi = 8
+
+        def work(_p):
+            rgb = self._photo(hi)
+            tried = []
+            for k, holes in candidates:
+                a = cam.align(rgb, hi, holes)
+                tried.append((k, holes, a))
+                if a.ok and k == 0:
+                    break
+            good = [t for t in tried if t[2].ok]
+            pick = max(good or tried, key=lambda t: t[2].found / max(t[2].total, 1))
+            return rgb, pick, bool(good)
+
+        def done(res):
+            rgb, (k, holes, a), good = res
+            self.show_bed(rgb[::hi // _PX_PER_MM, ::hi // _PX_PER_MM].copy())
+            if not good:
+                return (f"Could not find the holes: at best {a.found} of {a.total}. "
+                        f"Drag the stencil close to them and try again.")
+            target = self._middle(holes) + (a.dx, a.dy)
+            self._turn_to(self.turns + k, self.fine + a.turn)
+            now, _ = xtool.stencil_paths(self.art, self.origin())
+            dx, dy = target - self._middle(now)
+            self.x.setValue(round(self.x.value() + dx, 3))
+            self.y.setValue(round(self.y.value() + dy, 3))
+            moved = (a.dx ** 2 + a.dy ** 2) ** 0.5
+            turned = (90 * k + a.turn + 180) % 360 - 180
+            return (f"Aligned on {a.found} of {a.total} holes: moved {moved:.1f} mm, "
+                    f"turned {turned:+.1f}°. Check with Show where before cutting.")
+        self._start(work, "Aligning: photo, then looking for the holes…", done)
 
     def _focused(self, z, how):
         self.z_read.set(f"{z:.2f}")
@@ -1054,7 +1125,7 @@ class StencilLaserDialog(QDialog):
         self._say(msg, warn=warn)
 
     def _busy(self, on):
-        for b in (self.photo_btn, self.focus_btn, self.set_focus_btn,
+        for b in (self.photo_btn, self.focus_btn, self.align_btn, self.set_focus_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
                   self.mode, self.all_btn, self.none_btn, self.x, self.y,
                   self.preset, self.save_btn):
