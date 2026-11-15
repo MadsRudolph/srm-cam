@@ -647,6 +647,14 @@ several; Ctrl or Shift adds to the selection. **Cut** becomes **Cut N selected**
 it cuts only those holes, with the same recipe, and does not mark the outline
 again. Hovering over a hole shows its size.
 
+**Looking at the result.** **Filled | Outlines | Hidden** in the header changes
+how the stencil is drawn over the photo:
+- **Filled** is the stencil as it will be cut.
+- **Outlines** draws each hole as a thin line with nothing filled, so the photo
+  shows through every hole. Take a photo after cutting and look for pads that
+  are not dark all the way through, then select those and re-cut them.
+- **Hidden** shows only the photo. **H** switches between hidden and filled.
+
 **Align after moving the foil.** If the foil or board has been lifted and put
 back, for example to push out slugs before a re-cut:
 1. Drag the stencil roughly onto it.
