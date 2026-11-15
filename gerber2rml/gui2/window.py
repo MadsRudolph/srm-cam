@@ -50,6 +50,7 @@ from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
 from gerber2rml.engine import silkscreen
 from gerber2rml.engine import soldermask
+from gerber2rml.engine import stencil
 from gerber2rml.engine import spoilboard
 
 FOIL_MM = 0.035        # copper foil on 1.6 mm FR-4; what a cut must break
@@ -360,6 +361,10 @@ class MainWindow(QMainWindow):
         # Its sibling for the silkscreen: the same, without a shrink.
         self._silkscreen = False
         self._silk_result = None
+        # And the paste stencil, cut from steel foil on the same laser.
+        self._stencil = False
+        self._stencil_kerf = stencil.DEFAULT_KERF
+        self._stencil_result = None
         self._registration = "fiducial"     # the lab standard; dowels drill the bed
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
@@ -2746,6 +2751,7 @@ class MainWindow(QMainWindow):
         self._export_dir = None
         self._mask_result = None
         self._silk_result = None
+        self._stencil_result = None
         self.traveller.clear_done()
         self.rework_page._clear()
         # Pads of the last board, measured on the last piece of copper.
@@ -3315,6 +3321,7 @@ class MainWindow(QMainWindow):
     def action_mirror(self, on):
         self.state.mirror = on
         self._mask_result = None
+        self._stencil_result = None
         if self.state.boards:
             try:
                 self.state.reload()
@@ -3814,6 +3821,8 @@ class MainWindow(QMainWindow):
                 if self._solder_mask else None)
         silk = (self.write_silk_to(self._export_dir)
                 if self._silkscreen else None)
+        paste = (self.write_stencil_to(self._export_dir)
+                 if self._stencil else None)
         self.refresh_plan()
         self.sheet.show_plan(
             self.plan, name=st.name, out_dir=self._export_dir,
@@ -3824,7 +3833,7 @@ class MainWindow(QMainWindow):
         self.centre.setCurrentWidget(self.sheet)
         total = self.plan.total_seconds
         self.say("warn" if "WORN" in wear or (mask and mask[1])
-                 or (silk and silk[1]) else "ok",
+                 or (silk and silk[1]) or (paste and paste[1]) else "ok",
                  f"{len(written)} files written"
                  + (f" · about {format_duration(total)} of cutting"
                     if total else "")
@@ -3832,9 +3841,11 @@ class MainWindow(QMainWindow):
                     if extras else "")
                  + (" · plus the solder mask file" if mask and mask[0] else "")
                  + (" · plus the silkscreen file" if silk and silk[0] else "")
+                 + (" · plus the stencil file" if paste and paste[0] else "")
                  + wear
                  + (f" · Solder mask: {mask[1][0]}" if mask and mask[1] else "")
-                 + (f" · Silkscreen: {silk[1][0]}" if silk and silk[1] else ""))
+                 + (f" · Silkscreen: {silk[1][0]}" if silk and silk[1] else "")
+                 + (f" · Stencil: {paste[1][0]}" if paste and paste[1] else ""))
         return written
 
     # -------------------------------------------------------- the laser file
@@ -4011,6 +4022,115 @@ class MainWindow(QMainWindow):
         else:
             self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
                            f"· The face and the mirroring are in the name.")
+
+    # ------------------------------------------------- the solder paste stencil
+    def action_stencil(self, on):
+        self._stencil = bool(on)
+        self.inspector.setup.sync_stencil()
+        level, text = self.stencil_status()
+        if on and level == "warn":
+            self.say("warn", text)
+
+    def action_stencil_kerf(self, value):
+        self._stencil_kerf = float(value)
+        self._stencil_result = None
+        self.inspector.setup.sync_stencil()
+
+    def _stencil_sides(self):
+        """The faces that get a stencil: the milled bottom, mirrored like the
+        copper; a double-sided job's top as well, as plotted."""
+        sides = [("bottom", bool(self.state.mirror) or self._double)]
+        if self._double:
+            sides.append(("top", False))
+        return sides
+
+    def _stencil_arts(self, gerber_dir):
+        """``(arts, notes)`` for one board: every face with paste on it."""
+        arts, notes = [], []
+        for side, mirror in self._stencil_sides():
+            try:
+                arts.append(stencil.build_stencil(
+                    gerber_dir, side=side, kerf=self._stencil_kerf, mirror=mirror))
+            except stencil.StencilError as e:
+                notes.append(str(e))
+        # A face with no paste is normal when another face has some.
+        return arts, ([] if arts else notes)
+
+    def stencil_status(self):
+        st = self.state
+        if st.gerber_dir is None:
+            return "info", "Load a Gerber folder first."
+        if self._stencil_result is not None:
+            paths, notes = self._stencil_result
+            bits = [f"Wrote {p.name}" for p in paths] + notes
+            return ("warn" if notes else "info"), ". ".join(bits)
+        missing = [m.gerber_dir for m in st.boards
+                   if stencil.paste_layer_path(m.gerber_dir) is None
+                   and stencil.paste_layer_path(m.gerber_dir, "top") is None]
+        if missing:
+            return "warn", (
+                f"No paste Gerber in {missing[0].name}. In KiCad's Plot dialog "
+                f"tick B.Paste (and F.Paste for a double-sided board), plot into "
+                f"the same folder, and load it again.")
+        return "info", (
+            "Reads B.Paste and Edge.Cuts: the holes for 0.1 mm steel foil, each "
+            "half a kerf smaller per side, mirrored like the copper. Cut it on "
+            "the xTool from here, or put the DXF in XCS.")
+
+    def write_stencil_to(self, out_dir):
+        """Write the stencil DXF or DXFs into ``out_dir``. ``(paths, notes)``;
+        never raises, like :meth:`write_mask_to`."""
+        st = self.state
+        paths, notes, seen = [], [], set()
+        for m in st.boards:
+            if m.gerber_dir in seen:
+                continue
+            seen.add(m.gerber_dir)
+            name = clean_name(m.name) if st.is_panel else st.name
+            try:
+                arts, why = self._stencil_arts(m.gerber_dir)
+                notes += why
+                for art in arts:
+                    path = stencil.write_stencil_dxf(art, out_dir, name)
+                    paths.append(path)
+                    self._exported[path.name] = path
+                    notes += art.warnings()
+            except Exception as e:
+                notes.append(f"{name}'s stencil file could not be written: {e}")
+        self._stencil_result = (paths, notes)
+        self.inspector.setup.sync_stencil()
+        return paths, notes
+
+    def action_write_stencil(self):
+        if self.state.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        d = QFileDialog.getExistingDirectory(
+            self, "Where should the stencil file go?",
+            workspace.remembered_dir("out", "exports"))
+        if not d:
+            return
+        workspace.remember_dir("out", d)
+        paths, notes = self.write_stencil_to(d)
+        if notes:
+            self.say("warn", notes[0])
+        else:
+            self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
+                           f"· Import it into XCS to place it on the foil.")
+
+    def action_cut_stencil(self):
+        """The laser window for the selected board's stencil."""
+        st = self.state
+        if st.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        m = st.boards[st.current] if st.is_panel else st.boards[0]
+        arts, notes = self._stencil_arts(m.gerber_dir)
+        if not arts:
+            self.say("warn", notes[0] if notes else "No paste on this board.")
+            return
+        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+        StencilLaserDialog(arts[0], self).exec()
 
     def _write_export_extras(self, out_dir):
         """A picture of the stage and a board summary next to the machine

@@ -573,6 +573,71 @@ inside of a letter like O stays a loop of its own, which the laser's fill leaves
 unmarked. Nothing is shrunk. Artwork past the board edge is cut off at the outline
 and the clipped area is reported. Engine: `engine/silkscreen.py`.
 
+## Solder paste stencil: cut on the xTool F1 Ultra
+
+The holes for a paste stencil cut from 0.1 mm stainless foil by the fiber laser,
+from the same Gerber folder. It shares the solder mask file's reader and DXF writer.
+SRM-CAM can also **cut it**, sending the job to the F1 Ultra itself, because XCS
+cannot spread the heat out and a stencil cut in one go warps.
+
+**Solder paste stencil › Also make the stencil file (DXF)**, on the first page of
+the job, off by default. While it is ticked, **Export the job** writes the DXF too.
+**Write the stencil file now…** writes it on its own, and **Cut it on the xTool…**
+opens the laser window.
+
+| | |
+|---|---|
+| Read from | `*-B_Paste.*` (or `.gbp`), plus `*-F_Paste.*` (or `.gtp`) for a double-sided job, and `*-Edge_Cuts.*` |
+| Written | `<name>_stencil_bottom_mirrored.dxf` |
+| Contents | Closed `LWPOLYLINE`s on layer `STENCIL_APERTURES`, the outline on layer `OUTLINE`, mm at 1:1 |
+
+**Kerf.** The beam removes about 0.08 mm of steel around its path. That figure was
+measured on the lab's machine in 0.1 mm 304 stainless. So each hole is drawn half
+the kerf smaller per side, and comes out pad-sized.
+
+**Mirrored like the copper.** B.Paste goes on the milled face, which lies face up
+when the stencil goes on, so it is mirrored once. A double-sided job's F.Paste is
+not mirrored.
+
+**Holes that print.** A hole whose area ratio, area ÷ (perimeter × 0.1 mm), is under
+0.66 may hold on to its paste. It is reported, not dropped. So is a pad smaller than
+the kerf, which gets no hole.
+
+### Cutting it
+
+1. Plug the F1 Ultra into this PC by USB. It shows up as a network adapter, with
+   the laser at 201.234.3.1.
+2. In XCS, import the stencil DXF and drag it onto the foil in the camera image.
+3. Autofocus on the foil.
+4. Close XCS's job. In SRM-CAM's laser window, type the DXF's **X** and **Y**,
+   which are the top-left corner of its outline, and the autofocus **thickness**.
+5. **Show where** runs the blue laser round the outline at 6 %. That is visible but
+   does not mark steel. Move X/Y until it sits on clean foil.
+6. Press **Cut**. The head goes to Z = thickness + 8, the way XCS focuses. Then one
+   job runs:
+   - The holes are split into 4 zones around the centre.
+   - Each zone gets 5 passes, then a 6 s rest, round after round, until every hole
+     has had 30 passes.
+   - Each zone therefore cools for about 25 s between its bursts.
+   - Finally the outline is marked once at half power.
+
+   **Stop** stops the laser at once.
+
+The recipe (100 %, 550 mm/s, 30 kHz, 30 passes in bursts of 5) is the one that cut
+the ESP32 stencil flat and through on 2026-11-15. It is under **Recipe** in the
+laser window.
+
+The firmware ignores `G4` dwells, so a rest is the galvo crawling at 1 mm/s with
+the laser at `S0`. That was checked to leave no trace on steel, with the fiber
+selected.
+
+Command line: `srm-cam-stencil <folder> -o out` for the DXF, `--trace X Y`, and
+`--cut X Y --thickness T`.
+
+Engines: `engine/stencil.py` (the holes) and `engine/xtool.py` (the job file and
+the laser). The protocol notes are in the solder-stencil-tests repo,
+`docs/OPEN_CONTROL.md`.
+
 ## Double-sided boards
 
 Top/bottom passes align off machine-located holes, never the board edge. Tick
