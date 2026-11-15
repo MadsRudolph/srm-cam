@@ -50,13 +50,43 @@ BUILTIN_PRESETS = {
                                           passes_per_burst=1, rest_s=0, zones=1,
                                           mark_passes=0),
 }
-_RECIPE_FIELDS = ("power", "speed", "frequency", "total_passes",
-                  "passes_per_burst", "rest_s", "zones", "mark_power",
-                  "mark_passes")
+# Filled jobs: the sphawes/fiber-laser-pcb-fab settings the lab imports into XCS.
+FILL_PRESETS = {
+    "RemoveSolderMask (sphawes)": xtool.SPHAWES_REMOVE_MASK,
+    "Traces (sphawes)": xtool.SPHAWES_TRACES,
+}
+
+# What changes with the job. Everything else on the page is the same.
+KINDS = {
+    "stencil": dict(window="solder paste stencil", step="Cut the stencil",
+                    section="The stencil", noun="hole", run="Cut the stencil",
+                    run_selected="Cut {n} selected", busy="Cutting",
+                    presets=BUILTIN_PRESETS),
+    "mask": dict(window="solder mask", step="Open the solder mask",
+                 section="The solder mask", noun="opening", run="Open the mask",
+                 run_selected="Open {n} selected", busy="Opening the mask",
+                 presets=FILL_PRESETS),
+    "silk": dict(window="silkscreen", step="Mark the silkscreen",
+                 section="The silkscreen", noun="shape", run="Mark the silkscreen",
+                 run_selected="Mark {n} selected", busy="Marking the silkscreen",
+                 presets=FILL_PRESETS),
+}
 
 
 def _recipe_dict(r):
-    return {f: getattr(r, f) for f in _RECIPE_FIELDS}
+    from dataclasses import fields
+    return {f.name: getattr(r, f.name) for f in fields(r)}
+
+
+def as_laser_art(art):
+    """A stencil's artwork as the page's :class:`xtool.LaserArt`; anything
+    already one passes through."""
+    if isinstance(art, xtool.LaserArt):
+        return art
+    return xtool.LaserArt(kind="stencil", apertures=art.apertures,
+                          outline=art.outline, mirrored=art.mirrored,
+                          kerf=art.kerf, notes=art.warnings(),
+                          note=f"kerf {art.kerf:g} mm")
 
 
 def _c(token, a=1.0):
@@ -345,10 +375,14 @@ class _Legend(QFrame):
 # ---------------------------------------------------------------------------
 
 class StencilLaserDialog(QDialog):
-    """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork`."""
+    """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork` or an
+    :class:`xtool.LaserArt` (a solder mask or silkscreen job)."""
 
     def __init__(self, art, parent=None, laser=None, name="stencil"):
         super().__init__(parent)
+        art = as_laser_art(art)
+        self.kind = art.kind
+        self.k = KINDS[self.kind]
         self.base_art = art
         self.turns = 0
         self.fine = 0.0                     # degrees on top of the quarter turns
@@ -364,7 +398,7 @@ class StencilLaserDialog(QDialog):
         self._zone_holes = []
         self._focus_point = None            # None: follow the stencil's middle
         self._bed_rgb = None
-        self.setWindowTitle("xTool F1 Ultra — solder paste stencil")
+        self.setWindowTitle(f"xTool F1 Ultra — {self.k['window']}")
         self.resize(1400, 900)
         self.setStyleSheet(f"QDialog {{ background: {theme.BASE}; }}")
         cfg = QSettings(*_SETTINGS)
@@ -387,7 +421,8 @@ class StencilLaserDialog(QDialog):
         self.view.nudge.connect(self._nudge)
         self.view.context.connect(self._context)
         self.view.boxed.connect(self._boxed)
-        self.legend = _Legend([(theme.PATH, "paste hole"),
+        self.legend = _Legend([(theme.PATH, {"stencil": "paste hole", "mask": "mask opening",
+                                             "silk": "silkscreen"}[self.kind]),
                                (theme.PATH_FAR, "selected"),
                                (theme.TOOL, "cutting now"),
                                (theme.PROBE, "focus point"),
@@ -406,8 +441,8 @@ class StencilLaserDialog(QDialog):
         brand.setStyleSheet(f"color: {theme.TEXT_3};")
         self.mode = widgets.Segmented([
             ("move", "Move", "Drag, nudge with the arrow keys, turn"),
-            ("select", "Select holes", "Click holes or drag a box; Ctrl or Shift "
-                                       "adds. Cut then cuts only those.")], "move")
+            ("select", "Select", "Click shapes or drag a box; Ctrl or Shift "
+                                 "adds. The run then does only those.")], "move")
         self.mode.changed.connect(lambda k: self._select_mode(k == "select"))
         self.photo_btn = widgets.button("Photo", on=self.take_photo,
                                         tip="Take a picture of the bed")
@@ -453,12 +488,12 @@ class StencilLaserDialog(QDialog):
         hv.setContentsMargins(0, 0, 0, 0)
         hv.setSpacing(2)
         hv.addWidget(widgets.eyebrow("Step"))
-        t = QLabel("Cut the stencil")
+        t = QLabel(self.k["step"])
         t.setFont(theme.font("sub"))
         hv.addWidget(t)
         pv.addWidget(head)
 
-        s = widgets.Section("The stencil")
+        s = widgets.Section(self.k["section"])
         self.name_lbl = QLabel(name)
         self.name_lbl.setFont(theme.font("sub"))
         s.add(self.name_lbl)
@@ -508,6 +543,9 @@ class StencilLaserDialog(QDialog):
         self.reset_off_btn = widgets.button("Reset", kind="ghost",
                                             on=self.reset_offset)
         s.add(_row(self.learn_btn, self.reset_off_btn, None))
+        # Learning needs holes the laser itself cut; the offset is shared, so a
+        # stencil job teaches it for the mask and silkscreen too.
+        self.learn_btn.setVisible(self.kind == "stencil")
         pv.addWidget(s)
         self._show_offset()
 
@@ -519,7 +557,8 @@ class StencilLaserDialog(QDialog):
         s.add(self.recipe_lbl)
         # The numbers live under a fold: pick a preset and cut; open it only
         # to tweak one, and save the tweak as a preset of its own.
-        self.recipe_more = widgets.Disclosure("Adjust the numbers", key="stencil-recipe")
+        self.recipe_more = widgets.Disclosure("Adjust the numbers",
+                                              key=f"{self.kind}-recipe")
         r = xtool.DEFAULT_RECIPE
         self.power = _spin(r.power, 1, 100, 1, 0)
         self.speed = _spin(r.speed, 10, 5000, 10, 0)
@@ -530,17 +569,28 @@ class StencilLaserDialog(QDialog):
         self.zones = _ispin(r.zones, 1, 12)
         self.mark = QCheckBox("Mark the board outline afterwards")
         self.mark.setChecked(True)
-        for label, wdg, unit in (("Power", self.power, "%"),
-                                 ("Speed", self.speed, "mm/s"),
-                                 ("Frequency", self.freq, "kHz"),
-                                 ("Passes", self.passes, "per hole"),
-                                 ("Per burst", self.burst, "passes"),
-                                 ("Rest", self.rest, "s"),
-                                 ("Zones", self.zones, "")):
+        f = xtool.SPHAWES_REMOVE_MASK
+        self.density = _spin(f.lines_per_cm, 10, 1000, 10, 0)
+        self.cross = QCheckBox("Cross hatch: each pass at right angles to the last")
+        self.one_way = QCheckBox("One way: every line drawn the same direction")
+        if self.kind == "stencil":
+            rows = (("Power", self.power, "%"), ("Speed", self.speed, "mm/s"),
+                    ("Frequency", self.freq, "kHz"), ("Passes", self.passes, "per hole"),
+                    ("Per burst", self.burst, "passes"), ("Rest", self.rest, "s"),
+                    ("Zones", self.zones, ""))
+            checks = (self.mark,)
+        else:
+            self.mark.setText("Score the board outline afterwards, faintly")
+            rows = (("Power", self.power, "%"), ("Speed", self.speed, "mm/s"),
+                    ("Frequency", self.freq, "kHz"), ("Passes", self.passes, ""),
+                    ("Line density", self.density, "lines/cm"))
+            checks = (self.cross, self.one_way, self.mark)
+        for label, wdg, unit in rows:
             self.recipe_more.body.addWidget(widgets.Field(label, wdg, unit=unit))
             wdg.valueChanged.connect(self._recipe_changed)
-        self.recipe_more.body.addWidget(self.mark)
-        self.mark.toggled.connect(self._recipe_changed)
+        for c in checks:
+            self.recipe_more.body.addWidget(c)
+            c.toggled.connect(self._recipe_changed)
         self.save_btn = widgets.button("Save as preset…", on=self.save_preset)
         self.del_btn = widgets.button("Delete preset", kind="ghost",
                                       on=self.delete_preset)
@@ -618,7 +668,7 @@ class StencilLaserDialog(QDialog):
         for b in self.findChildren(QPushButton):
             b.setAutoDefault(False)
             b.setDefault(False)
-        self._fill_presets(cfg.value("preset", next(iter(BUILTIN_PRESETS))))
+        self._fill_presets(cfg.value(self._key("preset"), next(iter(self.k["presets"]))))
         self._build_item()
         self._busy(False)
 
@@ -707,10 +757,11 @@ class StencilLaserDialog(QDialog):
         w, h = self.art.size
         angle = (90 * self.turns + self.fine) % 360
         turned = f" · turned {angle:.1f}°".replace(".0°", "°") if abs(angle) > 1e-6 else ""
+        n = len(self.art.apertures)
         self.size_lbl.setText(
-            f"{len(self.art.apertures)} holes · {w:.1f} × {h:.1f} mm · "
-            f"{'mirrored' if self.art.mirrored else 'not mirrored'} · kerf "
-            f"{self.art.kerf:g} mm{turned}")
+            f"{n} {self.k['noun']}{'' if n == 1 else 's'} · {w:.1f} × {h:.1f} mm · "
+            f"{'mirrored' if self.art.mirrored else 'not mirrored'}"
+            + (f" · {self.art.note}" if self.art.note else "") + turned)
         self._paint()
         self._place_focus_mark()
 
@@ -852,18 +903,24 @@ class StencilLaserDialog(QDialog):
         self.item.paint_holes(self.selected, active, self.look)
         n, total = len(self.selected), len(self.art.apertures)
         self.sel_read.set(f"{n} / {total}" if n else f"{total}")
-        self.sel_read.set_label("Selected" if n else "Holes")
-        self.cut_btn.setText(f"Cut {n} selected" if n else "Cut the stencil")
+        self.sel_read.set_label("Selected" if n else f"{self.k['noun']}s")
+        self.cut_btn.setText(self.k["run_selected"].format(n=n) if n else self.k["run"])
         self._estimate()
 
     # -- recipe and presets ------------------------------------------------
-    def _presets(self):
-        cfg = QSettings(*_SETTINGS)
+    def _key(self, name):
+        """Settings per kind; the stencil keeps the names it always had."""
+        return name if self.kind == "stencil" else f"{name}_{self.kind}"
+
+    def _saved_presets(self):
         try:
-            saved = json.loads(cfg.value("presets", "{}"))
+            return json.loads(QSettings(*_SETTINGS).value(self._key("presets"), "{}"))
         except (TypeError, ValueError):
-            saved = {}
-        out = {k: _recipe_dict(v) for k, v in BUILTIN_PRESETS.items()}
+            return {}
+
+    def _presets(self):
+        saved = self._saved_presets()
+        out = {k: _recipe_dict(v) for k, v in self.k["presets"].items()}
         out.update(saved)
         return out, set(saved)
 
@@ -886,14 +943,21 @@ class StencilLaserDialog(QDialog):
         self.power.setValue(d["power"])
         self.speed.setValue(d["speed"])
         self.freq.setValue(d["frequency"])
-        self.passes.setValue(d["total_passes"])
-        self.burst.setValue(d["passes_per_burst"])
-        self.rest.setValue(d["rest_s"])
-        self.zones.setValue(d["zones"])
-        self.mark.setChecked(bool(d["mark_passes"]))
+        if self.kind == "stencil":
+            self.passes.setValue(d["total_passes"])
+            self.burst.setValue(d["passes_per_burst"])
+            self.rest.setValue(d["rest_s"])
+            self.zones.setValue(d["zones"])
+            self.mark.setChecked(bool(d["mark_passes"]))
+        else:
+            self.passes.setValue(d["passes"])
+            self.density.setValue(d["lines_per_cm"])
+            self.cross.setChecked(bool(d["cross_hatch"]))
+            self.one_way.setChecked(bool(d["one_way"]))
+            self.mark.setChecked(bool(d["mark_outline"]))
         self._syncing_recipe = False
         self.del_btn.setEnabled(name in saved)
-        QSettings(*_SETTINGS).setValue("preset", name)
+        QSettings(*_SETTINGS).setValue(self._key("preset"), name)
         self._recipe_changed()
 
     def _recipe_changed(self, *_a):
@@ -902,19 +966,34 @@ class StencilLaserDialog(QDialog):
         r = self.recipe()
         presets, _ = self._presets()
         chosen = presets.get(self.preset.currentText())
+        now = _recipe_dict(r)
         changed = chosen is not None and any(
-            float(chosen[f]) != float(getattr(r, f)) for f in _RECIPE_FIELDS
-            if f not in ("mark_power",))
-        self.recipe_lbl.setText(("Changed from the preset · " if changed else "") +
-            f"{r.rounds} round{'' if r.rounds == 1 else 's'} of "
-            f"{r.passes_per_burst} pass{'' if r.passes_per_burst == 1 else 'es'} "
-            f"per zone" + (f", {r.rest_s:g} s laser-off after each" if r.rest_s else ""))
+            float(chosen.get(f, v)) != float(v) for f, v in now.items()
+            if f != "mark_power")
+        if self.kind == "stencil":
+            what = (f"{r.rounds} round{'' if r.rounds == 1 else 's'} of "
+                    f"{r.passes_per_burst} pass{'' if r.passes_per_burst == 1 else 'es'} "
+                    f"per zone" + (f", {r.rest_s:g} s laser-off after each"
+                                   if r.rest_s else ""))
+        else:
+            what = (f"{r.power:g} % · {r.speed:g} mm/s · {r.passes} pass"
+                    f"{'' if r.passes == 1 else 'es'}"
+                    f"{', cross-hatched' if r.cross_hatch else ''} · "
+                    f"{r.lines_per_cm:g} lines/cm ({r.interval:.3f} mm)")
+        self.recipe_lbl.setText(("Changed from the preset · " if changed else "") + what)
         self._estimate()
 
     def _estimate(self):
         if not hasattr(self, "time_read") or self.item is None:
             return
         try:
+            if self.kind != "stencil":
+                from shapely.affinity import translate
+                shapes = [translate(p, -self.x.value() + 1, -self.y.value() + 1)
+                          for p in self._shapes()]
+                secs = xtool.fill_job(shapes, [], self._run_recipe()).seconds
+                self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
+                return
             holes, _ = self._holes()
             _, outline = xtool.stencil_paths(self.art, (0, 0))
             outline = [[(x + 1, y + 1) for x, y in p] for p in outline]
@@ -926,6 +1005,14 @@ class StencilLaserDialog(QDialog):
             self.time_read.set("—")
 
     def recipe(self):
+        if self.kind != "stencil":
+            return xtool.FillRecipe(power=self.power.value(), speed=self.speed.value(),
+                                    frequency=self.freq.value(),
+                                    passes=self.passes.value(),
+                                    lines_per_cm=self.density.value(),
+                                    cross_hatch=self.cross.isChecked(),
+                                    one_way=self.one_way.isChecked(),
+                                    mark_outline=self.mark.isChecked())
         return xtool.Recipe(power=self.power.value(), speed=self.speed.value(),
                             frequency=self.freq.value(),
                             total_passes=self.passes.value(),
@@ -936,7 +1023,10 @@ class StencilLaserDialog(QDialog):
     def _run_recipe(self):
         """A re-cut leaves the outline alone: it is marked already."""
         r = self.recipe()
-        return replace(r, mark_passes=0) if self.selected else r
+        if not self.selected:
+            return r
+        return replace(r, mark_passes=0) if self.kind == "stencil" else \
+            replace(r, mark_outline=False)
 
     def save_preset(self):
         name, ok = QInputDialog.getText(self, "Save the recipe", "Name:",
@@ -944,28 +1034,20 @@ class StencilLaserDialog(QDialog):
         name = name.strip()
         if not ok or not name:
             return
-        if name in BUILTIN_PRESETS:
+        if name in self.k["presets"]:
             return self._say(f"“{name}” is built in; pick another name.", warn=True)
-        cfg = QSettings(*_SETTINGS)
-        try:
-            saved = json.loads(cfg.value("presets", "{}"))
-        except (TypeError, ValueError):
-            saved = {}
+        saved = self._saved_presets()
         saved[name] = _recipe_dict(self.recipe())
-        cfg.setValue("presets", json.dumps(saved))
+        QSettings(*_SETTINGS).setValue(self._key("presets"), json.dumps(saved))
         self._fill_presets(name)
         self._say(f"Saved “{name}”.")
 
     def delete_preset(self):
         name = self.preset.currentText()
-        cfg = QSettings(*_SETTINGS)
-        try:
-            saved = json.loads(cfg.value("presets", "{}"))
-        except (TypeError, ValueError):
-            saved = {}
+        saved = self._saved_presets()
         if saved.pop(name, None) is not None:
-            cfg.setValue("presets", json.dumps(saved))
-            self._fill_presets(next(iter(BUILTIN_PRESETS)))
+            QSettings(*_SETTINGS).setValue(self._key("presets"), json.dumps(saved))
+            self._fill_presets(next(iter(self.k["presets"])))
             self._say(f"Deleted “{name}”.")
 
     # -- what the laser gets ---------------------------------------------
@@ -985,6 +1067,29 @@ class StencilLaserDialog(QDialog):
 
     def paths(self):
         return xtool.stencil_paths(self.art, self.origin(), only=self.selected or None)
+
+    def _shapes(self, art=None, origin=None, only="selected"):
+        """The job's shapes as shapely Polygons on the bed (filled jobs)."""
+        from shapely.geometry import Polygon
+        art = art or self.art
+        origin = origin or self.origin()
+        pick = (self.selected or None) if only == "selected" else None
+        _, h = art.size
+        out = []
+        for k, poly in enumerate(art.apertures):
+            if pick is not None and k not in pick:
+                continue
+            out.append(Polygon(xtool.to_bed(list(poly.exterior.coords), origin, h),
+                               [xtool.to_bed(list(r.coords), origin, h)
+                                for r in poly.interiors]))
+        return out
+
+    def _features(self, art, origin):
+        """What Align looks for: the stencil's own holes, or for a mask or
+        silkscreen the drilled holes, as bed paths."""
+        _, h = art.size
+        polys = art.apertures if self.kind == "stencil" else (art.features or [])
+        return [xtool.to_bed(list(p.exterior.coords), origin, h) for p in polys]
 
     def _remember(self):
         cfg = QSettings(*_SETTINGS)
@@ -1064,12 +1169,15 @@ class StencilLaserDialog(QDialog):
         went back the other way round."""
         from gerber2rml.engine import xtool_camera as cam
         cx, cy = self.centre()
+        if self.kind != "stencil" and not self.base_art.features:
+            return self._say("No drill file in the Gerber folder: Align locks onto "
+                             "the drilled holes. Plot the drill file into the same "
+                             "folder, or place it by hand.", warn=True)
         candidates = []
         for k in range(4):
             art = xtool.rotated(self.base_art, self.turns + k, self.fine)
             w, h = art.size
-            holes, _ = xtool.stencil_paths(art, (cx - w / 2, cy - h / 2))
-            candidates.append((k, holes))
+            candidates.append((k, self._features(art, (cx - w / 2, cy - h / 2))))
         hi = 8
 
         def work(_p):
@@ -1092,13 +1200,14 @@ class StencilLaserDialog(QDialog):
                         f"Drag the stencil close to them and try again.")
             target = self._middle(holes) + (a.dx, a.dy)
             self._turn_to(self.turns + k, self.fine + a.turn)
-            now, _ = xtool.stencil_paths(self.art, self.origin())
+            now = self._features(self.art, self.origin())
             dx, dy = target - self._middle(now)
             self.x.setValue(round(self.x.value() + dx, 3))
             self.y.setValue(round(self.y.value() + dy, 3))
             moved = (a.dx ** 2 + a.dy ** 2) ** 0.5
             turned = (90 * k + a.turn + 180) % 360 - 180
-            return (f"Aligned on {a.found} of {a.total} holes: moved {moved:.1f} mm, "
+            what = "holes" if self.kind == "stencil" else "drilled holes"
+            return (f"Aligned on {a.found} of {a.total} {what}: moved {moved:.1f} mm, "
                     f"turned {turned:+.1f}°. Check with Show where before cutting.")
         self._start(work, "Aligning: photo, then looking for the holes…", done)
 
@@ -1152,6 +1261,8 @@ class StencilLaserDialog(QDialog):
                     lambda _r: "Traced. Move the stencil if it was off.")
 
     def cut(self):
+        if self.kind != "stencil":
+            return self._fill()
         try:
             holes, owner = self._holes()
             _, outline = xtool.stencil_paths(self.art, self.origin())
@@ -1195,6 +1306,40 @@ class StencilLaserDialog(QDialog):
         what = f"{len(self.selected)} selected holes" if self.selected else "the stencil"
         self._start(work, f"Cutting {what} in {len(job.zones)} zones…", done)
 
+    def _fill(self):
+        """A solder mask or silkscreen: every shape hatched, pass by pass."""
+        try:
+            _, outline = xtool.stencil_paths(self.art, self.origin())
+            job = xtool.fill_job(self._shapes(), outline, self._run_recipe())
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        self._remember()
+        self._job = job
+        picked = self.selected or set(range(len(self.art.apertures)))
+        self._zone_holes = [picked]
+        self.bar.setRange(0, max(1, int(job.seconds)))
+        self.bar.setValue(0)
+        self.bar.setVisible(True)
+        take_photo = self.photo_after.isChecked()
+
+        def work(progress):
+            z = self.laser.z()
+            self.laser.run(job.text)
+            self.laser.wait(job.seconds * 2 + 120, progress=progress)
+            return z, (self._photo() if take_photo else None)
+
+        def done(res):
+            z, rgb = res
+            if rgb is not None:
+                self.show_bed(rgb)
+            n = len(picked)
+            return (f"Done at Z {z:.2f}: {n} {self.k['noun']}{'' if n == 1 else 's'}, "
+                    f"{job.passes} passes. Switch to Outlines to check them on the "
+                    f"photo; select any that need more and run those again.")
+        what = (f"{len(self.selected)} selected" if self.selected
+                else f"{len(picked)} {self.k['noun']}s")
+        self._start(work, f"{self.k['busy']}: {what}, {job.passes} passes…", done)
+
     def stop(self):
         try:
             self.laser.stop()
@@ -1221,7 +1366,8 @@ class StencilLaserDialog(QDialog):
         else:
             zone, rnd = where
             rounds = 1 + max((r for _a, _b, z, r in job.timeline if z >= 0), default=0)
-            text = f"Zone {zone + 1} of {len(job.zones)} · round {rnd + 1} of {rounds}"
+            text = (f"Pass {rnd + 1} of {rounds}" if self.kind != "stencil" else
+                    f"Zone {zone + 1} of {len(job.zones)} · round {rnd + 1} of {rounds}")
             self._paint_active(self._zone_holes[zone])
         self.status.setText(text)
 

@@ -443,3 +443,69 @@ def test_the_stencil_can_be_outlined_or_hidden(qt_app, monkeypatch, art):
     assert d.look == "filled" and d.item.isVisible()
     assert all(h.brush().style() != Qt.NoBrush for h in d.item.holes)
     d.close()
+
+
+# ---------------------------------------------------------------- mask and silkscreen
+
+BUCK = Path(__file__).parent / "fixtures" / "mosfet_test"
+
+
+def test_hatch_fills_a_shape_line_by_line():
+    from shapely.geometry import box
+    segs = xtool.hatch([box(10, 10, 12, 11)], 0.1, 0)
+    assert len(segs) == 10 and all(a[0] < b[0] for a, b in segs)     # one way
+    segs = xtool.hatch([box(10, 10, 12, 11)], 0.1, 90)
+    assert len(segs) == 20
+
+
+def test_the_mask_recipe_is_sphawes_remove_solder_mask():
+    r = xtool.SPHAWES_REMOVE_MASK
+    assert (r.power, r.speed, r.frequency, r.passes, r.lines_per_cm) == (40, 800, 30, 6, 300)
+    assert r.cross_hatch and r.one_way and r.interval == pytest.approx(1 / 30)
+
+
+def test_fill_job_cross_hatches_every_pass():
+    from shapely.geometry import box
+    job = xtool.fill_job([box(100, 100, 102, 101)], [], xtool.SPHAWES_REMOVE_MASK)
+    lines = job.text.split("\r\n")
+    cuts = [l for l in lines if l.endswith("S400F48000")]
+    assert len(cuts) == 3 * 30 + 3 * 60            # 3 passes each way at 0.033 mm
+    assert "G22" in lines and "G0Q30" in lines
+    assert len(job.timeline) == 6
+
+
+def test_drilled_holes_land_in_the_mask_openings():
+    from gerber2rml.engine import soldermask
+    from gerber2rml.loader import _find_layer
+    raw = soldermask._read_outline(_find_layer(BUCK, "*-Edge_Cuts.*", "*.gm1"))
+    art = soldermask.build_mask(BUCK, mirror=True)
+    feats = xtool.drill_features(BUCK, True, raw)
+    assert len(feats) == 27
+    assert all(any(o.contains(f.centroid) for o in art.openings) for f in feats)
+
+
+@pytest.mark.parametrize("action,kind,run", [
+    ("action_mask_laser", "mask", "Open the mask"),
+    ("action_silk_laser", "silk", "Mark the silkscreen")])
+def test_mask_and_silkscreen_open_the_laser_page(qt_app, monkeypatch, action, kind, run):
+    monkeypatch.setenv("SRM_CAM_MODE", "pro")
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.window import MainWindow
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
+    opened = []
+    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
+    w = MainWindow()
+    try:
+        w.load_folder(str(BUCK))
+        getattr(w, action)()
+        (d,) = opened
+        assert d.kind == kind and d.cut_btn.text() == run
+        assert d.preset.currentText() == "RemoveSolderMask (sphawes)"
+        assert len(d.base_art.features) == 27
+        d.x.setValue(40)
+        d.y.setValue(40)
+        job = xtool.fill_job(d._shapes(), [], d.recipe())
+        assert job.passes == 6 and job.seconds > 0
+        d.close()
+    finally:
+        w.close()

@@ -4126,6 +4126,71 @@ class MainWindow(QMainWindow):
             self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
                            f"· Import it into XCS to place it on the foil.")
 
+    def _laser_board(self):
+        st = self.state
+        return st.boards[st.current] if st.is_panel else st.boards[0]
+
+    def _open_laser(self, art, name):
+        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+        StencilLaserDialog(art, self, name=name).exec()
+
+    @staticmethod
+    def _raw_outline(folder):
+        from gerber2rml.loader import _find_layer
+        edge = _find_layer(folder, "*-Edge_Cuts.*", "*.gm1")
+        return soldermask._read_outline(edge) if edge else None
+
+    def action_mask_laser(self):
+        """The solder mask on the xTool: the openings filled with the
+        RemoveSolderMask recipe, aligned on the drilled holes."""
+        from gerber2rml.engine import xtool
+        st = self.state
+        if st.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        m = self._laser_board()
+        mirror = bool(st.mirror) or self._double
+        try:
+            art = soldermask.build_mask(m.gerber_dir, shrink=self._mask_shrink,
+                                        mirror=mirror)
+        except soldermask.MaskError as e:
+            self.say("warn", str(e))
+            return
+        try:
+            feats = xtool.drill_features(m.gerber_dir, mirror,
+                                         self._raw_outline(m.gerber_dir))
+        except Exception:                           # noqa: BLE001 - Align only
+            feats = []
+        self._open_laser(xtool.LaserArt(
+            kind="mask", apertures=art.openings, outline=art.outline,
+            mirrored=art.mirrored, notes=art.warnings(), features=feats,
+            note=f"shrunk {art.shrink:g} mm a side"),
+            m.name if st.is_panel else st.name)
+
+    def action_silk_laser(self):
+        """The silkscreen on the xTool: the artwork filled, aligned on the
+        drilled holes. The component side, as KiCad drew it: not mirrored."""
+        from gerber2rml.engine import xtool
+        st = self.state
+        if st.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        m = self._laser_board()
+        try:
+            art = silkscreen.build_silk(m.gerber_dir)
+        except silkscreen.SilkError as e:
+            self.say("warn", str(e))
+            return
+        try:
+            feats = xtool.drill_features(m.gerber_dir, art.mirrored,
+                                         self._raw_outline(m.gerber_dir))
+        except Exception:                           # noqa: BLE001 - Align only
+            feats = []
+        self._open_laser(xtool.LaserArt(
+            kind="silk", apertures=art.shapes, outline=art.outline,
+            mirrored=art.mirrored, notes=art.warnings(), features=feats),
+            m.name if st.is_panel else st.name)
+
     def action_cut_stencil(self):
         """The laser window for the selected board's stencil."""
         st = self.state

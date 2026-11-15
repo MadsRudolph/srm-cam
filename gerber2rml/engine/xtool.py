@@ -97,8 +97,11 @@ def rotated(art, quarter_turns, degrees=0.0):
     outline = turn(art.outline)
     x0, y0, _, _ = outline.bounds
     move = lambda g: translate(g, -x0, -y0)
-    return _replace(art, outline=move(outline),
-                    apertures=[move(turn(p)) for p in art.apertures])
+    out = _replace(art, outline=move(outline),
+                   apertures=[move(turn(p)) for p in art.apertures])
+    if getattr(art, "features", None):
+        out = _replace(out, features=[move(turn(p)) for p in art.features])
+    return out
 
 
 def snap_to_grid(point, step=10.0, extent=220.0):
@@ -437,3 +440,157 @@ class F1Ultra:
             return self.z()
         finally:
             self._json("POST", "/device/modeSwitch", {"state": "P_IDLE"})
+
+
+# ---------------------------------------------------------------------------
+# Any laser job from a Gerber folder: stencil, solder mask, silkscreen
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LaserArt:
+    """What the laser page shows and runs, whatever the job: shapes in the
+    artwork frame (mm, Y up, the outline's lower-left corner at 0, 0), the
+    outline, and what Align locks onto.
+
+    ``kind`` is "stencil" (cut through, in zones), "mask" (open the solder
+    mask over the pads: filled) or "silk" (mark the silkscreen: filled).
+    ``features`` are the shapes Align looks for in a photo when the job's own
+    shapes are not there yet: the drilled holes, for mask and silkscreen."""
+    kind: str
+    apertures: list
+    outline: object
+    mirrored: bool = False
+    note: str = ""
+    notes: list = None
+    features: list = None
+    kerf: float = 0.0
+
+    @property
+    def size(self):
+        x0, y0, x1, y1 = self.outline.bounds
+        return x1 - x0, y1 - y0
+
+    def warnings(self):
+        return list(self.notes or [])
+
+
+def drill_features(folder, mirror, outline_raw):
+    """The board's drilled holes as circles in the artwork frame: mirrored and
+    shifted exactly as the mask and silkscreen are (see engine/soldermask.py),
+    so Align can lock onto them before anything has been lasered."""
+    from shapely.affinity import scale as _scale, translate as _translate
+    from shapely.geometry import Point
+    from gerber2rml.loader import select_drill_holes
+    holes = select_drill_holes(folder, outline_raw)
+    o = outline_raw
+    if mirror:
+        o = _scale(o, xfact=-1, yfact=1, origin=(0, 0))
+    x0, y0, _, _ = o.bounds
+    out = []
+    for x, y, d in holes:
+        c = Point(-x if mirror else x, y).buffer(max(d, 0.3) / 2, quad_segs=8)
+        out.append(_translate(c, -x0, -y0))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Filled jobs: hatch lines inside every shape
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class FillRecipe:
+    """How to fill. ``lines_per_cm`` as XCS calls it (its "density");
+    ``cross_hatch`` turns each pass 90 degrees from the last; ``one_way``
+    draws every line the same way, as XCS's uni-directional scan."""
+    power: float = 40.0
+    speed: float = 800.0
+    frequency: float = 30.0
+    passes: int = 6
+    lines_per_cm: float = 300.0
+    cross_hatch: bool = True
+    one_way: bool = True
+    mark_outline: bool = False
+    mark_power: float = 10.0
+
+    @property
+    def interval(self):
+        return 10.0 / self.lines_per_cm
+
+
+# sphawes/fiber-laser-pcb-fab settings.json, the presets the lab imports into XCS
+SPHAWES_REMOVE_MASK = FillRecipe(power=40, speed=800, frequency=30, passes=6,
+                                 lines_per_cm=300)
+SPHAWES_TRACES = FillRecipe(power=100, speed=600, frequency=30, passes=10,
+                            lines_per_cm=240)
+
+
+def hatch(polys, interval, angle_deg=0.0, one_way=True):
+    """Hatch lines filling shapely ``polys`` (bed mm), ``interval`` apart, at
+    ``angle_deg``, as (start, end) segments in drawing order: line by line
+    across the whole job, so the beam sweeps instead of jumping shape to shape.
+    ``one_way`` keeps every line in the same direction."""
+    from shapely.affinity import rotate as _rotate
+    from shapely.geometry import LineString, MultiLineString
+    from shapely.ops import unary_union
+    shape = unary_union([p for p in polys if not p.is_empty])
+    if shape.is_empty:
+        return []
+    c = shape.centroid
+    flat = _rotate(shape, -angle_deg, origin=c)          # hatch horizontally
+    x0, y0, x1, y1 = flat.bounds
+    segs = []
+    y = y0 + interval / 2
+    flip = False
+    while y < y1:
+        cut = flat.intersection(LineString([(x0 - 1, y), (x1 + 1, y)]))
+        parts = list(cut.geoms) if isinstance(cut, MultiLineString) else (
+            [cut] if isinstance(cut, LineString) and not cut.is_empty else [])
+        row = []
+        for ln in parts:
+            (ax, ay), (bx, by) = ln.coords[0], ln.coords[-1]
+            if ax > bx:
+                (ax, ay), (bx, by) = (bx, by), (ax, ay)
+            row.append(((ax, ay), (bx, by)))
+        row.sort(key=lambda sg: sg[0][0])
+        if not one_way and flip:
+            row = [(b, a) for a, b in reversed(row)]
+        segs += row
+        flip = not flip
+        y += interval
+    if not segs:
+        return []
+    from shapely.geometry import MultiPoint
+    import math as _m
+    t = _m.radians(angle_deg)
+    cs, sn = _m.cos(t), _m.sin(t)
+
+    def back(p):                                     # undo the flattening turn
+        dx, dy = p[0] - c.x, p[1] - c.y
+        return (c.x + dx * cs - dy * sn, c.y + dx * sn + dy * cs)
+    return [(back(a), back(b)) for a, b in segs]
+
+
+def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
+    """One GS002 file that fills every shape (shapely Polygons, bed mm) with
+    ``recipe.passes`` hatch passes, each at right angles to the last when
+    ``cross_hatch``; then, if asked, the outline marked once."""
+    check_on_bed([list(p.exterior.coords) for p in shapes] + outline)
+    s_val, feed = round(recipe.power * 10), round(recipe.speed * 60)
+    body, secs, timeline = [], 0.0, []
+    for k in range(recipe.passes):
+        ang = base_angle + (90.0 * (k % 2) if recipe.cross_hatch else 0.0)
+        segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
+        for a, b in segs:
+            body.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
+            body.append(f"G1X{b[0]:.3f}Y{b[1]:.3f}S{s_val}F{feed}")
+        dt = sum(math.dist(a, b) for a, b in segs) / recipe.speed
+        timeline.append((secs, secs + dt, 0, k))
+        secs += dt
+    if outline and recipe.mark_outline:
+        body += _passes(outline, recipe.mark_power, recipe.speed, 1)
+        dt = sum(_length(p) for p in outline) / recipe.speed
+        timeline.append((secs, secs + dt, -1, recipe.passes))
+        secs += dt
+    lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
+    return Job(text="\r\n".join(lines), zones=[len(shapes)], seconds=secs,
+               passes=recipe.passes, zone_paths=[shapes], timeline=timeline)
