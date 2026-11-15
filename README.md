@@ -3,234 +3,100 @@
 [![tests](https://github.com/MadsRudolph/srm-cam/actions/workflows/tests.yml/badge.svg)](https://github.com/MadsRudolph/srm-cam/actions/workflows/tests.yml)
 [![build installer](https://github.com/MadsRudolph/srm-cam/actions/workflows/build.yml/badge.svg)](https://github.com/MadsRudolph/srm-cam/actions/workflows/build.yml)
 
-Desktop CAM for the **Roland SRM-20** mill: load KiCad **Gerber + Excellon**,
-preview the toolpaths, and export **G-code** (`.nc`) or RML. One tool we own,
-replacing the mods site and FlatCAM.
+CAM for the Roland SRM-20 desktop mill. Load a KiCad board's Gerber and drill
+files, check the toolpaths, and mill the PCB: one or two sides, with bed
+levelling, from a single program.
 
-> Python package name: `gerber2rml`.
+**User guide: [madsrudolph.github.io/srm-cam](https://madsrudolph.github.io/srm-cam/)**
 
-**📖 User guide: [madsrudolph.github.io/srm-cam](https://madsrudolph.github.io/srm-cam/)**
+| Start here | Then |
+|---|---|
+| [Getting started](https://madsrudolph.github.io/srm-cam/getting-started.html) | [Double-sided boards](https://madsrudolph.github.io/srm-cam/double-sided.html) |
+| [Mill a board](https://madsrudolph.github.io/srm-cam/automatic.html) | [Bed levelling](https://madsrudolph.github.io/srm-cam/bed-leveling.html) |
+| [Holding the copper](https://madsrudolph.github.io/srm-cam/holding-the-copper.html) | [Several boards on one sheet](https://madsrudolph.github.io/srm-cam/panels.html) |
+| [Troubleshooting](https://madsrudolph.github.io/srm-cam/troubleshooting.html) | [Solder mask](https://madsrudolph.github.io/srm-cam/solder-mask.html) |
 
-[![SRM-CAM: KiCad Gerbers in, a milled PCB out, on the Roland SRM-20 (click for the 40-second video)](docs/media/srm-cam-showcase.webp)](https://madsrudolph.github.io/srm-cam/video/srm-cam-showcase.mp4)
+[![SRM-CAM: KiCad Gerbers in, a milled PCB out (40-second video)](docs/media/srm-cam-showcase.webp)](https://madsrudolph.github.io/srm-cam/video/srm-cam-showcase.mp4)
 
-![SRM-CAM: three steps, the stock and board on the bed, the Run it page, the machine bar](website/img/automatic_run.png)
+## Download
 
-**Novice** (the default) runs the job itself: stock in the bracket, press Start, check the traces before the cut-out. **Pro** has the whole plan by hand, with export for VPanel. See [Run it all](https://madsrudolph.github.io/srm-cam/automatic.html).
-
-### Video guide
-
-[![Mill a board with SRM-CAM](https://img.youtube.com/vi/rVPFPnBHoaY/maxresdefault.jpg)](https://youtu.be/rVPFPnBHoaY)
-
-From a KiCad folder to a finished board, with chapters: **[watch on YouTube](https://youtu.be/rVPFPnBHoaY)**.
-Copper on both sides: **[the double-sided video](https://youtu.be/nmh9I9FdkqI)**.
-The written version is [Mill a board](https://madsrudolph.github.io/srm-cam/automatic.html).
-Doing it by hand in Pro has its own [13-minute video](https://youtu.be/aab9ItDjwt0).
-
-## Required before first use: Roland's driver and VPanel
-
-SRM-CAM **cannot talk to the SRM-20 without Roland's driver**. The driver makes
-the mill appear in Windows as a printer called *Roland SRM-20*, and SRM-CAM sends
-the job to that printer (without it, Start stops with "The Roland SRM-20 printer
-is not installed on this PC"). You also need Roland's **VPanel**, the mill's own
-control program: the Pro workflow plays the exported files from it, and the
-settings SRM-CAM relies on (command set NC Code, G54 origin) live in it.
-
-Download both from Roland DG's official SRM-20 page, on the **Software** tab:
-[downloadcenter.rolanddg.com/SRM-20](https://downloadcenter.rolanddg.com/SRM-20#software)
-
-| Download | Pick | Notes |
+| Platform | File | |
 |---|---|---|
-| **monoFab Driver** | Windows 10 64-bit, Ver. 2.12 (2024-10-17) | Ver. 2.11+ supports Windows 11 and 10 (the Windows 10 folder serves both); 8 and 7 are not supported. |
-| **VPanel for SRM-20** | Installer, Ver. 1.10 | 32-bit, runs on 64-bit Windows. |
+| Windows | `SRM-CAM-Setup.exe` | Unsigned: on the first run, SmartScreen needs *More info ▸ Run anyway*. |
+| macOS (Apple Silicon) | `SRM-CAM-macOS-arm64.dmg` | Not notarised: right-click ▸ Open the first time. See [docs/macos.md](docs/macos.md). |
+| Linux | `SRM-CAM-x86_64.AppImage` | `chmod +x` and run. No machine link: prepare and export only. |
 
-Roland makes you accept its licence before each download, so there is no direct
-file link to paste. Install **the driver first, and keep the mill's USB cable
-unplugged until the installer sequence says so**:
+All from the [latest release](https://github.com/MadsRudolph/srm-cam/releases/latest).
 
-1. Unzip the driver, open `WIN10X64` (or `WIN10X86` on 32-bit Windows 10), run `SETUP64.exe` (or `SETUP.exe`) as administrator.
-2. Click **Install**, choose model **SRM-20** and port **USB**, click **Start**, and follow the installer.
-3. Only now: power the mill on, wait for the light to stay lit, and plug in the USB cable that came with it (no hub, no extension).
-4. Check that the SRM-20 is listed under *Control Panel > View devices and printers > Printers*.
-5. Unzip VPanel, run `setup.exe`. Start it with the mill already switched on, and set Setup > Command Set to NC Code.
-
-These steps follow Roland's own
-[startup guide](https://startup.rolanddg.com/monoFab/SRM-20/SRM-20_EN/sp_welcome_on_en.html);
-the full version, with troubleshooting, is in the
-[user guide](https://madsrudolph.github.io/srm-cam/getting-started.html#roland).
-Windows only: on Linux you can prepare and export, then send the files from a Windows PC.
-
-## Install
-
-**Just run it (Windows):** download the latest installer from
-[Releases](https://github.com/MadsRudolph/srm-cam/releases) and run
-`SRM-CAM-Setup-*.exe`. No Python needed.
-
-**From source:**
-
-```bash
-pip install -e ".[gui]"
-python -m gerber2rml.gui2                                     # GUI
-python -m gerber2rml.cli <gerber-folder> -o out -n <board>   # headless CLI
-```
-
-> **Two interfaces, one engine.** `gui2` — "the setup sheet" — is what SRM-CAM
-> opens, and what the lab is migrating to. The interface it replaces is still
-> shipped and still works: `python -m gerber2rml.gui` from source, `SRM-CAM
-> --original` from an install, or its own entry in the application launcher.
-> Both drive the same engine and write the same files, so a job started in one
-> finishes in the other. See [HANDOFF-gui-ab.md](docs/HANDOFF-gui-ab.md).
-
-After a `git pull`, `python -m gerber2rml.doctor` installs any new dependencies.
-
-### Linux (Fedora, Ubuntu, Arch)
-
-Download `SRM-CAM-x86_64.AppImage` from the
-[latest release](https://github.com/MadsRudolph/srm-cam/releases/latest), then:
-
-```bash
-chmod +x SRM-CAM-x86_64.AppImage
-./SRM-CAM-x86_64.AppImage
-```
-
-No install step and no root. It carries its own Qt, so it does not care which
-version your distribution ships.
-
-The AppImage holds **both interfaces**. Without arguments it opens the setup
-sheet; `--original` opens the interface it replaces, which is what the second
-desktop entry runs:
-
-```bash
-./SRM-CAM-x86_64.AppImage --original
-```
-
-To get both into your application launcher, put the AppImage somewhere stable
-and install the two entries from `packaging/`:
-
-```bash
-install -Dm755 SRM-CAM-x86_64.AppImage ~/.local/bin/SRM-CAM
-install -Dm644 packaging/srm-cam-256.png ~/.local/share/icons/hicolor/256x256/apps/srm-cam.png
-install -Dm644 packaging/srm-cam.desktop packaging/srm-cam-original.desktop ~/.local/share/applications/
-```
-
-If the 3D views come up blank or the app will not start on a machine with no
-usable GPU driver — a VM, a remote session — run it with `GERBER2RML_GL=software`.
-
-**What Linux does not do:** the machine link — Connect, the DRO, jogging and
-bed probing over the Arduino — is Windows-only. Prepare the job on Linux,
-export, and send the files from VPanel on the CNC PC.
-
-That costs less than it sounds, because a height map is a file. Probe the bed
-once on the CNC PC, export the grid as CSV, and load it on Linux to export
-levelled toolpaths exactly as if you had measured them there.
+**Before first use on Windows**, install Roland's **monoFab driver** and
+**VPanel** from the [SRM-20 download page](https://downloadcenter.rolanddg.com/SRM-20#software)
+(Software tab). The driver makes the mill a printer SRM-CAM can send to; in
+VPanel, set *Setup ▸ Command Set* to **NC Code**. Install the driver with the
+mill's USB unplugged, and plug it in when the installer asks.
+Step by step: [Getting started](https://madsrudolph.github.io/srm-cam/getting-started.html#roland).
 
 ## What it does
 
-- **Traces / drill / cut-out** from Gerber + Excellon, exported per operation.
-- **G-code default** (`.nc`, G54 origin) for VPanel NC mode; RML available.
-- **Double-sided** registration — dowel pins or measured fiducials.
-- **Bed leveling** — probe a height map so depth follows an uneven surface;
-  one guided button in Novice.
-- **Screw fixture** — bolt the copper to the plate through the spoilboard's
-  hole grid, so it cannot creep and no clamp sits in the cutter's way. Travel
-  height is raised automatically to clear the screw heads.
-- **Rework** — mark several spots, re-cut them in one pass at per-region depth.
-- **3D views** — toolpath simulation + bed height-map.
-- **Guided tour** — launches on first run; replay via the **Guide** button (and
-  per-section buttons). A demo board loads so new users can follow along.
+![The Run it page: stock and board on the bed, the machine bar](website/img/automatic_run.png)
 
-> **No hardware required.** SRM-CAM talks to a stock SRM-20 through VPanel like
-> any other CAM tool. *Automatic* probing needs an Arduino on the machine's
-> SPI remote header — that is the only thing that does, and bed leveling still
-> works manually without it. See
-> [Milling without the Arduino](docs/usage.md#milling-without-the-arduino).
+- **Automatic runs.** Put the stock in the corner bracket and press Start: it finds the copper, levels the bed, drills, cuts the traces, and stops for a check before the cut-out. [Mill a board](https://madsrudolph.github.io/srm-cam/automatic.html)
+- **[Double-sided boards](https://madsrudolph.github.io/srm-cam/double-sided.html)**, registered on dowel pins or reference holes (drilled ones, or the board's own mounting holes).
+- **[Bed levelling](https://madsrudolph.github.io/srm-cam/bed-leveling.html).** The surface is probed and the cut depth follows it.
+- **[Clamps](https://madsrudolph.github.io/srm-cam/holding-the-copper.html).** Click the bed hole a clamp is screwed into; the run keeps the bit off it and goes round it.
+- **Boards as big as the sheet.** Left in the sheet with no cut-out, with isolation under the bracket or a clamp dropped only when that joins no nets.
+- **Checks** before anything is cut: fits the bed, Z reach, shorts, copper, screws.
+- **[Panels](https://madsrudolph.github.io/srm-cam/panels.html), [rework](https://madsrudolph.github.io/srm-cam/photo-and-rework.html) and [export](https://madsrudolph.github.io/srm-cam/reference.html)** to G-code (`.nc`) or RML for VPanel, in *Pro* mode.
+- **xTool F1 Ultra laser page** for solder paste stencils, solder mask and silkscreen from the same Gerbers.
+- **KiCad plugin.** Shows the SRM-20's build area in the PCB editor, sets design rules for the cutter, and sends the board to SRM-CAM.
 
-## The KiCad side
+**Novice** (the default) is the automatic run. **Pro** has every control and exports files by hand.
+Automatic runs need an Arduino on the mill's SPI header ([Hardware & firmware](https://madsrudolph.github.io/srm-cam/hardware.html));
+without it, SRM-CAM exports files for VPanel like any other CAM tool.
 
-A board that doesn't fit the mill is normally discovered *at* the mill, with the
-layout already finished. SRM-CAM ships a small KiCad plugin that answers it in
-the PCB editor instead — **Tools → External Plugins → Show SRM-20 build area**
-draws the machine's build area on User.Drawings and says whether the board fits,
-with the numbers.
+### Videos
 
-Install it from **KiCad → Set up the build-area plugin...**; SRM-CAM copies it
-into every KiCad version on the PC, and offers this once at launch if KiCad is
-there and the plugin isn't. Details: [`kicad-plugin/`](kicad-plugin).
-
-The plugin's dimensions and the CAM backend's `SRM20_BED` are asserted equal by
-the test suite — one definition of the machine, so KiCad can't say a board fits
-while SRM-CAM refuses to cut it.
-
-## Two modes
-
-**Novice** (the default on a fresh install) is the short path from Gerbers to
-files you can send from VPanel — load, level, drill, traces, cut out, export.
-Job parameters, double-sided, rework, the bed-leveling workbench and the live
-DRO / jog / streaming dock are put away. Diagnostics, the Guide, one-button bed
-leveling, `Corner = tool` and the screw fixture stay, because a beginner needs
-those most — and because hiding the screw checkbox would make Novice the more
-dangerous mode.
-
-**Professional** is every control.
-
-Novice is a strict subset, not a second program — the same settings export
-byte-identical files in either mode. Switch from the **Mode** menu; set
-`SRM_CAM_MODE=novice|pro` to pin a machine to one.
-
-A course hands the same approved feeds and depths to every seat with a **site
-preset**: `presets.json` next to the installed `SRM-CAM.exe`, which lives in
-Program Files so only an admin can change it. See
-[`docs/usage.md`](docs/usage.md#presets).
-
-## Showcase
+- [Mill a board](https://youtu.be/rVPFPnBHoaY): from a KiCad folder to a finished board
+- [Double-sided](https://youtu.be/nmh9I9FdkqI)
+- [Pro mode, by hand](https://youtu.be/aab9ItDjwt0)
 
 <table>
 <tr>
-<td width="50%"><img src="website/img/gui2_checks.png" alt="The checks, on screen"><br><sub><b>Checks on screen</b> — fits the bed, Z reach, shorts, the copper, the screws; the worst finding stays on the rail.</sub></td>
-<td width="50%"><img src="website/img/gui2_level.png" alt="A probed surface drawn on the board"><br><sub><b>Bed levelling</b> — probe the surface so the cut depth follows the board, one map per face.</sub></td>
+<td width="50%"><img src="website/img/gui2_checks.png" alt="The checks"><br><sub>Checks, with the worst finding kept on the rail.</sub></td>
+<td width="50%"><img src="website/img/gui2_level.png" alt="A probed surface"><br><sub>A probed surface, one map per face.</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="website/img/gui2_xray.png" alt="Design X-ray of a double-sided board"><br><sub><b>Double-sided</b> — dowel-pin or fiducial registration, and the top files re-written to where the board landed.</sub></td>
-<td width="50%"><img src="website/img/gui2_panel_cutout.png" alt="Two boards on one sheet with a shared cut"><br><sub><b>Panels</b> — several boards on one sheet; touching boards share one cut.</sub></td>
+<td width="50%"><img src="website/img/doublesided_bcu.jpg" alt="Bottom copper"><br><sub>A double-sided board: bottom.</sub></td>
+<td width="50%"><img src="website/img/doublesided_fcu.jpg" alt="Top copper"><br><sub>And top, held to the light.</sub></td>
 </tr>
 </table>
 
-You can also do **perfect double-sided PCBs** with srm-cam — both layers registered off dowel pins or fiducials. A finished board, held to the light:
+## From source
 
-<table>
-<tr>
-<td width="50%"><img src="website/img/doublesided_bcu.jpg" alt="Bottom copper (B.Cu)"><br><sub><b>Bottom — B.Cu</b></sub></td>
-<td width="50%"><img src="website/img/doublesided_fcu.jpg" alt="Top copper (F.Cu)"><br><sub><b>Top — F.Cu</b></sub></td>
-</tr>
-</table>
+```bash
+pip install -e ".[gui]"
+python -m gerber2rml.gui2                                    # the app
+python -m gerber2rml.cli <gerber-folder> -o out -n <board>   # command line
+python -m gerber2rml.doctor                                  # after a git pull: new dependencies
+pytest
+```
 
-## More
+The Python package is `gerber2rml`. The older interface still ships as
+`python -m gerber2rml.gui` (or `SRM-CAM --original`); both use the same engine
+and write the same files.
 
-- **Step-by-step guide (KiCad → milled board), with photos:** [DTU Ballerup PCB prototyping — Roland CNC router](https://github.com/DTU-EKB/DTU-PCB-prototyping#making-pcbs-with-the-roland-cnc-router)
-- Full usage & feature reference: [`docs/usage.md`](docs/usage.md)
-- Build the installer / cut a release: [`packaging/README.md`](packaging/README.md)
-- Bed-leveling probe firmware (Arduino UNO): [`hardware/srm20_spi_probe/`](hardware/srm20_spi_probe) — flash it before using auto bed leveling (wiring in [`docs/usage.md`](docs/usage.md#bed-leveling)).
-- Run the tests: `pytest`
-
-## Keeping it running
-
-The installed app does **not** use the machine's Python — PyInstaller freezes
-its own interpreter, Qt and every dependency into `_internal\`. Installing,
-upgrading or removing Python on the PC cannot affect it.
-
-What is maintained deliberately:
+## Documentation
 
 | | |
 |---|---|
-| **Reproducible builds** | `packaging/requirements-lock.txt` pins every version, including transitives, to the set the shipped installer was built from. |
-| **Builds on any machine** | Pushing a `v*` tag builds the installer from scratch on a clean GitHub Windows runner and drafts a release. No one person's laptop is in the loop. |
-| **Nothing silently changes** | `tests/test_golden.py` asserts a fixed board still produces byte-identical `.nc` output, so a dependency upgrade cannot quietly alter what gets cut. |
-| **Early warning** | A monthly `canary` CI job runs the suite against the newest Python and newest dependencies. When the world moves, it goes red before anyone is mid-course. |
+| [User guide](https://madsrudolph.github.io/srm-cam/) | How to use it: start here |
+| [docs/usage.md](docs/usage.md) | Full reference: every setting, presets, the CLI |
+| [docs/macos.md](docs/macos.md) | macOS: the mill as a print queue, its settings without VPanel |
+| [kicad-plugin/](kicad-plugin) | The KiCad plugin |
+| [packaging/README.md](packaging/README.md) | Building the installers, cutting a release |
+| [MAINTAINING.md](MAINTAINING.md) | Keeping it running: locked builds, CI, handover |
+| [DTU PCB prototyping](https://github.com/DTU-EKB/DTU-PCB-prototyping#making-pcbs-with-the-roland-cnc-router) | The lab's step-by-step guide, with photos |
 
-What is *not* solved by code is ownership: today the repo, the releases, the
-guide site and the CI alerts all hang off one personal GitHub account, and
-students graduate. The plan for that — transfer to the `DTU-EKB` org, a second
-maintainer, a cold copy on lab storage — is in
-**[`MAINTAINING.md`](MAINTAINING.md)**, along with the runbook for when CI goes
-red and how to rebuild the installer with no GitHub at all.
+## Credits
 
-Older handover notes and dev logs: [`docs/archive/`](docs/archive/).
+By Mads Vølkers Rudolph. macOS support, the mill's settings without VPanel and
+the clamp zones by Marius Bjerregaard. MIT licence.
