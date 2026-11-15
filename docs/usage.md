@@ -573,6 +573,188 @@ inside of a letter like O stays a loop of its own, which the laser's fill leaves
 unmarked. Nothing is shrunk. Artwork past the board edge is cut off at the outline
 and the clipped area is reported. Engine: `engine/silkscreen.py`.
 
+## Solder mask and silkscreen on the xTool
+
+The solder mask and silkscreen sections each have a button that opens the same
+laser page as the stencil, with the same photo, autofocus, placement, Align,
+selection, presets and STOP:
+- **Open the mask on the xTool…** fills every mask opening, ablating the cured
+  ink off the pads.
+- **Mark it on the xTool…** fills the silkscreen artwork.
+
+What changes:
+
+| | Stencil | Solder mask | Silkscreen |
+|---|---|---|---|
+| Laser work | outline cut, 30 passes in zones | filled, hatch lines | filled, hatch lines |
+| Default preset | 0.1 mm 304 stainless | RemoveSolderMask (sphawes) | RemoveSolderMask (sphawes) |
+| Align locks onto | the holes it cut | the drilled holes | the drilled holes |
+| Learn the camera offset | yes | no (uses the stencil's) | no (uses the stencil's) |
+
+**The fill presets** are the ones in sphawes/fiber-laser-pcb-fab's
+`settings.json`, which the lab imports into XCS:
+- **RemoveSolderMask:** fiber, 40 %, 800 mm/s, 30 kHz, 300 lines/cm, 6 passes,
+  one way, cross-hatched.
+- **Traces:** 100 %, 600 mm/s, 240 lines/cm, 10 passes.
+
+XCS draws these as a raster. Here each shape gets vector hatch lines at the same
+spacing, power and speed:
+- Each pass is at right angles to the last.
+- Every line runs the same way.
+- The lines run across the whole job, not shape by shape.
+
+Under **Adjust the numbers** are power, speed, frequency, passes, line density,
+cross hatch, one way, and a faint score of the board outline.
+
+**Align** uses the board's drill file, in the same frame and mirroring as the
+artwork. A drilled hole shows as a dark dot in the photo, through the ink too.
+On the test board, all 27 drilled holes fall inside their mask openings.
+
+The camera offset learned on a stencil applies to these jobs too.
+
+## Solder paste stencil: cut on the xTool F1 Ultra
+
+The holes for a paste stencil cut from 0.1 mm stainless foil by the fiber laser,
+from the same Gerber folder. It shares the solder mask file's reader and DXF writer.
+SRM-CAM can also **cut it**, sending the job to the F1 Ultra itself, because XCS
+cannot spread the heat out and a stencil cut in one go warps.
+
+**Solder paste stencil › Also make the stencil file (DXF)**, on the first page of
+the job, off by default. While it is ticked, **Export the job** writes the DXF too.
+**Write the stencil file now…** writes it on its own, and **Cut it on the xTool…**
+opens the laser window.
+
+| | |
+|---|---|
+| Read from | `*-B_Paste.*` (or `.gbp`), plus `*-F_Paste.*` (or `.gtp`) for a double-sided job, and `*-Edge_Cuts.*` |
+| Written | `<name>_stencil_bottom_mirrored.dxf` |
+| Contents | Closed `LWPOLYLINE`s on layer `STENCIL_APERTURES`, the outline on layer `OUTLINE`, mm at 1:1 |
+
+**Kerf.** The beam removes about 0.08 mm of steel around its path. That figure was
+measured on the lab's machine in 0.1 mm 304 stainless. So each hole is drawn half
+the kerf smaller per side, and comes out pad-sized.
+
+**Mirrored like the copper.** B.Paste goes on the milled face, which lies face up
+when the stencil goes on, so it is mirrored once. A double-sided job's F.Paste is
+not mirrored.
+
+**Holes that print.** A hole whose area ratio, area ÷ (perimeter × 0.1 mm), is under
+0.66 may hold on to its paste. It is reported, not dropped. So is a pad smaller than
+the kerf, which gets no hole.
+
+### Cutting it
+
+**Cut it on the xTool…** opens the laser page. The F1 Ultra must be plugged into
+this PC by USB. It shows up as a network adapter, with the laser at 201.234.3.1.
+XCS is not needed.
+
+The page is laid out like XCS: a toolbar over the bed picture, cards on the right
+(Stencil, Focus, Recipe, Run), and a status bar with the cursor's X/Y and the
+focus.
+
+1. **📷 Photo** shows the bed as the laser's camera sees it, straightened with the
+   machine's own calibration files. The rulers are the laser's mm.
+2. **◎ Autofocus** measures the height under the pink cross and moves the head
+   until that point is within 0.1 mm of focus:
+   - It does this the way XCS does: a blue dot glows there, the camera finds it,
+     and its row in the picture is read against the factory height table.
+   - The cross sits at the stencil's middle, on the factory's 10 mm grid.
+     Right-click → **Autofocus here** measures somewhere else.
+   - You can also type XCS's thickness and press **Set**.
+3. **Photo** again, then place the stencil. Any of these work:
+   - Drag it.
+   - Nudge it with the arrow keys: 0.1 mm, or 1 mm with Shift, or 10 mm with Ctrl.
+   - Type X/Y, which is the top-left corner of the outline.
+   - Right-click → **Centre the stencil here**.
+   - **Turn ◂ / Turn ▸** turns it a quarter at a time about its middle.
+
+   The camera rides on the head, so the photo is true for the foil's surface
+   however high the plate is.
+4. **Show where** runs the blue diode round the outline at 6 %. That is visible
+   but does not mark steel.
+5. **Cut** runs one job at the focus the head is at:
+   - The holes are split into zones, and each zone is cut in bursts with
+     laser-off rests between them.
+   - The holes of the zone being cut light up green, with the time left beside
+     them.
+   - A photo is taken at the end, unless you untick it.
+
+   **Stop** stops it at once.
+
+**Re-cutting.** Turn on **⬚ Select holes**. Click a hole, or drag a box round
+several; Ctrl or Shift adds to the selection. **Cut** becomes **Cut N selected**:
+it cuts only those holes, with the same recipe, and does not mark the outline
+again. Hovering over a hole shows its size.
+
+**Looking at the result.** **Filled | Outlines | Hidden** in the header changes
+how the stencil is drawn over the photo:
+- **Filled** is the stencil as it will be cut.
+- **Outlines** draws each hole as a thin line with nothing filled, so the photo
+  shows through every hole. Take a photo after cutting and look for pads that
+  are not dark all the way through, then select those and re-cut them.
+- **Hidden** shows only the photo. **H** switches between hidden and filled.
+
+**The camera's offset.** The factory camera calibration on the lab's machine
+shows everything about 0.5 mm left and 0.9 mm up of where the fiber really cuts.
+The **Camera** section stores a correction, and every photo is moved by it:
+1. Right after a cut, with the stencil still where it was cut, press **Learn
+   from this cut**.
+2. It finds the holes in a photo and stores the difference.
+
+The photo taken after a cut is checked automatically, and the status says when
+the photo is more than 0.3 mm off. **Reset** clears the correction.
+
+On the lab's machine, learning from the curtain-drive stencil (114 holes) took
+the photo from −0.51, −0.88 mm off down to 0.07 mm.
+
+**Align after moving the foil.** If the foil or board has been lifted and put
+back, for example to push out slugs before a re-cut:
+1. Drag the stencil roughly onto it.
+2. Press **Align**. It takes a photo and finds the holes already cut, which
+   show up as dark spots in bright foil or burned marks on FR4.
+3. The stencil is moved and turned onto them, including small angles. If the
+   board went back a quarter turn round, the other three orientations are
+   tried as well.
+4. The status says how many holes it found. Nothing moves unless at least 85 %
+   of them are found.
+
+On the lab's machine, two different starting points landed within 0.01 mm of
+each other and within 0.25 mm of where the holes were cut. Use **Show where**
+before cutting.
+
+**Recipes.** The Recipe section only shows the preset. **Adjust the numbers**
+folds out power, speed, frequency, passes, per burst, rest, zones and the
+outline mark. It says when they differ from the preset, and it holds **Save as
+preset…** and **Delete preset**. The two built-in presets are **0.1 mm 304
+stainless**, which is the proven one, and **Marking test (1 pass)**.
+
+**Recipes (detail).** The **Recipe** card holds power, speed, frequency, passes, per burst,
+rest, zones and the outline mark. There are two built-in presets:
+**0.1 mm 304 stainless**, which is the proven one, and **Marking test (1 pass)**.
+**Save…** keeps your own under a name, and **Delete** removes it.
+
+**Placement** was checked by firing the dot at known points. (60, 40) came out at
+(59.5, 39.2) in the photo, so trust it to about 1 mm and use **Show where** for
+the last bit.
+
+**Camera grid.** The factory grid is stored turned half round: its first point
+is the laser's (220, 220). `engine/xtool_camera.py` allows for that.
+
+The recipe (100 %, 550 mm/s, 30 kHz, 30 passes in bursts of 5) is the one that cut
+the ESP32 stencil flat and through on 2026-11-15. It is under **Recipe** in the
+laser window.
+
+The firmware ignores `G4` dwells, so a rest is the galvo crawling at 1 mm/s with
+the laser at `S0`. That was checked to leave no trace on steel, with the fiber
+selected.
+
+Command line: `srm-cam-stencil <folder> -o out` for the DXF, `--trace X Y`, and
+`--cut X Y --thickness T`.
+
+Engines: `engine/stencil.py` (the holes), `engine/xtool.py` (the job file and
+the laser) and `engine/xtool_camera.py` (photo and autofocus). The protocol notes are in the solder-stencil-tests repo,
+`docs/OPEN_CONTROL.md`.
+
 ## Double-sided boards
 
 Top/bottom passes align off machine-located holes, never the board edge. Tick

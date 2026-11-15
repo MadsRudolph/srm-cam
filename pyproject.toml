@@ -33,6 +33,7 @@ gui = [
 [project.scripts]
 gerber2rml-cli = "gerber2rml.cli:main"
 gerber2rml-doctor = "gerber2rml.doctor:main"
+srm-cam-stencil = "gerber2rml.stencil_cli:main"
 
 [project.gui-scripts]
 srm-cam = "gerber2rml.gui2.app:main"
