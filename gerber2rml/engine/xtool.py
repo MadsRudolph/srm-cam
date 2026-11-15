@@ -293,3 +293,102 @@ class F1Ultra:
 
     def stop(self):
         self._req("POST", "/processing/stop", "")
+
+    # -- camera, lights, autofocus (engine/xtool_camera.py does the maths) --
+    CAMERA_PORT = 8329
+    FILL_LIGHT = 136            # the machine's own default brightness
+
+    def _raw(self, port, path, *, method="GET", body=None, timeout=40):
+        c = http.client.HTTPConnection(self.host, port, timeout=timeout)
+        try:
+            data = json.dumps(body) if isinstance(body, dict) else body
+            c.request(method, path, body=data,
+                      headers={"Content-Type": "application/json"} if data else {})
+            r = c.getresponse()
+            out = r.read()
+        except OSError as e:
+            raise LaserError(f"No answer from the laser at {self.host} ({e}).") from e
+        finally:
+            c.close()
+        if r.status != 200:
+            raise LaserError(f"{path}: HTTP {r.status}")
+        return out
+
+    def download(self, filename):
+        """One of the machine's own files, e.g. ``global_calib.json``."""
+        return self._raw(self.port, f"/file?action=download&filename={filename}"
+                                    f"&filetype=3")
+
+    def calibration(self):
+        from gerber2rml.engine.xtool_camera import Calibration
+        return Calibration(self.download("global_calib.json"),
+                           self.download("global_ir.json"))
+
+    def gcode(self, line):
+        """One line straight to the motion controller."""
+        from urllib.parse import quote
+        return self._raw(self.port, f"/cmd?cmd={quote(line)}", timeout=10)
+
+    def lights(self, on):
+        self._json("POST", "/peripheral/fill_light",
+                   {"action": "set_bri", "idx": 0,
+                    "value": self.FILL_LIGHT if on else 0})
+        self._json("POST", "/peripheral/ir_led",
+                   {"action": "on" if on else "off", "index": 0})
+        self._raw(self.CAMERA_PORT, "/camera/exposure?stream=0", method="POST",
+                  body={"value": 0 if on else 10})
+
+    def snap(self):
+        """The camera's full-size JPEG."""
+        if self.mode() == "P_SLEEP":
+            self._json("POST", "/device/modeSwitch", {"state": "P_IDLE"})
+            time.sleep(0.5)
+        return self._raw(self.CAMERA_PORT,
+                         "/camera/snap?width=4656&height=3496&timeOut=30000",
+                         timeout=60)
+
+    def _goto_z(self, target, timeout=30):
+        self._json("POST", "/focus/control",
+                   {"action": "goTo", "Z": round(target, 3), "stopFirst": 1, "F": 300},
+                   timeout=60)
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            z = self.z()
+            if abs(z - target) < 0.05:
+                return z
+            time.sleep(0.3)
+        raise LaserError(f"The head stopped at Z {self.z():.2f}, not {target:.2f}.")
+
+    def measure(self, cal):
+        """mm the surface under (110, 110) is above focus, by the blue dot.
+        Call inside autofocus mode."""
+        from gerber2rml.engine.xtool_camera import DOT_AT, decode_jpeg
+        self.lights(False)
+        try:
+            self.gcode(f"G0X{DOT_AT[0]:g}Y{DOT_AT[1]:g}F60000")
+            time.sleep(0.3)
+            self.gcode("M3S30")             # the blue diode at a glow
+            time.sleep(0.5)
+            photo = self._raw(self.CAMERA_PORT,
+                              "/camera/snap?width=4656&height=3496&timeOut=30000",
+                              timeout=60)
+        finally:
+            self.gcode("M3S0")
+            self.gcode("M5")
+            self.lights(True)
+        dot, _n = cal.find_dot(decode_jpeg(photo))
+        return cal.height(dot)
+
+    def autofocus(self, cal, tolerance=0.1, tries=4):
+        """Move the head until the surface under (110, 110) is in focus.
+        Returns the Z reached; the XCS thickness is that minus 8."""
+        self._json("POST", "/device/modeSwitch", {"state": "P_AUTOFOCUS"})
+        try:
+            for _ in range(tries):
+                dz = self.measure(cal)
+                if abs(dz) <= tolerance:
+                    return self.z()
+                self._goto_z(self.z() + dz)
+            return self.z()
+        finally:
+            self._json("POST", "/device/modeSwitch", {"state": "P_IDLE"})

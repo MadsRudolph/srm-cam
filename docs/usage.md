@@ -605,23 +605,39 @@ the kerf, which gets no hole.
 
 ### Cutting it
 
-1. Plug the F1 Ultra into this PC by USB. It shows up as a network adapter, with
-   the laser at 201.234.3.1.
-2. In XCS, import the stencil DXF and drag it onto the foil in the camera image.
-3. Autofocus on the foil.
-4. Close XCS's job. In SRM-CAM's laser window, type the DXF's **X** and **Y**,
-   which are the top-left corner of its outline, and the autofocus **thickness**.
-5. **Show where** runs the blue laser round the outline at 6 %. That is visible but
-   does not mark steel. Move X/Y until it sits on clean foil.
-6. Press **Cut**. The head goes to Z = thickness + 8, the way XCS focuses. Then one
-   job runs:
+**Cut it on the xTool…** opens the laser page. The F1 Ultra must be plugged into
+this PC by USB. It shows up as a network adapter, with the laser at 201.234.3.1.
+XCS is not needed.
+
+1. **Take photo** shows the bed as the laser's camera sees it, straightened with
+   the machine's own calibration files, so the picture is in the laser's mm.
+2. Put the foil under the middle of the bed and press **Autofocus**. It measures
+   the height the way XCS does:
+   - The blue diode glows as a dot at X110 Y110, and the camera finds the dot.
+   - The dot's row in the picture is read against the factory height table.
+   - The head moves until the foil is within 0.1 mm of focus.
+
+   You can also type XCS's thickness and press **Set**.
+3. **Take photo** again, then drag the stencil onto clean foil, or type its X/Y:
+   the top-left corner of its outline. The camera rides on the head, so the photo
+   is true for the foil's surface however high the plate is.
+4. **Show where** runs the blue diode round the outline at 6 %. That is visible
+   but does not mark steel.
+5. **Cut** runs one job at the focus the head is at:
    - The holes are split into 4 zones around the centre.
-   - Each zone gets 5 passes, then a 6 s rest, round after round, until every hole
-     has had 30 passes.
+   - Each zone gets 5 passes, then a 6 s laser-off rest, round after round,
+     until every hole has had 30 passes.
    - Each zone therefore cools for about 25 s between its bursts.
    - Finally the outline is marked once at half power.
 
-   **Stop** stops the laser at once.
+   **Stop** stops it at once.
+
+**Placement** was checked by firing the dot at known points. (60, 40) came out at
+(59.5, 39.2) in the photo, so trust it to about 1 mm and use **Show where** for
+the last bit.
+
+**Camera grid.** The factory grid is stored turned half round: its first point
+is the laser's (220, 220). `engine/xtool_camera.py` allows for that.
 
 The recipe (100 %, 550 mm/s, 30 kHz, 30 passes in bursts of 5) is the one that cut
 the ESP32 stencil flat and through on 2026-11-15. It is under **Recipe** in the
@@ -634,8 +650,8 @@ selected.
 Command line: `srm-cam-stencil <folder> -o out` for the DXF, `--trace X Y`, and
 `--cut X Y --thickness T`.
 
-Engines: `engine/stencil.py` (the holes) and `engine/xtool.py` (the job file and
-the laser). The protocol notes are in the solder-stencil-tests repo,
+Engines: `engine/stencil.py` (the holes), `engine/xtool.py` (the job file and
+the laser) and `engine/xtool_camera.py` (photo and autofocus). The protocol notes are in the solder-stencil-tests repo,
 `docs/OPEN_CONTROL.md`.
 
 ## Double-sided boards

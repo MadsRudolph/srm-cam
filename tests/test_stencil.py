@@ -236,3 +236,58 @@ def test_the_laser_window_builds_the_job_it_shows(win, qt_app):
     d.cut()
     assert "field" in d.status.text()
     d.close()
+
+
+# ---------------------------------------------------------------- the camera
+
+def _fake_calibration():
+    """A camera that sees laser (X, Y) at pixel (50 + 4X, 30 + 4Y) when in
+    focus, and whose dot climbs 4 px per mm of height. The grid is stored the
+    way the F1 Ultra stores it: point (i, j) is laser (220 - 10i, 220 - 10j)."""
+    from gerber2rml.engine import xtool_camera as cam
+    n = 23
+    pts = []
+    for j in range(n):
+        for i in range(n):
+            X, Y = 220 - 10 * i, 220 - 10 * j
+            pts.append(f"[{50 + 4 * X:.2f},{30 + 4 * Y:.2f}]")
+    calib = {"image_src_w": 1000, "image_src_h": 1000, "grid_num_w": n,
+             "data0": "".join(pts)}
+    zs = [float(z) for z in range(-50, 55, 5)]
+    m = []
+    for z in zs:
+        row = []
+        for j in range(n):
+            for i in range(n):
+                X, Y = 220 - 10 * i, 220 - 10 * j
+                row += [50 + 4 * X, 30 + 4 * Y - 4 * z]
+        m.append(row)
+    return cam.Calibration(calib, {"z": zs, "map": m})
+
+
+def test_the_photo_comes_out_in_laser_millimetres():
+    import numpy as np
+    cal = _fake_calibration()
+    rgb = np.zeros((1000, 1000, 3), np.uint8)
+    rgb[30 + 4 * 40, 50 + 4 * 60] = 255            # something at laser (60, 40)
+    bed = cal.rectify(rgb, px_per_mm=1)
+    y, x = np.unravel_index(bed.sum(axis=2).argmax(), bed.shape[:2])
+    assert (x, y) == (60, 40)
+
+
+def test_the_dot_gives_the_height():
+    import numpy as np
+    cal = _fake_calibration()
+    for dz in (-3.0, 0.0, 12.5):
+        rgb = np.zeros((1000, 1000, 3), np.uint8)
+        px, py = 50 + 4 * 110, 30 + 4 * 110 - 4 * dz
+        rgb[int(py) - 2:int(py) + 3, px - 2:px + 3] = (120, 120, 255)
+        dot, n = cal.find_dot(rgb)
+        assert cal.height(dot) == pytest.approx(dz, abs=0.3)
+
+
+def test_no_dot_is_a_sentence():
+    import numpy as np
+    from gerber2rml.engine.xtool_camera import CameraError
+    with pytest.raises(CameraError, match="No dot"):
+        _fake_calibration().find_dot(np.zeros((1000, 1000, 3), np.uint8))
