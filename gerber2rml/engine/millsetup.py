@@ -11,7 +11,7 @@ all outside a job. So this module talks to the device directly.
 The protocol is a register file. Every exchange is one of four transfers::
 
     OUT 41 01 <reg lo> <reg hi> 00 00 <len>   data: 01 <reg hi> <reg lo> 00 [value]
-    IN  c1 01 01 00 00 00 08 00               -> 82 <busy> <spindle> 01 <working> 00 00 <n>
+    IN  c1 01 01 00 00 00 08 00               -> <status word> <working> 00 00 <n>
     IN  c1 01 03 00 00 00 <n>                 -> the n bytes the last request asked for
     IN  c1 01 00 01 00 00 38 00               -> that header plus the 48-byte live block
 
@@ -73,6 +73,17 @@ _HELLO = 0x0002          # wValue: 01 00 34 12 from an SRM-20
 # So only the two bits known to mean busy are waited for.
 _WORKING = 0x60
 
+# The header's first four bytes are the machine's status word - the very
+# word the Arduino link reads with getStatus (engine/spi_probe.py), least
+# significant byte first. The captures showed ``82 00 00 01`` so steadily
+# that the 82 looked like a signature, and the code checked for it; then a
+# run was stopped, the word became ``23 40 00 01``, and a mill that was on
+# and answering was turned away as "not an SRM-20 status header"
+# (2026-11-15). 0x01000082 is also exactly what the SPI audit read off an
+# idle machine. So it is decoded, with the audit's bit table, not matched.
+_MOVING = 0x00000800
+_SPINDLE = 0x00010000
+
 REG_COMMAND_SET = 0x3100         # read: 00 RML-1, 01 NC Code
 REG_SET_COMMAND_SET = 0x3101     # write: the same byte
 REG_SETUP_REST = 0x3200          # read: the rest of the Setup dialog, 3 bytes
@@ -108,12 +119,17 @@ def _transfer(dev, direction, value, payload):
 
 
 def _header(dev):
-    """The 8-byte status header: ``82 busy spindle 01 working 00 00 n``."""
+    """The 8-byte status header: the status word, then ``working 00 00 n``."""
     h = bytes(_transfer(dev, _IN, _HEADER, 8))
-    if len(h) != 8 or h[0] != 0x82:
-        raise SetupError("the mill answered with something that is not an "
-                         f"SRM-20 status header: {h.hex(' ') or 'nothing'}")
+    if len(h) != 8:
+        raise SetupError("the mill answered with %d bytes where its 8-byte "
+                         "status header was expected: %s"
+                         % (len(h), h.hex(" ") or "nothing"))
     return h
+
+
+def _word(b):
+    return struct.unpack_from("<I", b, 0)[0]
 
 
 def _ready(dev, wait_s=2.0, sleep=time.sleep, clock=time.monotonic,
@@ -196,11 +212,13 @@ def _words(data, count):
 def status(dev):
     """What VPanel shows, from one poll (tomgang.pcapng, jog.pcapng).
 
-    ``x_mm``/``y_mm``/``z_mm`` are machine coordinates. ``busy`` is the
-    header's second byte: 09 during every jog, 01 for the four seconds a
-    spindle took to run up and again while it ran down, 00 at rest. Its bits
-    are not mapped, so it is reported as true or false. ``spindle_on`` is the
-    third byte, 01 from the start command to the stop.
+    ``x_mm``/``y_mm``/``z_mm`` are machine coordinates. The flags are the
+    machine's status word decoded with the Arduino link's own table
+    (:func:`gerber2rml.engine.spi_probe.decode_status`), because it is the
+    same word: ``moving``, ``spindle_on``, ``cover``, ``error``, ``fatal``,
+    ``paused`` and the ``state`` code. ``busy`` is moving. The audit's
+    warning stands here too - only ``cover`` has been proved to mean what
+    its name says, and ``paused`` has been seen set on an idle machine.
 
     ``spindle_reading`` is the mill's own measurement and is NOT rpm as
     VPanel words it: it settled near 4300 with the slider at 16 % and was
@@ -208,12 +226,21 @@ def status(dev):
     8600 on a spindle rated 7000 (docs/archive/2026-08-21-spi-command-audit.md).
     Good for "is it turning, and faster or slower than before".
     """
+    from gerber2rml.engine.spi_probe import decode_status
     b = bytes(_transfer(dev, _IN, _LIVE, 56))
-    if len(b) != 56 or b[0] != 0x82:
-        raise SetupError("the mill's status could not be read")
+    if len(b) != 56:
+        raise SetupError("the mill's status could not be read (%d bytes "
+                         "where 56 were expected)" % len(b))
     x, y, z = _words(b[8:20], 3)
+    system = _word(b)
+    flags = decode_status(system, struct.unpack_from("<I", b, 4)[0] & 0xFF)
     return {"x_mm": x / 1000.0, "y_mm": y / 1000.0, "z_mm": z / 1000.0,
-            "busy": b[1] != 0, "spindle_on": b[2] != 0,
+            "busy": bool(system & _MOVING),
+            "moving": bool(system & _MOVING),
+            "spindle_on": bool(system & _SPINDLE),
+            "cover": flags["cover"], "error": flags["error"],
+            "fatal": flags["fatal"], "paused": flags["paused"],
+            "state": flags["state"], "system": system,
             "spindle_reading": struct.unpack_from("<I", b, 32)[0],
             "speed_percent": b[38], "spindle_percent": b[40]}
 

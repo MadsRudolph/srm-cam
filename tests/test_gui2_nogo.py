@@ -363,3 +363,76 @@ def test_the_level_page_has_the_same_margin_and_its_grid_follows(win):
     assert min(y for _x, y in lp._points) == pytest.approx(y6 + 3.0)
     assert workspace.setting("autorun/level_margin", "") == "9.0"
     lp.margin.setValue(2.0)
+
+
+# --- left in the sheet, the board has no edge to isolate from -----------------
+
+def _trace_cuts(w):
+    paths = w._toolpaths_for(w.plan.by_key("traces_run"))[0]
+    return [(m.x, m.y) for tp in paths for m in tp if not m.rapid and m.z < 0]
+
+
+def _edge_gap(w):
+    o = w.state.board.outline.bounds
+    xs, ys = zip(*_trace_cuts(w))
+    return min(min(xs) - o[0], min(ys) - o[1], o[2] - max(xs), o[3] - max(ys))
+
+
+def test_cut_out_a_poured_board_is_isolated_right_up_to_its_edge(win):
+    w = win
+    w.load_folder(str(FIXT))
+    w.select_step("autorun")
+    w.set_no_cutout(False)
+    assert _edge_gap(w) < 0.3                     # the pour's own outline
+    assert w._edge_checks() == []
+
+
+def test_left_in_the_sheet_the_edge_pass_is_gone_and_the_checks_say_so(win):
+    w = win
+    w.load_folder(str(FIXT))
+    w.select_step("autorun")
+    w.set_no_cutout(True)
+    assert _edge_gap(w) > 0.8                     # nothing along the edge
+    c = w._edge_checks()
+    assert [x.level for x in c] == ["ok"]
+    assert "left uncut" in c[0].title and "joins no" in c[0].detail
+    # Back to cutting it out: the edge pass is back with it.
+    w.set_no_cutout(False)
+    assert _edge_gap(w) < 0.3
+
+
+def test_an_edge_pass_that_would_join_nets_is_kept_and_said(win, monkeypatch):
+    from gerber2rml.engine import bracket as br_mod
+    w = win
+    w.load_folder(str(FIXT))
+    w.select_step("autorun")
+    real = br_mod.joined_nets
+    calls = []
+
+    def fake(copper, nets, paths, sheet, radius):
+        calls.append(1)
+        # The whole pass keeps them apart; the trimmed one would not.
+        return [] if len(calls) % 2 else [["GND", "+5V"]]
+
+    monkeypatch.setattr(br_mod, "joined_nets", fake)
+    w.set_no_cutout(True)
+    assert _edge_gap(w) < 0.3                     # still cut
+    c = w._edge_checks()
+    assert [x.level for x in c] == ["warn"]
+    assert "GND + +5V" in c[0].detail
+    monkeypatch.setattr(br_mod, "joined_nets", real)
+    w.set_no_cutout(False)
+
+
+def test_a_clamp_on_the_edge_of_a_board_left_in_the_sheet_is_no_concern(win):
+    """With the edge pass gone, a clamp on the board's edge has nothing
+    under it: the check that warned about isolation there is satisfied."""
+    w = win
+    w.load_folder(str(FIXT))
+    w.select_step("autorun")
+    w.set_no_cutout(True)
+    _trace_cuts(w)                                # the passes are made
+    b = w.work_bounds()
+    mid = (b[1] + b[3]) / 2.0
+    w.autorun_page.add_nogo(b[0] - 8.0, mid - 4.0, b[0] - 1.5, mid + 4.0)
+    assert [x.level for x in w._nogo_checks()] == ["ok"]

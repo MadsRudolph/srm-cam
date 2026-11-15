@@ -474,3 +474,51 @@ def test_the_check_can_drill_the_holes_again_deeper_and_asks_again(monkeypatch):
     assert not answers
     assert sent[-2:] == [HOLES_AGAIN, "cutout"]
 
+
+
+class PouredWholeBoard(WholeStockBoard):
+    """The same, with what a ground pour adds: an isolation pass all the
+    way round, a tenth of a millimetre inside the board's edge."""
+
+    def bottom_steps(self):
+        return [("traces", "Isolation traces")]
+
+    def toolpaths(self, key):
+        p = self._p
+        w, h = self.size
+        c = [p(0.1, 0.1), p(w - 0.1, 0.1), p(w - 0.1, h - 0.1),
+             p(0.1, h - 0.1), p(0.1, 0.1)]
+        return ([[Move(*c[0], 2, rapid=True)] + [Move(x, y, -0.1) for x, y in c]
+                 + [Move(*c[-1], 2, rapid=True)]], 4.0, 1.0)
+
+
+def test_a_poured_whole_stock_board_is_not_refused_for_its_edge_pass():
+    """Its pass runs 0.1 mm inside the stock's edge, so the 0.8 mm cutter's
+    edge is 0.3 mm over the side - cutting air. That is not hanging off."""
+    m = sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+                   size=(100000, 80000))
+    ser = spi_probe.open_link("SIM")
+    board, log = PouredWholeBoard(), Log()
+    run = AutoRun(ser, sm.printer(), board, log, click_mm=(90, 70),
+                  stock_mm=(100, 80), double=False, runner_opts=FAST,
+                  level=False)
+    assert run.run() is True and run.whole
+    assert ("traces", "done") in log.steps
+
+
+def test_a_whole_stock_board_cutting_past_the_edge_is_still_refused():
+    """A pass whose CENTRE is off the stock is another matter."""
+    class Over(PouredWholeBoard):
+        def toolpaths(self, key):
+            paths, xy, plunge = super().toolpaths(key)
+            return ([[Move(m.x - 1.0, m.y, m.z, rapid=m.rapid) for m in tp]
+                     for tp in paths], xy, plunge)
+
+    m = sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+                   size=(100000, 80000))
+    ser = spi_probe.open_link("SIM")
+    run = AutoRun(ser, sm.printer(), Over(), Log(), click_mm=(90, 70),
+                  stock_mm=(100, 80), double=False, runner_opts=FAST,
+                  level=False)
+    with pytest.raises(RunFailed, match="hangs off the stock"):
+        run.run()

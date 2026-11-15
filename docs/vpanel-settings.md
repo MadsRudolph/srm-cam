@@ -43,7 +43,7 @@ Four transfers make up the whole protocol. `bRequest` is always `01`,
 |---|---|---|
 | Request a register | `41 01 <lo> <hi> 00 00 04 00` | `01 <hi> <lo> 00` |
 | Set a register | `41 01 <lo> <hi> 00 00 <4+n> 00` | `01 <hi> <lo> 00` + n value bytes |
-| Status header | `c1 01 01 00 00 00 08 00` | ← `82 <busy> <spindle> 01 <working> 00 00 <n>` |
+| Status header | `c1 01 01 00 00 00 08 00` | ← `<status word, 4 bytes> <working> 00 00 <n>` |
 | Fetch the answer | `c1 01 03 00 00 00 <n> 00` | ← the n bytes the header announced |
 | Poll | `c1 01 00 01 00 00 38 00` | ← the header + a 48-byte live block |
 
@@ -66,9 +66,7 @@ VPanel polls about five times a second. The 56 bytes:
 
 | Bytes | Meaning | How it is known |
 |---|---|---|
-| 0 | `82` | constant |
-| 1 | busy: `09` during a jog, `01` while the spindle runs up or down | `jog`, both spindle captures. Bits not mapped |
-| 2 | spindle on | `01` from the start command to the stop |
+| 0–3 | the machine's **status word**, least significant byte first: the same word the Arduino link reads with `getStatus`. `82 00 00 01` (0x01000082) on an idle mill, as the SPI audit recorded; `23 40 00 01` after a run was stopped. Bit 0x800 (`08` in byte 1) is moving, 0x10000 (`01` in byte 2) spindle on, 0x20000 cover open; the low three bits are a state code. Decoded with `spi_probe.decode_status` | `jog`, both spindle captures; a read after a stopped run, 2026-11-15 |
 | 4 | bits `20`/`40`: the mill is working on the last request. Bit `04`: unknown - it came and went while a run moved the head, with a valid answer waiting, and is not a reason to wait | every write; every fast read; a read during a run |
 | 7 | `30`, the length of what follows | constant |
 | 8–19 | X, Y, Z, machine coordinates | follows every jog; matched VPanel's display |
