@@ -681,6 +681,40 @@ class SetupPage(Page):
         self.silk_section.add(self.silk_write_btn)
         self.add(self.silk_section)
 
+        # -- solder paste stencil ----------------------------------------
+        # The same Gerber folder again, for the same laser: holes in steel
+        # foil over every paste pad. Off until asked for.
+        from gerber2rml.engine.stencil import DEFAULT_KERF, MAX_KERF
+        self.stencil_section = widgets.Section("Solder paste stencil")
+        self.stencil = QCheckBox("Also make the stencil file (DXF)")
+        self.stencil.setToolTip(
+            "Writes a hole for every paste pad (B.Paste) and the outline, for "
+            "the fiber laser to cut from 0.1 mm stainless foil. It needs the "
+            "B.Paste layer in the folder.")
+        self.stencil.toggled.connect(ctl.action_stencil)
+        self.stencil_section.add(self.stencil)
+        self.stencil_kerf = num(DEFAULT_KERF, 0.0, MAX_KERF, 0.01, 2,
+                                self._on_stencil_kerf, suffix=" mm")
+        self.stencil_kerf_field = widgets.Field(
+            "Kerf", self.stencil_kerf,
+            help="How much steel the beam takes around its path. Each hole is "
+                 "drawn half this smaller per side, so it comes out pad-sized. "
+                 "0.08 mm was measured on the lab's F1 Ultra.")
+        self.stencil_section.add(self.stencil_kerf_field)
+        self.stencil_note = widgets.hint("")
+        self.stencil_section.add(self.stencil_note)
+        self.stencil_write_btn = widgets.button(
+            "Write the stencil file now…", on=ctl.action_write_stencil,
+            tip="The DXF, for XCS: place it on the foil on the camera image.")
+        self.stencil_section.add(self.stencil_write_btn)
+        self.stencil_cut_btn = widgets.button(
+            "Cut it on the xTool…", on=ctl.action_cut_stencil,
+            tip="With the F1 Ultra plugged into this PC by USB: cuts the "
+                "stencil with the heat spread over zones and rests, which XCS "
+                "cannot do.")
+        self.stencil_section.add(self.stencil_cut_btn)
+        self.add(self.stencil_section)
+
         # Novice's way on: the Setup page is the first of its three steps.
         self.next_btn = widgets.button(
             "Next: Run it →", kind="primary",
@@ -754,6 +788,9 @@ class SetupPage(Page):
 
     def _on_mask_shrink(self, v):
         self.ctl.action_mask_shrink(v)
+
+    def _on_stencil_kerf(self, v):
+        self.ctl.action_stencil_kerf(v)
 
     def _on_mirror(self, on):
         self.ctl.action_mirror(on)
@@ -953,7 +990,9 @@ class SetupPage(Page):
                          (self.solder_mask,
                           bool(getattr(ctl, "_solder_mask", False))),
                          (self.silkscreen,
-                          bool(getattr(ctl, "_silkscreen", False)))):
+                          bool(getattr(ctl, "_silkscreen", False))),
+                         (self.stencil,
+                          bool(getattr(ctl, "_stencil", False)))):
             box.blockSignals(True)
             box.setChecked(val)
             box.blockSignals(False)
@@ -967,6 +1006,7 @@ class SetupPage(Page):
         self.machine.blockSignals(False)
         self.sync_mask()
         self.sync_silk()
+        self.sync_stencil()
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.copper_more.setVisible(full)
@@ -1034,6 +1074,26 @@ class SetupPage(Page):
         self.silk_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
         self.silk_write_btn.setEnabled(ctl.state.board is not None)
+
+    def sync_stencil(self):
+        """The stencil rows, the same way as the solder mask's."""
+        ctl = self.ctl
+        on = bool(getattr(ctl, "_stencil", False))
+        self.stencil_kerf.blockSignals(True)
+        self.stencil_kerf.setValue(getattr(ctl, "_stencil_kerf",
+                                           self.stencil_kerf.value()))
+        self.stencil_kerf.blockSignals(False)
+        for w in (self.stencil_kerf_field, self.stencil_note,
+                  self.stencil_write_btn, self.stencil_cut_btn):
+            w.setVisible(on)
+        if not on:
+            return
+        level, text = ctl.stencil_status()
+        self.stencil_note.setText(text)
+        self.stencil_note.setStyleSheet(
+            f"color: {theme.CAUTION};" if level == "warn" else "")
+        for b in (self.stencil_write_btn, self.stencil_cut_btn):
+            b.setEnabled(ctl.state.board is not None)
 
 
 # ---------------------------------------------------------------------------
