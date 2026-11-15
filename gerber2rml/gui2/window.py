@@ -4138,7 +4138,7 @@ class MainWindow(QMainWindow):
             self.say("warn", notes[0] if notes else "No paste on this board.")
             return
         from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-        StencilLaserDialog(arts[0], self).exec()
+        StencilLaserDialog(arts[0], self, name=m.name if st.is_panel else st.name).exec()
 
     def _write_export_extras(self, out_dir):
         """A picture of the stage and a board summary next to the machine
