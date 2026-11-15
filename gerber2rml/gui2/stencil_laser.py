@@ -368,6 +368,9 @@ class StencilLaserDialog(QDialog):
         self.resize(1400, 900)
         self.setStyleSheet(f"QDialog {{ background: {theme.BASE}; }}")
         cfg = QSettings(*_SETTINGS)
+        # The camera's own error, learned from a real cut; see engine rectify().
+        self.cam_offset = (float(cfg.value("camera_offset_x", 0.0)),
+                           float(cfg.value("camera_offset_y", 0.0)))
 
         # -- the stage ---------------------------------------------------
         self.scene = QGraphicsScene(-18, -18, _FIELD + 30, _FIELD + 30)
@@ -491,6 +494,22 @@ class StencilLaserDialog(QDialog):
                                                 "as XCS does")
         s.add(_row((widgets.Field("By hand", self.thickness), 1), self.set_focus_btn))
         pv.addWidget(s)
+
+        s = widgets.Section("Camera")
+        self.off_x = widgets.Readout("Photo offset X", "")
+        self.off_y = widgets.Readout("Photo offset Y", "")
+        s.add(_row(self.off_x, self.off_y, None, gap=theme.GAP_L))
+        s.add(widgets.hint(
+            "The photo is moved by this much so it lands on what the fiber really "
+            "cuts. Right after a cut, with the stencil still where it was cut, "
+            "press Learn: it finds the holes in a photo and measures the "
+            "difference."))
+        self.learn_btn = widgets.button("Learn from this cut", on=self.learn_offset)
+        self.reset_off_btn = widgets.button("Reset", kind="ghost",
+                                            on=self.reset_offset)
+        s.add(_row(self.learn_btn, self.reset_off_btn, None))
+        pv.addWidget(s)
+        self._show_offset()
 
         s = widgets.Section("Recipe")
         self.preset = QComboBox()
@@ -979,11 +998,65 @@ class StencilLaserDialog(QDialog):
             self._cal = self.laser.calibration()
         return self._cal
 
-    def _photo(self, px_per_mm=_PX_PER_MM):
+    def _raw_photo(self):
         from gerber2rml.engine.xtool_camera import decode_jpeg
-        cal = self._calibration()
+        self._calibration()
         self.laser.lights(True)
-        return cal.rectify(decode_jpeg(self.laser.snap()), px_per_mm)
+        return decode_jpeg(self.laser.snap())
+
+    def _photo(self, px_per_mm=_PX_PER_MM, raw=None):
+        raw = self._raw_photo() if raw is None else raw
+        return self._calibration().rectify(raw, px_per_mm, self.cam_offset)
+
+    # -- the camera's offset -------------------------------------------------
+    def _show_offset(self):
+        ex, ey = self.cam_offset
+        self.off_x.set(f"{ex:+.2f} mm")
+        self.off_y.set(f"{ey:+.2f} mm")
+
+    def _set_offset(self, off):
+        self.cam_offset = (round(float(off[0]), 3), round(float(off[1]), 3))
+        cfg = QSettings(*_SETTINGS)
+        cfg.setValue("camera_offset_x", self.cam_offset[0])
+        cfg.setValue("camera_offset_y", self.cam_offset[1])
+        self._show_offset()
+
+    def reset_offset(self):
+        self._set_offset((0.0, 0.0))
+        self._say("Photo offset reset. Take a new photo to see it.")
+
+    def _residual(self, rgb_hi, hi):
+        """Where the holes of the stencil, as placed now, show up in a photo:
+        the alignment over a small search, or None if they cannot be found."""
+        from gerber2rml.engine import xtool_camera as cam
+        holes, _ = xtool.stencil_paths(self.art, self.origin())
+        a = cam.align(rgb_hi, hi, holes, search_mm=4.0, max_turn=1.5)
+        # In steel a clean hole shows the bright plate under it, so not every
+        # hole reads dark: half of them is plenty to measure a small offset
+        # with the stencil already in place.
+        return a if a.found >= max(5, 0.5 * a.total) and a.score > 0.15 else None
+
+    def learn_offset(self):
+        """The stencil is where it was cut: whatever offset the photo shows
+        between the overlay and the real holes is the camera's error."""
+        hi = 8
+
+        def work(_p):
+            raw = self._raw_photo()
+            a = self._residual(self._photo(hi, raw), hi)
+            return raw, a
+
+        def done(res):
+            raw, a = res
+            if a is None:
+                self.show_bed(self._photo(_PX_PER_MM, raw))
+                return ("Could not find the cut holes under the stencil. Leave it "
+                        "where it was cut, take a photo to check, and try again.")
+            self._set_offset((self.cam_offset[0] + a.dx, self.cam_offset[1] + a.dy))
+            self.show_bed(self._photo(_PX_PER_MM, raw))
+            return (f"Learned from {a.found} holes: the photo was {a.dx:+.2f}, "
+                    f"{a.dy:+.2f} mm off. Photos now land on the cut.")
+        self._start(work, "Learning the camera's offset from the cut…", done)
 
     def align(self):
         """Find the holes already cut and put the stencil back on them. Tries the
@@ -1098,16 +1171,27 @@ class StencilLaserDialog(QDialog):
             z = self.laser.z()
             self.laser.run(job.text)
             self.laser.wait(job.seconds * 2 + 120, progress=progress)
-            return z, (self._photo() if take_photo else None)
+            if not take_photo:
+                return z, None, None
+            raw = self._raw_photo()
+            try:
+                a = self._residual(self._photo(8, raw), 8)
+            except Exception:           # noqa: BLE001 - a check, never a failure
+                a = None
+            return z, self._photo(_PX_PER_MM, raw), a
 
         def done(res):
-            z, rgb = res
+            z, rgb, a = res
             if rgb is not None:
                 self.show_bed(rgb)
             n = sum(job.zones)
-            return (f"Cut at Z {z:.2f}: {n} hole{'' if n == 1 else 's'}, "
-                    f"{job.passes} passes. Push out any slugs; select the ones "
-                    f"that did not go through and cut them again.")
+            msg = (f"Cut at Z {z:.2f}: {n} hole{'' if n == 1 else 's'}, "
+                   f"{job.passes} passes. Push out any slugs; select the ones "
+                   f"that did not go through and cut them again.")
+            if a is not None and (a.dx ** 2 + a.dy ** 2) ** 0.5 > 0.3:
+                msg += (f" The photo shows the holes {a.dx:+.2f}, {a.dy:+.2f} mm "
+                        f"from where they were cut: press Learn from this cut.")
+            return msg
         what = f"{len(self.selected)} selected holes" if self.selected else "the stencil"
         self._start(work, f"Cutting {what} in {len(job.zones)} zones…", done)
 
@@ -1168,6 +1252,7 @@ class StencilLaserDialog(QDialog):
 
     def _busy(self, on):
         for b in (self.photo_btn, self.focus_btn, self.align_btn, self.set_focus_btn,
+                  self.learn_btn, self.reset_off_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
                   self.mode, self.all_btn, self.none_btn, self.x, self.y,
                   self.preset, self.save_btn):

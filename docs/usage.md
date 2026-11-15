@@ -655,6 +655,19 @@ how the stencil is drawn over the photo:
   are not dark all the way through, then select those and re-cut them.
 - **Hidden** shows only the photo. **H** switches between hidden and filled.
 
+**The camera's offset.** The factory camera calibration on the lab's machine
+shows everything about 0.5 mm left and 0.9 mm up of where the fiber really cuts.
+The **Camera** section stores a correction, and every photo is moved by it:
+1. Right after a cut, with the stencil still where it was cut, press **Learn
+   from this cut**.
+2. It finds the holes in a photo and stores the difference.
+
+The photo taken after a cut is checked automatically, and the status says when
+the photo is more than 0.3 mm off. **Reset** clears the correction.
+
+On the lab's machine, learning from the curtain-drive stencil (114 holes) took
+the photo from −0.51, −0.88 mm off down to 0.07 mm.
+
 **Align after moving the foil.** If the foil or board has been lifted and put
 back, for example to push out slugs before a re-cut:
 1. Drag the stencil roughly onto it.
