@@ -2,36 +2,39 @@
 and everything needed to place, focus and cut it. What XCS's canvas does for a
 stencil, without XCS.
 
-Layout, like XCS: a toolbar over the picture, the settings in cards on the
-right, a status bar under both.
+It is built like the main window, from the same parts: a header with the view
+controls and the link chip, the stage in the middle, an inspector of eyebrow
+sections on the right, and a bar along the bottom with the readouts, the run
+buttons and STOP. Colour on the stage follows ``theme``'s roles: the holes are
+PATH (metal comes off here), the zone being cut is TOOL, the focus point is
+PROBE (the surface gets measured here), the board edge is OUTLINE.
 
 * **Photo** takes the camera's picture and straightens it with the machine's own
-  calibration (``engine/xtool_camera.py``): a millimetre on the screen is a
+  calibration (``engine/xtool_camera.py``): a millimetre on the stage is a
   millimetre of the laser's coordinates.
-* **The stencil** sits on the photo. Drag it; nudge it with the arrow keys
-  (Shift x10, Ctrl x100); turn it a quarter at a time; right-click to centre it
-  where you click. X and Y are its outline's top-left corner.
-* **Autofocus** measures the height with the blue dot under the focus mark (a
-  cross on the factory's 10 mm grid, at the stencil's middle unless you
-  right-click "Autofocus here") and moves the head.
-* **Select** mode picks holes, by click or by dragging a box; **Cut** then cuts
-  only those, for the ones that did not go through.
-* **Cut** shows the zone being cut and the time left, and takes a photo when it
-  is done. **Stop** always works.
+* **Move** mode: drag the stencil, nudge it with the arrow keys (Shift x10,
+  Ctrl x100), turn it a quarter at a time, right-click to centre it where you
+  click. X and Y are its outline's top-left corner.
+* **Autofocus** measures under the focus point (on the factory's 10 mm grid, at
+  the stencil's middle unless you right-click "Autofocus here").
+* **Select** mode picks holes by click or box; **Cut** then cuts only those.
+* **Cut** lights the zone being cut, counts the time down, and takes a photo when
+  it is done. **STOP** always works.
 
 Every laser call runs on a worker thread; the page only shows what comes back.
 """
 import json
+from dataclasses import replace
 
 from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QThread, Signal
-from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QImage, QPainter,
-                           QPainterPath, QPen, QPixmap, QPolygonF)
+from PySide6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath, QPen,
+                           QPixmap, QPolygonF)
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
                                QFrame, QGraphicsItem, QGraphicsPathItem,
                                QGraphicsScene, QGraphicsSimpleTextItem,
                                QGraphicsView, QHBoxLayout, QInputDialog, QLabel,
                                QMenu, QProgressBar, QScrollArea, QSpinBox,
-                               QToolButton, QVBoxLayout, QWidget)
+                               QVBoxLayout, QWidget)
 
 from gerber2rml.engine import xtool
 from gerber2rml.gui2 import theme, widgets
@@ -39,13 +42,7 @@ from gerber2rml.gui2 import theme, widgets
 _SETTINGS = ("SRM-CAM", "stencil-laser")
 _PX_PER_MM = 4
 _FIELD = 220.0          # mm the camera calibration covers
-
-_HOLE = QColor(255, 96, 48)
-_HOLE_SELECTED = QColor(40, 200, 255)
-_HOLE_ACTIVE = QColor(120, 255, 90)
-_HOLE_DIM = QColor(255, 96, 48, 150)
-_OUTLINE = QColor(255, 214, 0)
-_FOCUS = QColor(255, 60, 200)
+_INSPECTOR_W = 380
 
 BUILTIN_PRESETS = {
     "0.1 mm 304 stainless": xtool.DEFAULT_RECIPE,
@@ -60,6 +57,20 @@ _RECIPE_FIELDS = ("power", "speed", "frequency", "total_passes",
 
 def _recipe_dict(r):
     return {f: getattr(r, f) for f in _RECIPE_FIELDS}
+
+
+def _c(token, a=1.0):
+    """A theme colour as a QColor, at ``a`` opacity."""
+    c = QColor(token)
+    c.setAlphaF(a)
+    return c
+
+
+def _pen(token, width=1.5, a=1.0):
+    p = QPen(_c(token, a))
+    p.setCosmetic(True)
+    p.setWidthF(width)
+    return p
 
 
 class _Worker(QThread):
@@ -79,17 +90,16 @@ class _Worker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# The stencil on the bed
+# The stencil on the stage
 # ---------------------------------------------------------------------------
 
 class _Hole(QGraphicsPathItem):
     def __init__(self, index, path, parent):
         super().__init__(path, parent)
         self.index = index
-        self.setPen(QPen(Qt.NoPen))
         self.setAcceptHoverEvents(True)
         r = path.boundingRect()
-        self.setToolTip(f"Hole {index + 1}: {r.width():.2f} × {r.height():.2f} mm")
+        self.setToolTip(f"Hole {index + 1} · {r.width():.2f} × {r.height():.2f} mm")
 
 
 class _StencilItem(QGraphicsPathItem):
@@ -104,10 +114,8 @@ class _StencilItem(QGraphicsPathItem):
         for ring in (art.outline.exterior, *art.outline.interiors):
             outline.addPolygon(QPolygonF([QPointF(x, h - y) for x, y in ring.coords]))
         self.setPath(outline)
-        pen = QPen(_OUTLINE)
-        pen.setCosmetic(True)
-        pen.setWidth(2)
-        self.setPen(pen)
+        self.setPen(_pen(theme.OUTLINE, 2.2))
+        self.setBrush(QBrush(_c(theme.INK, 0.62)))
         self.holes = []
         for k, poly in enumerate(art.apertures):
             p = QPainterPath()
@@ -125,17 +133,22 @@ class _StencilItem(QGraphicsPathItem):
         s.addRect(self.path().boundingRect())
         return s
 
-    def paint_holes(self, selected, active=None, dim_unselected=False):
+    def paint_holes(self, selected, active=None):
+        dim = bool(selected) or active is not None
         for hole in self.holes:
             if active is not None and hole.index in active:
-                c = _HOLE_ACTIVE
+                fill, edge = _c(theme.TOOL), _c(theme.TOOL)
             elif hole.index in selected:
-                c = _HOLE_SELECTED
-            elif dim_unselected:
-                c = _HOLE_DIM
+                fill, edge = _c(theme.PATH_FAR, 0.85), _c(theme.PATH_FAR)
+            elif dim:
+                fill, edge = _c(theme.GHOST, 0.9), _c(theme.OUTLINE, 0.7)
             else:
-                c = _HOLE
-            hole.setBrush(QBrush(c))
+                fill, edge = _c(theme.PATH), _c(theme.PATH)
+            hole.setBrush(QBrush(fill))
+            pen = QPen(edge)
+            pen.setCosmetic(True)
+            pen.setWidthF(1.0)
+            hole.setPen(pen)
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged:
@@ -155,20 +168,22 @@ class _BedView(QGraphicsView):
     def __init__(self, scene):
         super().__init__(scene)
         self.setRenderHint(QPainter.Antialiasing)
-        self.setBackgroundBrush(QColor(28, 28, 28))
+        self.setBackgroundBrush(QColor(theme.INK))
+        self.setFrameShape(QFrame.NoFrame)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._fitted = True
         self.select_mode = False
         self.rubberBandChanged.connect(self._band)
         self._last_band = QRectF()
+        self._pan = None
 
     def fit(self):
         self._fitted = True
         self.resetTransform()
-        self.fitInView(QRectF(-12, -12, _FIELD + 24, _FIELD + 24), Qt.KeepAspectRatio)
+        self.fitInView(QRectF(-16, -16, _FIELD + 26, _FIELD + 26), Qt.KeepAspectRatio)
 
     def zoom(self, f):
         self._fitted = False
@@ -181,12 +196,26 @@ class _BedView(QGraphicsView):
             self.fit()
 
     def wheelEvent(self, e):
-        self.zoom(1.25 if e.angleDelta().y() > 0 else 0.8)
+        self.zoom(1.2 if e.angleDelta().y() > 0 else 1 / 1.2)
 
     def mouseDoubleClickEvent(self, e):
         self.fit()
 
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MiddleButton:     # middle drag pans
+            self._pan = e.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
+        super().mousePressEvent(e)
+
     def mouseMoveEvent(self, e):
+        if self._pan is not None:
+            d = e.position() - self._pan
+            self._pan = e.position()
+            self._fitted = False
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - d.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - d.y())
+            return
         self.moved.emit(self.mapToScene(e.position().toPoint()))
         super().mouseMoveEvent(e)
 
@@ -215,10 +244,14 @@ class _BedView(QGraphicsView):
             self._last_band = self.mapToScene(rect).boundingRect()
 
     def mouseReleaseEvent(self, e):
+        if self._pan is not None and e.button() == Qt.MiddleButton:
+            self._pan = None
+            self.unsetCursor()
+            return
         band = self._last_band
         self._last_band = QRectF()
         super().mouseReleaseEvent(e)
-        if self.select_mode:
+        if self.select_mode and e.button() == Qt.LeftButton:
             add = bool(e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
             if band.width() > 0.3 or band.height() > 0.3:
                 self.boxed.emit(band, add)
@@ -228,50 +261,61 @@ class _BedView(QGraphicsView):
 
 
 # ---------------------------------------------------------------------------
-# Small widgets
+# Small parts
 # ---------------------------------------------------------------------------
 
-def _spin(value, lo, hi, step, decimals=2, suffix=" mm"):
+def _spin(value, lo, hi, step, decimals=2, suffix=""):
     s = QDoubleSpinBox()
     s.setRange(lo, hi)
     s.setDecimals(decimals)
     s.setSingleStep(step)
     s.setValue(value)
     s.setKeyboardTracking(False)
-    s.setSuffix(suffix)
-    return s
-
-
-def _ispin(value, lo, hi, suffix=""):
-    s = QSpinBox()
-    s.setRange(lo, hi)
-    s.setValue(value)
     if suffix:
         s.setSuffix(suffix)
     return s
 
 
-def _tool(text, tip, on, checkable=False):
-    b = QToolButton()
-    b.setText(text)
-    b.setToolTip(tip)
-    b.setCheckable(checkable)
-    b.setToolButtonStyle(Qt.ToolButtonTextOnly)
-    b.setCursor(Qt.PointingHandCursor)
-    (b.toggled if checkable else b.clicked).connect(on)
-    return b
+def _ispin(value, lo, hi):
+    s = QSpinBox()
+    s.setRange(lo, hi)
+    s.setValue(value)
+    return s
 
 
-class _Card(QFrame):
-    def __init__(self, title):
-        super().__init__()
-        self.setObjectName("card")
-        self.setStyleSheet("#card { border: 1px solid rgba(255,255,255,0.10);"
-                           " border-radius: 6px; }")
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(10, 8, 10, 10)
-        self.body.setSpacing(6)
-        self.body.addWidget(widgets.eyebrow(title))
+def _row(*items, gap=None):
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(theme.GAP_S if gap is None else gap)
+    for it in items:
+        if it is None:
+            h.addStretch(1)
+        elif isinstance(it, tuple):
+            h.addWidget(it[0], it[1])
+        else:
+            h.addWidget(it)
+    return w
+
+
+class _Legend(QFrame):
+    """The stage's key, in its corner, as the main stage has one."""
+
+    def __init__(self, entries, parent=None):
+        super().__init__(parent)
+        self.setObjectName("cardQuiet")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 8, 12, 8)
+        v.setSpacing(3)
+        for token, text in entries:
+            sw = QLabel()
+            sw.setFixedSize(12, 3)
+            sw.setStyleSheet(f"background: {token}; border-radius: 1px;")
+            t = widgets.micro(text)
+            t.setStyleSheet(f"color: {theme.TEXT_3}; background: transparent;")
+            r = _row(sw, t, None, gap=7)
+            r.setStyleSheet("background: transparent;")
+            v.addWidget(r)
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +325,7 @@ class _Card(QFrame):
 class StencilLaserDialog(QDialog):
     """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork`."""
 
-    def __init__(self, art, parent=None, laser=None):
+    def __init__(self, art, parent=None, laser=None, name="stencil"):
         super().__init__(parent)
         self.base_art = art
         self.turns = 0
@@ -290,19 +334,24 @@ class StencilLaserDialog(QDialog):
         self._cal = None
         self._worker = None
         self._syncing = False
+        self._syncing_recipe = False
         self.selected = set()
         self._job = None
+        self._zone_holes = []
         self._focus_point = None            # None: follow the stencil's middle
         self._bed_rgb = None
-        self.setWindowTitle("xTool F1 Ultra · solder paste stencil")
-        self.resize(1360, 880)
+        self.setWindowTitle("xTool F1 Ultra — solder paste stencil")
+        self.resize(1400, 900)
+        self.setStyleSheet(f"QDialog {{ background: {theme.BASE}; }}")
         cfg = QSettings(*_SETTINGS)
 
-        # -- the bed -----------------------------------------------------
-        self.scene = QGraphicsScene(-14, -14, _FIELD + 28, _FIELD + 28)
+        # -- the stage ---------------------------------------------------
+        self.scene = QGraphicsScene(-18, -18, _FIELD + 30, _FIELD + 30)
         self._bg = self.scene.addPixmap(self._grid_pixmap())
         self._bg.setScale(1 / _PX_PER_MM)
         self._bg.setZValue(-10)
+        edge = self.scene.addRect(QRectF(0, 0, _FIELD, _FIELD), _pen(theme.BED_EDGE, 1))
+        edge.setZValue(-9)
         self._add_rulers()
         self._focus_mark = self._make_focus_mark()
         self.item = None
@@ -311,223 +360,255 @@ class StencilLaserDialog(QDialog):
         self.view.nudge.connect(self._nudge)
         self.view.context.connect(self._context)
         self.view.boxed.connect(self._boxed)
+        self.legend = _Legend([(theme.PATH, "paste hole"),
+                               (theme.PATH_FAR, "selected"),
+                               (theme.TOOL, "cutting now"),
+                               (theme.PROBE, "focus point"),
+                               (theme.OUTLINE, "board edge")], self.view)
 
-        # -- toolbar -----------------------------------------------------
-        bar = QWidget()
-        tb = QHBoxLayout(bar)
-        tb.setContentsMargins(0, 0, 0, 0)
-        tb.setSpacing(4)
-        self.photo_btn = _tool("📷 Photo", "Take a picture of the bed", self.take_photo)
-        self.focus_btn = _tool("◎ Autofocus", "Measure the height under the pink "
-                               "cross with the blue dot and move the head",
-                               lambda: self.autofocus())
-        self.rot_l = _tool("Turn ◂", "Turn the stencil a quarter anticlockwise",
-                           lambda: self.rotate(-1))
-        self.rot_r = _tool("Turn ▸", "Turn the stencil a quarter clockwise",
-                           lambda: self.rotate(1))
-        self.select_btn = _tool("⬚ Select holes", "Click holes or drag a box; "
-                                "Ctrl or Shift adds. Cut then cuts only those.",
-                                self._select_mode, checkable=True)
-        self.all_btn = _tool("All", "Select every hole", self.select_all)
-        self.none_btn = _tool("None", "Clear the selection", self.select_none)
-        zin = _tool("＋", "Zoom in", lambda: self.view.zoom(1.25))
-        zout = _tool("－", "Zoom out", lambda: self.view.zoom(0.8))
-        fit = _tool("⤢ Fit", "Show the whole bed", self.view.fit)
-        for w in (self.photo_btn, self.focus_btn, self._sep(), self.rot_l,
-                  self.rot_r, self._sep(), self.select_btn, self.all_btn,
-                  self.none_btn):
-            tb.addWidget(w)
-        tb.addStretch(1)
-        for w in (zout, zin, fit):
-            tb.addWidget(w)
+        # -- header --------------------------------------------------------
+        header = QFrame()
+        header.setObjectName("header")
+        header.setStyleSheet(f"QFrame#header {{ background: {theme.PANEL};"
+                             f" border-bottom: 1px solid {theme.RULE}; }}")
+        hh = QHBoxLayout(header)
+        hh.setContentsMargins(theme.GAP_M, theme.GAP_S, theme.GAP_M, theme.GAP_S)
+        hh.setSpacing(theme.GAP_S)
+        brand = QLabel("XTOOL F1 ULTRA")
+        brand.setFont(theme.font("label"))
+        brand.setStyleSheet(f"color: {theme.TEXT_3};")
+        self.mode = widgets.Segmented([
+            ("move", "Move", "Drag, nudge with the arrow keys, turn"),
+            ("select", "Select holes", "Click holes or drag a box; Ctrl or Shift "
+                                       "adds. Cut then cuts only those.")], "move")
+        self.mode.changed.connect(lambda k: self._select_mode(k == "select"))
+        self.photo_btn = widgets.button("Photo", on=self.take_photo,
+                                        tip="Take a picture of the bed")
+        self.focus_btn = widgets.button(
+            "Autofocus", on=lambda: self.autofocus(),
+            tip="Measure the height under the focus point with the blue dot "
+                "and move the head")
+        self.rot_l = widgets.button("Turn left", on=lambda: self.rotate(-1),
+                                    tip="A quarter turn anticlockwise")
+        self.rot_r = widgets.button("Turn right", on=lambda: self.rotate(1),
+                                    tip="A quarter turn clockwise")
+        self.all_btn = widgets.button("All", kind="ghost", on=self.select_all)
+        self.none_btn = widgets.button("None", kind="ghost", on=self.select_none)
+        fit = widgets.button("Fit", on=self.view.fit, tip="Show the whole bed")
+        self.link = widgets.Chip("Laser not asked yet", "idle")
+        for w in (brand, widgets.vrule(), self.photo_btn, self.focus_btn,
+                  widgets.vrule(), self.mode, self.all_btn, self.none_btn,
+                  widgets.vrule(), self.rot_l, self.rot_r, fit):
+            hh.addWidget(w)
+        hh.addStretch(1)
+        hh.addWidget(self.link)
 
-        # -- status bar --------------------------------------------------
-        self.cursor_lbl = QLabel("X —  Y —")
-        self.laser_lbl = QLabel("Laser: not asked yet")
-        self.sel_lbl = QLabel("")
-        sb = QWidget()
-        sbl = QHBoxLayout(sb)
-        sbl.setContentsMargins(4, 0, 4, 0)
-        for w in (self.cursor_lbl, self.sel_lbl):
-            w.setFont(theme.font("small"))
-            sbl.addWidget(w)
-            sbl.addSpacing(18)
-        sbl.addStretch(1)
-        self.laser_lbl.setFont(theme.font("small"))
-        sbl.addWidget(self.laser_lbl)
-
-        # -- cards -------------------------------------------------------
+        # -- inspector -----------------------------------------------------
         panel = QWidget()
         pv = QVBoxLayout(panel)
-        pv.setContentsMargins(0, 0, 0, 0)
-        pv.setSpacing(10)
+        pv.setContentsMargins(theme.GAP_L, theme.GAP_M, theme.GAP_L, theme.GAP_L)
+        pv.setSpacing(theme.GAP_L)
 
-        c = _Card("Stencil")
-        w, h = art.size
-        self.size_lbl = widgets.head("")
-        c.body.addWidget(self.size_lbl)
-        c.body.addWidget(widgets.hint(
-            f"{'Mirrored' if art.mirrored else 'Not mirrored'} · kerf {art.kerf:g} mm"))
+        head = QWidget()
+        hv = QVBoxLayout(head)
+        hv.setContentsMargins(0, 0, 0, 0)
+        hv.setSpacing(2)
+        hv.addWidget(widgets.eyebrow("Step"))
+        t = QLabel("Cut the stencil")
+        t.setFont(theme.font("sub"))
+        hv.addWidget(t)
+        pv.addWidget(head)
+
+        s = widgets.Section("The stencil")
+        self.name_lbl = QLabel(name)
+        self.name_lbl.setFont(theme.font("sub"))
+        s.add(self.name_lbl)
+        self.size_lbl = widgets.hint("")
+        s.add(self.size_lbl)
         for msg in art.warnings():
             n = widgets.hint(msg)
             n.setStyleSheet(f"color: {theme.CAUTION};")
-            c.body.addWidget(n)
-        self.x = _spin(float(cfg.value("x", 60.0)), -50, _FIELD, 0.1)
-        self.y = _spin(float(cfg.value("y", 60.0)), -50, _FIELD, 0.1)
+            s.add(n)
+        self.x = _spin(float(cfg.value("x", 60.0)), -50, _FIELD, 0.1, suffix=" mm")
+        self.y = _spin(float(cfg.value("y", 60.0)), -50, _FIELD, 0.1, suffix=" mm")
         self.x.valueChanged.connect(self._typed)
         self.y.valueChanged.connect(self._typed)
-        c.body.addWidget(widgets.Field("X", self.x))
-        c.body.addWidget(widgets.Field("Y", self.y))
-        self.turn_lbl = widgets.hint("")
-        c.body.addWidget(self.turn_lbl)
-        pv.addWidget(c)
+        s.add(widgets.Field("X", self.x))
+        s.add(widgets.Field("Y", self.y, help="The outline's top-left corner, in "
+                                              "the laser's mm. Drag it, use the "
+                                              "arrow keys, or right-click the bed."))
+        pv.addWidget(s)
 
-        c = _Card("Focus")
-        self.focus_note = widgets.body("Not measured yet.")
-        c.body.addWidget(self.focus_note)
-        self.thickness = _spin(float(cfg.value("thickness", 4.1)), 0, 137, 0.1)
-        self.set_focus_btn = widgets.button("Set", on=self.set_thickness)
-        trow = QWidget()
-        th = QHBoxLayout(trow)
-        th.setContentsMargins(0, 0, 0, 0)
-        th.addWidget(widgets.Field("Thickness", self.thickness), 1)
-        th.addWidget(self.set_focus_btn)
-        c.body.addWidget(trow)
-        c.body.addWidget(widgets.hint("XCS's thickness; Set moves the head to it + 8 mm."))
-        pv.addWidget(c)
+        s = widgets.Section("Focus")
+        self.z_read = widgets.Readout("Head Z", "—")
+        self.t_read = widgets.Readout("Thickness", "—")
+        s.add(_row(self.z_read, self.t_read, None, gap=theme.GAP_L))
+        self.focus_note = widgets.hint("Autofocus measures at the cross: the "
+                                       "stencil's middle, on the factory's 10 mm "
+                                       "grid. Right-click the bed to measure "
+                                       "somewhere else.")
+        s.add(self.focus_note)
+        self.thickness = _spin(float(cfg.value("thickness", 4.1)), 0, 137, 0.1,
+                               suffix=" mm")
+        self.set_focus_btn = widgets.button("Set", on=self.set_thickness,
+                                            tip="Move the head to this thickness + 8 mm, "
+                                                "as XCS does")
+        s.add(_row((widgets.Field("By hand", self.thickness), 1), self.set_focus_btn))
+        pv.addWidget(s)
 
-        c = _Card("Recipe")
+        s = widgets.Section("Recipe")
         self.preset = QComboBox()
         self.preset.currentTextChanged.connect(self._load_preset)
-        prow = QWidget()
-        ph = QHBoxLayout(prow)
-        ph.setContentsMargins(0, 0, 0, 0)
-        ph.addWidget(self.preset, 1)
-        ph.addWidget(widgets.button("Save…", on=self.save_preset,
-                                    tip="Save these numbers as a named recipe"))
-        self.del_btn = widgets.button("Delete", on=self.delete_preset)
-        ph.addWidget(self.del_btn)
-        c.body.addWidget(prow)
+        self.save_btn = widgets.button("Save as…", on=self.save_preset)
+        self.del_btn = widgets.button("Delete", kind="ghost", on=self.delete_preset)
+        s.add(widgets.Field("Preset", self.preset))
+        s.add(_row(None, self.save_btn, self.del_btn))
         r = xtool.DEFAULT_RECIPE
-        self.power = _spin(r.power, 1, 100, 1, 0, " %")
-        self.speed = _spin(r.speed, 10, 5000, 10, 0, " mm/s")
-        self.freq = _spin(r.frequency, 1, 60, 1, 0, " kHz")
+        self.power = _spin(r.power, 1, 100, 1, 0)
+        self.speed = _spin(r.speed, 10, 5000, 10, 0)
+        self.freq = _spin(r.frequency, 1, 60, 1, 0)
         self.passes = _ispin(r.total_passes, 1, 300)
         self.burst = _ispin(r.passes_per_burst, 1, 50)
-        self.rest = _spin(r.rest_s, 0, 120, 1, 0, " s")
+        self.rest = _spin(r.rest_s, 0, 120, 1, 0)
         self.zones = _ispin(r.zones, 1, 12)
-        self.mark = QCheckBox("Mark the outline afterwards")
+        self.mark = QCheckBox("Mark the board outline afterwards")
         self.mark.setChecked(True)
-        grid = [("Power", self.power), ("Speed", self.speed), ("Frequency", self.freq),
-                ("Passes", self.passes), ("Per burst", self.burst),
-                ("Rest", self.rest), ("Zones", self.zones)]
-        for name, wdg in grid:
-            c.body.addWidget(widgets.Field(name, wdg))
-        c.body.addWidget(self.mark)
-        self.recipe_lbl = widgets.hint("")
-        c.body.addWidget(self.recipe_lbl)
-        for wdg in (self.power, self.speed, self.freq, self.passes, self.burst,
-                    self.rest, self.zones):
+        for label, wdg, unit in (("Power", self.power, "%"),
+                                 ("Speed", self.speed, "mm/s"),
+                                 ("Frequency", self.freq, "kHz"),
+                                 ("Passes", self.passes, "per hole"),
+                                 ("Per burst", self.burst, "passes"),
+                                 ("Rest", self.rest, "s"),
+                                 ("Zones", self.zones, "")):
+            s.add(widgets.Field(label, wdg, unit=unit))
             wdg.valueChanged.connect(self._recipe_changed)
+        s.add(self.mark)
         self.mark.toggled.connect(self._recipe_changed)
-        pv.addWidget(c)
-
-        c = _Card("Run")
-        self.trace_btn = widgets.button(
-            "Show where", on=self.trace,
-            tip="The blue diode round the outline, faint enough not to mark steel.")
-        self.cut_btn = widgets.button("Cut", kind="primary", on=self.cut)
-        self.stop_btn = widgets.button("Stop", kind="stop", on=self.stop)
-        row = QWidget()
-        rh = QHBoxLayout(row)
-        rh.setContentsMargins(0, 0, 0, 0)
-        rh.addWidget(self.trace_btn)
-        rh.addWidget(self.cut_btn)
-        c.body.addWidget(row)
-        c.body.addWidget(self.stop_btn)
-        self.bar = QProgressBar()
-        self.bar.setVisible(False)
-        self.progress_lbl = widgets.hint("")
-        self.status = widgets.body("")
-        self.photo_after = QCheckBox("Take a photo when it is done")
-        self.photo_after.setChecked(True)
-        for wdg in (self.photo_after, self.bar, self.progress_lbl, self.status):
-            c.body.addWidget(wdg)
-        pv.addWidget(c)
+        self.recipe_lbl = widgets.hint("")
+        s.add(self.recipe_lbl)
+        pv.addWidget(s)
         pv.addStretch(1)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(panel)
-        scroll.setFixedWidth(360)
+        scroll.setFixedWidth(_INSPECTOR_W)
+        scroll.setObjectName("inspector")
+        scroll.setStyleSheet(f"QScrollArea#inspector {{ background: {theme.PANEL};"
+                             f" border-left: 1px solid {theme.RULE}; }}")
+        panel.setStyleSheet(f"background: {theme.PANEL};")
 
-        left = QVBoxLayout()
-        left.addWidget(bar)
-        left.addWidget(self.view, 1)
-        main = QHBoxLayout()
-        main.addLayout(left, 1)
-        main.addWidget(scroll)
+        # -- the bar along the bottom ----------------------------------------
+        foot = QFrame()
+        foot.setObjectName("foot")
+        foot.setStyleSheet(f"QFrame#foot {{ background: {theme.PANEL};"
+                           f" border-top: 1px solid {theme.RULE}; }}")
+        fh = QHBoxLayout(foot)
+        fh.setContentsMargins(theme.GAP_M, theme.GAP_S + 2, theme.GAP_M, theme.GAP_S + 2)
+        fh.setSpacing(theme.GAP_L)
+        self.cursor_read = widgets.Readout("Cursor", "—", width=170)
+        self.sel_read = widgets.Readout("Holes", "—", width=110)
+        self.time_read = widgets.Readout("Estimate", "—", width=110)
+        mid = QWidget()
+        mid.setStyleSheet("background: transparent;")
+        mv = QVBoxLayout(mid)
+        mv.setContentsMargins(0, 0, 0, 0)
+        mv.setSpacing(4)
+        self.status = QLabel("")
+        self.status.setFont(theme.font("small"))
+        self.status.setWordWrap(True)
+        self.bar = QProgressBar()
+        self.bar.setTextVisible(False)
+        self.bar.setFixedHeight(4)
+        self.bar.setVisible(False)
+        mv.addWidget(self.status)
+        mv.addWidget(self.bar)
+        self.photo_after = QCheckBox("Photo when done")
+        self.photo_after.setChecked(True)
+        self.trace_btn = widgets.button(
+            "Show where", on=self.trace,
+            tip="The blue diode round the outline, faint enough not to mark steel")
+        self.cut_btn = widgets.button("Cut", kind="primary", on=self.cut)
+        self.cut_btn.setMinimumWidth(170)
+        self.stop_btn = widgets.button("STOP", kind="stop", on=self.stop)
+        self.stop_btn.setMinimumWidth(112)
+        for w in (self.cursor_read, self.sel_read, self.time_read, widgets.vrule()):
+            fh.addWidget(w)
+        fh.addWidget(mid, 1)
+        for w in (self.photo_after, self.trace_btn, self.cut_btn, self.stop_btn):
+            fh.addWidget(w)
+
+        # -- assemble --------------------------------------------------------
+        middle = QHBoxLayout()
+        middle.setContentsMargins(0, 0, 0, 0)
+        middle.setSpacing(0)
+        middle.addWidget(self.view, 1)
+        middle.addWidget(scroll)
         outer = QVBoxLayout(self)
-        outer.addLayout(main, 1)
-        outer.addWidget(sb)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(header)
+        outer.addLayout(middle, 1)
+        outer.addWidget(foot)
 
+        # A dialog makes its first button the default and rings it; nothing on
+        # this page should fire on Enter.
+        from PySide6.QtWidgets import QPushButton
+        for b in self.findChildren(QPushButton):
+            b.setAutoDefault(False)
+            b.setDefault(False)
         self._fill_presets(cfg.value("preset", next(iter(BUILTIN_PRESETS))))
         self._build_item()
         self._busy(False)
 
     # -- the bed picture -------------------------------------------------
     @staticmethod
-    def _sep():
-        f = QFrame()
-        f.setFrameShape(QFrame.VLine)
-        f.setStyleSheet("color: rgba(255,255,255,0.15);")
-        return f
-
-    @staticmethod
     def _grid_pixmap():
         n = int(_FIELD * _PX_PER_MM)
         img = QImage(n, n, QImage.Format_RGB888)
-        img.fill(QColor(62, 62, 62))
+        img.fill(QColor(theme.BED))
         pm = QPixmap.fromImage(img)
         p = QPainter(pm)
-        p.setPen(QPen(QColor(88, 88, 88), 1))
         for k in range(0, int(_FIELD) + 1, 10):
+            p.setPen(QPen(QColor(theme.GRID_10 if k % 50 == 0 else theme.GRID), 1))
             p.drawLine(k * _PX_PER_MM, 0, k * _PX_PER_MM, n)
             p.drawLine(0, k * _PX_PER_MM, n, k * _PX_PER_MM)
         p.end()
         return pm
 
     def _add_rulers(self):
-        pen = QPen(QColor(150, 150, 150))
-        pen.setCosmetic(True)
-        font = QFont()
-        font.setPointSize(8)
+        pen = _pen(theme.TEXT_4, 1)
+        font = theme.font("micro", mono=True)
         for k in range(0, int(_FIELD) + 1, 10):
-            long = k % 50 == 0
-            t = 4 if long else 2
+            t = 3.5 if k % 50 == 0 else 2
             self.scene.addLine(k, -t, k, 0, pen)
             self.scene.addLine(-t, k, 0, k, pen)
             if k % 20 == 0:
-                for x, y in ((k, -13), (-13, k)):
+                for x, y in ((k - 2, -11), (-14, k - 2)):
                     lbl = QGraphicsSimpleTextItem(str(k))
                     lbl.setFont(font)
-                    lbl.setBrush(QColor(170, 170, 170))
+                    lbl.setBrush(QColor(theme.TEXT_3))
                     lbl.setFlag(QGraphicsItem.ItemIgnoresTransformations)
                     lbl.setPos(x, y)
                     self.scene.addItem(lbl)
 
     def _make_focus_mark(self):
         p = QPainterPath()
-        p.moveTo(-3, 0)
-        p.lineTo(3, 0)
-        p.moveTo(0, -3)
-        p.lineTo(0, 3)
-        p.addEllipse(QPointF(0, 0), 1.6, 1.6)
-        pen = QPen(_FOCUS)
-        pen.setCosmetic(True)
-        pen.setWidth(2)
-        item = self.scene.addPath(p, pen)
+        p.moveTo(-3.5, 0)
+        p.lineTo(-1.2, 0)
+        p.moveTo(1.2, 0)
+        p.lineTo(3.5, 0)
+        p.moveTo(0, -3.5)
+        p.lineTo(0, -1.2)
+        p.moveTo(0, 1.2)
+        p.lineTo(0, 3.5)
+        p.addEllipse(QPointF(0, 0), 2.0, 2.0)
+        halo = self.scene.addPath(p, _pen(theme.INK, 5.0, 0.7))
+        item = self.scene.addPath(p, _pen(theme.PROBE, 2.4))
+        halo.setParentItem(item)
+        halo.setPos(0, 0)
+        halo.setFlag(QGraphicsItem.ItemStacksBehindParent)
         item.setZValue(20)
         item.setToolTip("Autofocus measures here (the factory's 10 mm grid)")
         return item
@@ -537,6 +618,20 @@ class StencilLaserDialog(QDialog):
         h, w = rgb.shape[:2]
         img = QImage(rgb.data, w, h, w * 3, QImage.Format_RGB888).copy()
         self._bg.setPixmap(QPixmap.fromImage(img))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place_legend()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._place_legend()
+        self.view.setFocus()            # the arrow keys move the stencil at once
+
+    def _place_legend(self):
+        self.legend.adjustSize()
+        vw, vh = self.view.width(), self.view.height()
+        self.legend.move(vw - self.legend.width() - 14, vh - self.legend.height() - 14)
 
     # -- the stencil -------------------------------------------------------
     def _build_item(self):
@@ -550,9 +645,11 @@ class StencilLaserDialog(QDialog):
         self.item.setPos(*keep)
         self._syncing = False
         w, h = self.art.size
-        self.size_lbl.setText(f"{len(self.art.apertures)} holes · {w:.1f} × {h:.1f} mm")
-        self.turn_lbl.setText(f"Turned {90 * self.turns}° clockwise" if self.turns
-                              else "As drawn")
+        turned = f" · turned {90 * self.turns}°" if self.turns else ""
+        self.size_lbl.setText(
+            f"{len(self.art.apertures)} holes · {w:.1f} × {h:.1f} mm · "
+            f"{'mirrored' if self.art.mirrored else 'not mirrored'} · kerf "
+            f"{self.art.kerf:g} mm{turned}")
         self._paint()
         self._place_focus_mark()
 
@@ -610,7 +707,7 @@ class StencilLaserDialog(QDialog):
         self._focus_mark.setPos(*self.focus_point())
 
     def _cursor(self, p):
-        self.cursor_lbl.setText(f"X {p.x():7.2f}   Y {p.y():7.2f} mm")
+        self.cursor_read.set(f"{p.x():6.1f}  {p.y():6.1f}")
 
     def _context(self, p, global_pos):
         m = QMenu(self)
@@ -637,7 +734,7 @@ class StencilLaserDialog(QDialog):
         self.view.set_select_mode(on)
         if self.item is not None:
             self.item.setFlag(QGraphicsItem.ItemIsMovable, not on)
-            self.item.setCursor(Qt.ArrowCursor if on else Qt.OpenHandCursor)
+            self.item.setCursor(Qt.CrossCursor if on else Qt.OpenHandCursor)
         self._paint()
 
     def _boxed(self, rect, add):
@@ -646,12 +743,11 @@ class StencilLaserDialog(QDialog):
         if not add:
             self.selected.clear()
         hit = set()
+        point = rect.width() == 0 and rect.height() == 0
         for hole in self.item.holes:
             r = hole.mapRectToScene(hole.path().boundingRect())
-            if rect.width() == 0 and rect.height() == 0:
-                if r.contains(rect.topLeft()):
-                    hit.add(hole.index)
-            elif rect.intersects(r):
+            if (r.adjusted(-0.3, -0.3, 0.3, 0.3).contains(rect.topLeft()) if point
+                    else rect.intersects(r)):
                 hit.add(hole.index)
         if add and len(hit) == 1 and hit <= self.selected:
             self.selected -= hit                  # a click on a picked hole drops it
@@ -670,11 +766,12 @@ class StencilLaserDialog(QDialog):
     def _paint(self, active=None):
         if self.item is None:
             return
-        self.item.paint_holes(self.selected, active,
-                              dim_unselected=bool(self.selected))
-        n = len(self.selected)
-        self.sel_lbl.setText(f"{n} hole{'' if n == 1 else 's'} selected" if n else "")
-        self.cut_btn.setText(f"Cut {n} selected" if n else "Cut")
+        self.item.paint_holes(self.selected, active)
+        n, total = len(self.selected), len(self.art.apertures)
+        self.sel_read.set(f"{n} / {total}" if n else f"{total}")
+        self.sel_read.set_label("Selected" if n else "Holes")
+        self.cut_btn.setText(f"Cut {n} selected" if n else "Cut the stencil")
+        self._estimate()
 
     # -- recipe and presets ------------------------------------------------
     def _presets(self):
@@ -717,13 +814,28 @@ class StencilLaserDialog(QDialog):
         self._recipe_changed()
 
     def _recipe_changed(self, *_a):
-        if getattr(self, "_syncing_recipe", False):
+        if self._syncing_recipe:
             return
         r = self.recipe()
         self.recipe_lbl.setText(
-            f"{r.rounds} rounds of {r.passes_per_burst} pass"
-            f"{'' if r.passes_per_burst == 1 else 'es'} per zone"
-            + (f", {r.rest_s:g} s rest after each burst" if r.rest_s else ""))
+            f"{r.rounds} round{'' if r.rounds == 1 else 's'} of "
+            f"{r.passes_per_burst} pass{'' if r.passes_per_burst == 1 else 'es'} "
+            f"per zone" + (f", {r.rest_s:g} s laser-off after each" if r.rest_s else ""))
+        self._estimate()
+
+    def _estimate(self):
+        if not hasattr(self, "time_read") or self.item is None:
+            return
+        try:
+            holes, _ = self._holes()
+            _, outline = xtool.stencil_paths(self.art, (0, 0))
+            outline = [[(x + 1, y + 1) for x, y in p] for p in outline]
+            holes = [[(x - self.x.value() + 1, y - self.y.value() + 1) for x, y in p]
+                     for p in holes]
+            secs = xtool.stencil_job(holes, outline, self._run_recipe()).seconds
+            self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
+        except ValueError:
+            self.time_read.set("—")
 
     def recipe(self):
         return xtool.Recipe(power=self.power.value(), speed=self.speed.value(),
@@ -733,8 +845,13 @@ class StencilLaserDialog(QDialog):
                             rest_s=self.rest.value(), zones=self.zones.value(),
                             mark_passes=1 if self.mark.isChecked() else 0)
 
+    def _run_recipe(self):
+        """A re-cut leaves the outline alone: it is marked already."""
+        r = self.recipe()
+        return replace(r, mark_passes=0) if self.selected else r
+
     def save_preset(self):
-        name, ok = QInputDialog.getText(self, "Save recipe", "Name:",
+        name, ok = QInputDialog.getText(self, "Save the recipe", "Name:",
                                         text=self.preset.currentText())
         name = name.strip()
         if not ok or not name:
@@ -742,7 +859,6 @@ class StencilLaserDialog(QDialog):
         if name in BUILTIN_PRESETS:
             return self._say(f"“{name}” is built in; pick another name.", warn=True)
         cfg = QSettings(*_SETTINGS)
-        _, saved_names = self._presets()
         try:
             saved = json.loads(cfg.value("presets", "{}"))
         except (TypeError, ValueError):
@@ -800,9 +916,16 @@ class StencilLaserDialog(QDialog):
         self.laser.lights(True)
         return cal.rectify(decode_jpeg(self.laser.snap()), _PX_PER_MM)
 
+    def _focused(self, z, how):
+        self.z_read.set(f"{z:.2f}")
+        self.t_read.set(f"{z - xtool.FOCUS_OFFSET:.2f}")
+        self.link.set(f"Laser · focus Z {z:.2f}", "live")
+        self.focus_note.setText(how)
+
     def take_photo(self):
         def shown(rgb):
             self.show_bed(rgb)
+            self.link.set("Laser connected", "live")
             return "Photo taken."
         self._start(lambda _p: self._photo(), "Taking a photo…", shown)
 
@@ -814,9 +937,7 @@ class StencilLaserDialog(QDialog):
 
         def done(z):
             self.thickness.setValue(z - xtool.FOCUS_OFFSET)
-            self.focus_note.setText(f"Z {z:.2f} · thickness {z - xtool.FOCUS_OFFSET:.2f} "
-                                    f"· measured at X{at[0]:g} Y{at[1]:g}")
-            self.laser_lbl.setText(f"Laser: focus Z {z:.2f}")
+            self._focused(z, f"Measured at X{at[0]:g} Y{at[1]:g} with the blue dot.")
             self._remember()
             return "In focus. Take a new photo to place the stencil."
         self._start(work, f"Autofocus at X{at[0]:g} Y{at[1]:g}…", done)
@@ -825,8 +946,7 @@ class StencilLaserDialog(QDialog):
         t = self.thickness.value()
 
         def done(z):
-            self.focus_note.setText(f"Z {z:.2f} · thickness {t:g} (typed)")
-            self.laser_lbl.setText(f"Laser: focus Z {z:.2f}")
+            self._focused(z, f"Set by hand to thickness {t:g}.")
             self._remember()
             return "Head moved."
         self._start(lambda _p: self.laser.focus(t), "Moving the head…", done)
@@ -843,17 +963,13 @@ class StencilLaserDialog(QDialog):
             self.laser.run(text)
             self.laser.wait(180)
         self._start(work, "Tracing the outline in blue…",
-                    lambda _r: "Traced. Drag the stencil if it was off.")
+                    lambda _r: "Traced. Move the stencil if it was off.")
 
     def cut(self):
         try:
             holes, owner = self._holes()
             _, outline = xtool.stencil_paths(self.art, self.origin())
-            recipe = self.recipe()
-            if self.selected:            # a re-cut: the outline is marked already
-                from dataclasses import replace
-                recipe = replace(recipe, mark_passes=0)
-            job = xtool.stencil_job(holes, outline, recipe)
+            job = xtool.stencil_job(holes, outline, self._run_recipe())
         except ValueError as e:
             return self._say(str(e), warn=True)
         self._remember()
@@ -875,19 +991,17 @@ class StencilLaserDialog(QDialog):
             z, rgb = res
             if rgb is not None:
                 self.show_bed(rgb)
-            self._paint()
             n = sum(job.zones)
             return (f"Cut at Z {z:.2f}: {n} hole{'' if n == 1 else 's'}, "
-                    f"{job.passes} passes. Push out any slugs; select any that "
-                    f"did not go through and cut them again.")
+                    f"{job.passes} passes. Push out any slugs; select the ones "
+                    f"that did not go through and cut them again.")
         what = f"{len(self.selected)} selected holes" if self.selected else "the stencil"
-        self._start(work, f"Cutting {what}, about {job.seconds / 60:.1f} min "
-                          f"({len(job.zones)} zones)…", done)
+        self._start(work, f"Cutting {what} in {len(job.zones)} zones…", done)
 
     def stop(self):
         try:
             self.laser.stop()
-            self._say("Stopped.")
+            self._say("Stopped.", warn=True)
         except xtool.LaserError as e:
             self._say(str(e), warn=True)
 
@@ -898,18 +1012,25 @@ class StencilLaserDialog(QDialog):
         if job is None:
             return
         left = max(job.seconds - t, 0)
+        self.time_read.set(f"{int(left // 60)}:{int(left % 60):02d}")
+        self.time_read.set_label("Left")
         where = job.at(t)
         if where is None:
-            text = "resting" if t < job.seconds else "finishing"
-            self._paint()
+            text = "Resting, laser off" if t < job.seconds else "Finishing"
+            self._paint_active(None)
         elif where[0] < 0:
-            text = "marking the outline"
-            self._paint()
+            text = "Marking the outline"
+            self._paint_active(None)
         else:
             zone, rnd = where
-            text = f"zone {zone + 1} of {len(job.zones)}, round {rnd + 1}"
-            self._paint(active=self._zone_holes[zone])
-        self.progress_lbl.setText(f"{text} · about {left:.0f} s left")
+            rounds = 1 + max((r for _a, _b, z, r in job.timeline if z >= 0), default=0)
+            text = f"Zone {zone + 1} of {len(job.zones)} · round {rnd + 1} of {rounds}"
+            self._paint_active(self._zone_holes[zone])
+        self.status.setText(text)
+
+    def _paint_active(self, active):
+        if self.item is not None:
+            self.item.paint_holes(self.selected, active)
 
     def _start(self, fn, text, done=None):
         self._say(text)
@@ -924,15 +1045,19 @@ class StencilLaserDialog(QDialog):
     def _done(self, msg, warn):
         self._busy(False)
         self.bar.setVisible(False)
-        self.progress_lbl.setText("")
         self._job = None
+        self.time_read.set_label("Estimate")
+        if warn:
+            self.link.set("Laser: no answer" if "answer" in msg else "Laser", "fail"
+                          if "answer" in msg else "warn")
         self._paint()
         self._say(msg, warn=warn)
 
     def _busy(self, on):
         for b in (self.photo_btn, self.focus_btn, self.set_focus_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
-                  self.select_btn, self.x, self.y):
+                  self.mode, self.all_btn, self.none_btn, self.x, self.y,
+                  self.preset, self.save_btn):
             b.setEnabled(not on)
         if self.item is not None:
             self.item.setFlag(QGraphicsItem.ItemIsMovable,
@@ -940,11 +1065,11 @@ class StencilLaserDialog(QDialog):
 
     def _say(self, text, warn=False):
         self.status.setText(text)
-        self.status.setStyleSheet(f"color: {theme.CAUTION};" if warn else "")
+        self.status.setStyleSheet(f"color: {theme.CAUTION if warn else theme.TEXT_2};")
 
     def closeEvent(self, e):
         if self._worker is not None and self._worker.isRunning():
-            self._say("The laser is still running: press Stop first.", warn=True)
+            self._say("The laser is still running: press STOP first.", warn=True)
             e.ignore()
             return
         super().closeEvent(e)
