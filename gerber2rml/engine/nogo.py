@@ -18,6 +18,149 @@ import math
 # clearance; this only keeps a turn from grazing its edge on rounding.
 CORNER_SPARE_MM = 0.3
 
+# A zone is either a box somebody drew by eye, ``(x0, y0, x1, y1)``, or one
+# of the lab's printed cam clamps, ``(cx, cy, d)``: a disc, from its model in
+# hardware/probe_bracket/hold_down.py. 26 mm across, 1.8 mm above the copper;
+# the thumbscrew (14.4 mm head, 5.5 mm off centre) stands inside that disc.
+# Its boss pushes against the sheet's edge, so its flat lip lies LIP mm in
+# over the copper - which is all of it the bit can reach.
+CLAMP_D_MM = 26.0
+CLAMP_LIP_MM = 2.0
+# The tool's edge is kept this far beyond a zone. A box drawn by eye gets
+# room for a millimetre or two of slack in the drawing; a clamp is its real
+# shape, set against the sheet's edge, so only the click along the edge is
+# a guess.
+NOGO_CLEAR_MM = 2.0
+CLAMP_CLEAR_MM = 1.0
+# A click this close to a sheet edge (either side) puts a clamp on that edge.
+CLAMP_SNAP_MM = 20.0
+
+
+def is_clamp(z):
+    """A clamp is ``(cx, cy, d)`` or, screwed into a bed hole,
+    ``(cx, cy, d, sx, sy)`` with the screw's centre."""
+    return len(z) in (3, 5)
+
+
+def zone_shape(z, grow):
+    """The shapely shape the tool's centre stays out of: zone ``z`` grown by
+    ``grow`` (the tool's radius plus a box's clearance). A clamp is grown
+    by its own, smaller, clearance instead."""
+    from shapely.geometry import Point, box
+    if is_clamp(z):
+        cx, cy, d = z[:3]
+        g = grow - NOGO_CLEAR_MM + CLAMP_CLEAR_MM
+        return Point(cx, cy).buffer(d / 2.0 + g, 64)
+    return box(z[0] - grow, z[1] - grow, z[2] + grow, z[3] + grow)
+
+
+def zone_bounds(z):
+    if is_clamp(z):
+        cx, cy, d = z[:3]
+        return (cx - d / 2.0, cy - d / 2.0, cx + d / 2.0, cy + d / 2.0)
+    return tuple(z)
+
+
+def zone_contains(z, x, y):
+    """Is (x, y) on zone ``z`` itself, not grown? For picking one."""
+    if is_clamp(z):
+        return math.hypot(x - z[0], y - z[1]) <= z[2] / 2.0
+    return z[0] <= x <= z[2] and z[1] <= y <= z[3]
+
+
+def normal(z):
+    """A zone as it is kept: a box with its corners in order, rounded."""
+    if is_clamp(z):
+        return tuple(round(v, 2) for v in z)
+    return (round(min(z[0], z[2]), 2), round(min(z[1], z[3]), 2),
+            round(max(z[0], z[2]), 2), round(max(z[1], z[3]), 2))
+
+
+CLAMP_CAM_MM = 5.5      # the screw off the clamp's centre (hold_down.CAM_E)
+# The click names the hole the clamp is screwed into when one is this near.
+HOLE_PICK_MM = 10.0
+
+
+def clamp_on_screw(screw, stock, click=None, d=CLAMP_D_MM, lip=CLAMP_LIP_MM,
+                   cam=CLAMP_CAM_MM):
+    """The clamp screwed into the bed hole at ``screw``: a list with its one
+    zone, ``(cx, cy, d, sx, sy)``.
+
+    It is a cam: its centre is ``cam`` mm off the screw, and it is turned
+    until its boss (``d - 2 lip`` across) meets the nearest edge of the
+    ``stock`` (x0, y0, x1, y1) - hardware/probe_bracket/hold_down.py,
+    ``clamp``. Two turns of it meet the edge, mirror images along it, and
+    only one holds: the thumbscrew is tightened clockwise and drags the cam
+    with it, so the clamp must sit where turning on clockwise drives it
+    harder into the sheet - the first touch going clockwise. The other
+    would be turned off the sheet by tightening (Mads, 2026-11-15). Seen
+    from above, machine Y to the back, that is the centre turned
+    anticlockwise of the line from the screw to the edge, so ``click``
+    picks nothing but the hole. A hole nearer the edge than the
+    cam lets the boss clear has the clamp turned fully away from the sheet;
+    one too far for the boss to reach it, fully towards it. With no stock
+    the clamp is centred on the screw: every way it could turn is within
+    ``cam`` of that, and the zone says so by being ``2 cam`` wider."""
+    sx, sy = screw
+    if stock is None:
+        return [normal((sx, sy, d + 2 * cam, sx, sy))]
+    boss = d / 2.0 - lip
+    x0, y0, x1, y1 = stock
+    # (reach, inward unit) for each edge the screw is beside and out past:
+    # reach is how far the edge is from the screw.
+    edges = [(x0 - sx, (1.0, 0.0), y0 - boss <= sy <= y1 + boss),
+             (sx - x1, (-1.0, 0.0), y0 - boss <= sy <= y1 + boss),
+             (y0 - sy, (0.0, 1.0), x0 - boss <= sx <= x1 + boss),
+             (sy - y1, (0.0, -1.0), x0 - boss <= sx <= x1 + boss)]
+    out = [(reach, u) for reach, u, beside in edges if beside and reach > 0]
+    if not out:
+        return [normal((sx, sy, d + 2 * cam, sx, sy))]
+    reach, (ux, uy) = min(out)
+    along = max(-cam, min(cam, reach - boss))   # centre's offset to the edge
+    side = math.sqrt(max(0.0, cam * cam - along * along))
+    # u turned a quarter anticlockwise: turning clockwise from that side
+    # carries the centre towards u, onto the sheet.
+    px, py = -uy, ux
+    bx, by = sx + ux * along, sy + uy * along
+    return [normal((bx + px * side, by + py * side, d, sx, sy))]
+
+
+def clamp_at(x, y, stock=None, holes=None, d=CLAMP_D_MM, lip=CLAMP_LIP_MM):
+    """The clamp zones for a click at (x, y): a list of ``(cx, cy, d...)``.
+
+    ``holes`` are the bed's screw holes [(x, y)]: with one within
+    :data:`HOLE_PICK_MM` of the click, the clamp is the one screwed in there
+    (:func:`clamp_on_screw`) - exact, because a clamp can only be where its
+    screw and the stock's edge let it. Otherwise, with the ``stock`` known
+    (x0, y0, x1, y1) and the click within :data:`CLAMP_SNAP_MM` of an edge,
+    it is set on that edge with ``lip`` mm over the copper, where along it
+    the click says. Elsewhere it is centred on the click."""
+    if holes:
+        hx, hy = min(holes, key=lambda h: math.hypot(h[0] - x, h[1] - y))
+        if math.hypot(hx - x, hy - y) <= HOLE_PICK_MM:
+            return clamp_on_screw((hx, hy), stock, (x, y), d, lip)
+    if stock is not None:
+        x0, y0, x1, y1 = stock
+        out = d / 2.0 - lip
+        edges = []
+        if y0 - CLAMP_SNAP_MM <= y <= y1 + CLAMP_SNAP_MM:
+            edges += [(abs(x - x0), 0, (x0 - out, y)),
+                      (abs(x - x1), 1, (x1 + out, y))]
+        if x0 - CLAMP_SNAP_MM <= x <= x1 + CLAMP_SNAP_MM:
+            edges += [(abs(y - y0), 2, (x, y0 - out)),
+                      (abs(y - y1), 3, (x, y1 + out))]
+        near = [e for e in edges if e[0] <= CLAMP_SNAP_MM]
+        if near:
+            _d, side, (cx, cy) = min(near)
+            # Along the edge it stays on the sheet: a clamp past a corner
+            # would hold nothing.
+            if side < 2:
+                cy = min(max(cy, y0), y1)
+            else:
+                cx = min(max(cx, x0), x1)
+            return [normal((cx, cy, d))]
+    return [normal((x, y, d))]
+
 
 def route(a, b, zones, inside=None, spare=CORNER_SPARE_MM):
     """The points to pass through between ``a`` and ``b``, in order.
@@ -50,8 +193,17 @@ def route(a, b, zones, inside=None, spare=CORNER_SPARE_MM):
     nodes = [a, b]
     for z in zones:
         x0, y0, x1, y1 = z.bounds
-        for x, y in ((x0 - spare, y0 - spare), (x1 + spare, y0 - spare),
-                     (x1 + spare, y1 + spare), (x0 - spare, y1 + spare)):
+        turns = [(x0 - spare, y0 - spare), (x1 + spare, y0 - spare),
+                 (x1 + spare, y1 + spare), (x0 - spare, y1 + spare)]
+        if z.area < 0.95 * (x1 - x0) * (y1 - y0):
+            # A clamp's disc: round it on an octagon drawn outside it, not
+            # out at the corners of its bounding square.
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            r = ((x1 - x0) / 2.0 + spare) / math.cos(math.pi / 8.0)
+            turns += [(cx + r * math.cos(k * math.pi / 4.0),
+                       cy + r * math.sin(k * math.pi / 4.0))
+                      for k in range(8)]
+        for x, y in turns:
             if inside is not None and not (inside[0] <= x <= inside[2]
                                            and inside[1] <= y <= inside[3]):
                 continue

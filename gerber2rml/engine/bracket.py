@@ -269,7 +269,7 @@ def path_hit(paths, rect, grow):
                 pts.append((m.x, m.y))
     if not pts:
         return None
-    zone = box(rect[0] - grow, rect[1] - grow, rect[2] + grow, rect[3] + grow)
+    zone = _zone(rect, grow)
     line = LineString(pts) if len(pts) > 1 else Point(pts[0])
     if not line.intersects(zone):
         return None
@@ -318,8 +318,9 @@ AVOID_SPARE_MM = 0.05
 
 
 def _zone(rect, grow):
-    from shapely.geometry import box
-    return box(rect[0] - grow, rect[1] - grow, rect[2] + grow, rect[3] + grow)
+    """A box grown by ``grow`` - or a clamp's disc (engine/nogo.py)."""
+    from gerber2rml.engine.nogo import zone_shape
+    return zone_shape(rect, grow)
 
 
 def _round(a, b, zones, inside, margin=0.6):

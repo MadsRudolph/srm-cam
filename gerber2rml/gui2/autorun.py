@@ -52,20 +52,23 @@ STATE_GLYPH = {"waiting": ("○", theme.TEXT_3),
 
 
 def nogo_to_text(zones):
-    """No-go zones as one settings string: ``x0,y0,x1,y1;...`` in mm."""
+    """No-go zones as one settings string, in mm: ``x0,y0,x1,y1`` for a box,
+    ``cx,cy,d`` for a clamp, joined by ``;``."""
     return ";".join(",".join("%.2f" % v for v in z) for z in zones)
 
 
 def nogo_from_text(raw):
     """The reverse of :func:`nogo_to_text`. A string that does not parse
     gives no zones for that entry rather than a zone in the wrong place."""
+    from gerber2rml.engine.nogo import normal
     zones = []
     for part in str(raw or "").split(";"):
         try:
-            x0, y0, x1, y1 = (float(v) for v in part.split(","))
+            vals = tuple(float(v) for v in part.split(","))
         except ValueError:
             continue
-        zones.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+        if len(vals) == 4 or (len(vals) in (3, 5) and vals[2] > 0):
+            zones.append(normal(vals))
     return zones
 
 
@@ -509,7 +512,7 @@ class AutoRunPage(inspector.Page):
         # How far in from the board's edge the surface is touched. Its own
         # setting because the right answer depends on how the stock is held:
         # 2 mm with tape, more with clamps on the edge of a board as big as
-        # its sheet. Kept with this PC, like the zones.
+        # its sheet. Kept with this PC.
         mrow = QWidget()
         mh = QHBoxLayout(mrow)
         mh.setContentsMargins(0, 0, 0, 0)
@@ -565,21 +568,28 @@ class AutoRunPage(inspector.Page):
 
         # What holds the stock down. The bracket is drawn because the app
         # knows its shape; a clamp is known only if somebody says where it
-        # is. Kept with this PC, like the bracket: the fixture does not move
-        # between boards.
-        self._nogo = nogo_from_text(workspace.setting("autorun/nogo", ""))
+        # is. Not kept between sessions: the clamps come off with every
+        # board, and yesterday's marks on the bed would be wrong today
+        # (Mads, 2026-11-15). The old saved setting is cleared once.
+        self._nogo = []
+        if workspace.setting("autorun/nogo", ""):
+            workspace.set_setting("autorun/nogo", "")
         nrow = QWidget()
         nh = QHBoxLayout(nrow)
         nh.setContentsMargins(0, 0, 0, 0)
         nh.setSpacing(theme.GAP_S)
         self.nogo_btn = widgets.button(
             "Mark a clamp (no-go zone)",
-            tip="While this is lit, dragging on the bed draws a box the bit "
-                "stays out of: no surface touch in it, no cut or move "
-                "through it, and a move that would cross it is led "
-                "round it. Draw one round every clamp, screw head or "
-                "knob that stands above the copper. The run keeps 2 mm "
-                "away from the box as drawn.")
+            tip="While this is lit, click the bed hole a clamp is screwed "
+                "into: the lab's printed cam clamp (26 mm, its screw 5.5 mm "
+                "off centre) is put there, turned clockwise onto the stock's "
+                "edge - the way tightening the thumbscrew presses it on - "
+                "with its 2 mm lip over the copper. Drag instead to draw a "
+                "box round anything else that stands above the copper. "
+                "The bit stays out of both: no surface touch in one, no "
+                "cut or move through one, and a move that would cross one "
+                "is led round it. It keeps 1 mm from a clamp and 2 mm from "
+                "a box.")
         self.nogo_btn.setCheckable(True)
         self.nogo_btn.toggled.connect(self._arm_nogo)
         self.nogo_clear_btn = widgets.button("Clear zones",
@@ -1625,7 +1635,6 @@ class AutoRunPage(inspector.Page):
         bracket's tongue, on the sheet, and with every touch that would land
         in a no-go zone moved to the nearest free spot. [] with levelling
         off or no board."""
-        from shapely.geometry import box
         ctl = self.ctl
         b = ctl.work_bounds() if ctl.state.board is not None else None
         if b is None or not self.level_chk.isChecked():
@@ -1637,9 +1646,9 @@ class AutoRunPage(inspector.Page):
             keepout=self._bracket.keepout() if self.bracket() else None,
             bit=bit,
             stock=(sx, sy, sx + sw, sy + sh) if self.no_cutout() else None)
+        from gerber2rml.engine.nogo import zone_shape
         g = bit / 2.0 + ar.NOGO_CLEAR_MM
-        zones = [box(z[0] - g, z[1] - g, z[2] + g, z[3] + g)
-                 for z in self._nogo]
+        zones = [zone_shape(z, g) for z in self._nogo]
         return [t for t in ar.level_targets(pts, zones) if t is not None]
 
     def _show_touches(self):
@@ -1663,11 +1672,27 @@ class AutoRunPage(inspector.Page):
         return list(self._nogo)
 
     def add_nogo(self, x0, y0, x1, y1):
-        z = (round(min(x0, x1), 2), round(min(y0, y1), 2),
-             round(max(x0, x1), 2), round(max(y0, y1), 2))
+        from gerber2rml.engine.nogo import normal
+        z = normal((x0, y0, x1, y1))
         if z[2] - z[0] < 0.5 or z[3] - z[1] < 0.5:
             return                  # a click, not a drag: no zone of nothing
         self._nogo.append(z)
+        self._save_nogo()
+
+    def add_clamp(self, x, y):
+        """A click on the bed while marking: one of the lab's cam clamps
+        (engine/nogo.py): screwed into the bed hole nearest the click and
+        turned against the nearest edge of the stock."""
+        from gerber2rml.engine import spoilboard
+        from gerber2rml.engine.nogo import clamp_at
+        st = getattr(self.ctl, "stock", None)
+        stock = (None if not st else
+                 (st[0], st[1], st[0] + st[2], st[1] + st[3]))
+        # Every hole in the plate, as the bed draws them - not only those a
+        # bracket screw may use: a clamp goes in the outer ring too.
+        g = spoilboard.measured_grid()
+        holes = [g.centre(i, j) for j in range(g.ny) for i in range(g.nx)]
+        self._nogo.extend(clamp_at(x, y, stock, holes))
         self._save_nogo()
 
     def _clear_nogo(self):
@@ -1682,7 +1707,8 @@ class AutoRunPage(inspector.Page):
             self._save_nogo()
 
     def on_nogo_picked(self, index, where):
-        """A zone was right-clicked on the bed: offer to delete it."""
+        """A zone was right-clicked on the bed: it is deleted, no questions -
+        one more click puts a clamp back."""
         if not 0 <= index < len(self._nogo):
             return
         if self._thread is not None and self.flip_btn.isHidden():
@@ -1691,20 +1717,11 @@ class AutoRunPage(inspector.Page):
             self.ctl.say("warn", "The run is using these zones. They can be "
                                  "changed while it waits at the flip.")
             return
-        if self._ask_delete_nogo(self._nogo[index], where):
-            self.remove_nogo(index)
-
-    def _ask_delete_nogo(self, z, where):
-        """The one-line menu under the pointer. True when it was chosen."""
-        from PySide6.QtWidgets import QMenu
-        menu = QMenu(self)
-        act = menu.addAction("Delete this no-go zone (%.0f × %.0f mm)"
-                             % (z[2] - z[0], z[3] - z[1]))
-        return menu.exec(where) is act
+        self.remove_nogo(index)
 
     def _save_nogo(self):
-        from gerber2rml.gui2 import workspace
-        workspace.set_setting("autorun/nogo", nogo_to_text(self._nogo))
+        """The zones changed: show them. They live only as long as this
+        session (see where ``_nogo`` is made)."""
         self._show_nogo()
 
     def _show_nogo(self):
@@ -1714,8 +1731,8 @@ class AutoRunPage(inspector.Page):
             "No zones. With clamps on the stock, mark each one: the surface "
             "probe touches 2 mm in from the board's edge, which is where "
             "clamps sit." if not n else
-            "%d no-go zone%s on this bed. The bit stays out, and 2 mm clear. "
-            "Right-click a zone to delete it."
+            "%d no-go zone%s on this bed. The bit stays out: 1 mm clear of "
+            "a clamp, 2 mm of a box. Right-click one to delete it."
             % (n, "" if n == 1 else "s"))
         self.ctl.stage.set_nogo(self._nogo)
         self._show_touches()

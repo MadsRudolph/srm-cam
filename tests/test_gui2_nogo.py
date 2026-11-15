@@ -1,8 +1,9 @@
 """No-go zones on the Run it page, and the copper check for a board left in
 the sheet.
 
-A zone is a box dragged round a clamp. It is kept with this PC (the fixture
-does not move between boards), drawn on the bed in its own layer, and handed
+A zone is a clamp clicked on its bed hole, or a box dragged round anything
+else. It lasts only as long as the session (the clamps come off with every
+board), is drawn on the bed in its own layer, and is handed
 to the run. The engine's side is in test_autorun_nogo.py."""
 from pathlib import Path
 
@@ -38,7 +39,33 @@ def test_zones_survive_the_settings_string():
     assert page_mod.nogo_from_text(page_mod.nogo_to_text(zones)) == zones
     assert page_mod.nogo_from_text("") == []
     # A mangled entry is dropped, not turned into a zone somewhere else.
-    assert page_mod.nogo_from_text("1,2,3;5,6,7,8") == [(5.0, 6.0, 7.0, 8.0)]
+    assert page_mod.nogo_from_text("1,2;5,6,7,8") == [(5.0, 6.0, 7.0, 8.0)]
+    # Three numbers are a clamp: centre and diameter.
+    assert page_mod.nogo_from_text("1,2,26") == [(1.0, 2.0, 26.0)]
+
+
+def test_a_click_while_marking_puts_a_clamp_on_the_stock_edge(win):
+    from gerber2rml.engine import nogo
+    page = win.autorun_page
+    page.nogo_btn.setChecked(True)
+    from gerber2rml.engine import spoilboard
+    # A bed hole 8 mm in front of the stock: the clamp's boss reaches it.
+    # An outer-ring hole: drawn on the bed, though no bracket screw uses it.
+    hx, hy = spoilboard.measured_grid().centre(8, 0)
+    win.stock = (hx - 50.0, hy + 8.0, 100.0, 60.0)
+    sx, sy, sw, sh = win.stock
+    win.stage.box_clicked.emit(hx + 3.0, hy)      # near the screw
+    (z,) = page.nogo()
+    assert nogo.is_clamp(z) and z[2] == nogo.CLAMP_D_MM
+    # In front of the sheet: turned clockwise onto it, so left of the screw.
+    assert z[0] < hx and z[3:] == pytest.approx((hx, hy))
+    assert z[1] + z[2] / 2 == pytest.approx(sy + nogo.CLAMP_LIP_MM, abs=0.01)
+    assert win.stage._nogo == [z]
+    assert win.stage.nogo_at((z[0], z[1])) == 0
+    # Without the button lit a click is nothing.
+    page.nogo_btn.setChecked(False)
+    win.stage.box_clicked.emit(sx + 10, sy + 1.0)
+    assert len(page.nogo()) == 1
 
 
 def test_a_box_dragged_while_the_button_is_lit_becomes_a_zone(win):
@@ -49,9 +76,8 @@ def test_a_box_dragged_while_the_button_is_lit_becomes_a_zone(win):
     assert page.nogo() == [(20.0, 10.0, 40.0, 30.0)]
     assert win.stage._nogo == [(20.0, 10.0, 40.0, 30.0)]
     assert "1 no-go zone" in page.nogo_lbl.text()
-    # Kept with this PC: the next window has it too.
-    assert page_mod.nogo_from_text(workspace.setting("autorun/nogo", "")) == [
-        (20.0, 10.0, 40.0, 30.0)]
+    # Not saved: the next session starts with none.
+    assert workspace.setting("autorun/nogo", "") == ""
 
 
 def test_a_box_dragged_without_the_button_is_not_a_zone(win):
@@ -195,29 +221,17 @@ def test_deleting_one_zone_leaves_the_others(win):
     page.remove_nogo(0)
     assert page.nogo() == [(60.0, 60.0, 80.0, 80.0)]
     assert win.stage._nogo == [(60.0, 60.0, 80.0, 80.0)]
-    assert page_mod.nogo_from_text(workspace.setting("autorun/nogo", "")) == [
-        (60.0, 60.0, 80.0, 80.0)]
     page.remove_nogo(7)                              # a stale index: nothing
     assert len(page.nogo()) == 1
 
 
-def test_a_right_click_on_a_zone_offers_to_delete_it(win, monkeypatch):
+def test_a_right_click_on_a_zone_deletes_it_without_asking(win):
     page = win.autorun_page
     page.add_nogo(10.0, 10.0, 30.0, 30.0)
-    asked = []
-    monkeypatch.setattr(page, "_ask_delete_nogo",
-                        lambda z, where: asked.append(z) or True)
+    page.add_nogo(60.0, 60.0, 80.0, 80.0)
     win.stage.nogo_picked.emit(0, None)
-    assert asked == [(10.0, 10.0, 30.0, 30.0)]
-    assert page.nogo() == []
-
-
-def test_a_right_click_dismissed_deletes_nothing(win, monkeypatch):
-    page = win.autorun_page
-    page.add_nogo(10.0, 10.0, 30.0, 30.0)
-    monkeypatch.setattr(page, "_ask_delete_nogo", lambda z, where: False)
-    win.stage.nogo_picked.emit(0, None)
-    assert len(page.nogo()) == 1
+    assert page.nogo() == [(60.0, 60.0, 80.0, 80.0)]
+    assert win.stage._nogo == [(60.0, 60.0, 80.0, 80.0)]
 
 
 # --- the checks say when work lies in a zone ----------------------------------
