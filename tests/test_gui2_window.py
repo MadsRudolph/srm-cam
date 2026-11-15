@@ -26,7 +26,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWidget, QLabel
 
-from gerber2rml.gui2 import dialogs, style, tier
+from gerber2rml.gui2 import dialogs, style, theme, tier
 from gerber2rml.gui2.window import MainWindow
 
 FIXT = Path(__file__).parent / "fixtures" / "mosfet_test"
@@ -530,7 +530,14 @@ def test_the_measure_page_fits_the_inspector(loaded):
     page = loaded.flipfit_page
     sw = page.flip.minimumSizeHint().width()
     others = [w.minimumSizeHint().width() for w in (page.fit_btn, page.drill_btn)]
-    assert sw <= max(others), "the flip switch is the widest thing on the page"
+    # Or no wider than the panel itself, which is the thing that matters.
+    # The comparison with the buttons alone depended on which fonts an
+    # earlier test had left installed: with the app's stylesheet the buttons
+    # are set in a condensed face and the switch is not, so on macOS the
+    # switch is 198 px against buttons of 185 - in a panel of 352.
+    room = loaded.inspector.width() - 2 * theme.GAP_L
+    assert sw <= max(max(others), room), \
+        "the flip switch is wider than the panel it sits in"
 
 
 def test_a_warning_toast_stays_until_dismissed(loaded):

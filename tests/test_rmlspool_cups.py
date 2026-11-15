@@ -72,8 +72,8 @@ def test_a_missing_tool_is_a_spool_error_not_a_crash():
 
 
 def test_pending_counts_only_this_queues_jobs():
-    out = ("SRM-20-12   marius   2048   fre 13 nov 16:01:02 2026\n"
-           "SRM-20-13   marius   1024   fre 13 nov 16:01:09 2026\n")
+    out = ("SRM-20-12   student  2048   fre 13 nov 16:01:02 2026\n"
+           "SRM-20-13   student  1024   fre 13 nov 16:01:09 2026\n")
     run = FakeRun({("lpstat", "-o", "SRM-20"): (0, out, "")})
     assert CupsPrinter("SRM-20", run=run).pending() == 2
 
@@ -107,7 +107,7 @@ class Queue:
                 return subprocess.CompletedProcess(argv, 0, b"", b"")
             return subprocess.CompletedProcess(argv, 1, b"",
                                                b"cancel: Forbidden")
-        out = "".join(f"SRM-20-{j} marius 10 now\n" for j in self.jobs)
+        out = "".join(f"SRM-20-{j} student 10 now\n" for j in self.jobs)
         return subprocess.CompletedProcess(argv, 0, out.encode(), b"")
 
 

@@ -125,6 +125,7 @@ class Stage(QWidget):
     pad_picked = Signal(float, float)            # clicked a pad to measure, mm
     stock_picked = Signal(float, float)          # clicked roughly on the stock
     bracket_moved = Signal(float, float)         # bracket dropped: its corner, mm
+    nogo_picked = Signal(int, object)            # right-clicked a zone: index, global pos
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,6 +162,7 @@ class Stage(QWidget):
         self._screws = []
         self._screw_grid = []
         self._regions = []
+        self._nogo = []                   # [(x0, y0, x1, y1)] mm, no-go zones
         self._stock = None                # (x, y, w, h) mm
         self._photo = None                # (QImage, (x0, y0, x1, y1)) in mm
         self._mesh = None                 # (QImage, rect, span) height map
@@ -396,6 +398,30 @@ class Stage(QWidget):
         self._regions = regions
         self._invalidate()
         self.update()
+
+    def set_nogo(self, zones):
+        """No-go zones: ``[(x0, y0, x1, y1), ...]`` in machine mm.
+
+        Their own list, not more ``regions``: Rework and the run's re-cut
+        boxes each replace those wholesale, and a clamp does not stop being
+        there because another page drew something.
+        """
+        zones = [tuple(z) for z in (zones or [])]
+        if zones == self._nogo:
+            return
+        self._nogo = zones
+        self._invalidate()
+        self.update()
+
+    def nogo_at(self, p):
+        """Index of the no-go zone under ``p`` (mm), the last drawn first -
+        that is the one on top - or None."""
+        x, y = (p.x(), p.y()) if hasattr(p, "x") else p
+        for i in range(len(self._nogo) - 1, -1, -1):
+            x0, y0, x1, y1 = self._nogo[i]
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return i
+        return None
 
     def set_level_mesh(self, image, rect, span):
         """The measured surface, as a heatmap over the board's footprint.
@@ -970,6 +996,13 @@ class Stage(QWidget):
         # and leave the pan armed with a closed-hand cursor.
         button = e.button()
         if button in (Qt.MiddleButton, Qt.RightButton):
+            # The right button pans. Pressed and let go on the spot it is a
+            # click, and on a no-go zone that click is "this one": the page
+            # offers to delete it. Four pixels of slack - a hand is not a
+            # tripod.
+            start = getattr(self, "_pan_start", None)
+            still = (start is not None and
+                     (e.position() - start).manhattanLength() <= 4)
             if self._panning:
                 self._panning = False
                 self._invalidate()
@@ -977,6 +1010,10 @@ class Stage(QWidget):
                 # A repaint, not just a cache drop: without it the last frame
                 # of the pan stayed on screen with a bare band down one edge.
                 self.update()
+            if button == Qt.RightButton and still:
+                i = self.nogo_at(self.to_mm(e.position()))
+                if i is not None:
+                    self.nogo_picked.emit(i, e.globalPosition().toPoint())
             return
         if button != Qt.LeftButton:
             return
@@ -1521,6 +1558,18 @@ class Stage(QWidget):
             p.drawText(c + QPointF(2, -4), m.name)
 
     def _paint_regions(self, p):
+        # No-go zones: filled heavier than a rework box and crossed corner
+        # to corner, so one is never mistaken for a place work will be done.
+        for (x0, y0, x1, y1) in self._nogo:
+            r = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
+            p.fillRect(r, theme.alpha(theme.DANGER, 0.28))
+            pen = QPen(QColor(theme.DANGER), 0)
+            pen.setCosmetic(True)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(r)
+            p.drawLine(r.topLeft(), r.bottomRight())
+            p.drawLine(r.topRight(), r.bottomLeft())
         for (x0, y0, x1, y1, colour) in self._regions:
             r = QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
             p.fillRect(r, theme.alpha(colour, 0.16))

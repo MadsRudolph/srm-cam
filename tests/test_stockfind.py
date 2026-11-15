@@ -190,13 +190,49 @@ def test_a_fast_drop_stops_on_copper_higher_than_it_was_told():
     assert m.pos[2] >= surface
 
 
-def test_with_no_known_height_it_still_drops_fast_on_firmware_that_stops():
+def test_with_no_known_height_there_is_no_fast_drop_at_all():
+    """It used to drop at the machine's rapid towards "the lab's usual"
+    copper height, relying on stop-on-touch. On 2026-11-15 a bit seated
+    further out than usual reached the copper first and was driven into it.
+    A height nobody measured is not somewhere to aim 19 mm/s."""
     m, surface, ser = _probe_port(0)
     said = []
-    stockfind.seek_surface(ser, 100000, 80000, note=said.append, hint_um=None)
-    assert any("Dropping fast" in s for s in said)
-    # One look, not one per 5.5 mm from the top.
-    assert sum("Looking for" in s for s in said) <= 2
+    assert stockfind.drop_to_hint(ser, None, note=said.append) is True
+    assert m.pos[2] == 0                       # it did not move
+    assert not any("Dropping fast" in s for s in said)
+    assert any("feeling down" in s for s in said)
+    # The copper is still found - step by step, from the top.
+    z = stockfind.seek_surface(ser, 100000, 80000, note=said.append,
+                               hint_um=None)
+    assert z == pytest.approx(surface, abs=50)
+    assert not any("Dropping fast" in s for s in said)
+
+
+def test_a_height_from_another_day_is_stopped_well_short_of():
+    """15 mm above, not 5: the bit may have been changed since."""
+    m, surface, ser = _probe_port(0)
+    assert stockfind.drop_to_hint(ser, surface)
+    assert m.pos[2] == surface + stockfind.STALE_ABOVE_UM
+
+
+def test_a_height_measured_in_this_session_is_dropped_close_to():
+    m, surface, ser = _probe_port(0)
+    assert stockfind.drop_to_hint(ser, surface, fresh=True)
+    assert m.pos[2] == surface + stockfind.HINT_ABOVE_UM
+
+
+def test_a_bit_10_mm_longer_than_last_time_is_not_reached_by_the_drop():
+    """The case that broke a bit, with a saved height: the copper is now
+    10 mm higher in machine Z than the height on file. The drop ends above
+    it, and the touch that follows finds it."""
+    m, surface, ser = _probe_port(0)
+    said = []
+    assert stockfind.drop_to_hint(ser, surface - 10000, note=said.append)
+    assert m.pos[2] > surface
+    assert not any("higher than expected" in s for s in said)
+    r = stockfind.touch_from_anywhere(ser, surface - 10000)
+    assert r is not None and r[2] * 1000 == pytest.approx(surface, abs=50)
+
 
 
 def test_older_firmware_with_no_known_height_does_not_drop_blind(monkeypatch):

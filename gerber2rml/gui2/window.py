@@ -520,6 +520,7 @@ class MainWindow(QMainWindow):
                                                     AutoRunPage(self))
         self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
         self.stage.bracket_moved.connect(self.autorun_page.on_bracket_moved)
+        self.stage.nogo_picked.connect(self.autorun_page.on_nogo_picked)
         self.split.addWidget(self.inspector)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
@@ -1117,6 +1118,53 @@ class MainWindow(QMainWindow):
         ys = [y + s * d / 2.0 for _x, y, d in lay.align_holes for s in (-1, 1)]
         return (min(b[0], *xs), min(b[1], *ys), max(b[2], *xs), max(b[3], *ys))
 
+    def work_reach(self):
+        """What has to be ON the copper, ``(x0, y0, x1, y1)`` machine mm.
+
+        Cut out, that is the whole job: :meth:`work_extent`, outline and
+        all. Left in the sheet, the outline is not cut and may hang off the
+        piece - a board drawn bigger than the copper it is made on, slid
+        until the part that matters is on it. Then only what is cut counts:
+        the copper of both layers (the top is drawn where the design has
+        it, as the bottom is), the holes, and the reference holes, each by
+        where the tool's centre goes. The run measures the same from its
+        toolpaths before it starts (engine/autorun.py, ``_reach``); this is
+        the cheap version, for a check that is redrawn as the board is
+        dragged.
+        """
+        ext = self.work_extent()
+        board = self.state.board
+        if ext is None or not self._no_cutout or board is None:
+            return ext
+        r = self.state.trace.effective_diameter() / 2.0
+        boxes = []
+        for g in (board.copper, getattr(board, "copper_top", None)):
+            if g is not None and not g.is_empty:
+                b = g.bounds
+                boxes.append((b[0] - r, b[1] - r, b[2] + r, b[3] + r))
+        for x, y, _d in (board.holes or []):
+            boxes.append((x, y, x, y))
+        if not boxes:
+            return ext
+        x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+        # The board's own frame to the bed's: a double-sided layout moves
+        # the board to make room for its reference holes.
+        wb = self.work_bounds()
+        base = (board.outline if board.outline is not None
+                else board.copper).bounds
+        dx, dy = wb[0] - base[0], wb[1] - base[1]
+        x0, y0, x1, y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
+        if self._double and self._registration == "fiducial":
+            lay = self._ds_layout()
+            for hx, hy, d in (lay.align_holes if lay is not None else []):
+                x0, y0 = min(x0, hx - d / 2.0), min(y0, hy - d / 2.0)
+                x1, y1 = max(x1, hx + d / 2.0), max(y1, hy + d / 2.0)
+        # Never beyond the outline's own extent: copper a hair over the
+        # board edge is the outline check's business, not this one's.
+        return (max(x0, ext[0]), max(y0, ext[1]),
+                min(x1, ext[2]), min(y1, ext[3]))
+
     def _on_machine_position(self, x, y, z, touch):
         # The bar shows the RAW machine readout, VPanel-equal. Everything
         # drawn on the design - the bit, its trail, the run tracking, the 3D
@@ -1415,7 +1463,9 @@ class MainWindow(QMainWindow):
                           (getattr(getattr(self, "autorun_page", None),
                                    "pick_btn", None), "stock"),
                           (getattr(getattr(self, "autorun_page", None),
-                                   "box_btn", None), "box")):
+                                   "box_btn", None), "box"),
+                          (getattr(getattr(self, "autorun_page", None),
+                                   "nogo_btn", None), "box")):
             if box is not None and mode != owns and box.isChecked():
                 box.blockSignals(True)
                 box.setChecked(False)
@@ -2045,6 +2095,12 @@ class MainWindow(QMainWindow):
             return
         checks += self._gap_checks()
         checks += self._stock_checks()
+        checks += self._nogo_checks()
+        # The run page draws where the surface will be touched; that moves
+        # with the board, and this is what runs when the board has moved.
+        page = getattr(self, "autorun_page", None)
+        if page is not None:
+            page._show_touches()
         checks += self._panel_checks()
         checks += self._two_sided_depth_check()
         checks += self._screw_checks()
@@ -2340,7 +2396,8 @@ class MainWindow(QMainWindow):
                 "warn", "Part of the copper is out of reach",
                 "the sheet sits " + " and ".join(bits) + ". The spindle cannot "
                 "get there, so nothing may be placed on that part of it."))
-        wb = self.work_bounds()
+        # Left in the sheet, the outline is not cut: only the work counts.
+        wb = self.work_reach() if self._no_cutout else self.work_bounds()
         if wb is None:
             return out
         x0, y0, x1, y1 = wb
@@ -2375,6 +2432,95 @@ class MainWindow(QMainWindow):
                 f"nearest edge has "
                 f"{min(x0 - sx, sx + sw - x1, y0 - sy, sy + sh - y1):.1f} mm "
                 f"to spare."))
+        return out
+
+    def _nogo_checks(self):
+        """Is any of the work in a no-go zone?
+
+        The run refuses such a job when it starts, from its real toolpaths
+        (engine/autorun.py, ``_check_nogo``). That is the last word, and it
+        comes late: after the board has been placed, the clamps put on and
+        Start pressed. This says it while the board can still be dragged.
+
+        Measured from the geometry, so that it can be redrawn with every
+        drag: a cut runs along the EDGE of copper, so it is the copper's
+        edges that count - a pour may lie under a clamp untouched - plus
+        every hole and reference hole. Both layers, each where the design
+        has it. The clearance is the run's own.
+        """
+        page = getattr(self, "autorun_page", None)
+        zones = page.nogo() if page is not None else []
+        board = self.state.board
+        if not zones or board is None or self.work_bounds() is None:
+            return []
+        from shapely.geometry import Point, box
+        from gerber2rml.engine.autorun import NOGO_CLEAR_MM
+        r = self.state.trace.effective_diameter() / 2.0
+        wb = self.work_bounds()
+        base = (board.outline if board.outline is not None
+                else board.copper).bounds
+        dx, dy = wb[0] - base[0], wb[1] - base[1]
+        hard, soft = [], []
+        for n, z in enumerate(zones, 1):
+            # In the board's own frame, grown to where the cutter's EDGE
+            # may not come: the tool's radius is in the cut, not the zone.
+            g = NOGO_CLEAR_MM + r
+            zone = box(z[0] - dx - g, z[1] - dy - g,
+                       z[2] - dx + g, z[3] - dy + g)
+            where = "zone %d (X %.0f-%.0f, Y %.0f-%.0f)" % (
+                n, z[0], z[2], z[1], z[3])
+            edges = [name for name, geom in (
+                ("bottom copper", board.copper),
+                ("top copper", getattr(board, "copper_top", None)))
+                if geom is not None and not geom.is_empty
+                and geom.boundary.intersects(zone)]
+            what = []
+            holes = sum(1 for x, y, _d in (board.holes or [])
+                        if zone.intersects(Point(x, y)))
+            if holes:
+                what.append("%d hole%s" % (holes, "" if holes == 1 else "s"))
+            if self._double and self._registration == "fiducial":
+                lay = self._ds_layout()
+                refs = sum(1 for hx, hy, _d in
+                           (lay.align_holes if lay is not None else [])
+                           if zone.intersects(Point(hx - dx, hy - dy)))
+                if refs:
+                    what.append("%d reference hole%s"
+                                % (refs, "" if refs == 1 else "s"))
+            if edges and not self._no_cutout:
+                what = edges + what
+            elif edges:
+                soft.append("%s: %s" % (where, ", ".join(edges)))
+            if what:
+                hard.append("%s: %s" % (where, ", ".join(what)))
+        out = []
+        if hard:
+            out.append(diag.Check(
+                "fail", "Work lies in a no-go zone",
+                "; ".join(hard) + ". The bit would hit what is there, and "
+                "the run will refuse to start. Move the board or the clamp, "
+                "or delete the zone (right-click it) if nothing is there."
+                + ("" if self._no_cutout else
+                   " With Leave the board in the sheet, isolation under a "
+                   "clamp is left uncut instead, where that joins no nets.")))
+        if soft:
+            # Left in the sheet, isolation under a clamp is not cut: the
+            # run takes that length out, leads the bit round, and proves on
+            # paper that no two nets end up on one piece of copper - a
+            # pour's own outline along the board's edge is the usual case.
+            # It refuses only if they would.
+            out.append(diag.Check(
+                "warn", "Isolation in a no-go zone will be left uncut",
+                "; ".join(soft) + ". The run leaves out the isolation "
+                "there and goes round - if that joins no nets, which it "
+                "checks before it cuts anything, and stops if it would. A "
+                "ground pour's edge along the board's edge joins nothing."))
+        if not out:
+            out.append(diag.Check(
+                "ok", "The work is clear of the no-go zones",
+                "%d zone%s on the bed, nothing to cut within %.0f mm of one."
+                % (len(zones), "" if len(zones) == 1 else "s",
+                   NOGO_CLEAR_MM)))
         return out
 
     def _panel_checks(self):
@@ -4973,7 +5119,9 @@ class MainWindow(QMainWindow):
     def _on_region(self, x0, y0, x1, y1):
         # The run's check before the cut-out borrows the boxes while it
         # waits; every other time they are Rework's.
-        if self.autorun_page.box_btn.isChecked():
+        if self.autorun_page.nogo_btn.isChecked():
+            self.autorun_page.add_nogo(x0, y0, x1, y1)
+        elif self.autorun_page.box_btn.isChecked():
             self.autorun_page.add_box(x0, y0, x1, y1)
         else:
             self.rework_page.add_region(x0, y0, x1, y1)

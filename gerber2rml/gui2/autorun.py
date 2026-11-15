@@ -50,6 +50,25 @@ STATE_GLYPH = {"waiting": ("○", theme.TEXT_3),
                "skipped": ("–", theme.TEXT_3)}
 
 
+
+def nogo_to_text(zones):
+    """No-go zones as one settings string: ``x0,y0,x1,y1;...`` in mm."""
+    return ";".join(",".join("%.2f" % v for v in z) for z in zones)
+
+
+def nogo_from_text(raw):
+    """The reverse of :func:`nogo_to_text`. A string that does not parse
+    gives no zones for that entry rather than a zone in the wrong place."""
+    zones = []
+    for part in str(raw or "").split(";"):
+        try:
+            x0, y0, x1, y1 = (float(v) for v in part.split(","))
+        except ValueError:
+            continue
+        zones.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+    return zones
+
+
 class _OnGui(QObject):
     """Run a callable on the GUI thread and wait for its result.
 
@@ -155,9 +174,14 @@ class WindowSource(ar.JobSource):
             # stock as FOUND - its measured size, before the turn - whatever
             # the outline said.
             sx, sy, sw, sh = w.stock
+            # "On the outline" is asked of what has to be on it: a board
+            # left in the sheet may hang off with its work on the copper
+            # (window.work_reach), and is then kept where it was put, not
+            # pulled back to the margin as one dropped beside the stock is.
+            r = w.work_reach()
             on = (self.keep_placement
-                  and b[0] >= sx - 1e-6 and b[1] >= sy - 1e-6
-                  and b[2] <= sx + sw + 1e-6 and b[3] <= sy + sh + 1e-6)
+                  and r[0] >= sx - 1e-6 and r[1] >= sy - 1e-6
+                  and r[2] <= sx + sw + 1e-6 and r[3] <= sy + sh + 1e-6)
             if self.centre:
                 ox = (pose.w - (b[2] - b[0])) / 2.0
                 oy = (pose.h - (b[3] - b[1])) / 2.0
@@ -301,6 +325,11 @@ class _Events(QObject, ar.Events):
         self.flip_sig.emit()
         self.flipped.wait()
         return self.go_on
+
+    def nogo(self):
+        # Read on the GUI thread when Continue was pressed (_flipped); the
+        # run only picks the list up here.
+        return getattr(self, "nogo_now", None)
 
 
 class AutoRunPage(inspector.Page):
@@ -477,6 +506,35 @@ class AutoRunPage(inspector.Page):
             "spot, and the board is assumed flat - quicker, fine for a small "
             "board on a flat bed.")
         stock.add(self.level_chk)
+        # How far in from the board's edge the surface is touched. Its own
+        # setting because the right answer depends on how the stock is held:
+        # 2 mm with tape, more with clamps on the edge of a board as big as
+        # its sheet. Kept with this PC, like the zones.
+        mrow = QWidget()
+        mh = QHBoxLayout(mrow)
+        mh.setContentsMargins(0, 0, 0, 0)
+        mh.setSpacing(theme.GAP_S)
+        mh.addSpacing(theme.GAP_L)          # under the tick it belongs to
+        mh.addWidget(QLabel("Levelling: touches this far in from the edge"))
+        try:
+            saved = float(workspace.setting("autorun/level_margin", "") or 2.0)
+        except ValueError:
+            saved = 2.0
+        self.level_margin_spin = self._spin(saved, lo=0.5, hi=40.0)
+        self.level_margin_spin.setSuffix(" mm")
+        self.level_margin_spin.setToolTip(
+            "The surface is touched on a 4 x 3 grid over the board. This is "
+            "how far its outer touches are kept from the board's edge. "
+            "Raise it to keep the probe away from clamps on the edge; the "
+            "height map carries its outer rows out to the edge. A no-go "
+            "zone is still the way to say where a clamp IS.")
+        self.level_margin_spin.valueChanged.connect(self._margin_changed)
+        mh.addWidget(self.level_margin_spin)
+        mh.addStretch(1)
+        stock.add(mrow)
+        self.level_chk.toggled.connect(mrow.setEnabled)
+        self.level_chk.toggled.connect(lambda _on: self._show_touches())
+        self._points_before = None
         self.check_chk = QCheckBox("Stop before the cut-out, so I can check "
                                    "the traces")
         self.check_chk.setChecked(True)
@@ -504,6 +562,35 @@ class AutoRunPage(inspector.Page):
             "job start to finish - with the bit kept in the air. For "
             "watching a new setup before it cuts.")
         stock.add(self.dry_chk)
+
+        # What holds the stock down. The bracket is drawn because the app
+        # knows its shape; a clamp is known only if somebody says where it
+        # is. Kept with this PC, like the bracket: the fixture does not move
+        # between boards.
+        self._nogo = nogo_from_text(workspace.setting("autorun/nogo", ""))
+        nrow = QWidget()
+        nh = QHBoxLayout(nrow)
+        nh.setContentsMargins(0, 0, 0, 0)
+        nh.setSpacing(theme.GAP_S)
+        self.nogo_btn = widgets.button(
+            "Mark a clamp (no-go zone)",
+            tip="While this is lit, dragging on the bed draws a box the bit "
+                "stays out of: no surface touch in it, no cut or move "
+                "through it, and a move that would cross it is led "
+                "round it. Draw one round every clamp, screw head or "
+                "knob that stands above the copper. The run keeps 2 mm "
+                "away from the box as drawn.")
+        self.nogo_btn.setCheckable(True)
+        self.nogo_btn.toggled.connect(self._arm_nogo)
+        self.nogo_clear_btn = widgets.button("Clear zones",
+                                             on=self._clear_nogo)
+        nh.addWidget(self.nogo_btn)
+        nh.addWidget(self.nogo_clear_btn)
+        nh.addStretch(1)
+        stock.add(nrow)
+        self.nogo_lbl = widgets.hint("")
+        stock.add(self.nogo_lbl)
+        self._show_nogo()
         self.where.currentIndexChanged.connect(self._where_changed)
         self._where_changed()
         # The outline on the stage follows the size and the bracket as they
@@ -1092,6 +1179,21 @@ class AutoRunPage(inspector.Page):
 
     def showEvent(self, e):
         super().showEvent(e)
+        # The margin is shared with the Level page: take what it left.
+        from gerber2rml.gui2 import workspace
+        try:
+            m = float(workspace.setting("autorun/level_margin", "") or 2.0)
+        except ValueError:
+            m = 2.0
+        if abs(m - self.level_margin_spin.value()) > 1e-6:
+            self.level_margin_spin.blockSignals(True)
+            self.level_margin_spin.setValue(m)
+            self.level_margin_spin.blockSignals(False)
+        # The bed's probe points are another page's while it is open (the
+        # Level page's grid, the reference holes). Borrowed here, given back
+        # on the way out.
+        self._points_before = list(self.ctl.stage._probe)
+        self._show_touches()
         port = self._port()
         if port and simmachine.is_sim(port):
             m = simmachine.machine()
@@ -1114,6 +1216,9 @@ class AutoRunPage(inspector.Page):
 
     def hideEvent(self, e):
         super().hideEvent(e)
+        if self._points_before is not None:
+            self.ctl.stage.set_probe_points(self._points_before)
+            self._points_before = None
         # The stack still has this page as current while it hides: redraw
         # once the next one is up, so the bracket stays (Novice) but can no
         # longer be dragged, or goes (Pro).
@@ -1221,6 +1326,8 @@ class AutoRunPage(inspector.Page):
         check_cut = self.check_chk.isChecked()
         no_cut = self.no_cutout() and datum is not None
         start_at = self.start_box.currentData()
+        nogo = self.nogo()
+        level_margin = self.level_margin_spin.value()
         from gerber2rml.gui2 import workspace
         try:
             hint = float(workspace.setting("autorun/surface_z", "") or "x")
@@ -1247,7 +1354,8 @@ class AutoRunPage(inspector.Page):
                                  margin_mm=(0.0 if no_cut
                                             else ar.PLACE_MARGIN_MM),
                                  check_cut=check_cut and not no_cut,
-                                 start_at=start_at)
+                                 start_at=start_at, nogo=nogo,
+                                 level_margin=level_margin)
                 try:
                     ok = run.run()
                 finally:
@@ -1379,6 +1487,9 @@ class AutoRunPage(inspector.Page):
             return
         if simmachine.is_sim(getattr(self, "_last_port", "")):
             simmachine.machine().flip()
+        # The zones as they are NOW: the clamps came off for the flip, and
+        # the boxes may have been redrawn while the run waited.
+        self._events.nogo_now = self.nogo()
         self._events.go_on = True
         self._events.flipped.set()
 
@@ -1398,7 +1509,124 @@ class AutoRunPage(inspector.Page):
 
     # -- boxes over the shallow spots ----------------------------------------
     def _arm_boxes(self, on):
+        if on and self.nogo_btn.isChecked():
+            # One owner of the dragged box at a time.
+            self.nogo_btn.blockSignals(True)
+            self.nogo_btn.setChecked(False)
+            self.nogo_btn.blockSignals(False)
         self.ctl.set_stage_mode("box" if on else "place")
+
+    # -- where the surface will be touched --------------------------------------
+    def _margin_changed(self, v):
+        from gerber2rml.gui2 import workspace
+        workspace.set_setting("autorun/level_margin", "%.1f" % v)
+        self._show_touches()
+
+    def touch_points(self):
+        """Where the run will touch the surface, worked out the way the run
+        does it (engine/autorun.py, ``level_grid`` and ``level_targets``):
+        the grid over the board, set in by the margin, clear of the
+        bracket's tongue, on the sheet, and with every touch that would land
+        in a no-go zone moved to the nearest free spot. [] with levelling
+        off or no board."""
+        from shapely.geometry import box
+        ctl = self.ctl
+        b = ctl.work_bounds() if ctl.state.board is not None else None
+        if b is None or not self.level_chk.isChecked():
+            return []
+        bit = ctl.state.drill.bit_diameter
+        sx, sy, sw, sh = ctl.stock
+        pts, _area = ar.level_grid(
+            b, self.level_margin_spin.value(),
+            keepout=self._bracket.keepout() if self.bracket() else None,
+            bit=bit,
+            stock=(sx, sy, sx + sw, sy + sh) if self.no_cutout() else None)
+        g = bit / 2.0 + ar.NOGO_CLEAR_MM
+        zones = [box(z[0] - g, z[1] - g, z[2] + g, z[3] + g)
+                 for z in self._nogo]
+        return [t for t in ar.level_targets(pts, zones) if t is not None]
+
+    def _show_touches(self):
+        """Draw them on the bed while this page is the one open, so a
+        margin or a zone is seen to move them before anything runs."""
+        if getattr(self.ctl, "inspector", None) is None:
+            return                      # the window is still being built
+        if self._on_this_page() and self._thread is None:
+            self.ctl.stage.set_probe_points(self.touch_points())
+
+    # -- no-go zones ---------------------------------------------------------
+    def _arm_nogo(self, on):
+        if on and self.box_btn.isChecked():
+            self.box_btn.blockSignals(True)
+            self.box_btn.setChecked(False)
+            self.box_btn.blockSignals(False)
+        self.ctl.set_stage_mode("box" if on else "place")
+
+    def nogo(self):
+        """The no-go zones, ``[(x0, y0, x1, y1)]`` in machine mm."""
+        return list(self._nogo)
+
+    def add_nogo(self, x0, y0, x1, y1):
+        z = (round(min(x0, x1), 2), round(min(y0, y1), 2),
+             round(max(x0, x1), 2), round(max(y0, y1), 2))
+        if z[2] - z[0] < 0.5 or z[3] - z[1] < 0.5:
+            return                  # a click, not a drag: no zone of nothing
+        self._nogo.append(z)
+        self._save_nogo()
+
+    def _clear_nogo(self):
+        self._nogo = []
+        self._save_nogo()
+
+    def remove_nogo(self, index):
+        """Delete one zone. Out of range does nothing: the menu that asked
+        may be older than the list."""
+        if 0 <= index < len(self._nogo):
+            del self._nogo[index]
+            self._save_nogo()
+
+    def on_nogo_picked(self, index, where):
+        """A zone was right-clicked on the bed: offer to delete it."""
+        if not 0 <= index < len(self._nogo):
+            return
+        if self._thread is not None and self.flip_btn.isHidden():
+            # A run in motion has the zones it was given. At the flip it
+            # waits and takes them afresh, so there they may be changed.
+            self.ctl.say("warn", "The run is using these zones. They can be "
+                                 "changed while it waits at the flip.")
+            return
+        if self._ask_delete_nogo(self._nogo[index], where):
+            self.remove_nogo(index)
+
+    def _ask_delete_nogo(self, z, where):
+        """The one-line menu under the pointer. True when it was chosen."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act = menu.addAction("Delete this no-go zone (%.0f × %.0f mm)"
+                             % (z[2] - z[0], z[3] - z[1]))
+        return menu.exec(where) is act
+
+    def _save_nogo(self):
+        from gerber2rml.gui2 import workspace
+        workspace.set_setting("autorun/nogo", nogo_to_text(self._nogo))
+        self._show_nogo()
+
+    def _show_nogo(self):
+        n = len(self._nogo)
+        self.nogo_clear_btn.setEnabled(bool(n))
+        self.nogo_lbl.setText(
+            "No zones. With clamps on the stock, mark each one: the surface "
+            "probe touches 2 mm in from the board's edge, which is where "
+            "clamps sit." if not n else
+            "%d no-go zone%s on this bed. The bit stays out, and 2 mm clear. "
+            "Right-click a zone to delete it."
+            % (n, "" if n == 1 else "s"))
+        self.ctl.stage.set_nogo(self._nogo)
+        self._show_touches()
+        # The checks say when work lies in a zone: they follow the zones.
+        refresh = getattr(self.ctl, "refresh_checks", None)
+        if refresh is not None and getattr(self.ctl, "plan", None) is not None:
+            refresh()
 
     def add_box(self, x0, y0, x1, y1):
         self._boxes.append((min(x0, x1), min(y0, y1),

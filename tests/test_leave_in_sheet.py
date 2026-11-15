@@ -325,3 +325,64 @@ def test_top_isolation_under_the_tongue_once_flipped_is_proved_or_refused():
     run = _run2(_two_faced(paths, copper, [{"A"}, {"B"}, {"C"}]))
     with pytest.raises(ar.RunFailed, match="once the board is flipped"):
         run._check_flipped()
+
+
+# -- a clamp is treated as the tongue is ---------------------------------------
+#
+# A board left in the sheet runs to the sheet's edge, and so do the clamps
+# that hold it. A poured board has an isolation pass all the way round, a
+# tenth of a millimetre inside its edge (a poured 160 x 100 board on the lab mill,
+# 2026-11-15: three clamps, three "work lies in a no-go zone").
+
+CLAMP = (100.0, 26.0, 112.0, 33.0)            # on the pour's front edge
+TRACK_CLAMP = (110.0, 68.0, 120.0, 74.0)      # across the 5V track's edge
+
+
+def _run_clamped(src, leave_under, nogo):
+    run = ar.AutoRun(None, None, src, _Ev(), click_mm=None,
+                     stock_mm=(160, 100), double=False, bit_mm=0.8,
+                     keepout=TONGUE, arms=ARMS, leave_under=leave_under,
+                     margin_mm=0.0, nogo=nogo)
+    run.pose = _Pose()
+    return run
+
+
+def test_left_in_the_sheet_a_pour_edge_under_a_clamp_is_left_uncut():
+    copper, nets, paths = _pour_board()
+    run = _run_clamped(_Src({"traces_run": paths}, copper, nets, FULL), True,
+                       [CLAMP])
+    run._check_keepout("bottom")                  # proves it, does not raise
+    run._check_nogo("bottom")                     # and what is left is clear
+    assert any("left uncut" in n and "no-go zone" in n for n in run.ev.notes)
+    kept, uncut = run._leave_out("traces_run", paths)
+    assert uncut > 10.0                           # the clamp is 12 mm wide
+    assert br.path_hit(kept, CLAMP, run._nogo_grow()) is None
+
+
+def test_cut_out_as_usual_a_pour_edge_under_a_clamp_stops_the_run():
+    """Nothing is left out of a board that is cut out: it is refused."""
+    copper, nets, paths = _pour_board()
+    run = _run_clamped(_Src({"traces_run": paths}, copper, nets, FULL), False,
+                       [CLAMP])
+    with pytest.raises(ar.RunFailed, match="no-go zone"):
+        run._check_nogo("bottom")
+
+
+def test_left_in_the_sheet_a_clamp_that_would_join_two_nets_stops_the_run():
+    """The clamp sits on the gap between the 5V track and the pour: left
+    uncut there, they are one piece of copper."""
+    copper, nets, paths = _pour_board()
+    run = _run_clamped(_Src({"traces_run": paths}, copper, nets, FULL), True,
+                       [TRACK_CLAMP])
+    with pytest.raises(ar.RunFailed, match="5V"):
+        run._check_keepout("bottom")
+
+
+def test_a_hole_under_a_clamp_stops_the_run_even_left_in_the_sheet():
+    copper, nets, paths = _pour_board()
+    hole = [_cut((105.0, 30.0), (105.2, 30.0), z=-1.9)]
+    run = _run_clamped(_Src({"traces_run": paths, "drill_run": hole},
+                            copper, nets, FULL), True, [CLAMP])
+    run._check_keepout("bottom")
+    with pytest.raises(ar.RunFailed, match="Drill Run would take the bit"):
+        run._check_nogo("bottom")
