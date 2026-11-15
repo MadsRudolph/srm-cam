@@ -609,28 +609,48 @@ the kerf, which gets no hole.
 this PC by USB. It shows up as a network adapter, with the laser at 201.234.3.1.
 XCS is not needed.
 
-1. **Take photo** shows the bed as the laser's camera sees it, straightened with
-   the machine's own calibration files, so the picture is in the laser's mm.
-2. Put the foil under the middle of the bed and press **Autofocus**. It measures
-   the height the way XCS does:
-   - The blue diode glows as a dot at X110 Y110, and the camera finds the dot.
-   - The dot's row in the picture is read against the factory height table.
-   - The head moves until the foil is within 0.1 mm of focus.
+The page is laid out like XCS: a toolbar over the bed picture, cards on the right
+(Stencil, Focus, Recipe, Run), and a status bar with the cursor's X/Y and the
+focus.
 
-   You can also type XCS's thickness and press **Set**.
-3. **Take photo** again, then drag the stencil onto clean foil, or type its X/Y:
-   the top-left corner of its outline. The camera rides on the head, so the photo
-   is true for the foil's surface however high the plate is.
+1. **📷 Photo** shows the bed as the laser's camera sees it, straightened with the
+   machine's own calibration files. The rulers are the laser's mm.
+2. **◎ Autofocus** measures the height under the pink cross and moves the head
+   until that point is within 0.1 mm of focus:
+   - It does this the way XCS does: a blue dot glows there, the camera finds it,
+     and its row in the picture is read against the factory height table.
+   - The cross sits at the stencil's middle, on the factory's 10 mm grid.
+     Right-click → **Autofocus here** measures somewhere else.
+   - You can also type XCS's thickness and press **Set**.
+3. **Photo** again, then place the stencil. Any of these work:
+   - Drag it.
+   - Nudge it with the arrow keys: 0.1 mm, or 1 mm with Shift, or 10 mm with Ctrl.
+   - Type X/Y, which is the top-left corner of the outline.
+   - Right-click → **Centre the stencil here**.
+   - **Turn ◂ / Turn ▸** turns it a quarter at a time about its middle.
+
+   The camera rides on the head, so the photo is true for the foil's surface
+   however high the plate is.
 4. **Show where** runs the blue diode round the outline at 6 %. That is visible
    but does not mark steel.
 5. **Cut** runs one job at the focus the head is at:
-   - The holes are split into 4 zones around the centre.
-   - Each zone gets 5 passes, then a 6 s laser-off rest, round after round,
-     until every hole has had 30 passes.
-   - Each zone therefore cools for about 25 s between its bursts.
-   - Finally the outline is marked once at half power.
+   - The holes are split into zones, and each zone is cut in bursts with
+     laser-off rests between them.
+   - The holes of the zone being cut light up green, with the time left beside
+     them.
+   - A photo is taken at the end, unless you untick it.
 
    **Stop** stops it at once.
+
+**Re-cutting.** Turn on **⬚ Select holes**. Click a hole, or drag a box round
+several; Ctrl or Shift adds to the selection. **Cut** becomes **Cut N selected**:
+it cuts only those holes, with the same recipe, and does not mark the outline
+again. Hovering over a hole shows its size.
+
+**Recipes.** The **Recipe** card holds power, speed, frequency, passes, per burst,
+rest, zones and the outline mark. There are two built-in presets:
+**0.1 mm 304 stainless**, which is the proven one, and **Marking test (1 pass)**.
+**Save…** keeps your own under a name, and **Delete** removes it.
 
 **Placement** was checked by firing the dot at known points. (60, 40) came out at
 (59.5, 39.2) in the photo, so trust it to about 1 mm and use **Show where** for

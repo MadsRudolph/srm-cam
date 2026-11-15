@@ -69,16 +69,42 @@ def to_bed(ring_coords, origin, height):
     return [(ox + x, oy + (height - y)) for x, y in ring_coords]
 
 
-def stencil_paths(art, origin):
-    """(holes, outline) as closed point lists on the bed."""
+def stencil_paths(art, origin, only=None):
+    """(holes, outline) as closed point lists on the bed. ``only``, a set of
+    indices into ``art.apertures``, keeps just those holes: a re-cut."""
     _, h = art.size
     holes = []
-    for poly in art.apertures:
+    for k, poly in enumerate(art.apertures):
+        if only is not None and k not in only:
+            continue
         for ring in (poly.exterior, *poly.interiors):
             holes.append(to_bed(list(ring.coords), origin, h))
     outline = [to_bed(list(r.coords), origin, h)
                for r in (art.outline.exterior, *art.outline.interiors)]
     return holes, outline
+
+
+def rotated(art, quarter_turns):
+    """The artwork turned clockwise as seen on the bed, by 90 degrees a step,
+    with its outline's corner back at (0, 0)."""
+    from dataclasses import replace as _replace
+    from shapely.affinity import rotate, translate
+    q = quarter_turns % 4
+    if not q:
+        return art
+    # The artwork frame is Y up; clockwise on the Y-down bed is negative here.
+    turn = lambda g: rotate(g, -90 * q, origin=(0, 0))
+    outline = turn(art.outline)
+    x0, y0, _, _ = outline.bounds
+    move = lambda g: translate(g, -x0, -y0)
+    return _replace(art, outline=move(outline),
+                    apertures=[move(turn(p)) for p in art.apertures])
+
+
+def snap_to_grid(point, step=10.0, extent=220.0):
+    """The calibrated point nearest ``point``: autofocus measures on the
+    factory's 10 mm grid."""
+    return tuple(min(max(round(v / step) * step, 0.0), extent) for v in point)
 
 
 def check_on_bed(paths):
@@ -169,6 +195,17 @@ class Job:
     zones: list            # hole count per zone
     seconds: float         # estimated run time
     passes: int            # per hole
+    zone_paths: list = None    # the paths of each zone, as given
+    # (start_s, end_s, zone, round) per burst, -1 for the outline mark; an
+    # estimate from the path lengths, for showing progress.
+    timeline: list = None
+
+    def at(self, t):
+        """(zone, round) the job is probably on ``t`` seconds in, or None."""
+        for t0, t1, z, r in self.timeline or ():
+            if t0 <= t < t1:
+                return z, r
+        return None
 
 
 def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
@@ -177,22 +214,28 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
     check_on_bed(holes + outline)
     zs = zones(holes, recipe.zones)
     park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
-    body, secs = [], 0.0
-    bursts = [(r, z) for r in range(recipe.rounds) for z in zs]
-    for i, (r, z) in enumerate(bursts):
+    body, secs, timeline = [], 0.0, []
+    bursts = [(r, k) for r in range(recipe.rounds) for k in range(len(zs))]
+    for i, (r, k) in enumerate(bursts):
+        z = zs[k]
         n = min(recipe.passes_per_burst,
                 recipe.total_passes - r * recipe.passes_per_burst)
         body += _passes(z, recipe.power, recipe.speed, n)
-        secs += n * sum(_length(p) for p in z) / recipe.speed
+        dt = n * sum(_length(p) for p in z) / recipe.speed
+        timeline.append((secs, secs + dt, k, r))
+        secs += dt
         if i < len(bursts) - 1 and recipe.rest_s > 0:
             body += _rest(park, recipe.rest_s)
             secs += recipe.rest_s
     if outline and recipe.mark_passes:
         body += _passes(outline, recipe.mark_power, recipe.speed, recipe.mark_passes)
-        secs += recipe.mark_passes * sum(_length(p) for p in outline) / recipe.speed
+        dt = recipe.mark_passes * sum(_length(p) for p in outline) / recipe.speed
+        timeline.append((secs, secs + dt, -1, recipe.rounds))
+        secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
     return Job(text="\r\n".join(lines), zones=[len(z) for z in zs],
-               seconds=secs, passes=recipe.total_passes)
+               seconds=secs, passes=recipe.total_passes, zone_paths=zs,
+               timeline=timeline)
 
 
 def trace_job(outline, laps=15, power=6.0, speed=100.0):
@@ -359,13 +402,15 @@ class F1Ultra:
             time.sleep(0.3)
         raise LaserError(f"The head stopped at Z {self.z():.2f}, not {target:.2f}.")
 
-    def measure(self, cal):
-        """mm the surface under (110, 110) is above focus, by the blue dot.
-        Call inside autofocus mode."""
+    def measure(self, cal, at=None):
+        """mm the surface under ``at`` (a 10 mm grid point; the middle of the
+        bed by default) is above focus, by the blue dot. Call inside autofocus
+        mode."""
         from gerber2rml.engine.xtool_camera import DOT_AT, decode_jpeg
+        at = snap_to_grid(at or DOT_AT)
         self.lights(False)
         try:
-            self.gcode(f"G0X{DOT_AT[0]:g}Y{DOT_AT[1]:g}F60000")
+            self.gcode(f"G0X{at[0]:g}Y{at[1]:g}F60000")
             time.sleep(0.3)
             self.gcode("M3S30")             # the blue diode at a glow
             time.sleep(0.5)
@@ -376,16 +421,16 @@ class F1Ultra:
             self.gcode("M3S0")
             self.gcode("M5")
             self.lights(True)
-        dot, _n = cal.find_dot(decode_jpeg(photo))
-        return cal.height(dot)
+        dot, _n = cal.find_dot(decode_jpeg(photo), at)
+        return cal.height(dot, at)
 
-    def autofocus(self, cal, tolerance=0.1, tries=4):
-        """Move the head until the surface under (110, 110) is in focus.
-        Returns the Z reached; the XCS thickness is that minus 8."""
+    def autofocus(self, cal, at=None, tolerance=0.1, tries=4):
+        """Move the head until the surface under ``at`` is in focus. Returns
+        the Z reached; the XCS thickness is that minus 8."""
         self._json("POST", "/device/modeSwitch", {"state": "P_AUTOFOCUS"})
         try:
             for _ in range(tries):
-                dz = self.measure(cal)
+                dz = self.measure(cal, at)
                 if abs(dz) <= tolerance:
                     return self.z()
                 self._goto_z(self.z() + dz)
