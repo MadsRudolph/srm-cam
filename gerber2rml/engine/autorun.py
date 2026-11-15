@@ -370,7 +370,18 @@ class AutoRun:
             if reach is None:
                 raise RunFailed("the board fills the stock, and there is "
                                 "nothing inside it to cut.")
-            x0, y0, x1, y1 = self._work = reach
+            self._work = reach
+            # For "is it on the stock" the cutter's CENTRE is what counts,
+            # here as for a board left in the sheet (_reach). A poured board
+            # has an isolation pass all the way round, a tenth of a
+            # millimetre inside its edge; on a board that IS the stock that
+            # pass runs with a third of a millimetre of the cutter over the
+            # side, cutting air. Measured by the cutter's edge it "hangs off
+            # the stock" by 0.3 mm on all four sides, and a board the run
+            # was changed to accept was refused (the lab mill, 2026-11-15).
+            r = self.bit / 2.0
+            x0, y0, x1, y1 = (reach[0] + r, reach[1] + r,
+                              reach[2] - r, reach[3] - r)
         else:
             # The outline and all - or, for a board left in the sheet, only
             # what is cut (_reach).

@@ -180,6 +180,46 @@ def test_a_header_asked_before_the_mill_has_begun_is_asked_again():
     assert millsetup.command_set(Late()) == "nc"
 
 
+# What the header and the poll read after a run had been stopped: the status
+# word 0x01004023 where an idle mill has 0x01000082 (the lab mill,
+# 2026-11-15). The head stood at 176.79, 103.43, -48.71.
+STOPPED = H("23 40 00 01 00 00 00 30 96 b2 02 00 06 94 01 00 ba 41 ff ff"
+            " 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 64 64"
+            " 64 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00")
+
+
+def test_a_mill_in_another_state_is_still_read():
+    """The first byte is the mill's state, not a signature. Checking it for
+    82 turned a mill away as "not an SRM-20 status header" the moment a
+    stopped run left it in another state - "the mill's settings could not
+    be read", with the mill on, plugged in and answering."""
+    class Stopped(FakeMill):
+        def ctrl_transfer(self, rtype, request, value, index, payload):
+            out = super().ctrl_transfer(rtype, request, value, index, payload)
+            if rtype == 0xC1 and value == 0x0001:
+                return STOPPED[:4] + out[4:]
+            return out
+
+    mill = Stopped(STOPPED)
+    assert millsetup.command_set(mill) == "nc"
+    assert millsetup.g54_origin(mill) == (0.0, 0.0, -55.64)
+    st = millsetup.status(mill)
+    assert (st["x_mm"], st["y_mm"], st["z_mm"]) == (176.79, 103.43, -48.71)
+    assert st["system"] == 0x01004023 and st["state"] == 3
+    assert st["paused"] and not st["moving"] and not st["spindle_on"]
+
+
+def test_the_status_word_is_the_one_the_arduino_link_reads():
+    """0x01000082 idle, as the SPI audit recorded it; the jog's 09 in the
+    second byte is the moving bit, the spindle's 01 in the third its own."""
+    assert millsetup.status(FakeMill())["system"] == 0x01000082
+    st = millsetup.status(FakeMill(JOGGING))
+    assert st["moving"] and st["busy"] and not st["spindle_on"]
+    st = millsetup.status(FakeMill(SPINNING))
+    assert st["spindle_on"] and not st["moving"]
+    assert not st["cover"] and not st["error"] and not st["fatal"]
+
+
 def test_status_reads_position_and_the_sliders():
     st = millsetup.status(FakeMill())
     assert (st["x_mm"], st["y_mm"], st["z_mm"]) == (101.6, 152.4, 0.0)
@@ -303,8 +343,6 @@ def test_something_that_is_not_an_srm20_is_refused():
             return b"\x00" * 8
 
     assert not millsetup.is_srm20(Other())
-    with pytest.raises(SetupError, match="not an"):
-        millsetup.read_register(Other(), 0x3100)
 
 
 def test_a_usb_error_becomes_a_setup_error():

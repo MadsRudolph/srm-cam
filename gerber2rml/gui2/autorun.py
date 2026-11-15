@@ -674,6 +674,24 @@ class AutoRunPage(inspector.Page):
         _row(self.cut_btn, self.stop_here_btn)
         self.check_box.setVisible(False)
         run.add(self.check_box)
+        # How far, and how long still: a bar, the step in hand, the time
+        # left and the time of day it should be done. The checklist below
+        # says what is finished; this says when the rest will be.
+        from PySide6.QtWidgets import QProgressBar
+        self.progress = QProgressBar()
+        self.progress.setObjectName("runProgress")
+        self.progress.setRange(0, 1000)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(8)
+        self.progress.setVisible(False)
+        run.add(self.progress)
+        self.progress_lbl = widgets.body("")
+        self.progress_lbl.setVisible(False)
+        run.add(self.progress_lbl)
+        self._clock = None
+        self._clock_timer = QTimer(self)
+        self._clock_timer.setInterval(1000)
+        self._clock_timer.timeout.connect(self._tick)
         self.status = widgets.body("")
         run.add(self.status)
         self.list_box = QWidget()
@@ -1162,7 +1180,75 @@ class AutoRunPage(inspector.Page):
             self._set_row(key, "waiting")
             self.list_lay.addWidget(lab)
 
+    # -- how far, and how long still ---------------------------------------
+    def _estimates(self, src):
+        """``[(key, label, seconds)]`` for the run about to start.
+
+        The cutting steps from their own toolpaths at the planned feeds,
+        with a fifth added and twenty seconds each for getting there and
+        back (the frame check, the lift, the spin-up). The rest are what
+        they took on the lab mill: a touch is about twelve seconds, a stock
+        found in the bracket one touch from the top. They only have to be
+        roughly right - the clock corrects itself from the first step that
+        finishes (runclock.py)."""
+        from gerber2rml.engine.estimate import estimate_toolpaths_seconds
+        fixed = {"stock": 45.0, "stock_top": 45.0, "fiducials": 120.0,
+                 "flip": 0.0,
+                 "level": 150.0 if self.level_chk.isChecked() else 2.0,
+                 "level_top": 150.0 if self.level_chk.isChecked() else 2.0}
+        out = []
+        for key, label in self._plan_rows():
+            if key in fixed:
+                out.append((key, label, fixed[key]))
+                continue
+            try:
+                paths, xy, plunge = src.toolpaths(key)
+                s = estimate_toolpaths_seconds(paths, xy, plunge) * 1.2 + 20.0
+            except Exception:           # noqa: BLE001 - the top before a fit
+                s = 300.0
+            out.append((key, label, s))
+        return out
+
+    def _tick(self):
+        """Once a second while a run is going: the bar, the line under it,
+        and the same line on the machine bar."""
+        if self._clock is None:
+            return
+        from datetime import datetime, timedelta
+        from gerber2rml.engine.estimate import format_duration
+        s = self._clock.snapshot()
+        self.progress.setValue(int(round(s["fraction"] * 1000)))
+        pct = int(s["fraction"] * 100)
+        where = ("Step %d of %d · %s" % (s["index"], s["count"], s["label"])
+                 if s["index"] else "Starting")
+        if s["waiting"]:
+            line = "%s · %d%% · waiting for you - the clock is stopped" % (
+                where, pct)
+            short = "%d%% · waiting for you" % pct
+        else:
+            left = format_duration(s["left_s"])
+            at = (datetime.now() + timedelta(seconds=s["left_s"])).strftime(
+                "%H:%M")
+            more = "at least " if s["over"] else "about "
+            line = "%s · %d%% · %s%s left · done %s%s · %s so far" % (
+                where, pct, more, left, "after " if s["over"] else "about ",
+                at, format_duration(s["elapsed_s"]))
+            short = "%s · %d%% · %s%s left · done ~%s" % (
+                where, pct, more, left, at)
+        self.progress_lbl.setText(line)
+        bar = getattr(self.ctl, "bar", None)
+        if bar is not None and hasattr(bar, "set_run_progress"):
+            bar.set_run_progress(short)
+
+    def _clock_wait(self, on):
+        if self._clock is not None:
+            self._clock.wait(on)
+            self._tick()
+
     def _set_row(self, key, state):
+        if self._clock is not None:
+            self._clock.step(key, state)
+            self._tick()
         if key == "stock_top" and state == "running":
             self.ctl.show_auto_face(True)
         if key not in self._rows:
@@ -1288,6 +1374,13 @@ class AutoRunPage(inspector.Page):
         link.disconnect_from("handing the port to the run")
         ctl.bar.set_held_by_run(True)
         link.clear_abort()
+        from gerber2rml.gui2.runclock import RunClock
+        self._clock = RunClock(self._estimates(WindowSource(ctl, self._gui)))
+        self.progress.setValue(0)
+        self.progress.setVisible(True)
+        self.progress_lbl.setVisible(True)
+        self._clock_timer.start()
+        self._tick()
         self._events = ev = _Events()
         ev.note_sig.connect(self._on_note)
         ev.step_sig.connect(self._set_row)
@@ -1477,6 +1570,7 @@ class AutoRunPage(inspector.Page):
                        ((0, 0), (pose.w, 0), (pose.w, pose.h), (0, pose.h))]
 
     def _on_flip(self):
+        self._clock_wait(True)
         self.flip_btn.setVisible(True)
         self.ctl.say("warn", "Turn the board over, left to right, put it back "
                              "where it was, then press Continue.")
@@ -1490,10 +1584,12 @@ class AutoRunPage(inspector.Page):
         # The zones as they are NOW: the clamps came off for the flip, and
         # the boxes may have been redrawn while the run waited.
         self._events.nogo_now = self.nogo()
+        self._clock_wait(False)
         self._events.go_on = True
         self._events.flipped.set()
 
     def _on_check(self, traces_label, deeper):
+        self._clock_wait(True)
         self.check_lbl.setText(
             "%s done%s. The board is at the view position. Is every trace "
             "through the copper, and every hole through the board? Then cut it "
@@ -1652,6 +1748,7 @@ class AutoRunPage(inspector.Page):
                      list(self._boxes) or None)
 
     def _answer(self, what, mm, boxes=None):
+        self._clock_wait(False)
         self.check_box.setVisible(False)
         self.box_btn.setChecked(False)
         boxes_shown = bool(self._boxes)
@@ -1670,6 +1767,19 @@ class AutoRunPage(inspector.Page):
 
     def _on_finished(self, ok, msg):
         self._thread = None
+        # The bar stays, at what it reached: full for a board that is done,
+        # where it stopped for one that is not. The line says how long it
+        # took; the time left is nobody's business any more.
+        self._clock_timer.stop()
+        if self._clock is not None:
+            from gerber2rml.engine.estimate import format_duration
+            s = self._clock.snapshot()
+            if ok:
+                self.progress.setValue(1000)
+            self.progress_lbl.setText(
+                ("Done in %s." if ok else "Stopped after %s.")
+                % format_duration(s["elapsed_s"]))
+            self._clock = None
         self.ctl.bar.set_held_by_run(False)
         self._sync_offline()
         self.start_btn.setEnabled(True)
