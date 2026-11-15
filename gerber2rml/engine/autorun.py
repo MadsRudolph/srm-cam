@@ -167,6 +167,27 @@ def about(cx, cy, deg):
     return Transform(a, 1.0, cx - (c * cx - s * cy), cy - (s * cx + c * cy))
 
 
+# How much further from the bracket the top side is held when it is checked
+# before the flip: a sheet turned over and pushed back comes home within a
+# few tenths, and this must not be what decides it after one side is cut.
+FLIP_SPARE_MM = 1.0
+
+
+def _moved(geom, t):
+    """``geom`` through the similarity ``t`` (a fit's Transform)."""
+    from shapely import affinity
+    c = math.cos(t.theta) * t.scale
+    s_ = math.sin(t.theta) * t.scale
+    return affinity.affine_transform(geom, [c, -s_, s_, c, t.tx, t.ty])
+
+
+def _extent(paths):
+    """(x0, y0, x1, y1) of every move in ``paths``, or None."""
+    xs = [m.x for tp in paths for m in tp]
+    ys = [m.y for tp in paths for m in tp]
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
+
+
 class AutoRun:
     """Run the whole job. Call :meth:`run` on a thread."""
 
@@ -174,7 +195,8 @@ class AutoRun:
                  double, bit_mm=0.8, margin_mm=PLACE_MARGIN_MM, rpm=None,
                  should_abort=None, should_pause=None, dry_run=False,
                  runner_opts=None, level=True, surface_hint=None,
-                 datum=None, check_cut=True, start_at=None, keepout=None):
+                 datum=None, check_cut=True, start_at=None, keepout=None,
+                 arms=None, leave_under=False):
         self.ser, self.printer = ser, printer
         self.src, self.ev = source, events
         self.click, self.size = click_mm, stock_mm
@@ -189,6 +211,15 @@ class AutoRun:
         # (x, y, corner): the stock sits in a corner bracket - no edge walks
         self.datum = datum
         self.keepout = keepout               # (x0, y0, x1, y1) the bit stays out
+        # [(x0, y0, x1, y1)]: the bracket's bars, beside the stock. With the
+        # usual margins nothing comes near them; a job set flush to the
+        # stock's edge can, so every move is held clear of them as well.
+        self.arms = list(arms or [])
+        # A board that is not cut out may lie under the tongue. Its isolation
+        # there is then left uncut and the bit led round - but only once the
+        # passes, milled out of the sheet on paper, are seen to join no nets
+        # (engine/bracket.py). Off, a job that reaches there is refused.
+        self.leave_under = bool(leave_under)
         # Stop before a cut-out so the traces can be looked at first: once
         # the board is cut free it can no longer be re-cut where it lay.
         self.check_cut = check_cut
@@ -244,7 +275,12 @@ class AutoRun:
                 "onto the stock outline." % (x0, x1, y0, y1, p.x, p.x + p.w,
                                              p.y, p.y + p.h))
         self._check_keepout("bottom")
-        if self.double:
+        if self.double and self.leave_under:
+            # Not by its outline, which is under the tongue by design: by
+            # what the top side actually has there, laid where a perfect
+            # flip puts it. Now, not with one side already cut.
+            self._check_flipped()
+        elif self.double:
             # Turned over left to right, the job lands mirrored across the
             # stock. Find out now, not with one side already cut.
             mid = 2 * p.x + p.w
@@ -408,12 +444,189 @@ class AutoRun:
                 raise RunStopped("stopped")
             time.sleep(0.2)
 
+    def _near_keepout(self, x0, y0, x1, y1):
+        kx0, ky0, kx1, ky1 = self.keepout
+        b = self.bit
+        return x0 - b < kx1 and x1 + b > kx0 and y0 - b < ky1 and y1 + b > ky0
+
     def _check_keepout(self, side):
-        """The job, and the bit along its edge, clear of the bracket's probe
-        tongue."""
+        """The job clear of the bracket's probe tongue.
+
+        Its whole extent first, as it always was. A board that reaches under
+        the tongue fails that - but if no MOVE of any of its jobs goes there,
+        nothing is in the way: then every path is looked at instead, and the
+        run goes ahead only when all of them stay out."""
+        if self.keepout is None:
+            return
+        # A whole-stock board reaches the tongue by its outline, by design:
+        # what counts for it is what the bit cuts.
+        ext = (self._work if self.whole and side == "bottom"
+               else self.src.extent(side))
+        if not self._near_keepout(*ext) and not self.leave_under:
+            return
+        steps = (self.src.bottom_steps() if side == "bottom"
+                 else self.src.top_steps())
+        left = 0.0
+        for key, label in steps:
+            whole = self.src.toolpaths(key)[0]
+            paths, uncut = self._leave_out(key, whole)
+            if uncut > 0:
+                copper, nets = self.src.copper_nets(side)
+                self._prove(label, whole, paths, copper, nets, uncut)
+                left += uncut
+            self._paths_clear(paths, label)
+        if left > 0:
+            self.ev.note("%.0f mm of isolation lies under the bracket and is "
+                         "left uncut. Milled out on paper, it joins no nets."
+                         % left)
+        elif self._near_keepout(*ext):
+            self.ev.note("The board reaches under the bracket's tongue; no "
+                         "cut or move of the %s side goes there." % side)
+
+    def _tongue_grow(self):
+        """How far the tool's CENTRE stays from the keepout: its radius and
+        a hair. The keepout already holds the tongue's own clearance, and the
+        extent check allows the same - a board a bit's width away, with the
+        cut-out pass running in that width."""
+        return self.bit / 2.0 + 0.05
+
+    def _prove(self, label, whole, paths, copper, nets, uncut, when=""):
+        """Raise if leaving ``uncut`` mm of ``whole`` out (giving ``paths``)
+        would put two nets on one piece of copper.
+
+        Only what leaving it out joins: nets the whole pass leaves on one
+        piece as well are the design's own shorts, found and said by the
+        checks, not something done here."""
+        from gerber2rml.engine.bracket import joined_nets
+        sheet, r = self._stock_rect(), self.bit / 2.0
+        before = [set(j) for j in joined_nets(copper, nets, whole, sheet, r)]
+        joined = [j for j in joined_nets(copper, nets, paths, sheet, r)
+                  if not any(set(j) <= b for b in before)]
+        if joined:
+            raise RunFailed(
+                "%.0f mm of %s lies under the bracket%s and cannot be cut, "
+                "and without it these would be one piece of copper: %s. "
+                "Move the board away from the bracket, or move those "
+                "tracks." % (uncut, label.lower(), when,
+                             "; ".join(" + ".join(j) for j in joined)))
+
+    # -- the other side, before it is turned over ----------------------------
+    def _expected_flip(self):
+        """``(transform, expected)``: where a perfect flip, pushed back into
+        the bracket, puts the top side - the layout's top frame to machine
+        mm - and where each reference hole lands. The bracket holds the
+        sheet square, so the board comes back mirrored across the stock."""
+        bottom, top = self.src.fiducials()
+        p = self.pose
+        expected = [(2 * p.x + p.w - bx, by) for bx, by in bottom]
+        if len(top) < 2 or len(top) != len(expected):
+            return None, expected
+        return fit_transform(top, expected, allow_scale=False), expected
+
+    def _hole_blocked(self, x, y, spare=0.0):
+        """Would finding a reference hole at (x, y) take the bit under the
+        bracket? The hole itself, the touches beside it that take the
+        surface, and the search round it all have to be clear."""
+        reach = max(2.5, HOLE_SEARCH_UM / 1000.0)
+        for rect, grow in self._zones():
+            g = grow + spare + reach
+            if (rect[0] - g < x < rect[2] + g
+                    and rect[1] - g < y < rect[3] + g):
+                return True
+        return False
+
+    def _check_flipped(self):
+        """The top side, laid where a perfect flip puts it, against the
+        bracket: enough reference holes still reachable, and every job clear
+        once its isolation under the tongue is left out. The real flip is
+        measured later and checked again (:meth:`_check_keepout`); this is
+        held ``FLIP_SPARE_MM`` further off, for how far a sheet comes back
+        from where it was."""
+        from gerber2rml.engine.bracket import avoid, path_hit
+        t0, expected = self._expected_flip()
+        need = min(3, len(expected))
+        reach = [i for i, (x, y) in enumerate(expected)
+                 if not self._hole_blocked(x, y, FLIP_SPARE_MM)]
+        if len(reach) < need:
+            raise RunFailed(
+                "once the board is flipped only %d of its %d reference holes "
+                "can be reached - the others land under the bracket - and it "
+                "takes %d to trust the fit. Move a hole, or the board."
+                % (len(reach), len(expected), need))
+        if len(reach) < len(expected):
+            self.ev.note("%d reference hole(s) land under the bracket once "
+                         "the board is flipped and will not be used; %d "
+                         "are enough." % (len(expected) - len(reach),
+                                          len(reach)))
+        if t0 is None:
+            return
+        zones = [(r, g + FLIP_SPARE_MM) for r, g in self._zones()]
+        left = 0.0
+        for key, label in self.src.top_steps():
+            whole = apply_to_toolpaths(self.src.nominal_top(key), t0)
+            paths = whole
+            if "traces" in key:
+                paths, uncut = avoid(whole, zones, self._stock_rect())
+                if uncut > 0:
+                    copper, nets = self.src.copper_nets("top", fitted=False)
+                    self._prove(label, whole, paths, _moved(copper, t0), nets,
+                                uncut, " once the board is flipped")
+                    left += uncut
+            for rect, grow in zones:
+                hit = path_hit(paths, rect, grow)
+                if hit:
+                    raise RunFailed(
+                        "%s, once the board is flipped, would take the bit "
+                        "under the bracket (at X %.1f, Y %.1f). Move the "
+                        "board away from the bracket, or take what is there "
+                        "off the board." % (label, hit[0], hit[1]))
+        if left > 0:
+            self.ev.note("Once flipped, %.0f mm of the top's isolation lies "
+                         "under the bracket and is left uncut. Milled out on "
+                         "paper, it joins no nets." % left)
+
+    def _zones(self):
+        """The bracket, as what the tool's centre must stay out of."""
+        zones = []
         if self.keepout is not None:
-            self._clear_of_keepout(*(self._work if self.whole
-                                     else self.src.extent(side)))
+            zones.append((self.keepout, self._tongue_grow()))
+        zones += [(arm, self.bit / 2.0 + 0.1) for arm in self.arms]
+        return zones
+
+    def _stock_rect(self):
+        p = self.pose
+        return (p.x, p.y, p.x + p.w, p.y + p.h)
+
+    def _leave_out(self, key, paths):
+        """An isolation pass with what is under the bracket taken out and
+        the bit led round. ``(paths, uncut_mm)``; any other job, or with
+        ``leave_under`` off, is returned as it is."""
+        if not self.leave_under or "traces" not in key:
+            return paths, 0.0
+        from gerber2rml.engine.bracket import avoid
+        return avoid(paths, self._zones(), self._stock_rect())
+
+    def _paths_clear(self, paths, label):
+        """Raise unless every move of ``paths`` stays out from over the
+        tongue and off the bracket's bars."""
+        from gerber2rml.engine.bracket import path_hit
+        if self.keepout is not None:
+            hit = path_hit(paths, self.keepout, self._tongue_grow())
+            if hit:
+                raise RunFailed(
+                    "%s would take the bit under the bracket's probe tongue "
+                    "(at X %.1f, Y %.1f) and it would hit it. Move the board "
+                    "away from the bracket, or take what is there off the "
+                    "board." % (label, hit[0], hit[1]))
+        for arm in self.arms:
+            # Its edge is the stock's edge: the cutter's own radius, and a
+            # little, has to stay on the stock.
+            hit = path_hit(paths, arm, self.bit / 2.0 + 0.1)
+            if hit:
+                raise RunFailed(
+                    "%s would run off the stock into the bracket (at X %.1f, "
+                    "Y %.1f). Move the board away from the bracket."
+                    % (label, hit[0], hit[1]))
 
     def _cut_reach(self, steps):
         """``(x0, y0, x1, y1)`` the bit's edge reaches while cutting in
@@ -452,6 +665,12 @@ class AutoRun:
             # stock's edge, where the bracket's tongue lies over the copper.
             x0, y0, x1, y1 = (self._work if self.whole and side == "bottom"
                               else self.src.area(side))
+            if self.keepout is not None and t is None:
+                # No touch under the tongue: the probe would come down on
+                # plastic, find no copper, and keep going.
+                from gerber2rml.engine.bracket import level_area_clear
+                x0, y0, x1, y1 = level_area_clear(
+                    (x0, y0, x1, y1), self.keepout, self.bit + 1.5, 2.0)
             nx, ny = LEVEL_GRID
             nominal = probe_points((x0, y0, x1, y1), nx, ny, margin=2.0)
             pts = [t.apply(*p) if t else p for p in nominal]
@@ -538,6 +757,13 @@ class AutoRun:
                 else:
                     guess = (px + off_x, py + off_y)
                     radius = HOLE_SEARCH_UM
+                if self._zones() and self._hole_blocked(guess[0], guess[1]):
+                    # Under the bracket this side up: the probe cannot go
+                    # there. The others carry the fit.
+                    self.ev.note("Fiducial %d is under the bracket now and "
+                                 "is not used." % (i + 1))
+                    measured.append(None)
+                    continue
                 try:
                     found = self._locate(guess[0], guess[1], radius)
                 except (RunFailed, ProbeError) as e:
@@ -660,6 +886,13 @@ class AutoRun:
                 # Only the cutting moves go down; travel stays where it was.
                 paths = [[Move(m.x, m.y, m.z - deeper if m.z < 0 else m.z,
                                rapid=m.rapid) for m in tp] for tp in paths]
+            paths, _uncut = self._leave_out(key, paths)
+            # Where the bit will really go, turned and clipped: the last
+            # word on the bracket, before anything is sent.
+            if self.keepout is not None or self.arms:
+                ext = _extent(paths)
+                if ext is not None and (self.arms or self._near_keepout(*ext)):
+                    self._paths_clear(paths, label)
             # Rapid down to just above the copper; only the last bit of each
             # plunge is fed. On nominal Z, so before the levelling.
             paths = fast_approach(paths)

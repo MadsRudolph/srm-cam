@@ -38,3 +38,35 @@ def find_narrow_gaps(copper, outline, bit_diameter, min_area: float = 0.1):
     keep = [p for p in polys if isinstance(p, Polygon) and p.area >= min_area]
 
     return MultiPolygon(keep) if keep else Polygon()
+
+
+def split_narrow_gaps(gaps, copper, touch_mm: float = 0.01):
+    """Sort :func:`find_narrow_gaps`'s patches into ``(between, corners)``.
+
+    ``between`` lie between two SEPARATE pieces of copper: a gap that was
+    meant to be cleared and will not be. ``corners`` touch one piece only -
+    the inside of an acute bend, where a track joins another at 45 degrees:
+    a round cutter cannot reach into the point, so that copper stays, and it
+    stays part of the very track it is the corner of. Nothing is joined that
+    was apart, so it is not a finding; it is what a milled corner looks like.
+
+    Both are shapely geometries, empty when there are none.
+    """
+    from shapely.strtree import STRtree
+
+    def pack(polys):
+        return MultiPolygon(polys) if polys else Polygon()
+
+    if gaps is None or gaps.is_empty:
+        return Polygon(), Polygon()
+    pieces = list(getattr(copper, "geoms", [copper]))
+    patches = list(getattr(gaps, "geoms", [gaps]))
+    if len(pieces) < 2:
+        return Polygon(), pack(patches)
+    tree = STRtree(pieces)
+    between, corners = [], []
+    for patch in patches:
+        near = sum(1 for i in tree.query(patch.buffer(touch_mm))
+                   if pieces[int(i)].distance(patch) <= touch_mm)
+        (between if near >= 2 else corners).append(patch)
+    return pack(between), pack(corners)

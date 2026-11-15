@@ -28,7 +28,8 @@ import math
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points, unary_union
 
-from gerber2rml.engine.drc import isolation_pairs
+from gerber2rml.engine.drc import (isolation_pairs, exact_fit_pairs,
+                                  EXACT_FIT_MM, TOUCHING_MM)
 from gerber2rml.toolpath import Move
 
 RUN_OUT_MAX = 8.0   # how far a run-out may travel, in bit radii, before it
@@ -213,18 +214,29 @@ def _channel(a, b, width):
     return runs
 
 
-def pinch_centrelines(copper, job, width=None):
+def pinch_centrelines(copper, job, width=None, exact=False):
     """Lines down the middle of every gap too narrow for the cutter to enter.
 
     Each is run on past both ends until it breaks into metal the ordinary
     pass already took (see :func:`_run_out`). ``width`` overrides the job's
     effective cut width, which is what the checks use to ask "what would a
     different bit do".
+
+    ``exact=True`` gives the lines for the gaps that are the cutter's own
+    width instead (:func:`gerber2rml.engine.drc.exact_fit_pairs`). Those are
+    always cut, whatever ``TraceJob.cut_pinches`` says: the pass costs no
+    copper, and without it the two grown outlines coincide and nothing goes
+    between them at all.
     """
     if width is None:
         width = job.effective_diameter()
     r = width / 2.0
-    pairs = isolation_pairs(copper, width)
+    if exact:
+        pairs = exact_fit_pairs(copper, width)
+        reach = width + 2 * TOUCHING_MM       # the channel IS that wide
+    else:
+        pairs = isolation_pairs(copper, width)
+        reach = width
     if not pairs:
         return []
     # What the ordinary first isolation pass already takes out. The run-outs
@@ -241,7 +253,7 @@ def pinch_centrelines(copper, job, width=None):
         # run-out drives straight into copper, so a stub that merely retraces
         # a channel already taken is dropped.
         taken = None
-        for cs in sorted(_channel(a, b, width),
+        for cs in sorted(_channel(a, b, reach),
                          key=lambda c: LineString(c).length, reverse=True):
             ls = LineString(cs)
             if taken is not None:

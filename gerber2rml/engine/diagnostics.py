@@ -146,22 +146,28 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
             checks.append(Check(
                 "warn", "Narrow gaps cut through",
                 f"{len(shorts)} gap(s) are narrower than the cutter (worst "
-                f"{worst:.2f} mm, marked X on the Traces preview). The pass "
+                f"{worst:.2f} mm, marked X on the board). The pass "
                 f"goes down the middle of each anyway, so the nets come out "
                 f"separated and both pads lose up to {bite:.2f} mm. Turn "
                 f"\"Cut gaps too narrow for the bit\" off to leave them "
                 f"shorted instead."))
         elif shorts:
             worst = min(s["gap"] for s in shorts)
+            # The number to type into KiCad, when the caller said which cutter.
+            need = (" at least the cutter's %.2f mm"
+                    % trace.effective_diameter() if trace is not None
+                    else " at least as wide as the cutter")
             checks.append(Check(
                 "fail", "Nets closer than the bit",
                 f"{len(shorts)} spot(s) where two SEPARATE nets sit closer than "
                 f"the cutter can go (worst {worst:.2f} mm, marked X on the "
-                f"Traces preview). The copper between them cannot be removed, so "
+                f"board). The copper between them cannot be removed, so "
                 f"those nets WILL be shorted on the finished board. Turn on "
                 f"\"Cut gaps too narrow for the bit\" to cut them anyway and "
                 f"lose some pad, use a narrower bit (a V-bit cuts narrower at a "
-                f"shallower depth), or move the tracks apart in KiCad."))
+                f"shallower depth), or move the tracks apart in KiCad: the "
+                f"clearance there (Board Setup ▸ Design Rules ▸ Constraints, "
+                f"and Net Classes) has to be{need}."))
         else:
             checks.append(Check(
                 "ok", "Net clearance", "no two nets sit closer than the bit."))

@@ -349,6 +349,7 @@ class MainWindow(QMainWindow):
         self._shorts = []
         self._eaten = []         # pads a cut-it-anyway pass takes most of
         self._gaps = None        # copper gaps too narrow for the cutter
+        self._corners = None     # ...and inside corners it cannot reach into
         self._exported = {}
         self._export_dir = None
         self._double = False
@@ -368,6 +369,12 @@ class MainWindow(QMainWindow):
         self._fid_diameter = 1.6
         self._fid_count = 4
         self._fid_placement = "waste"      # "waste" | "onboard" | "manual"
+        # The manual places are the board's own mounting holes, chosen by
+        # the app (engine/mountfid.py), not pins dragged by hand.
+        self._fid_mounting = False
+        # The board is left in the sheet: Automatic mode cuts nothing round
+        # its outline (gui2/autorun.py, "Leave the board in the sheet").
+        self._no_cutout = False
         self._fid_offset = 4.0
         # Which way the board is physically turned over. The fit cannot tell:
         # a rectangle of corner holes matches equally well either way, so a
@@ -780,6 +787,19 @@ class MainWindow(QMainWindow):
         self._act(v, "Simulate a file in 3D…", self.action_sim_file)
 
         m = mb.addMenu("&Machine")
+        from gerber2rml.engine import rmlspool
+        if rmlspool.MACOS:
+            from gerber2rml.gui2 import macmill
+            self._act(m, "Set up the mill on this Mac…",
+                      lambda: macmill.setup_sheet(self))
+        if not rmlspool.WINDOWS:
+            # Command Set and the spindle speed, which otherwise need VPanel
+            # on a Windows PC. Not offered on Windows: the Roland driver owns
+            # the device there and VPanel is at hand (engine/millsetup.py).
+            from gerber2rml.gui2 import millsettings
+            self._act(m, "The mill's settings…",
+                      lambda: millsettings.settings_sheet(self))
+            m.addSeparator()
         self._act(m, "Rescan the serial ports", self.bar.refresh_ports)
         self._act(m, "Connect / disconnect", self.bar._toggle_connect, "Ctrl+L")
         m.addSeparator()
@@ -1858,7 +1878,11 @@ class MainWindow(QMainWindow):
         self.stage.set_screws(picks, reach)
 
     def _draw_shorts(self, step):
-        if step.op in ("traces", "top_traces") and self.state.board is not None:
+        # Novice has no Traces step to look at: its "Check it" is where the
+        # finding is read, so that is where the marks are.
+        here = (step.op in ("traces", "top_traces")
+                or (step.key == "checks" and not tier.is_full()))
+        if here and self.state.board is not None:
             self.stage.set_shorts(self._shorts)
             self.stage.set_gaps(self._gaps)
         else:
@@ -1902,31 +1926,79 @@ class MainWindow(QMainWindow):
         self.stage.set_legend(legend)
 
     # ------------------------------------------------------------ the checks
+    def _cut_copper(self):
+        """The bottom copper in the frame the stage draws and the job cuts:
+        the double-sided layout's when there is one, else the board's own."""
+        if self._double:
+            try:
+                lay = self._ds_layout()
+            except Exception:                   # noqa: BLE001 - no layout yet
+                lay = None
+            copper = getattr(lay, "bottom_copper", None)
+            if copper is not None and not copper.is_empty:
+                return copper
+        return self.state.board.copper
+
+    def _cut_nets(self, copper):
+        """The net names for ``copper``'s polygons, or None when they cannot
+        be trusted to line up: the board's list is in its own copper's order,
+        and the double-sided layout's copper is a second copy of it, moved.
+        It is used only when polygon for polygon they are the same shapes."""
+        return self._nets_aligned(
+            getattr(self.state.board, "copper_nets", None),
+            self.state.board.copper, copper)
+
+    @staticmethod
+    def _nets_aligned(nets, mine, theirs):
+        """``nets`` (in the order of ``mine``'s polygons) if ``theirs`` is
+        the same polygons in the same order, moved; else None."""
+        if nets is None or mine is None or theirs is None:
+            return None
+        a = list(getattr(mine, "geoms", []))
+        b = list(getattr(theirs, "geoms", []))
+        if len(nets) != len(a) or len(a) != len(b):
+            return None
+        if any(abs(p.area - q.area) > 1e-6 for p, q in zip(a, b)):
+            return None
+        return nets
+
     def refresh_checks(self):
         st = self.state
         if st.board is None:
             self._checks, self._shorts, self._gaps = [], [], None
+            self._corners = None
             self.inspector.checks.set_checks([])
             self.traveller.clear_finding()
             return
+        # The copper where it is DRAWN and cut. A double-sided job's layout
+        # moves the board over to make room for its reference holes, and marks
+        # worked out on the unmoved board landed beside it on the stage.
+        copper = self._cut_copper()
         try:
-            self._shorts = isolation_bridges(st.board.copper,
-                                             st.trace.effective_diameter())
+            self._shorts = isolation_bridges(copper,
+                                             st.trace.effective_diameter(),
+                                             nets=self._cut_nets(copper))
         except Exception:
             self._shorts = []           # a DRC that crashes must not block work
         self._eaten = []
         if self._shorts and st.trace.cut_pinches:
             try:
                 from gerber2rml.engine.pinch import pinch_losses
-                self._eaten = pinch_losses(st.board.copper, st.trace)
+                self._eaten = pinch_losses(copper, st.trace)
             except Exception:
                 self._eaten = []        # ...and neither must this one
         try:
             from gerber2rml.analysis import find_narrow_gaps
-            self._gaps = find_narrow_gaps(st.board.copper, st.board.outline,
-                                          st.trace.effective_diameter())
+            from gerber2rml.engine.drc import EXACT_FIT_MM
+            # Less the exact-fit allowance: a gap the cutter's own width is
+            # cut down its middle, not left red.
+            from gerber2rml.analysis import split_narrow_gaps
+            self._gaps, self._corners = split_narrow_gaps(
+                find_narrow_gaps(copper, st.board.outline,
+                                 st.trace.effective_diameter() - EXACT_FIT_MM),
+                copper)
         except Exception:
-            self._gaps = None
+            self._gaps, self._corners = None, None
         dowel_depth = None
         if (self._double and self._registration == "dowel"
                 and self._dowel_mode == "fresh"):
@@ -1993,11 +2065,22 @@ class MainWindow(QMainWindow):
         bridging and for a design that relied on the gap.
         """
         gaps = self._gaps
-        if gaps is None or gaps.is_empty:
-            return []
-        n = len(gaps.geoms) if hasattr(gaps, "geoms") else 1
+        corners = getattr(self, "_corners", None)
         bit = self.state.trace.effective_diameter()
-        return [diag.Check(
+        out = []
+        if corners is not None and not corners.is_empty:
+            k = len(corners.geoms) if hasattr(corners, "geoms") else 1
+            out.append(diag.Check(
+                "ok",
+                f"{k} inside corner{'s' if k != 1 else ''} left as copper",
+                f"where a track meets another at an angle, the round "
+                f"{bit:.2f} mm cutter cannot reach into the point. That "
+                f"copper stays, as part of the track it is the corner of: "
+                f"nothing is joined that was apart."))
+        if gaps is None or gaps.is_empty:
+            return out
+        n = len(gaps.geoms) if hasattr(gaps, "geoms") else 1
+        return out + [diag.Check(
             "warn",
             f"{n} copper gap{'s' if n != 1 else ''} too narrow to isolate",
             f"drawn red on the traces view: clearance narrower than the "
@@ -2541,6 +2624,7 @@ class MainWindow(QMainWindow):
         if d:
             self.load_folder(d)
             self._detect_sides()
+            self.autorun_page.board_opened()
 
     def show_auto_face(self, top):
         """Automatic mode has one step on the rail and two faces: once the
@@ -2564,9 +2648,96 @@ class MainWindow(QMainWindow):
         top = board.copper_top
         two = (top is not None and not top.is_empty
                and board.copper is not None and not board.copper.is_empty)
-        self.inspector.setup.double.setChecked(two)
+        # What the operator said about THIS board last time beats the guess:
+        # F.Cu is also where people draw wire links on a single-sided board,
+        # and a board sent from KiCad again must not turn double-sided again.
+        said = (workspace.setting(self._sides_key(), "")
+                if self.remember_board_choices else "")
+        self._detecting_sides = True
+        try:
+            if said in ("single", "double"):
+                self.inspector.setup.double.setChecked(said == "double")
+                if two and said == "single":
+                    self.say("info", "Copper on both layers, but you set this "
+                                     "board up as single-sided: kept so.")
+                return
+            self.inspector.setup.double.setChecked(two)
+        finally:
+            self._detecting_sides = False
+            self._restore_reference_holes()
         if two:
-            self.say("info", "Copper on both layers: set up as double-sided.")
+            self.say("info", "Copper on both layers: set up as double-sided. "
+                             "Untick it on Your board if the top is not "
+                             "milled; that is remembered for this board.")
+
+    def _sides_key(self):
+        """The setting that remembers one board folder's single/double."""
+        import hashlib
+        folder = str(workspace.remembered_dir("gerber") or "")
+        return "sides/" + hashlib.sha1(folder.encode("utf-8")).hexdigest()[:16]
+
+    def set_no_cutout(self, on):
+        """Leave the board in the sheet, or cut it out as usual."""
+        self._no_cutout = bool(on)
+        if self.remember_board_choices and self.state.board is not None:
+            workspace.set_setting(self._nocut_key(),
+                                  "yes" if on else "no")
+
+    def _nocut_key(self):
+        return "nocut/" + self._sides_key().split("/", 1)[1]
+
+    def _refs_key(self):
+        """...and where that board's reference holes go."""
+        return "refs/" + self._sides_key().split("/", 1)[1]
+
+    def _restore_reference_holes(self):
+        """A board opened again gets the reference holes it had: the waste,
+        inside the corners, or its own mounting holes."""
+        if not self.remember_board_choices:
+            return
+        self._no_cutout = workspace.setting(self._nocut_key(), "") == "yes"
+        said = workspace.setting(self._refs_key(), "")
+        self._restoring_refs = True
+        try:
+            if said == "mounting":
+                self.use_mounting_holes(quiet=True)
+            elif said in ("waste", "onboard") and (
+                    said != self._fid_placement or self._fid_mounting):
+                self.action_fiducial_layout(4, said, self._fid_offset)
+        finally:
+            self._restoring_refs = False
+        self.inspector.setup.sync()
+
+    # Whether what the operator says about a board - single or double
+    # sided, where its reference holes go - is remembered for its folder and
+    # given back when it is opened again. On in the app (gui2/app.py); off
+    # for a window built by anything else, so a test or a script neither
+    # reads nor leaves choices in the user's settings.
+    remember_board_choices = False
+
+    def open_from_outside(self, path):
+        """A board or setup handed over by the KiCad plugin or a second
+        launch (gui2/handoff.py). Returns False, and loads nothing, while a
+        run is going: swapping the board under a cutting mill is not an
+        "open". Otherwise it is exactly File ▸ Open (or Load setup)."""
+        page = getattr(self, "autorun_page", None)
+        if page is not None and getattr(page, "_thread", None) is not None:
+            self.say("warn", "A run is in progress, so the board from KiCad "
+                             "was not loaded. Send it again when it is done.")
+            QApplication.alert(self)
+            return False
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)
+        if str(path).lower().endswith(".srmcam"):
+            self.load_setup(path)
+        else:
+            self.load_folder(path)
+            self._detect_sides()
+            self.autorun_page.board_opened()
+        return True
 
     def action_open_demo(self):
         if not DEMO.exists():
@@ -2580,6 +2751,7 @@ class MainWindow(QMainWindow):
                                   "examples folder to be writable.")
                 return
         self.load_folder(str(DEMO))
+        self.autorun_page.board_opened()
 
     def load_folder(self, folder):
         """Programmatic load — the dialog path and the tests both come here."""
@@ -2600,6 +2772,9 @@ class MainWindow(QMainWindow):
         self._top_fit = None
         self._fid_measured = []
         self._stock_turn = None
+        # The last board's mounting holes are not this board's.
+        self._leave_mounting_holes()
+        self._no_cutout = False
         from gerber2rml.loader import gerber_stem
         self._custom_name = False
         try:
@@ -2615,6 +2790,7 @@ class MainWindow(QMainWindow):
         self.refresh_checks()
         self.select_step("setup")
         self.stage.fit_work()
+        self.autorun_page.board_loaded()
         self.say("ok", f"Loaded {self.state.name} — "
                        f"{len(self.state.board.holes)} holes.")
 
@@ -3340,6 +3516,11 @@ class MainWindow(QMainWindow):
                              f"others off first.")
             return
         self._double = bool(on)
+        if self.remember_board_choices \
+                and not getattr(self, "_detecting_sides", False) \
+                and self.state.board is not None:
+            workspace.set_setting(self._sides_key(),
+                                  "double" if on else "single")
         self._mask_result = None
         self._silk_result = None
         self._paths_cache = {}
@@ -3461,7 +3642,90 @@ class MainWindow(QMainWindow):
             return self._fid_flip
         return _axis_of(self.dowel_spec())
 
+    def reference_holes(self):
+        """Where the reference holes are, as the choice the operator made:
+        "waste", "onboard", "mounting" or "manual"."""
+        return "mounting" if self._fid_mounting else self._fid_placement
+
+    def mounting_holes(self):
+        """The board's own holes that can be the reference holes, as
+        ``([[x, y], ...], diameter)`` - design frame, from the framed board
+        box's lower-left, which is what a manual FiducialSpec takes - or
+        None when the board has none that will do."""
+        from gerber2rml.doublesided import (preview_layout_double_sided,
+                                            FiducialSpec)
+        from gerber2rml.engine import mountfid
+        st = self.state
+        if st.board is None or st.gerber_dir is None:
+            return None
+        try:
+            lay = preview_layout_double_sided(
+                st.gerber_dir, dowels=self.dowel_spec(),
+                offset=(st.place_x, st.place_y), rotate=st.rotate,
+                registration="fiducial",
+                fiducials=FiducialSpec(placement="onboard"))
+        except Exception:                       # noqa: BLE001 - not a board
+            return None
+        picked = mountfid.pick(lay.holes, lay.outline.bounds,
+                               bit_mm=st.drill.bit_diameter)
+        if not picked:
+            return None
+        fx0, fy0 = lay.frame0
+        return [[x - fx0, y - fy0] for x, y, _d in picked], picked[0][2]
+
+    def use_mounting_holes(self, quiet=False):
+        """Make the board's mounting holes the reference holes. False, and
+        nothing changed, when it has none that will do."""
+        from gerber2rml.engine import mountfid
+        got = self.mounting_holes()
+        if got is None:
+            if not quiet:
+                lo = mountfid.min_diameter(self.state.drill.bit_diameter)
+                self.say("warn", "This board has no holes that can be the "
+                                 "reference holes. It takes at least two of "
+                                 "one size, %.1f to %.1f mm across, at "
+                                 "opposite ends of the board."
+                                 % (lo, mountfid.MAX_D))
+            return False
+        self._fid_points, self._fid_diameter = got
+        self._fid_count = len(self._fid_points)
+        self._fid_placement = "manual"
+        self._fid_mounting = True
+        self._fid_changed()
+        if not quiet:
+            self.say("ok", "%d of the board's own %.1f mm holes are the "
+                           "reference holes: nothing extra is drilled."
+                           % (self._fid_count, self._fid_diameter))
+        return True
+
+    def _leave_mounting_holes(self):
+        """Back to drilled reference holes: their own size and count."""
+        if self._fid_mounting:
+            self._fid_mounting = False
+            self._fid_points = []
+            self._fid_count = 4
+            self._fid_diameter = round(self.state.drill.bit_diameter + 0.8, 2)
+            self._fid_placement = "waste"
+
+    def _fid_changed(self):
+        self._layout_base = None
+        self._layout_key = None
+        self._paths_cache = {}
+        self._after_params()
+        self.refresh_preview()
+
     def action_fiducial_layout(self, count, placement, offset):
+        if self.remember_board_choices \
+                and not getattr(self, "_restoring_refs", False) \
+                and self.state.board is not None:
+            workspace.set_setting(self._refs_key(), placement)
+        if placement == "mounting":
+            if not self.use_mounting_holes():
+                self.inspector.setup.sync()      # the box goes back
+            return
+        if self._fid_mounting:
+            self._leave_mounting_holes()
+            count = self._fid_count
         self._fid_count = int(count)
         self._fid_placement = placement
         self._fid_offset = float(offset)
@@ -3538,6 +3802,7 @@ class MainWindow(QMainWindow):
         back into a design-frame point (see :meth:`_on_pin_moved`)."""
         return (self._double and self._registration == "fiducial"
                 and self._fid_placement == "manual"
+                and not self._fid_mounting
                 and self.state.board is not None)
 
     def _on_pin_moved(self, index, x, y):
@@ -4223,6 +4488,7 @@ class MainWindow(QMainWindow):
             "flex_auto": self._flex_auto, "flex_mm": self._flex_mm,
             "fid_count": self._fid_count,
             "fid_placement": self._fid_placement,
+            "fid_mounting": self._fid_mounting,
             "fid_offset": self._fid_offset,
             "fid_flip": self._fid_flip, "fid_scale": self._fid_scale,
             "fid_points": [list(p) for p in self._fid_points],
@@ -4343,6 +4609,8 @@ class MainWindow(QMainWindow):
             # Hand-placed holes without their places are not a placement.
             self._fid_placement = "waste"
             foreign.append("the hand-placed reference holes")
+        self._fid_mounting = (bool(data.get("fid_mounting", False))
+                              and self._fid_placement == "manual")
         self._dowel_mode = "grid" if data.get("dowel_mode") == "grid" else "fresh"
         self._dowel_edges = ("leftright" if data.get("dowel_edges") == "leftright"
                              else "topbottom")
@@ -4423,6 +4691,7 @@ class MainWindow(QMainWindow):
             px, py = data.get("place", [0, 0])
             st.set_rotation(data.get("rotate", 0))
             st.set_placement(px, py)
+            self.autorun_page.board_placed()
         self._paths_cache = {}
         setup = self.inspector.setup
         # Signals blocked: a thickness that differs from the spinbox fired the
