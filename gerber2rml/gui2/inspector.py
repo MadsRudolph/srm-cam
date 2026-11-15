@@ -657,6 +657,12 @@ class SetupPage(Page):
             tip="Writes the file straight away, without exporting the job or "
                 "starting a run. Those write it as well while this is ticked.")
         self.mask_section.add(self.mask_write_btn)
+        self.mask_laser_btn = widgets.button(
+            "Open the mask on the xTool…", on=ctl.action_mask_laser,
+            tip="With the F1 Ultra plugged into this PC by USB: photo, autofocus, "
+                "align on the drilled holes, and the openings filled with the "
+                "RemoveSolderMask recipe.")
+        self.mask_section.add(self.mask_laser_btn)
         self.add(self.mask_section)
 
         # -- silkscreen --------------------------------------------------
@@ -679,6 +685,11 @@ class SetupPage(Page):
             tip="Writes the file straight away, without exporting the job or "
                 "starting a run. Those write it as well while this is ticked.")
         self.silk_section.add(self.silk_write_btn)
+        self.silk_laser_btn = widgets.button(
+            "Mark it on the xTool…", on=ctl.action_silk_laser,
+            tip="With the F1 Ultra plugged into this PC by USB: photo, autofocus, "
+                "align on the drilled holes, and the artwork filled.")
+        self.silk_section.add(self.silk_laser_btn)
         self.add(self.silk_section)
 
         # -- solder paste stencil ----------------------------------------
@@ -1051,7 +1062,8 @@ class SetupPage(Page):
         self.mask_shrink.setValue(getattr(ctl, "_mask_shrink",
                                           self.mask_shrink.value()))
         self.mask_shrink.blockSignals(False)
-        for w in (self.mask_shrink_field, self.mask_note, self.mask_write_btn):
+        for w in (self.mask_shrink_field, self.mask_note, self.mask_write_btn,
+                  self.mask_laser_btn):
             w.setVisible(on)
         if not on:
             return
@@ -1060,12 +1072,13 @@ class SetupPage(Page):
         self.mask_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
         self.mask_write_btn.setEnabled(ctl.state.board is not None)
+        self.mask_laser_btn.setEnabled(ctl.state.board is not None)
 
     def sync_silk(self):
         """The silkscreen rows, the same way as the solder mask's."""
         ctl = self.ctl
         on = bool(getattr(ctl, "_silkscreen", False))
-        for w in (self.silk_note, self.silk_write_btn):
+        for w in (self.silk_note, self.silk_write_btn, self.silk_laser_btn):
             w.setVisible(on)
         if not on:
             return
@@ -1074,6 +1087,7 @@ class SetupPage(Page):
         self.silk_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
         self.silk_write_btn.setEnabled(ctl.state.board is not None)
+        self.silk_laser_btn.setEnabled(ctl.state.board is not None)
 
     def sync_stencil(self):
         """The stencil rows, the same way as the solder mask's."""

@@ -573,6 +573,45 @@ inside of a letter like O stays a loop of its own, which the laser's fill leaves
 unmarked. Nothing is shrunk. Artwork past the board edge is cut off at the outline
 and the clipped area is reported. Engine: `engine/silkscreen.py`.
 
+## Solder mask and silkscreen on the xTool
+
+The solder mask and silkscreen sections each have a button that opens the same
+laser page as the stencil, with the same photo, autofocus, placement, Align,
+selection, presets and STOP:
+- **Open the mask on the xTool…** fills every mask opening, ablating the cured
+  ink off the pads.
+- **Mark it on the xTool…** fills the silkscreen artwork.
+
+What changes:
+
+| | Stencil | Solder mask | Silkscreen |
+|---|---|---|---|
+| Laser work | outline cut, 30 passes in zones | filled, hatch lines | filled, hatch lines |
+| Default preset | 0.1 mm 304 stainless | RemoveSolderMask (sphawes) | RemoveSolderMask (sphawes) |
+| Align locks onto | the holes it cut | the drilled holes | the drilled holes |
+| Learn the camera offset | yes | no (uses the stencil's) | no (uses the stencil's) |
+
+**The fill presets** are the ones in sphawes/fiber-laser-pcb-fab's
+`settings.json`, which the lab imports into XCS:
+- **RemoveSolderMask:** fiber, 40 %, 800 mm/s, 30 kHz, 300 lines/cm, 6 passes,
+  one way, cross-hatched.
+- **Traces:** 100 %, 600 mm/s, 240 lines/cm, 10 passes.
+
+XCS draws these as a raster. Here each shape gets vector hatch lines at the same
+spacing, power and speed:
+- Each pass is at right angles to the last.
+- Every line runs the same way.
+- The lines run across the whole job, not shape by shape.
+
+Under **Adjust the numbers** are power, speed, frequency, passes, line density,
+cross hatch, one way, and a faint score of the board outline.
+
+**Align** uses the board's drill file, in the same frame and mirroring as the
+artwork. A drilled hole shows as a dark dot in the photo, through the ink too.
+On the test board, all 27 drilled holes fall inside their mask openings.
+
+The camera offset learned on a stencil applies to these jobs too.
+
 ## Solder paste stencil: cut on the xTool F1 Ultra
 
 The holes for a paste stencil cut from 0.1 mm stainless foil by the fiber laser,
