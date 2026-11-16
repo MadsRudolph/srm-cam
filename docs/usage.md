@@ -601,58 +601,72 @@ of times. SRM-CAM defaults to **Concentric passes (FlatCAM style)**:
 | **Moat hatch (cross-hatched band)** | Hatches only the isolation band around copper traces and pads | When you want a cross-hatched moat without full rubout |
 | **Full rubout (sphawes / XCS)** | Hatches every empty millimetre inside the board outline | When all unused copper must be removed |
 
-**Copper calibration.** The built-in copper profiles are uncalibrated starting
-values. XTool Studio fill parameters do not establish an effective native
-concentric-vector exposure. Board thickness and copper foil thickness are
-separate measurements.
+**The proven recipe.** **FR4 1.6 mm · proven** is the default traces preset:
+- **Settings:** fiber, **100 %, 1000 mm/s, 30 kHz, 20 passes**, with concentric
+  rings (6 rings, 0.04 mm kerf, 285 lines/cm).
+- **Result on the lab's F1 Ultra (16 Nov 2026):** the whole curtain-drive board
+  came out with every net isolated and no fine trace burnt, in about five minutes
+  of laser time, against about two hours on the mill.
+- **Other presets:** the rest are still uncalibrated starting points. XCS fill
+  settings do not carry over to these vector rings.
 
-From **Traces → Recipe → Calibrate copper vectors…**, use a fresh flat scrap
-of the same stock. The coupon frame is 40 × 40 mm. Its labels and outline are
-preview guides only; the fiber engraves neither. The preview shows the exact
-paths sent by the same native vector writer used for production isolation.
+**Copper calibration**, for new stock. Open it from **Traces → Recipe →
+Calibrate copper vectors…**, or straight away with `srm-cam-laser --calibrate`.
+Use a fresh, flat scrap of the same stock and autofocus on its copper. The
+coupon is a 40 × 40 mm square; its labels and frame are guides and are never
+lasered.
 
-1. **Single lines:** five independent 12 mm lines. Place the frame over fresh
-   copper, autofocus on its surface, check **Fresh copper positioned for this
-   stage**, and press **Run cell 1 · ONE pass**. Initial 10% power, 2000 mm/s
-   and 30 kHz are an exploratory low-exposure starting point, not a verified
-   copper recipe. Inspect after each pass. Compare changed exposures on fresh
-   cells, or repeat the same cell after cooling to measure cumulative depth.
-   Stop an experiment on laminate damage. A dark mark alone does not establish
-   copper removal. Measure the cleared substrate width and enter **Cleared
-   width** only once copper has actually been removed.
-2. **Spacing:** derives five parallel-line pitches (40–100% of the measured
-   width, rounded to the output grid). Use a fresh coupon area and the exposure
-   that produced the width measurement. Run each cell separately and identify
-   continuous clearing without copper ridges; enter the successful **Tested
-   pitch**. Do not reuse the single-line area for this stage.
-3. **Corners and pads:** uses production concentric generation for a straight
-   track, corners, a square pad, two tracks with a nominal 0.30 mm gap, and a
-   round pad. Use fresh copper again. Run one cell/one depth pass at a time.
-   Check track continuity, isolation from surrounding copper, and laminate
-   condition after cleaning. This test does not certify finer actual-board
-   features; inspect and test those separately.
+1. **Find the exposure.**
+   - **The grid:** 16 small real traces, each two 0.4 mm tracks with a 0.3 mm
+     gap and a pad at alternate ends, isolated with the production rings.
+   - **Columns and rows:** the columns are speeds (300, 600, 1000, 2000 mm/s)
+     and the rows are pass counts (5, 10, 20, 40), all at one power (100 %,
+     30 kHz). Both lists can be edited.
+   - **One job:** the whole grid runs in about 80 s. Passes go round-robin with
+     a 0.5 s laser-off rest each round, so no track gets its passes back to back.
+   - **Reading it:** too little dose leaves faint outlines; too much chars the
+     board.
+   - **Choosing:** pick the cell that cleared the copper with the fewest passes.
+     Prove it with a continuity check across the two pads, which should read
+     open.
 
-Each attempt saves `.gcode` and `.json` files in
-`Documents/SRM-CAM/exports/copper-calibration/` (or the configured workspace).
-Records include material, selected cell, measured geometry, exposure, position,
-head Z, camera correction, exact job hash and completion state. Completed pass
-counts belong to the same sample, geometry and bed position. Interrupted or
-failed attempts are recorded as uncertain, not credited as completed passes.
-**New scrap / new sample** starts a fresh history. **Record observation** saves
-what you actually inspected; it does not infer isolation from a camera image.
+   On the lab's FR4, 600 × 20, 1000 × 20 and 2000 × 40 were best: the same dose
+   (passes ÷ speed) window. A single line is not a fair test: it only cuts a
+   hairline, too thin to judge whether the copper is cleared.
+2. **Single lines, Spacing, Corners and pads:** use the exposure the grid found.
+   These stages take a pass count, so a cell runs at, say, 20 passes in one
+   press.
+   - **Single lines:** measure the cleared width.
+   - **Spacing:** find a pitch that clears continuously.
+   - **Corners and pads:** check five real shapes.
 
-After recording **Clean isolation** on all five corners/pads cells at one
-common exposure and cumulative pass count,
-**Save measured one-pass recipe…** transfers the exposure, measured cleared
-width, tested pitch and ring count into Traces. The recipe deliberately retains
-**one pass**: manual cooling and inspection between experiments do not qualify
-an uninterrupted multi-pass production run. The required cumulative pass count
-is retained in calibration metadata and the run records.
-Mixed exposures, inconsistent pass counts and interrupted attempts cannot
-become a production preset.
-Closing the calibration window loads the saved recipe in the parent Traces
-window, retaining the board's placement. Camera correction is shared, and
-focus/photo tools are available throughout calibration.
+   Each stage needs the measurement from the one before. Use fresh copper for
+   every stage.
+
+**Run records.** Every run saves its `.gcode` and `.json` in
+`Documents/SRM-CAM/exports/copper-calibration/`, or the configured workspace:
+- **What is recorded:** the material, the stage and cell (or the whole grid
+  with each cell's speed and passes), power, frequency, passes, position, head
+  Z, camera correction, the exact job's hash, and whether it completed.
+- **Uncertain runs:** interrupted or failed runs are recorded as uncertain, not
+  counted.
+- **Observations:** **Record observation** saves what you inspected. It does not
+  judge isolation from a camera picture.
+
+**Saving a recipe.** After **Clean isolation** on all five corners/pads cells, at
+one exposure and one total pass count, **Save measured recipe…** stores the
+exposure, cleared width, pitch, rings and that pass count as a traces preset.
+Mixed exposures, uneven pass counts and interrupted runs cannot become a
+preset.
+
+**The laser page on its own.** `srm-cam-laser [gerber-folder]` opens the laser
+page straight on a board, without SRM-CAM's milling steps:
+- **Which job:** it starts on traces from the face with the most copper, so a
+  fab-made board like curtain-drive opens on F.Cu. It falls back to mask,
+  silkscreen or stencil if the folder has no copper.
+- **With no folder:** it reopens the last one, or asks for one.
+- **Options:** `--job mask|silk|stencil` opens on that job, and `--calibrate`
+  opens the copper calibration window.
 
 When a drill file is present, **Etch drill hole centres inside pads** (on by
 default) clears the copper at each hole centre so drill bits self-centre and
@@ -663,7 +677,7 @@ What changes across the four jobs:
 | | Traces | Stencil | Solder mask | Silkscreen |
 |---|---|---|---|---|
 | Laser work | concentric vector rings (or moat/rubout) | outline cut, 30 passes in zones | filled, hatch lines | filled, hatch lines |
-| Default preset | FlatCAM isolation (concentric; uncalibrated) | 0.1 mm 304 stainless | RemoveSolderMask (sphawes) | RemoveSolderMask (sphawes) |
+| Default preset | FR4 1.6 mm · proven (100 %, 1000 mm/s × 20) | 0.1 mm 304 stainless | RemoveSolderMask (sphawes) | RemoveSolderMask (sphawes) |
 | Align locks onto | the drilled holes (if present) | the holes it cut | the drilled holes | the drilled holes |
 | Learn the camera offset | no (uses the stencil's) | yes | no (uses the stencil's) | no (uses the stencil's) |
 

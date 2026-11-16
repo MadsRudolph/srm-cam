@@ -57,6 +57,7 @@ FILL_PRESETS = {
 }
 # Copper trace presets: FlatCAM-style concentric isolation + optional moat / rubout.
 TRACES_PRESETS = {
+    "FR4 1.6 mm · proven (100 %, 1000 mm/s × 20)": xtool.FR4_TRACES_RECIPE,
     "FlatCAM isolation (concentric; uncalibrated)": xtool.DEFAULT_TRACES_RECIPE,
     "Wide isolation (concentric; uncalibrated)": xtool.WIDE_TRACES_RECIPE,
     "Moat hatch (uncalibrated)": xtool.MOAT_HATCH_RECIPE,
@@ -1309,7 +1310,8 @@ class StencilLaserDialog(QDialog):
                     f"{'' if r.passes == 1 else 'es'}"
                     f"{', cross-hatched' if r.cross_hatch else ''} · "
                     f"{r.lines_per_cm:g} lines/cm ({r.interval:.3f} mm)")
-        uncalibrated = (self.kind == "traces" and self.preset.currentText() in TRACES_PRESETS)
+        uncalibrated = (self.kind == "traces" and self.preset.currentText() in TRACES_PRESETS
+                        and "proven" not in self.preset.currentText())
         self.recipe_lbl.setText(("Uncalibrated starting values · " if uncalibrated else "")
                                + ("Changed from the preset · " if changed else "") + what)
         self._estimate()
