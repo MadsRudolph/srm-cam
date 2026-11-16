@@ -688,6 +688,12 @@ class TracesRecipe:
 
 
 DEFAULT_TRACES_RECIPE = TracesRecipe()
+# Proven on the lab's F1 Ultra, 2026-11-16: FR4 1.6 mm, copper isolation with
+# the concentric rings. Found with the exposure grid (best cells 600 x 20,
+# 1000 x 20 and 2000 x 40, the same dose window) and then run on the whole
+# curtain-drive board: every net isolated, no fine trace burnt, about five
+# minutes against two hours on the mill.
+FR4_TRACES_RECIPE = TracesRecipe(power=100.0, speed=1000.0, frequency=30.0, passes=20)
 WIDE_TRACES_RECIPE = TracesRecipe(offsets=10)
 MOAT_HATCH_RECIPE = TracesRecipe(strategy="moat", lines_per_cm=240.0)
 RUBOUT_TRACES_RECIPE = TracesRecipe(strategy="rubout", lines_per_cm=240.0)
