@@ -28,11 +28,12 @@ levelling, from a single program.
 
 All from the [latest release](https://github.com/MadsRudolph/srm-cam/releases/latest).
 
-**Before first use on Windows**, install Roland's **monoFab driver** and
-**VPanel** from the [SRM-20 download page](https://downloadcenter.rolanddg.com/SRM-20#software)
-(Software tab). The driver makes the mill a printer SRM-CAM can send to; in
-VPanel, set *Setup ▸ Command Set* to **NC Code**. Install the driver with the
-mill's USB unplugged, and plug it in when the installer asks.
+**Before first use on Windows**, install Roland's **monoFab driver** from the
+[SRM-20 download page](https://downloadcenter.rolanddg.com/SRM-20#software)
+(Software tab). It is the one thing SRM-CAM needs: the driver makes the mill a
+printer SRM-CAM can send to. Install it with the mill's USB unplugged, and plug
+it in when the installer asks. Roland's VPanel is optional: only for playing
+exported files by hand in Pro, or for changing the mill's command set.
 Step by step: [Getting started](https://madsrudolph.github.io/srm-cam/getting-started.html#roland).
 
 ## What it does
