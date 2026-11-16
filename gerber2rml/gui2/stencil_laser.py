@@ -33,14 +33,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
                                QFrame, QGraphicsItem, QGraphicsPathItem,
                                QGraphicsScene, QGraphicsSimpleTextItem,
                                QGraphicsView, QHBoxLayout, QInputDialog, QLabel,
-                               QMenu, QProgressBar, QScrollArea, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QListWidget, QListWidgetItem, QMenu, QProgressBar, QPushButton, QScrollArea,
+                               QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
 from gerber2rml.engine import xtool
 from gerber2rml.gui2 import theme, widgets
 
 _SETTINGS = ("SRM-CAM", "stencil-laser")
-_PX_PER_MM = 4
+_PX_PER_MM = 8
 _FIELD = 220.0          # mm the camera calibration covers
 _INSPECTOR_W = 380
 
@@ -55,9 +55,26 @@ FILL_PRESETS = {
     "RemoveSolderMask (sphawes)": xtool.SPHAWES_REMOVE_MASK,
     "Traces (sphawes)": xtool.SPHAWES_TRACES,
 }
+# Copper trace presets: FlatCAM-style concentric isolation + optional moat / rubout.
+TRACES_PRESETS = {
+    "FlatCAM isolation (concentric; uncalibrated)": xtool.DEFAULT_TRACES_RECIPE,
+    "Wide isolation (concentric; uncalibrated)": xtool.WIDE_TRACES_RECIPE,
+    "Moat hatch (uncalibrated)": xtool.MOAT_HATCH_RECIPE,
+    "Full rubout (XCS reference; uncalibrated)": xtool.RUBOUT_TRACES_RECIPE,
+}
 
 # What changes with the job. Everything else on the page is the same.
 KINDS = {
+    "calibration": dict(window="copper calibration", step="Calibrate native copper vectors",
+                        section="The calibration coupon", noun="cell",
+                        run="Run one calibration pass", run_selected="Run one calibration pass",
+                        busy="Calibrating", presets={"Exploratory single pass — not a production recipe":
+                            xtool.FillRecipe(power=10, speed=2000, frequency=30, passes=1,
+                                             mark_outline=False)}),
+    "traces": dict(window="copper traces", step="Etch the copper traces",
+                   section="The copper traces", noun="trench", nouns="trenches",
+                   run="Etch the traces", run_selected="Etch {n} selected",
+                   busy="Etching the traces", presets=TRACES_PRESETS),
     "stencil": dict(window="solder paste stencil", step="Cut the stencil",
                     section="The stencil", noun="hole", run="Cut the stencil",
                     run_selected="Cut {n} selected", busy="Cutting",
@@ -71,6 +88,8 @@ KINDS = {
                  run_selected="Mark {n} selected", busy="Marking the silkscreen",
                  presets=FILL_PRESETS),
 }
+_LEGEND_NOUN = {"traces": "isolation trench", "stencil": "paste hole",
+                "mask": "mask opening", "silk": "silkscreen", "calibration": "test vectors"}
 
 
 def _recipe_dict(r):
@@ -212,6 +231,7 @@ class _BedView(QGraphicsView):
     nudge = Signal(float, float)
     context = Signal(QPointF, object)
     boxed = Signal(QRectF, bool)
+    reference_clicked = Signal(QPointF)
 
     def __init__(self, scene):
         super().__init__(scene)
@@ -227,6 +247,7 @@ class _BedView(QGraphicsView):
         self.rubberBandChanged.connect(self._band)
         self._last_band = QRectF()
         self._pan = None
+        self.pick_reference = False
 
     def fit(self):
         self._fitted = True
@@ -250,6 +271,10 @@ class _BedView(QGraphicsView):
         self.fit()
 
     def mousePressEvent(self, e):
+        if self.pick_reference and e.button() == Qt.LeftButton:
+            self.reference_clicked.emit(self.mapToScene(e.position().toPoint()))
+            e.accept()
+            return
         if e.button() == Qt.MiddleButton:     # middle drag pans
             self._pan = e.position()
             self.setCursor(Qt.ClosedHandCursor)
@@ -295,6 +320,9 @@ class _BedView(QGraphicsView):
             self._last_band = self.mapToScene(rect).boundingRect()
 
     def mouseReleaseEvent(self, e):
+        if self.pick_reference and e.button() == Qt.LeftButton:
+            e.accept()
+            return
         if self._pan is not None and e.button() == Qt.MiddleButton:
             self._pan = None
             self.unsetCursor()
@@ -358,12 +386,15 @@ class _Legend(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(10, 8, 12, 8)
         v.setSpacing(3)
-        for token, text in entries:
+        self.first_label = None
+        for idx, (token, text) in enumerate(entries):
             sw = QLabel()
             sw.setFixedSize(12, 3)
             sw.setStyleSheet(f"background: {token}; border-radius: 1px;")
             t = widgets.micro(text)
             t.setStyleSheet(f"color: {theme.TEXT_3}; background: transparent;")
+            if idx == 0:
+                self.first_label = t
             r = _row(sw, t, None, gap=7)
             r.setObjectName("legendRow")
             r.setStyleSheet("QWidget#legendRow { background: transparent; }")
@@ -376,14 +407,16 @@ class _Legend(QFrame):
 
 class StencilLaserDialog(QDialog):
     """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork` or an
-    :class:`xtool.LaserArt` (a solder mask or silkscreen job)."""
+    :class:`xtool.LaserArt` (traces, solder mask, silkscreen, or stencil)."""
 
-    def __init__(self, art, parent=None, laser=None, name="stencil"):
+    def __init__(self, art, parent=None, laser=None, name="stencil", jobs=None):
         super().__init__(parent)
         art = as_laser_art(art)
         self.kind = art.kind
         self.k = KINDS[self.kind]
+        self._jobs = jobs
         self.base_art = art
+        self._trace_side = art.side if art.kind == "traces" else None
         self.turns = 0
         self.fine = 0.0                     # degrees on top of the quarter turns
         self.look = "filled"
@@ -398,6 +431,12 @@ class StencilLaserDialog(QDialog):
         self._zone_holes = []
         self._focus_point = None            # None: follow the stencil's middle
         self._bed_rgb = None
+        self._raw_rgb = None
+        self._reference_pairs = []  # (unrotated artwork XY, corrected photo XY)
+        self._pending_reference = None
+        self._reference_markers = []
+        self._last_cut_paths = None
+        self._art_warnings = []
         self.setWindowTitle(f"xTool F1 Ultra — {self.k['window']}")
         self.resize(1400, 900)
         self.setStyleSheet(f"QDialog {{ background: {theme.BASE}; }}")
@@ -421,8 +460,8 @@ class StencilLaserDialog(QDialog):
         self.view.nudge.connect(self._nudge)
         self.view.context.connect(self._context)
         self.view.boxed.connect(self._boxed)
-        self.legend = _Legend([(theme.PATH, {"stencil": "paste hole", "mask": "mask opening",
-                                             "silk": "silkscreen"}[self.kind]),
+        self.view.reference_clicked.connect(self._pick_reference)
+        self.legend = _Legend([(theme.PATH, _LEGEND_NOUN[self.kind]),
                                (theme.PATH_FAR, "selected"),
                                (theme.TOOL, "cutting now"),
                                (theme.PROBE, "focus point"),
@@ -452,8 +491,8 @@ class StencilLaserDialog(QDialog):
                 "and move the head")
         self.align_btn = widgets.button(
             "Align", on=self.align,
-            tip="Photo, then find the holes already cut and put the stencil "
-                "back on them: after the foil or board has been moved")
+            tip="Take a photo and find the enabled automatic references. "
+                "Use Alignment in the side panel to choose references or match points.")
         self.rot_l = widgets.button("Turn left", on=lambda: self.rotate(-1),
                                     tip="A quarter turn anticlockwise")
         self.rot_r = widgets.button("Turn right", on=lambda: self.rotate(1),
@@ -483,28 +522,48 @@ class StencilLaserDialog(QDialog):
         pv.setContentsMargins(theme.GAP_L, theme.GAP_M, theme.GAP_L, theme.GAP_L)
         pv.setSpacing(theme.GAP_L)
 
+        self.job_switch = widgets.Segmented([
+            ("traces", "Traces", "Etch the copper traces"),
+            ("mask", "Mask", "Open the solder mask over the pads"),
+            ("silk", "Silk", "Mark the component silkscreen"),
+            ("stencil", "Stencil", "Cut the solder paste stencil")], self.kind)
+        for b in self.job_switch.findChildren(QPushButton):
+            b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
+        self.job_switch.changed.connect(self.switch_kind)
+        pv.addWidget(self.job_switch)
+
         head = QWidget()
         hv = QVBoxLayout(head)
         hv.setContentsMargins(0, 0, 0, 0)
         hv.setSpacing(2)
         hv.addWidget(widgets.eyebrow("Step"))
-        t = QLabel(self.k["step"])
-        t.setFont(theme.font("sub"))
-        hv.addWidget(t)
+        self.step_lbl = QLabel(self.k["step"])
+        self.step_lbl.setFont(theme.font("sub"))
+        hv.addWidget(self.step_lbl)
         pv.addWidget(head)
 
         s = widgets.Section(self.k["section"])
+        self.art_section = s
         self.name_lbl = QLabel(name)
         self.name_lbl.setFont(theme.font("sub"))
         s.add(self.name_lbl)
         self.size_lbl = widgets.hint("")
         s.add(self.size_lbl)
-        for msg in art.warnings():
-            n = widgets.hint(msg)
-            n.setStyleSheet(f"color: {theme.CAUTION};")
-            s.add(n)
-        self.x = _spin(float(cfg.value("x", 60.0)), -50, _FIELD, 0.1, suffix=" mm")
-        self.y = _spin(float(cfg.value("y", 60.0)), -50, _FIELD, 0.1, suffix=" mm")
+        self.copper_side = QComboBox()
+        self.copper_side.addItem("B.Cu — bottom copper", "bottom")
+        self.copper_side.addItem("F.Cu — top copper", "top")
+        self.copper_side.setCurrentIndex(self.copper_side.findData(self._trace_side or "bottom"))
+        self.copper_side.currentIndexChanged.connect(self._switch_copper_side)
+        self.copper_side_field = widgets.Field("Copper face", self.copper_side)
+        s.add(self.copper_side_field)
+        self._warn_box = QWidget()
+        self._warn_layout = QVBoxLayout(self._warn_box)
+        self._warn_layout.setContentsMargins(0, 0, 0, 0)
+        self._warn_layout.setSpacing(theme.GAP_S)
+        s.add(self._warn_box)
+        self._sync_warnings()
+        self.x = _spin(float(cfg.value("x", 60.0)), -50, _FIELD, 0.1, 3, suffix=" mm")
+        self.y = _spin(float(cfg.value("y", 60.0)), -50, _FIELD, 0.1, 3, suffix=" mm")
         self.x.valueChanged.connect(self._typed)
         self.y.valueChanged.connect(self._typed)
         s.add(widgets.Field("X", self.x))
@@ -512,6 +571,53 @@ class StencilLaserDialog(QDialog):
                                               "the laser's mm. Drag it, use the "
                                               "arrow keys, or right-click the bed."))
         pv.addWidget(s)
+
+        s = widgets.Section("Alignment")
+        s.add(widgets.hint("Pick the same holes, pad centres, corners or marks in the "
+                           "drawing and photo. Use 2 distant points; 3 or more let "
+                           "the fit check your picks. No mounting holes needed."))
+        self.reference_snap = QComboBox()
+        self.reference_snap.addItem("Snap to hole centres", "holes")
+        self.reference_snap.addItem("Snap to artwork centres", "artwork")
+        self.reference_snap.addItem("Free points / corners / marks", "free")
+        self.reference_snap.currentIndexChanged.connect(self._draw_references)
+        s.add(self.reference_snap)
+        self.pick_refs_btn = widgets.button("Pick matching points", on=self._toggle_reference_pick)
+        self.pick_refs_btn.setCheckable(True)
+        s.add(self.pick_refs_btn)
+        self.reference_list = QListWidget()
+        self.reference_list.setMaximumHeight(110)
+        s.add(self.reference_list)
+        self.reference_note = widgets.hint("Take a photo, then pick matching points.")
+        s.add(self.reference_note)
+        self.apply_refs_btn = widgets.button("Apply point alignment", on=self.apply_reference_alignment)
+        self.remove_ref_btn = widgets.button("Remove", kind="ghost", on=self._remove_reference)
+        self.clear_refs_btn = widgets.button("Clear", kind="ghost", on=self._clear_references)
+        s.add(self.apply_refs_btn)
+        s.add(_row(self.remove_ref_btn, self.clear_refs_btn, None))
+        auto = widgets.Disclosure("Automatic alignment references", key="alignment-references")
+        auto.body.addWidget(widgets.hint("Tick only holes or shapes that already exist "
+                                        "on the material. These picks do not change what gets etched."))
+        self.auto_reference_source = QComboBox()
+        self.auto_reference_source.addItem("Drilled holes", "holes")
+        self.auto_reference_source.addItem("Artwork shapes", "artwork")
+        self.auto_reference_source.setCurrentIndex(1 if self.kind == "stencil" else 0)
+        self.auto_reference_source.currentIndexChanged.connect(self._populate_auto_references)
+        auto.body.addWidget(self.auto_reference_source)
+        self.auto_contrast = QComboBox()
+        self.auto_contrast.addItem("Dark holes / marks on light material", "dark")
+        self.auto_contrast.addItem("Bright pads / marks on dark material", "bright")
+        auto.body.addWidget(self.auto_contrast)
+        self.auto_reference_list = QListWidget()
+        self.auto_reference_list.setMaximumHeight(140)
+        self.auto_reference_list.itemSelectionChanged.connect(self._draw_references)
+        auto.body.addWidget(self.auto_reference_list)
+        self.auto_all_btn = widgets.button("All", kind="ghost", on=lambda: self._check_auto_references(True))
+        self.auto_none_btn = widgets.button("None", kind="ghost", on=lambda: self._check_auto_references(False))
+        auto.body.addWidget(_row(self.auto_all_btn, self.auto_none_btn, None))
+        s.add(auto)
+        pv.addWidget(s)
+        self._populate_auto_references()
 
         s = widgets.Section("Focus")
         self.z_read = widgets.Readout("Head Z", "—")
@@ -534,6 +640,12 @@ class StencilLaserDialog(QDialog):
         self.off_x = widgets.Readout("Photo offset X", "")
         self.off_y = widgets.Readout("Photo offset Y", "")
         s.add(_row(self.off_x, self.off_y, None, gap=theme.GAP_L))
+        self.offset_x = _spin(self.cam_offset[0], -10, 10, 0.01, 3, suffix=" mm")
+        self.offset_y = _spin(self.cam_offset[1], -10, 10, 0.01, 3, suffix=" mm")
+        self.offset_x.valueChanged.connect(self._edit_offset)
+        self.offset_y.valueChanged.connect(self._edit_offset)
+        s.add(widgets.Field("Correction X", self.offset_x))
+        s.add(widgets.Field("Correction Y", self.offset_y))
         s.add(widgets.hint(
             "The photo is moved by this much so it lands on what the fiber really "
             "cuts. Right after a cut, with the stencil still where it was cut, "
@@ -553,6 +665,13 @@ class StencilLaserDialog(QDialog):
         self.preset = QComboBox()
         self.preset.currentTextChanged.connect(self._load_preset)
         s.add(self.preset)
+        self.strategy = QComboBox()
+        self.strategy.addItem("Concentric passes (FlatCAM, fast)", "concentric")
+        self.strategy.addItem("Moat hatch (cross-hatched band)", "moat")
+        self.strategy.addItem("Full rubout (clear all non-copper)", "rubout")
+        self.strategy_field = widgets.Field("Method", self.strategy)
+        self.strategy.currentIndexChanged.connect(self._on_trace_geometry_changed)
+        s.add(self.strategy_field)
         self.recipe_lbl = widgets.hint("")
         s.add(self.recipe_lbl)
         # The numbers live under a fold: pick a preset and cut; open it only
@@ -560,42 +679,69 @@ class StencilLaserDialog(QDialog):
         self.recipe_more = widgets.Disclosure("Adjust the numbers",
                                               key=f"{self.kind}-recipe")
         r = xtool.DEFAULT_RECIPE
+        f = xtool.SPHAWES_REMOVE_MASK
+        t = xtool.DEFAULT_TRACES_RECIPE
         self.power = _spin(r.power, 1, 100, 1, 0)
         self.speed = _spin(r.speed, 10, 5000, 10, 0)
         self.freq = _spin(r.frequency, 1, 60, 1, 0)
         self.passes = _ispin(r.total_passes, 1, 300)
+        self.offsets = _ispin(t.offsets, 1, 50)
+        self.trace_kerf = _spin(t.kerf, 0.0, 0.2, 0.001, 3)
+        self.density = _spin(f.lines_per_cm, 10, 1000, 10, 0)
         self.burst = _ispin(r.passes_per_burst, 1, 50)
         self.rest = _spin(r.rest_s, 0, 120, 1, 0)
         self.zones = _ispin(r.zones, 1, 12)
-        self.mark = QCheckBox("Mark the board outline afterwards")
-        self.mark.setChecked(True)
-        f = xtool.SPHAWES_REMOVE_MASK
-        self.density = _spin(f.lines_per_cm, 10, 1000, 10, 0)
+        self.spot_drills = QCheckBox("Etch drill hole centres inside pads")
+        self.spot_drills.setChecked(True)
         self.cross = QCheckBox("Cross hatch: each pass at right angles to the last")
         self.one_way = QCheckBox("One way: every line drawn the same direction")
-        if self.kind == "stencil":
-            rows = (("Power", self.power, "%"), ("Speed", self.speed, "mm/s"),
-                    ("Frequency", self.freq, "kHz"), ("Passes", self.passes, "per hole"),
-                    ("Per burst", self.burst, "passes"), ("Rest", self.rest, "s"),
-                    ("Zones", self.zones, ""))
-            checks = (self.mark,)
-        else:
-            self.mark.setText("Score the board outline afterwards, faintly")
-            rows = (("Power", self.power, "%"), ("Speed", self.speed, "mm/s"),
-                    ("Frequency", self.freq, "kHz"), ("Passes", self.passes, ""),
-                    ("Line density", self.density, "lines/cm"))
-            checks = (self.cross, self.one_way, self.mark)
-        for label, wdg, unit in rows:
-            self.recipe_more.body.addWidget(widgets.Field(label, wdg, unit=unit))
-            wdg.valueChanged.connect(self._recipe_changed)
-        for c in checks:
+        self.mark = QCheckBox("Mark the board outline afterwards")
+        self.mark.setChecked(True)
+
+        self.power_field = widgets.Field("Power", self.power, unit="%")
+        self.speed_field = widgets.Field("Speed", self.speed, unit="mm/s")
+        self.freq_field = widgets.Field("Frequency", self.freq, unit="kHz")
+        self.passes_field = widgets.Field("Passes", self.passes)
+        self.offsets_field = widgets.Field("Isolation passes", self.offsets, unit="rings")
+        self.trace_kerf_field = widgets.Field("Cleared line width", self.trace_kerf, unit="mm")
+        self.density_field = widgets.Field("Line density", self.density, unit="lines/cm")
+        self.burst_field = widgets.Field("Per burst", self.burst, unit="passes")
+        self.rest_field = widgets.Field("Rest", self.rest, unit="s")
+        self.zones_field = widgets.Field("Zones", self.zones)
+
+        for field_w, wdg in (
+            (self.power_field, self.power),
+            (self.speed_field, self.speed),
+            (self.freq_field, self.freq),
+            (self.passes_field, self.passes),
+            (self.offsets_field, self.offsets),
+            (self.trace_kerf_field, self.trace_kerf),
+            (self.density_field, self.density),
+            (self.burst_field, self.burst),
+            (self.rest_field, self.rest),
+            (self.zones_field, self.zones),
+        ):
+            self.recipe_more.body.addWidget(field_w)
+            if wdg in (self.offsets, self.trace_kerf, self.density):
+                wdg.valueChanged.connect(self._on_trace_geometry_changed)
+            else:
+                wdg.valueChanged.connect(self._recipe_changed)
+
+        for c in (self.spot_drills, self.cross, self.one_way, self.mark):
             self.recipe_more.body.addWidget(c)
-            c.toggled.connect(self._recipe_changed)
+            if c is self.spot_drills:
+                c.toggled.connect(self._on_trace_geometry_changed)
+            else:
+                c.toggled.connect(self._recipe_changed)
+
         self.save_btn = widgets.button("Save as preset…", on=self.save_preset)
         self.del_btn = widgets.button("Delete preset", kind="ghost",
                                       on=self.delete_preset)
         self.recipe_more.body.addWidget(_row(None, self.save_btn, self.del_btn))
         s.add(self.recipe_more)
+        self.calibrate_btn = widgets.button("Calibrate copper vectors…", on=self.open_copper_calibration)
+        self.calibrate_btn.setVisible(self.kind == "traces")
+        s.add(self.calibrate_btn)
         pv.addWidget(s)
         pv.addStretch(1)
 
@@ -664,10 +810,10 @@ class StencilLaserDialog(QDialog):
 
         # A dialog makes its first button the default and rings it; nothing on
         # this page should fire on Enter.
-        from PySide6.QtWidgets import QPushButton
         for b in self.findChildren(QPushButton):
             b.setAutoDefault(False)
             b.setDefault(False)
+        self._sync_recipe_widgets()
         self._fill_presets(cfg.value(self._key("preset"), next(iter(self.k["presets"]))))
         self._build_item()
         self._busy(False)
@@ -744,6 +890,123 @@ class StencilLaserDialog(QDialog):
         self.legend.move(vw - self.legend.width() - 14, vh - self.legend.height() - 14)
 
     # -- the stencil -------------------------------------------------------
+    def _noun(self, n):
+        return self.k["noun"] if n == 1 else self.k.get("nouns", self.k["noun"] + "s")
+
+    def _sync_warnings(self):
+        for w in self._art_warnings:
+            w.setParent(None)
+            w.deleteLater()
+        self._art_warnings = []
+        for msg in self.base_art.warnings():
+            n = widgets.hint(msg)
+            n.setStyleSheet(f"color: {theme.CAUTION};")
+            self._warn_layout.addWidget(n)
+            self._art_warnings.append(n)
+        self._warn_box.setVisible(bool(self._art_warnings))
+
+    def _sync_recipe_widgets(self):
+        is_stencil = self.kind == "stencil"
+        is_traces = self.kind == "traces"
+        self.density.setMaximum(10000 if is_traces else 1000)
+        self.density.setDecimals(2 if is_traces else 0)
+        if hasattr(self, "calibrate_btn"):
+            self.calibrate_btn.setVisible(is_traces)
+        strat = self.strategy.currentData() or "concentric"
+        is_hatch = is_traces and strat in ("moat", "rubout")
+        self.copper_side_field.setVisible(is_traces)
+        self.strategy_field.setVisible(is_traces)
+        self.offsets_field.setVisible(is_traces and strat != "rubout")
+        self.trace_kerf_field.setVisible(is_traces)
+        self.density_field.setVisible(self.kind in ("mask", "silk") or is_traces)
+        self.burst_field.setVisible(is_stencil)
+        self.rest_field.setVisible(is_stencil or (is_traces and strat == "concentric"))
+        self.zones_field.setVisible(is_stencil)
+        self.spot_drills.setVisible(is_traces and bool(self.base_art.drills))
+        self.cross.setVisible(self.kind in ("mask", "silk") or is_hatch)
+        self.one_way.setVisible(self.kind in ("mask", "silk") or is_hatch)
+        self.mark.setText("Mark the board outline afterwards"
+                          if is_stencil else
+                          "Score the board outline afterwards, faintly")
+
+    def _trace_art_for(self, side):
+        if callable(self._jobs):
+            return self._jobs("traces", side=side)
+        if self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
+            return self.parent()._laser_art_for("traces", side=side)
+        raise ValueError("Load this Gerber folder in the main window to change copper faces.")
+
+    def _switch_copper_side(self, *_a):
+        side = self.copper_side.currentData()
+        if self.kind != "traces" or side == self.base_art.side:
+            return
+        try:
+            art = self._trace_art_for(side)
+        except Exception as e:
+            self.copper_side.blockSignals(True)
+            self.copper_side.setCurrentIndex(self.copper_side.findData(self.base_art.side))
+            self.copper_side.blockSignals(False)
+            self._say(str(e), warn=True)
+            return
+        self.base_art = as_laser_art(art)
+        self._clear_references()
+        self._populate_auto_references()
+        self._trace_side = side
+        self.selected.clear()
+        self._refresh_traces_art()
+        self._sync_warnings()
+        self._sync_recipe_widgets()
+        self._say(f"Showing {'F.Cu (top)' if side == 'top' else 'B.Cu (bottom)'}. "
+                  "Place that copper face upwards on the laser bed.")
+
+    def switch_kind(self, kind):
+        if kind == self.kind:
+            return
+        try:
+            if kind == "traces" and self._trace_side is not None:
+                new_art = self._trace_art_for(self._trace_side)
+            elif callable(self._jobs):
+                new_art = self._jobs(kind)
+            elif isinstance(self._jobs, dict) and kind in self._jobs:
+                new_art = self._jobs[kind]
+            elif self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
+                new_art = self.parent()._laser_art_for(kind)
+            else:
+                raise RuntimeError(f"No {KINDS[kind]['window']} job is loaded.")
+        except Exception as e:                  # noqa: BLE001 - shown in status bar
+            self.job_switch.set_current(self.kind)
+            self._say(str(e), warn=True)
+            return
+        self.kind = kind
+        self.k = KINDS[kind]
+        self.base_art = as_laser_art(new_art)
+        self._clear_references()
+        self.auto_reference_source.setCurrentIndex(1 if kind == "stencil" else 0)
+        self._populate_auto_references()
+        self.art = xtool.rotated(self.base_art, self.turns, self.fine)
+        if kind == "traces":
+            self._trace_side = self.base_art.side
+            self.copper_side.blockSignals(True)
+            self.copper_side.setCurrentIndex(self.copper_side.findData(self._trace_side))
+            self.copper_side.blockSignals(False)
+        self.selected.clear()
+        self.job_switch.set_current(kind)
+        self.setWindowTitle(f"xTool F1 Ultra — {self.k['window']}")
+        self.step_lbl.setText(self.k["step"])
+        self.art_section.label.setText(self.k["section"])
+        if self.legend.first_label is not None:
+            self.legend.first_label.setText(_LEGEND_NOUN[kind])
+        self.legend.adjustSize()
+        self._place_legend()
+        self._sync_warnings()
+        self.learn_btn.setVisible(self.kind == "stencil")
+        self._sync_recipe_widgets()
+        cfg = QSettings(*_SETTINGS)
+        self._fill_presets(cfg.value(self._key("preset"),
+                                     next(iter(self.k["presets"]))))
+        self._build_item()
+        self._say(f"Switched to {self.k['window']}.")
+
     def _build_item(self):
         keep = self.origin()
         if self.item is not None:
@@ -759,7 +1022,9 @@ class StencilLaserDialog(QDialog):
         turned = f" · turned {angle:.1f}°".replace(".0°", "°") if abs(angle) > 1e-6 else ""
         n = len(self.art.apertures)
         self.size_lbl.setText(
-            f"{n} {self.k['noun']}{'' if n == 1 else 's'} · {w:.1f} × {h:.1f} mm · "
+            (f"{'F.Cu (top)' if self.art.side == 'top' else 'B.Cu (bottom)'} · "
+             if self.kind == "traces" else "")
+            + f"{n} {self._noun(n)} · {w:.1f} × {h:.1f} mm · "
             f"{'mirrored' if self.art.mirrored else 'not mirrored'}"
             + (f" · {self.art.note}" if self.art.note else "") + turned)
         self._paint()
@@ -768,13 +1033,14 @@ class StencilLaserDialog(QDialog):
     def rotate(self, step):
         self._turn_to(self.turns + step, self.fine)
 
-    def _turn_to(self, turns, fine):
+    def _turn_to(self, turns, fine, *, preserve_selection=False):
         """Turn the stencil about its middle, keeping the middle where it is."""
         cx, cy = self.centre()
         self.turns = turns % 4
         self.fine = fine
         self.art = xtool.rotated(self.base_art, self.turns, self.fine)
-        self.selected.clear()
+        if not preserve_selection:
+            self.selected.clear()
         w, h = self.art.size
         self._syncing = True
         self.x.setValue(round(cx - w / 2, 3))
@@ -827,6 +1093,7 @@ class StencilLaserDialog(QDialog):
 
     def _place_focus_mark(self):
         self._focus_mark.setPos(*self.focus_point())
+        self._draw_references()
 
     def _cursor(self, p):
         self.cursor_read.set(f"{p.x():6.1f}  {p.y():6.1f}")
@@ -892,20 +1159,27 @@ class StencilLaserDialog(QDialog):
         self._paint()
 
     def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape and self.view.pick_reference:
+            self.pick_refs_btn.setChecked(False)
+            self._toggle_reference_pick()
+            return
         if e.key() == Qt.Key_H and not e.modifiers():
             self.set_look("filled" if self.look == "hidden" else "hidden")
             return
         super().keyPressEvent(e)
 
-    def _paint(self, active=None):
+    def _paint(self, active=None, *, estimate=True):
         if self.item is None:
             return
-        self.item.paint_holes(self.selected, active, self.look)
+        self.item.paint_holes(self.selected, active, "outlines" if self.view.pick_reference else self.look)
+        if self.view.pick_reference:
+            self.item.setVisible(self._pending_reference is None)
         n, total = len(self.selected), len(self.art.apertures)
         self.sel_read.set(f"{n} / {total}" if n else f"{total}")
-        self.sel_read.set_label("Selected" if n else f"{self.k['noun']}s")
+        self.sel_read.set_label("Selected" if n else self._noun(2))
         self.cut_btn.setText(self.k["run_selected"].format(n=n) if n else self.k["run"])
-        self._estimate()
+        if estimate:
+            self._estimate()
 
     # -- recipe and presets ------------------------------------------------
     def _key(self, name):
@@ -949,6 +1223,19 @@ class StencilLaserDialog(QDialog):
             self.rest.setValue(d["rest_s"])
             self.zones.setValue(d["zones"])
             self.mark.setChecked(bool(d["mark_passes"]))
+        elif self.kind == "traces":
+            idx = self.strategy.findData(d.get("strategy", "concentric"))
+            if idx >= 0:
+                self.strategy.setCurrentIndex(idx)
+            self.passes.setValue(d["passes"])
+            self.offsets.setValue(d.get("offsets", xtool.DEFAULT_TRACE_OFFSETS))
+            self.trace_kerf.setValue(d.get("kerf", xtool.DEFAULT_TRACE_KERF))
+            self.density.setValue(d["lines_per_cm"])
+            self.rest.setValue(d.get("rest_s", 0.0))
+            self.spot_drills.setChecked(bool(d.get("spot_drills", True)))
+            self.cross.setChecked(bool(d["cross_hatch"]))
+            self.one_way.setChecked(bool(d["one_way"]))
+            self.mark.setChecked(bool(d["mark_outline"]))
         else:
             self.passes.setValue(d["passes"])
             self.density.setValue(d["lines_per_cm"])
@@ -958,7 +1245,37 @@ class StencilLaserDialog(QDialog):
         self._syncing_recipe = False
         self.del_btn.setEnabled(name in saved)
         QSettings(*_SETTINGS).setValue(self._key("preset"), name)
+        if self.kind == "traces":
+            self._sync_recipe_widgets()
+            self._refresh_traces_art()
         self._recipe_changed()
+
+    def _on_trace_geometry_changed(self, *_a):
+        if self._syncing_recipe:
+            return
+        if self.kind == "traces":
+            self._sync_recipe_widgets()
+            self._refresh_traces_art()
+        self._recipe_changed()
+
+    def _refresh_traces_art(self):
+        if self.kind != "traces" or self.base_art.copper is None:
+            return
+        r = self.recipe()
+        apertures = xtool.traces_apertures(
+            self.base_art.copper, self.base_art.outline,
+            self.base_art.drills or (), strategy=r.strategy, offsets=r.offsets,
+            kerf=r.kerf, lines_per_cm=r.lines_per_cm, spot_drills=r.spot_drills)
+        note = ("full rubout" if r.strategy == "rubout"
+                else f"{r.offsets} passes ({r.isolation_mm:.2f} mm gap)")
+        self.base_art = replace(self.base_art, apertures=apertures, kerf=r.kerf,
+                                note=note, _ring_cache=None)
+        if self.auto_reference_source.currentData() == "artwork":
+            self._populate_auto_references()
+        self.art = xtool.rotated(self.base_art, self.turns, self.fine)
+        self.selected.clear()
+        if self.item is not None:
+            self._build_item()
 
     def _recipe_changed(self, *_a):
         if self._syncing_recipe:
@@ -968,25 +1285,45 @@ class StencilLaserDialog(QDialog):
         chosen = presets.get(self.preset.currentText())
         now = _recipe_dict(r)
         changed = chosen is not None and any(
-            float(chosen.get(f, v)) != float(v) for f, v in now.items()
-            if f != "mark_power")
+            float(chosen.get(f, v)) != float(v)
+            for f, v in now.items()
+            if f != "mark_power" and isinstance(v, (int, float, bool))
+        ) or (chosen is not None and chosen.get("strategy") != getattr(r, "strategy", None)
+              if self.kind == "traces" else False)
         if self.kind == "stencil":
             what = (f"{r.rounds} round{'' if r.rounds == 1 else 's'} of "
                     f"{r.passes_per_burst} pass{'' if r.passes_per_burst == 1 else 'es'} "
                     f"per zone" + (f", {r.rest_s:g} s laser-off after each"
                                    if r.rest_s else ""))
+        elif self.kind == "traces":
+            if r.strategy == "concentric":
+                what = (f"Concentric · {r.offsets} ring{'' if r.offsets == 1 else 's'} "
+                        f"({r.isolation_mm:.2f} mm gap) · {r.passes} depth passes · "
+                        f"{r.power:g} % @ {r.speed:g} mm/s")
+            else:
+                mode = "Moat hatch" if r.strategy == "moat" else "Full rubout"
+                what = (f"{mode} · {r.power:g} % · {r.speed:g} mm/s · {r.passes} passes · "
+                        f"{r.lines_per_cm:g} lines/cm")
         else:
             what = (f"{r.power:g} % · {r.speed:g} mm/s · {r.passes} pass"
                     f"{'' if r.passes == 1 else 'es'}"
                     f"{', cross-hatched' if r.cross_hatch else ''} · "
                     f"{r.lines_per_cm:g} lines/cm ({r.interval:.3f} mm)")
-        self.recipe_lbl.setText(("Changed from the preset · " if changed else "") + what)
+        uncalibrated = (self.kind == "traces" and self.preset.currentText() in TRACES_PRESETS)
+        self.recipe_lbl.setText(("Uncalibrated starting values · " if uncalibrated else "")
+                               + ("Changed from the preset · " if changed else "") + what)
         self._estimate()
 
     def _estimate(self):
         if not hasattr(self, "time_read") or self.item is None:
             return
         try:
+            if self.kind == "traces":
+                secs = xtool.traces_job(
+                    self.art, (1.0, 1.0), self._run_recipe(),
+                    only=self.selected or None).seconds
+                self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
+                return
             if self.kind != "stencil":
                 from shapely.affinity import translate
                 shapes = [translate(p, -self.x.value() + 1, -self.y.value() + 1)
@@ -1005,6 +1342,21 @@ class StencilLaserDialog(QDialog):
             self.time_read.set("—")
 
     def recipe(self):
+        if self.kind == "traces":
+            return xtool.TracesRecipe(
+                strategy=self.strategy.currentData() or "concentric",
+                power=self.power.value(),
+                speed=self.speed.value(),
+                frequency=self.freq.value(),
+                passes=self.passes.value(),
+                offsets=self.offsets.value(),
+                kerf=self.trace_kerf.value(),
+                lines_per_cm=self.density.value(),
+                rest_s=self.rest.value(),
+                spot_drills=self.spot_drills.isChecked(),
+                cross_hatch=self.cross.isChecked(),
+                one_way=self.one_way.isChecked(),
+                mark_outline=self.mark.isChecked())
         if self.kind != "stencil":
             return xtool.FillRecipe(power=self.power.value(), speed=self.speed.value(),
                                     frequency=self.freq.value(),
@@ -1084,12 +1436,200 @@ class StencilLaserDialog(QDialog):
                                 for r in poly.interiors]))
         return out
 
+    def _auto_polys(self, art):
+        return (art.apertures if self.auto_reference_source.currentData() == "artwork"
+                else (art.features or []))
+
+    def _populate_auto_references(self, *_a):
+        self.auto_reference_list.clear()
+        for i, poly in enumerate(self._auto_polys(self.base_art)):
+            c = poly.centroid
+            item = QListWidgetItem(f"{i + 1} · X {c.x:.2f}  Y {c.y:.2f} mm")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self.auto_reference_list.addItem(item)
+
+    def _check_auto_references(self, checked):
+        for i in range(self.auto_reference_list.count()):
+            self.auto_reference_list.item(i).setCheckState(Qt.Checked if checked else Qt.Unchecked)
+
     def _features(self, art, origin):
-        """What Align looks for: the stencil's own holes, or for a mask or
-        silkscreen the drilled holes, as bed paths."""
+        """Only the explicitly enabled automatic alignment references."""
         _, h = art.size
-        polys = art.apertures if self.kind == "stencil" else (art.features or [])
-        return [xtool.to_bed(list(p.exterior.coords), origin, h) for p in polys]
+        return [xtool.to_bed(list(p.exterior.coords), origin, h)
+                for i, p in enumerate(self._auto_polys(art))
+                if i < self.auto_reference_list.count()
+                and self.auto_reference_list.item(i).checkState() == Qt.Checked]
+
+    # -- picked references: base artwork XY <-> corrected bed/photo XY -------
+    def _reference_to_bed(self, point):
+        from shapely.affinity import rotate
+        from shapely.geometry import Point
+        angle = 90 * self.turns + self.fine
+        outline = rotate(self.base_art.outline, -angle, origin=(0, 0))
+        x0, _, _, y1 = outline.bounds
+        p = rotate(Point(*point), -angle, origin=(0, 0))
+        ox, oy = self.origin()
+        return p.x - x0 + ox, y1 - p.y + oy
+
+    def _reference_from_bed(self, point):
+        from shapely.affinity import rotate
+        from shapely.geometry import Point
+        angle = 90 * self.turns + self.fine
+        x0, _, _, y1 = rotate(self.base_art.outline, -angle, origin=(0, 0)).bounds
+        ox, oy = self.origin()
+        p = rotate(Point(point[0] - ox + x0, y1 - point[1] + oy),
+                   angle, origin=(0, 0))
+        return p.x, p.y
+
+    def _toggle_reference_pick(self):
+        if self.pick_refs_btn.isChecked() and self._bed_rgb is None:
+            self.pick_refs_btn.setChecked(False)
+            return self._say("Take a photo first, then pick matching points.", warn=True)
+        self._pending_reference = None
+        self.view.pick_reference = self.pick_refs_btn.isChecked()
+        self.view.setCursor(Qt.CrossCursor if self.view.pick_reference else Qt.ArrowCursor)
+        self.item.setFlag(QGraphicsItem.ItemIsMovable,
+                          not self.view.pick_reference and not self.view.select_mode)
+        self._reference_prompt()
+        self._draw_references()
+        self._paint(estimate=False)
+
+    def _reference_prompt(self):
+        if self.view.pick_reference:
+            text = ("Now click the SAME point in the photo (drawing hidden)."
+                    if self._pending_reference is not None else
+                    "Click a reference in the drawing. Zoom in for a precise pick.")
+        else:
+            text = f"{len(self._reference_pairs)} matching points · use widely spaced references."
+        self.reference_note.setText(text)
+
+    def _pick_reference(self, point):
+        if not self.view.pick_reference:
+            return
+        xy = (point.x(), point.y())
+        if not (0 <= xy[0] <= _FIELD and 0 <= xy[1] <= _FIELD):
+            return self._say("Pick a point inside the camera's bed area.", warn=True)
+        if self._pending_reference is None:
+            mode = self.reference_snap.currentData()
+            if mode != "free":
+                polys = ((self.art.features or []) if mode == "holes" else self.art.apertures)
+                centres = [xtool.to_bed([(p.centroid.x, p.centroid.y)], self.origin(),
+                                       self.art.size[1])[0] for p in polys]
+                if not centres:
+                    return self._say("No centres available. Choose Free points / corners / marks.", warn=True)
+                xy = min(centres, key=lambda q: (q[0] - xy[0]) ** 2 + (q[1] - xy[1]) ** 2)
+                if (xy[0] - point.x()) ** 2 + (xy[1] - point.y()) ** 2 > 16:
+                    return self._say("Click closer to a reference centre, or choose Free points.", warn=True)
+            self._pending_reference = self._reference_from_bed(xy)
+        else:
+            self._reference_pairs.append((self._pending_reference, xy))
+            self._pending_reference = None
+        self._update_reference_list()
+        self._paint(estimate=False)
+
+    def _update_reference_list(self):
+        self.reference_list.clear()
+        for i, (_, target) in enumerate(self._reference_pairs):
+            self.reference_list.addItem(f"{i + 1} · photo X {target[0]:.2f}  Y {target[1]:.2f} mm")
+        self._reference_prompt()
+        self._draw_references()
+
+    def _clear_references(self):
+        self._reference_pairs.clear()
+        self._pending_reference = None
+        self.pick_refs_btn.setChecked(False)
+        self.view.pick_reference = False
+        self.view.setCursor(Qt.ArrowCursor)
+        self._update_reference_list()
+        if self.item is not None:
+            self.item.setFlag(QGraphicsItem.ItemIsMovable, not self.view.select_mode)
+            self._paint(estimate=False)
+
+    def _remove_reference(self):
+        row = self.reference_list.currentRow()
+        if row >= 0:
+            self._reference_pairs.pop(row)
+        self._pending_reference = None
+        self._update_reference_list()
+        self._paint(estimate=False)
+
+    def _draw_references(self):
+        for item in self._reference_markers:
+            self.scene.removeItem(item)
+        self._reference_markers.clear()
+        if self.view.pick_reference and self._pending_reference is None:
+            mode = self.reference_snap.currentData()
+            polys = ((self.art.features or []) if mode == "holes" else
+                     self.art.apertures if mode == "artwork" else [])
+            for poly in polys:
+                centre = poly.centroid
+                x, y = xtool.to_bed([(centre.x, centre.y)], self.origin(), self.art.size[1])[0]
+                path = QPainterPath()
+                path.addEllipse(QPointF(x, y), 0.5, 0.5)
+                marker = self.scene.addPath(path, _pen(theme.PROBE, 1.5))
+                marker.setZValue(24)
+                marker.setAcceptedMouseButtons(Qt.NoButton)
+                self._reference_markers.append(marker)
+        if hasattr(self, "auto_reference_list"):
+            row = self.auto_reference_list.currentRow()
+            polys = self._auto_polys(self.art)
+            if 0 <= row < len(polys):
+                points = xtool.to_bed(list(polys[row].exterior.coords), self.origin(), self.art.size[1])
+                path = QPainterPath()
+                path.addPolygon(QPolygonF([QPointF(*p) for p in points]))
+                marker = self.scene.addPath(path, _pen(theme.PROBE, 3.0))
+                marker.setZValue(24)
+                marker.setAcceptedMouseButtons(Qt.NoButton)
+                self._reference_markers.append(marker)
+        pairs = list(self._reference_pairs)
+        if self._pending_reference is not None:
+            pairs.append((self._pending_reference, None))
+        for i, (source, target) in enumerate(pairs):
+            for xy, token, suffix in ((self._reference_to_bed(source), theme.PATH, "D"),
+                                      (target, theme.PROBE, "P")):
+                if xy is None:
+                    continue
+                x, y = xy
+                path = QPainterPath()
+                path.addEllipse(QPointF(x, y), 0.6, 0.6)
+                path.moveTo(x - 1, y)
+                path.lineTo(x + 1, y)
+                path.moveTo(x, y - 1)
+                path.lineTo(x, y + 1)
+                marker = self.scene.addPath(path, _pen(token, 1.5))
+                label = self.scene.addSimpleText(f"{i + 1}{suffix}")
+                label.setBrush(QBrush(_c(token)))
+                label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+                label.setPos(x + 0.8, y + 0.8)
+                for item in (marker, label):
+                    item.setZValue(25)
+                    item.setAcceptedMouseButtons(Qt.NoButton)
+                    self._reference_markers.append(item)
+
+    def apply_reference_alignment(self):
+        from math import degrees
+        from gerber2rml.engine import xtool_camera as cam
+        source = [self._reference_to_bed(p) for p, _ in self._reference_pairs]
+        target = [q for _, q in self._reference_pairs]
+        try:
+            fit = cam.fit_reference_points(source, target)
+        except (ValueError, cam.CameraError) as e:
+            return self._say(str(e), warn=True)
+        # Rotating about the board centre changes its bounding box. Recover
+        # translation from the same physical reference after the turn.
+        self._turn_to(self.turns, self.fine + degrees(fit.transform.theta), preserve_selection=True)
+        now = [self._reference_to_bed(p) for p, _ in self._reference_pairs]
+        self.x.setValue(round(self.x.value() + sum(q[0] - p[0] for p, q in zip(now, target)) / len(now), 3))
+        self.y.setValue(round(self.y.value() + sum(q[1] - p[1] for p, q in zip(now, target)) / len(now), 3))
+        self.pick_refs_btn.setChecked(False)
+        self._toggle_reference_pick()
+        msg = f"Aligned on {len(source)} points · RMS {fit.rms:.3f} mm · worst {max(fit.errors):.3f} mm."
+        if len(source) == 2:
+            msg += " Add a third point to independently check the fit."
+        self.reference_note.setText(msg)
+        self._remember()
+        self._say(msg)
 
     def _remember(self):
         cfg = QSettings(*_SETTINGS)
@@ -1098,6 +1638,21 @@ class StencilLaserDialog(QDialog):
         cfg.setValue("thickness", self.thickness.value())
 
     # -- actions -----------------------------------------------------------
+    def open_copper_calibration(self):
+        from gerber2rml.gui2.copper_calibration import CopperCalibrationDialog
+        dialog = CopperCalibrationDialog(self, laser=self.laser)
+        dialog._cal = self._cal
+        if self._raw_rgb is not None:
+            dialog._raw_rgb = self._raw_rgb
+            dialog.show_bed(dialog._photo(_PX_PER_MM, dialog._raw_rgb))
+        dialog.exec()
+        self._cal = dialog._cal
+        self._raw_rgb = dialog._raw_rgb
+        self._set_offset(dialog.cam_offset)
+        self.thickness.setValue(dialog.thickness.value())
+        if dialog.saved_recipe_name:
+            self._fill_presets(dialog.saved_recipe_name)
+
     def _calibration(self):
         if self._cal is None:
             self._cal = self.laser.calibration()
@@ -1107,7 +1662,8 @@ class StencilLaserDialog(QDialog):
         from gerber2rml.engine.xtool_camera import decode_jpeg
         self._calibration()
         self.laser.lights(True)
-        return decode_jpeg(self.laser.snap())
+        self._raw_rgb = decode_jpeg(self.laser.snap())
+        return self._raw_rgb
 
     def _photo(self, px_per_mm=_PX_PER_MM, raw=None):
         raw = self._raw_photo() if raw is None else raw
@@ -1120,31 +1676,53 @@ class StencilLaserDialog(QDialog):
         self.off_y.set(f"{ey:+.2f} mm")
 
     def _set_offset(self, off):
+        old = self.cam_offset
         self.cam_offset = (round(float(off[0]), 3), round(float(off[1]), 3))
         cfg = QSettings(*_SETTINGS)
         cfg.setValue("camera_offset_x", self.cam_offset[0])
         cfg.setValue("camera_offset_y", self.cam_offset[1])
+        # A correction changes photo coordinates, never the laser artwork.
+        dx, dy = old[0] - self.cam_offset[0], old[1] - self.cam_offset[1]
+        self._reference_pairs = [(p, (q[0] + dx, q[1] + dy))
+                                 for p, q in self._reference_pairs]
+        for spin, value in ((self.offset_x, self.cam_offset[0]),
+                            (self.offset_y, self.cam_offset[1])):
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        if self._raw_rgb is not None:
+            self.show_bed(self._photo(_PX_PER_MM, self._raw_rgb))
+        self._update_reference_list()
         self._show_offset()
+
+    def _edit_offset(self, *_a):
+        self._set_offset((self.offset_x.value(), self.offset_y.value()))
+        self._say("Photo correction updated. The drawing and laser position have not moved.")
 
     def reset_offset(self):
         self._set_offset((0.0, 0.0))
-        self._say("Photo offset reset. Take a new photo to see it.")
+        self._say("Photo offset reset; the current photo has been updated.")
 
-    def _residual(self, rgb_hi, hi):
+    def _residual(self, rgb_hi, hi, holes=None):
         """Where the holes of the stencil, as placed now, show up in a photo:
         the alignment over a small search, or None if they cannot be found."""
         from gerber2rml.engine import xtool_camera as cam
-        holes, _ = xtool.stencil_paths(self.art, self.origin())
+        holes = self._last_cut_paths if holes is None else holes
+        if not holes or len(holes) < 2:
+            return None
         a = cam.align(rgb_hi, hi, holes, search_mm=4.0, max_turn=1.5)
         # In steel a clean hole shows the bright plate under it, so not every
         # hole reads dark: half of them is plenty to measure a small offset
         # with the stencil already in place.
-        return a if a.found >= max(5, 0.5 * a.total) and a.score > 0.15 else None
+        return a if a.found >= max(2, min(5, 0.5 * a.total)) and a.score > 0.15 else None
 
     def learn_offset(self):
         """The stencil is where it was cut: whatever offset the photo shows
         between the overlay and the real holes is the camera's error."""
         hi = 8
+        if not self._last_cut_paths:
+            return self._say("Cut a stencil in this window first. Camera learning uses "
+                             "the actual cut position; matching board points only moves the drawing.", warn=True)
 
         def work(_p):
             raw = self._raw_photo()
@@ -1153,7 +1731,7 @@ class StencilLaserDialog(QDialog):
 
         def done(res):
             raw, a = res
-            if a is None:
+            if a is None or abs(a.turn) > 0.3:
                 self.show_bed(self._photo(_PX_PER_MM, raw))
                 return ("Could not find the cut holes under the stencil. Leave it "
                         "where it was cut, take a photo to check, and try again.")
@@ -1169,47 +1747,49 @@ class StencilLaserDialog(QDialog):
         went back the other way round."""
         from gerber2rml.engine import xtool_camera as cam
         cx, cy = self.centre()
-        if self.kind != "stencil" and not self.base_art.features:
-            return self._say("No drill file in the Gerber folder: Align locks onto "
-                             "the drilled holes. Plot the drill file into the same "
-                             "folder, or place it by hand.", warn=True)
+        if len(self._features(self.art, self.origin())) < 2:
+            return self._say("Choose at least two existing features under Automatic "
+                             "alignment references, or use Pick matching points for "
+                             "pads, corners or marks.", warn=True)
         candidates = []
         for k in range(4):
             art = xtool.rotated(self.base_art, self.turns + k, self.fine)
             w, h = art.size
             candidates.append((k, self._features(art, (cx - w / 2, cy - h / 2))))
         hi = 8
+        contrast = self.auto_contrast.currentData()
 
         def work(_p):
             rgb = self._photo(hi)
             tried = []
             for k, holes in candidates:
-                a = cam.align(rgb, hi, holes)
+                a = cam.align(rgb, hi, holes, polarity=contrast)
                 tried.append((k, holes, a))
                 if a.ok and k == 0:
                     break
             good = [t for t in tried if t[2].ok]
-            pick = max(good or tried, key=lambda t: t[2].found / max(t[2].total, 1))
+            pick = max(good or tried, key=lambda t: (t[2].found / max(t[2].total, 1), t[2].score))
             return rgb, pick, bool(good)
 
         def done(res):
             rgb, (k, holes, a), good = res
             self.show_bed(rgb[::hi // _PX_PER_MM, ::hi // _PX_PER_MM].copy())
             if not good:
-                return (f"Could not find the holes: at best {a.found} of {a.total}. "
-                        f"Drag the stencil close to them and try again.")
+                return (f"Could not match the references: at best {a.found} of {a.total}. "
+                        "Drag the drawing closer, choose clearer references, or pick matching points.")
             target = self._middle(holes) + (a.dx, a.dy)
-            self._turn_to(self.turns + k, self.fine + a.turn)
+            self._turn_to(self.turns + k, self.fine + a.turn, preserve_selection=True)
             now = self._features(self.art, self.origin())
             dx, dy = target - self._middle(now)
             self.x.setValue(round(self.x.value() + dx, 3))
             self.y.setValue(round(self.y.value() + dy, 3))
             moved = (a.dx ** 2 + a.dy ** 2) ** 0.5
             turned = (90 * k + a.turn + 180) % 360 - 180
-            what = "holes" if self.kind == "stencil" else "drilled holes"
+            self._clear_references()
+            what = "references"
             return (f"Aligned on {a.found} of {a.total} {what}: moved {moved:.1f} mm, "
                     f"turned {turned:+.1f}°. Check with Show where before cutting.")
-        self._start(work, "Aligning: photo, then looking for the holes…", done)
+        self._start(work, "Aligning: photo, then looking for the chosen references…", done)
 
     def _focused(self, z, how):
         self.z_read.set(f"{z:.2f}")
@@ -1219,6 +1799,7 @@ class StencilLaserDialog(QDialog):
 
     def take_photo(self):
         def shown(rgb):
+            self._clear_references()
             self.show_bed(rgb)
             self.link.set("Laser connected", "live")
             return "Photo taken."
@@ -1228,23 +1809,34 @@ class StencilLaserDialog(QDialog):
         at = at or self.focus_point()
 
         def work(_p):
-            return self.laser.autofocus(self._calibration(), at)
+            z = self.laser.autofocus(self._calibration(), at)
+            return z, self._photo()
 
-        def done(z):
+        def done(result):
+            z, rgb = result
+            self._clear_references()
+            self.show_bed(rgb)
             self.thickness.setValue(z - xtool.FOCUS_OFFSET)
             self._focused(z, f"Measured at X{at[0]:g} Y{at[1]:g} with the blue dot.")
             self._remember()
-            return "In focus. Take a new photo to place the stencil."
+            return "In focus. Photo refreshed at the new head height; ready to align."
         self._start(work, f"Autofocus at X{at[0]:g} Y{at[1]:g}…", done)
 
     def set_thickness(self):
         t = self.thickness.value()
 
-        def done(z):
+        def work(_p):
+            z = self.laser.focus(t)
+            return z, self._photo()
+
+        def done(result):
+            z, rgb = result
+            self._clear_references()
+            self.show_bed(rgb)
             self._focused(z, f"Set by hand to thickness {t:g}.")
             self._remember()
-            return "Head moved."
-        self._start(lambda _p: self.laser.focus(t), "Moving the head…", done)
+            return "Head moved; photo refreshed for alignment."
+        self._start(work, "Moving the head and refreshing the photo…", done)
 
     def trace(self):
         try:
@@ -1286,13 +1878,14 @@ class StencilLaserDialog(QDialog):
                 return z, None, None
             raw = self._raw_photo()
             try:
-                a = self._residual(self._photo(8, raw), 8)
+                a = self._residual(self._photo(8, raw), 8, holes)
             except Exception:           # noqa: BLE001 - a check, never a failure
                 a = None
             return z, self._photo(_PX_PER_MM, raw), a
 
         def done(res):
             z, rgb, a = res
+            self._last_cut_paths = holes
             if rgb is not None:
                 self.show_bed(rgb)
             n = sum(job.zones)
@@ -1307,10 +1900,15 @@ class StencilLaserDialog(QDialog):
         self._start(work, f"Cutting {what} in {len(job.zones)} zones…", done)
 
     def _fill(self):
-        """A solder mask or silkscreen: every shape hatched, pass by pass."""
+        """A traces, solder mask, or silkscreen job."""
         try:
-            _, outline = xtool.stencil_paths(self.art, self.origin())
-            job = xtool.fill_job(self._shapes(), outline, self._run_recipe())
+            if self.kind == "traces":
+                job = xtool.traces_job(
+                    self.art, self.origin(), self._run_recipe(),
+                    only=self.selected or None)
+            else:
+                _, outline = xtool.stencil_paths(self.art, self.origin())
+                job = xtool.fill_job(self._shapes(), outline, self._run_recipe())
         except ValueError as e:
             return self._say(str(e), warn=True)
         self._remember()
@@ -1333,11 +1931,11 @@ class StencilLaserDialog(QDialog):
             if rgb is not None:
                 self.show_bed(rgb)
             n = len(picked)
-            return (f"Done at Z {z:.2f}: {n} {self.k['noun']}{'' if n == 1 else 's'}, "
+            return (f"Done at Z {z:.2f}: {n} {self._noun(n)}, "
                     f"{job.passes} passes. Switch to Outlines to check them on the "
                     f"photo; select any that need more and run those again.")
         what = (f"{len(self.selected)} selected" if self.selected
-                else f"{len(picked)} {self.k['noun']}s")
+                else f"{len(picked)} {self._noun(len(picked))}")
         self._start(work, f"{self.k['busy']}: {what}, {job.passes} passes…", done)
 
     def stop(self):
@@ -1400,12 +1998,18 @@ class StencilLaserDialog(QDialog):
         for b in (self.photo_btn, self.focus_btn, self.align_btn, self.set_focus_btn,
                   self.learn_btn, self.reset_off_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
-                  self.mode, self.all_btn, self.none_btn, self.x, self.y,
-                  self.preset, self.save_btn):
+                  self.mode, self.job_switch, self.strategy,
+                  self.all_btn, self.none_btn, self.x, self.y,
+                  self.preset, self.save_btn, self.copper_side,
+                  self.pick_refs_btn, self.apply_refs_btn, self.remove_ref_btn,
+                  self.clear_refs_btn, self.reference_snap, self.auto_reference_source,
+                  self.auto_reference_list, self.auto_all_btn, self.auto_none_btn, self.auto_contrast,
+                  self.offset_x, self.offset_y, self.calibrate_btn):
             b.setEnabled(not on)
         if self.item is not None:
             self.item.setFlag(QGraphicsItem.ItemIsMovable,
-                              not on and not self.view.select_mode)
+                              not on and not self.view.select_mode and not self.view.pick_reference)
+        self.view.setEnabled(not on)
 
     def _say(self, text, warn=False):
         self.status.setText(text)

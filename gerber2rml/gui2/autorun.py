@@ -1404,6 +1404,12 @@ class AutoRunPage(inspector.Page):
         # In the run's folder with its programs: Novice has no export to carry
         # it, and a file that did not get made must not stop the run. The
         # setup page keeps what it has to say.
+        if ctl._laser_traces and self.run_dir is not None:
+            paths, notes = ctl.write_laser_traces_to(self.run_dir)
+            for p in paths:
+                self._log(f"Laser traces file: {p.name}")
+            for n in notes:
+                self._log(f"Laser traces: {n}")
         if ctl._solder_mask and self.run_dir is not None:
             paths, notes = ctl.write_mask_to(self.run_dir)
             for p in paths:

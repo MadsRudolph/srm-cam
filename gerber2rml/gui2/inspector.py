@@ -632,6 +632,36 @@ class SetupPage(Page):
         self.ds_more = self._gather(self.ds_section, 1)
         self.add(self.ds_section)
 
+        # -- laser traces ------------------------------------------------
+        from gerber2rml.engine.xtool import DEFAULT_TRACE_OFFSETS
+        self.laser_traces_section = widgets.Section("Laser traces")
+        self.laser_traces = QCheckBox("Also make the laser traces file (DXF)")
+        self.laser_traces.setToolTip(
+            "For boards whose copper is etched on the xTool fiber laser instead "
+            "of milled. Writes the concentric isolation paths and outline from "
+            "this Gerber folder.")
+        self.laser_traces.toggled.connect(ctl.action_laser_traces)
+        self.laser_traces_section.add(self.laser_traces)
+        self.laser_offsets = num(DEFAULT_TRACE_OFFSETS, 1, 50, 1, 0,
+                                 self._on_laser_offsets, suffix=" passes")
+        self.laser_offsets_field = widgets.Field(
+            "Isolation passes", self.laser_offsets,
+            help="Concentric laser rings around every trace and pad (6 passes "
+                 "is about 0.22 mm). More passes widen the isolation gap.")
+        self.laser_traces_section.add(self.laser_offsets_field)
+        self.laser_traces_note = widgets.hint("")
+        self.laser_traces_section.add(self.laser_traces_note)
+        self.laser_traces_write_btn = widgets.button(
+            "Write the traces file now…", on=ctl.action_write_laser_traces,
+            tip="Writes the isolation DXF straight away.")
+        self.laser_traces_section.add(self.laser_traces_write_btn)
+        self.laser_traces_run_btn = widgets.button(
+            "Etch the traces on the xTool…", on=ctl.action_traces_laser,
+            tip="With the F1 Ultra plugged into this PC by USB: photo, autofocus, "
+                "align, and etch the traces using FlatCAM-style concentric passes.")
+        self.laser_traces_section.add(self.laser_traces_run_btn)
+        self.add(self.laser_traces_section)
+
         # -- solder mask -------------------------------------------------
         # Both tiers: Novice has no export, but its board gets ink just the
         # same. The file is for the laser, so nothing the mill runs depends
@@ -800,6 +830,9 @@ class SetupPage(Page):
 
     def _on_machine(self, text):
         self.ctl.action_machine(text)
+
+    def _on_laser_offsets(self, v):
+        self.ctl.action_laser_offsets(int(v))
 
     def _on_mask_shrink(self, v):
         self.ctl.action_mask_shrink(v)
@@ -1003,6 +1036,8 @@ class SetupPage(Page):
         for box, val in ((self.mirror, bool(st.mirror)),
                          (self.double, bool(getattr(ctl, "_double", False))),
                          (self.screwed, bool(getattr(ctl, "screwed", False))),
+                         (self.laser_traces,
+                          bool(getattr(ctl, "_laser_traces", False))),
                          (self.solder_mask,
                           bool(getattr(ctl, "_solder_mask", False))),
                          (self.silkscreen,
@@ -1020,6 +1055,7 @@ class SetupPage(Page):
         self.machine.blockSignals(True)
         self.machine.setCurrentText(st.machine)
         self.machine.blockSignals(False)
+        self.sync_laser_traces()
         self.sync_mask()
         self.sync_silk()
         self.sync_stencil()
@@ -1062,61 +1098,87 @@ class SetupPage(Page):
         self.screw_row.setVisible(self.screwed.isChecked())
         self.screw_file_btn.setVisible(self.screwed.isChecked())
 
+    def sync_laser_traces(self):
+        """The DXF controls show once ticked; the xTool button is always ready."""
+        ctl = self.ctl
+        on = bool(getattr(ctl, "_laser_traces", False))
+        has_board = ctl.state.board is not None
+        self.laser_offsets.blockSignals(True)
+        self.laser_offsets.setValue(getattr(ctl, "_laser_offsets",
+                                            self.laser_offsets.value()))
+        self.laser_offsets.blockSignals(False)
+        for w in (self.laser_offsets_field, self.laser_traces_note,
+                  self.laser_traces_write_btn):
+            w.setVisible(on)
+        self.laser_traces_run_btn.setVisible(True)
+        self.laser_traces_run_btn.setEnabled(has_board)
+        if not on:
+            return
+        level, text = ctl.laser_traces_status()
+        self.laser_traces_note.setText(text)
+        self.laser_traces_note.setStyleSheet(
+            f"color: {theme.CAUTION};" if level == "warn" else "")
+        self.laser_traces_write_btn.setEnabled(has_board)
+
     def sync_mask(self):
-        """The solder mask rows: only there once asked for, and saying what
-        the file will be, or why it cannot be made."""
+        """The DXF controls show once ticked; the xTool button is always ready."""
         ctl = self.ctl
         on = bool(getattr(ctl, "_solder_mask", False))
+        has_board = ctl.state.board is not None
         self.mask_shrink.blockSignals(True)
         self.mask_shrink.setValue(getattr(ctl, "_mask_shrink",
                                           self.mask_shrink.value()))
         self.mask_shrink.blockSignals(False)
-        for w in (self.mask_shrink_field, self.mask_note, self.mask_write_btn,
-                  self.mask_laser_btn):
+        for w in (self.mask_shrink_field, self.mask_note, self.mask_write_btn):
             w.setVisible(on)
+        self.mask_laser_btn.setVisible(True)
+        self.mask_laser_btn.setEnabled(has_board)
         if not on:
             return
         level, text = ctl.mask_status()
         self.mask_note.setText(text)
         self.mask_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
-        self.mask_write_btn.setEnabled(ctl.state.board is not None)
-        self.mask_laser_btn.setEnabled(ctl.state.board is not None)
+        self.mask_write_btn.setEnabled(has_board)
 
     def sync_silk(self):
-        """The silkscreen rows, the same way as the solder mask's."""
+        """The DXF controls show once ticked; the xTool button is always ready."""
         ctl = self.ctl
         on = bool(getattr(ctl, "_silkscreen", False))
-        for w in (self.silk_note, self.silk_write_btn, self.silk_laser_btn):
+        has_board = ctl.state.board is not None
+        for w in (self.silk_note, self.silk_write_btn):
             w.setVisible(on)
+        self.silk_laser_btn.setVisible(True)
+        self.silk_laser_btn.setEnabled(has_board)
         if not on:
             return
         level, text = ctl.silk_status()
         self.silk_note.setText(text)
         self.silk_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
-        self.silk_write_btn.setEnabled(ctl.state.board is not None)
-        self.silk_laser_btn.setEnabled(ctl.state.board is not None)
+        self.silk_write_btn.setEnabled(has_board)
 
     def sync_stencil(self):
-        """The stencil rows, the same way as the solder mask's."""
+        """The DXF controls show once ticked; the xTool button is always ready."""
         ctl = self.ctl
         on = bool(getattr(ctl, "_stencil", False))
+        has_board = ctl.state.board is not None
         self.stencil_kerf.blockSignals(True)
         self.stencil_kerf.setValue(getattr(ctl, "_stencil_kerf",
                                            self.stencil_kerf.value()))
         self.stencil_kerf.blockSignals(False)
         for w in (self.stencil_kerf_field, self.stencil_note,
-                  self.stencil_write_btn, self.stencil_cut_btn):
+                  self.stencil_write_btn):
             w.setVisible(on)
+        self.stencil_cut_btn.setVisible(True)
+        self.stencil_cut_btn.setEnabled(has_board)
         if not on:
             return
         level, text = ctl.stencil_status()
         self.stencil_note.setText(text)
         self.stencil_note.setStyleSheet(
             f"color: {theme.CAUTION};" if level == "warn" else "")
-        for b in (self.stencil_write_btn, self.stencil_cut_btn):
-            b.setEnabled(ctl.state.board is not None)
+        self.stencil_write_btn.setEnabled(has_board)
 
 
 # ---------------------------------------------------------------------------
@@ -1565,6 +1627,99 @@ class HandoffPage(Page):
         self.note.setVisible(bool(step.note))
         self.done_btn.setText("Not done after all" if self.ctl.is_done(step.key)
                               else "Done — mark it off")
+
+
+# ---------------------------------------------------------------------------
+
+class LaserPage(Page):
+    """The xTool F1 Ultra hub: Traces, Solder mask, Silkscreen, and Stencil."""
+
+    def __init__(self, ctl, parent=None):
+        super().__init__(parent)
+        self.ctl = ctl
+        self.set_head("Step", "xTool F1 Ultra")
+        self.add(widgets.body(
+            "Direct USB control of the F1 Ultra (no XCS needed). Pick any "
+            "job below, or switch between all four inside the laser window."))
+
+        from gerber2rml.engine.xtool import DEFAULT_TRACE_OFFSETS
+        from gerber2rml.engine.soldermask import DEFAULT_SHRINK, MAX_SHRINK
+        from gerber2rml.engine.stencil import DEFAULT_KERF, MAX_KERF
+
+        # 1. Copper traces
+        sec_t = widgets.Section("Copper traces")
+        self.traces_offsets = num(DEFAULT_TRACE_OFFSETS, 1, 50, 1, 0,
+                                  lambda v: ctl.action_laser_offsets(int(v)),
+                                  suffix=" passes")
+        sec_t.add(widgets.Field(
+            "Isolation passes", self.traces_offsets,
+            help="FlatCAM-style concentric laser rings around every trace "
+                 "and pad (6 passes ≈ 0.22 mm gap). Runs in minutes instead "
+                 "of hours."))
+        self.traces_run_btn = widgets.button(
+            "Etch the traces on the xTool…", kind="primary",
+            on=ctl.action_traces_laser)
+        self.traces_dxf_btn = widgets.button(
+            "Write the traces DXF now…",
+            on=ctl.action_write_laser_traces)
+        sec_t.add(self.traces_run_btn)
+        sec_t.add(self.traces_dxf_btn)
+        self.add(sec_t)
+
+        # 2. Solder mask
+        sec_m = widgets.Section("Solder mask")
+        self.mask_shrink = num(DEFAULT_SHRINK, 0.0, MAX_SHRINK, 0.05, 2,
+                               ctl.action_mask_shrink, suffix=" mm")
+        sec_m.add(widgets.Field("Shrink by", self.mask_shrink))
+        self.mask_run_btn = widgets.button(
+            "Open the mask on the xTool…", on=ctl.action_mask_laser)
+        self.mask_dxf_btn = widgets.button(
+            "Write the mask DXF now…", on=ctl.action_write_mask)
+        sec_m.add(self.mask_run_btn)
+        sec_m.add(self.mask_dxf_btn)
+        self.add(sec_m)
+
+        # 3. Silkscreen
+        sec_s = widgets.Section("Silkscreen")
+        self.silk_run_btn = widgets.button(
+            "Mark it on the xTool…", on=ctl.action_silk_laser)
+        self.silk_dxf_btn = widgets.button(
+            "Write the silkscreen DXF now…", on=ctl.action_write_silk)
+        sec_s.add(self.silk_run_btn)
+        sec_s.add(self.silk_dxf_btn)
+        self.add(sec_s)
+
+        # 4. Solder paste stencil
+        sec_p = widgets.Section("Solder paste stencil")
+        self.stencil_kerf = num(DEFAULT_KERF, 0.0, MAX_KERF, 0.01, 2,
+                                ctl.action_stencil_kerf, suffix=" mm")
+        sec_p.add(widgets.Field("Kerf", self.stencil_kerf))
+        self.stencil_run_btn = widgets.button(
+            "Cut it on the xTool…", on=ctl.action_cut_stencil)
+        self.stencil_dxf_btn = widgets.button(
+            "Write the stencil DXF now…", on=ctl.action_write_stencil)
+        sec_p.add(self.stencil_run_btn)
+        sec_p.add(self.stencil_dxf_btn)
+        self.add(sec_p)
+
+        self.finish()
+
+    def sync(self):
+        ctl = self.ctl
+        has_board = ctl.state.board is not None
+        for box, attr in (
+            (self.traces_offsets, "_laser_offsets"),
+            (self.mask_shrink, "_mask_shrink"),
+            (self.stencil_kerf, "_stencil_kerf"),
+        ):
+            box.blockSignals(True)
+            box.setValue(getattr(ctl, attr, box.value()))
+            box.blockSignals(False)
+        for btn in (self.traces_run_btn, self.traces_dxf_btn,
+                    self.mask_run_btn, self.mask_dxf_btn,
+                    self.silk_run_btn, self.silk_dxf_btn,
+                    self.stencil_run_btn, self.stencil_dxf_btn):
+            btn.setEnabled(has_board)
 
 
 # ---------------------------------------------------------------------------

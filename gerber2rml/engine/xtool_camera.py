@@ -217,15 +217,51 @@ class Alignment:
 
     @property
     def ok(self):
-        return bool(self.total) and self.found >= max(3, 0.85 * self.total) and self.score > 0.2
+        return self.total >= 2 and self.found >= max(2, 0.85 * self.total) and self.score > 0.2
 
 
-def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0):
+@dataclass
+class PointAlignment:
+    transform: object
+    errors: list
+    rms: float
+
+
+def fit_reference_points(drawing, photo, *, max_error_mm=0.3):
+    """Rigid registration of matching points in corrected bed millimetres.
+
+    Never scale or reflect the job to conceal mismatched picks. All points
+    participate; an inconsistent reference must be corrected explicitly.
+    """
+    from gerber2rml.engine.fiducial import fit_transform, residuals, rms
+    p, q = np.asarray(drawing, dtype=float), np.asarray(photo, dtype=float)
+    if p.ndim != 2 or p.shape[1:] != (2,) or p.shape != q.shape or len(p) < 2:
+        raise CameraError("Pick at least two matching drawing/photo points.")
+    if not np.isfinite(p).all() or not np.isfinite(q).all():
+        raise CameraError("Reference coordinates must be finite.")
+    for points in (p, q):
+        distances = np.linalg.norm(points[:, None] - points[None, :], axis=2)
+        if distances.max() < 5:
+            raise CameraError("Pick references at least 5 mm apart for a reliable angle.")
+        if np.min(distances[np.triu_indices(len(points), 1)]) < 0.5:
+            raise CameraError("Two references overlap. Remove the duplicate and pick a distinct point.")
+    transform = fit_transform(p, q)
+    errors = residuals(transform, p, q)
+    if max(errors) > max_error_mm:
+        worst = int(np.argmax(errors)) + 1
+        raise CameraError(f"Reference {worst} disagrees by {max(errors):.2f} mm. "
+                          "Check the matching points; alignment was not applied.")
+    return PointAlignment(transform, errors, rms(transform, p, q))
+
+
+def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0, polarity="dark"):
     """Where the cut ``holes`` (bed mm, as the overlay has them now) really are
     in a straightened photo ``bed_rgb`` of ``px_per_mm``.
 
     A correlation over shift for each of a fan of small turns, then a finer fan
     round the best, then a check hole by hole."""
+    if len(holes) < 2:
+        raise CameraError("Choose at least two automatic references, or pick matching points.")
     pts = np.array([q for p in holes for q in p], float)
     cx, cy = pts.mean(axis=0)
     x0, y0 = pts.min(axis=0) - search_mm - 3
@@ -235,7 +271,10 @@ def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0):
     c1, r1 = min(int(x1 * px_per_mm), W), min(int(y1 * px_per_mm), H)
     if c1 - c0 < 8 or r1 - r0 < 8:
         raise CameraError("The stencil is off the photo.")
-    D = darkness(bed_rgb[r0:r1, c0:c1], px_per_mm)
+    if polarity not in ("dark", "bright"):
+        raise CameraError("Choose dark or bright automatic references.")
+    crop = bed_rgb[r0:r1, c0:c1]
+    D = darkness(255 - crop if polarity == "bright" else crop, px_per_mm)
     origin = (c0 / px_per_mm, r0 / px_per_mm)
     FD = np.fft.rfft2(D)
     lim = int(search_mm * px_per_mm)

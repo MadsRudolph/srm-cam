@@ -26,7 +26,8 @@ import http.client
 import json
 import math
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 HOST = "201.234.3.1"
 HTTP_PORT = 8080
@@ -89,6 +90,7 @@ def rotated(art, quarter_turns, degrees=0.0):
     and ``degrees`` more, with its outline's bounding box back at (0, 0)."""
     from dataclasses import replace as _replace
     from shapely.affinity import rotate, translate
+    from shapely.geometry import Point
     angle = (quarter_turns % 4) * 90 + degrees
     if abs(angle % 360) < 1e-9:
         return art
@@ -99,8 +101,18 @@ def rotated(art, quarter_turns, degrees=0.0):
     move = lambda g: translate(g, -x0, -y0)
     out = _replace(art, outline=move(outline),
                    apertures=[move(turn(p)) for p in art.apertures])
+    if hasattr(art, "_ring_cache"):
+        out = _replace(out, _ring_cache=None)
     if getattr(art, "features", None):
         out = _replace(out, features=[move(turn(p)) for p in art.features])
+    if getattr(art, "copper", None) is not None:
+        out = _replace(out, copper=move(turn(art.copper)))
+    if getattr(art, "drills", None):
+        moved = []
+        for x, y, d in art.drills:
+            p = move(turn(Point(x, y)))
+            moved.append((p.x, p.y, d))
+        out = _replace(out, drills=moved)
     return out
 
 
@@ -171,9 +183,21 @@ _TAIL = ["# END", "# GS002 VECTOR TAIL", "# motion_end", "# GS002 TAIL",
 
 def _passes(paths, power, speed, n):
     s, f = round(power * 10), round(speed * 60)
+    # Geometry finer than the output's 1 µm grid can collapse onto the same
+    # coordinate. Do not send stationary laser-on moves to the controller.
+    rounded_paths = []
+    for path in paths:
+        points = []
+        for x, y in path:
+            point = tuple(0.0 if v == 0 else v
+                          for v in (float(f"{x:.3f}"), float(f"{y:.3f}")))
+            if not points or point != points[-1]:
+                points.append(point)
+        if len(points) >= 2:
+            rounded_paths.append(points)
     out = []
     for _ in range(n):
-        for p in paths:
+        for p in rounded_paths:
             out.append(f"G0X{p[0][0]:.3f}Y{p[0][1]:.3f}")
             for i, (x, y) in enumerate(p[1:]):
                 out.append(f"G1X{x:.3f}Y{y:.3f}" + (f"S{s}F{f}" if i == 0 else ""))
@@ -452,10 +476,11 @@ class LaserArt:
     artwork frame (mm, Y up, the outline's lower-left corner at 0, 0), the
     outline, and what Align locks onto.
 
-    ``kind`` is "stencil" (cut through, in zones), "mask" (open the solder
-    mask over the pads: filled) or "silk" (mark the silkscreen: filled).
-    ``features`` are the shapes Align looks for in a photo when the job's own
-    shapes are not there yet: the drilled holes, for mask and silkscreen."""
+    ``kind`` is "stencil" (cut through, in zones), "traces" (copper traces,
+    isolated by concentric rings, moat hatch, or full rubout), "mask" (open
+    the solder mask over the pads: filled) or "silk" (mark the silkscreen:
+    filled). ``features`` are the shapes Align looks for in a photo when the
+    job's own shapes are not there yet: the drilled holes."""
     kind: str
     apertures: list
     outline: object
@@ -464,6 +489,10 @@ class LaserArt:
     notes: list = None
     features: list = None
     kerf: float = 0.0
+    copper: object = None
+    drills: list = None
+    side: str = "bottom"
+    _ring_cache: dict = field(default=None, repr=False, compare=False)
 
     @property
     def size(self):
@@ -577,13 +606,19 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
     check_on_bed([list(p.exterior.coords) for p in shapes] + outline)
     s_val, feed = round(recipe.power * 10), round(recipe.speed * 60)
     body, secs, timeline = [], 0.0, []
+    cached = {}
     for k in range(recipe.passes):
         ang = base_angle + (90.0 * (k % 2) if recipe.cross_hatch else 0.0)
-        segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
-        for a, b in segs:
-            body.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
-            body.append(f"G1X{b[0]:.3f}Y{b[1]:.3f}S{s_val}F{feed}")
-        dt = sum(math.dist(a, b) for a, b in segs) / recipe.speed
+        if ang not in cached:
+            segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
+            dt = sum(math.dist(a, b) for a, b in segs) / recipe.speed
+            lines_k = []
+            for a, b in segs:
+                lines_k.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
+                lines_k.append(f"G1X{b[0]:.3f}Y{b[1]:.3f}S{s_val}F{feed}")
+            cached[ang] = (lines_k, dt)
+        lines_k, dt = cached[ang]
+        body += lines_k
         timeline.append((secs, secs + dt, 0, k))
         secs += dt
     if outline and recipe.mark_outline:
@@ -594,3 +629,297 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
     return Job(text="\r\n".join(lines), zones=[len(shapes)], seconds=secs,
                passes=recipe.passes, zone_paths=[shapes], timeline=timeline)
+
+
+# ---------------------------------------------------------------------------
+# PCB traces: FlatCAM-style concentric isolation, moat hatch, or full rubout
+# ---------------------------------------------------------------------------
+
+DEFAULT_TRACE_KERF = 0.04       # mm, fiber spot size on copper
+DEFAULT_TRACE_OFFSETS = 6       # concentric rings (~0.22 mm moat at 285 l/cm)
+DEFAULT_TRACE_DENSITY = 285.0   # lines/cm -> stepover ~0.035 mm
+
+_COPPER_PATTERNS = {"bottom": ("*-B_Cu.*", "*.gbl"),
+                    "top": ("*-F_Cu.*", "*.gtl")}
+_COPPER_NAME = {"bottom": "B.Cu", "top": "F.Cu"}
+
+
+class TracesError(ValueError):
+    """Why this folder cannot give a laser traces job, in words for the operator."""
+
+
+@dataclass(frozen=True)
+class TracesRecipe:
+    """How to isolate or clear PCB copper on the F1 Ultra.
+
+    ``strategy``:
+    - ``"concentric"`` (default): FlatCAM-style concentric offset rings around
+      every trace and pad, swept round by round so heat stays spread out and
+      the beam never jumps line-by-line across traces.
+    - ``"moat"``: hatch only a fixed-width moat band around the copper.
+    - ``"rubout"``: hatch every empty millimetre of the board (like XCS).
+    """
+    strategy: str = "concentric"
+    power: float = 100.0
+    speed: float = 600.0
+    frequency: float = 30.0
+    passes: int = 10
+    offsets: int = DEFAULT_TRACE_OFFSETS
+    kerf: float = DEFAULT_TRACE_KERF
+    lines_per_cm: float = DEFAULT_TRACE_DENSITY
+    rest_s: float = 0.0
+    spot_drills: bool = True
+    cross_hatch: bool = True
+    one_way: bool = True
+    mark_outline: bool = False
+    mark_power: float = 10.0
+
+    @property
+    def stepover(self):
+        return 10.0 / self.lines_per_cm
+
+    @property
+    def interval(self):
+        return self.stepover
+
+    @property
+    def isolation_mm(self):
+        return self.kerf + max(0, self.offsets - 1) * self.stepover
+
+
+DEFAULT_TRACES_RECIPE = TracesRecipe()
+WIDE_TRACES_RECIPE = TracesRecipe(offsets=10)
+MOAT_HATCH_RECIPE = TracesRecipe(strategy="moat", lines_per_cm=240.0)
+RUBOUT_TRACES_RECIPE = TracesRecipe(strategy="rubout", lines_per_cm=240.0)
+
+
+def copper_layer_path(folder, side="bottom"):
+    """The copper Gerber for ``side`` in ``folder``, or None."""
+    from gerber2rml.loader import _find_layer
+    return _find_layer(folder, *_COPPER_PATTERNS[side])
+
+
+def _drill_spots(drills):
+    """Union of pilot hole circles (≤ 0.5 mm dia) for spotting pads."""
+    from shapely.geometry import Point
+    from shapely.ops import unary_union
+    if not drills:
+        return None
+    return unary_union([Point(x, y).buffer(min(max(d, 0.3) / 2, 0.25), quad_segs=16)
+                        for x, y, d in drills])
+
+
+def traces_apertures(copper, outline, drills=(), *, strategy="concentric",
+                     offsets=DEFAULT_TRACE_OFFSETS, kerf=DEFAULT_TRACE_KERF,
+                     lines_per_cm=DEFAULT_TRACE_DENSITY, spot_drills=True):
+    """Polygons of cleared copper in the artwork frame, for preview, selection,
+    DXF export, and moat/rubout hatching."""
+    from gerber2rml.engine import soldermask
+    if copper is None or copper.is_empty:
+        return []
+    spots = _drill_spots(drills) if spot_drills and drills else None
+    cu = copper.difference(spots) if spots is not None else copper
+    if strategy == "rubout":
+        cleared = outline.difference(cu)
+    else:
+        step = 10.0 / lines_per_cm
+        iso_w = max(kerf + max(0, offsets - 1) * step, kerf)
+        cleared = cu.buffer(iso_w).intersection(outline).difference(cu)
+        if spots is not None:
+            cleared = cleared.union(spots.intersection(copper).intersection(outline))
+    return [p for p in soldermask._polygons(cleared)
+            if p.area >= soldermask._SLIVER_MM2]
+
+
+def build_laser_traces(folder, *, side="bottom", mirror=True,
+                       offsets=DEFAULT_TRACE_OFFSETS, kerf=DEFAULT_TRACE_KERF,
+                       lines_per_cm=DEFAULT_TRACE_DENSITY,
+                       strategy="concentric", spot_drills=True):
+    """Read one face's copper, outline, and drills from a Gerber folder into a
+    :class:`LaserArt` ready for the xTool laser page or DXF export."""
+    from gerbonara import GerberFile
+    from shapely.affinity import scale, translate
+    from gerber2rml.engine import soldermask
+    from gerber2rml.loader import _find_layer, select_drill_holes
+
+    folder = Path(folder)
+    path = copper_layer_path(folder, side)
+    if path is None:
+        other = "top" if side == "bottom" else "bottom"
+        there = copper_layer_path(folder, other)
+        raise TracesError(
+            f"No {_COPPER_NAME[side]} Gerber in {folder}, so there is nothing "
+            f"to etch."
+            + (f" There is an {_COPPER_NAME[other]} ({there.name}), which is "
+               f"the other face." if there else "")
+            + f" Plot {_COPPER_NAME[side]} into this folder and try again.")
+    edge = _find_layer(folder, "*-Edge_Cuts.*", "*.gm1")
+    if edge is None:
+        raise TracesError(f"No board outline (Edge.Cuts) Gerber in {folder}.")
+    outline_raw = soldermask._read_outline(edge)
+    if outline_raw.is_empty:
+        raise TracesError(f"{edge.name} has no outline in it.")
+    copper = soldermask._layer_to_shapely(GerberFile.open(str(path)))
+    if copper.is_empty:
+        raise TracesError(f"{path.name} is empty: {_COPPER_NAME[side]} has no "
+                          f"copper on it.")
+    try:
+        raw_drills = select_drill_holes(folder, outline_raw)
+    except Exception:
+        raw_drills = []
+
+    outline = outline_raw
+    if mirror:
+        outline = scale(outline, xfact=-1, yfact=1, origin=(0, 0))
+        copper = scale(copper, xfact=-1, yfact=1, origin=(0, 0))
+    x0, y0, _, _ = outline.bounds
+    outline = translate(outline, -x0, -y0)
+    copper = translate(copper, -x0, -y0).intersection(outline)
+
+    drills = [((-x if mirror else x) - x0, y - y0, d) for x, y, d in raw_drills]
+    from shapely.geometry import Point
+    features = [Point(x, y).buffer(max(d, 0.3) / 2, quad_segs=8)
+                for x, y, d in drills]
+    apertures = traces_apertures(
+        copper, outline, drills, strategy=strategy, offsets=offsets,
+        kerf=kerf, lines_per_cm=lines_per_cm, spot_drills=spot_drills)
+    if strategy == "rubout":
+        note = "full rubout"
+    else:
+        iso_mm = kerf + max(0, offsets - 1) * (10.0 / lines_per_cm)
+        note = f"{offsets} passes ({iso_mm:.2f} mm gap)"
+    return LaserArt(kind="traces", apertures=apertures, outline=outline,
+                    mirrored=mirror, note=note, notes=[], features=features,
+                    kerf=kerf, copper=copper, drills=drills, side=side)
+
+
+def traces_filename(art, name):
+    state = "mirrored" if art.mirrored else "not_mirrored"
+    return f"{name}_traces_{art.side}_{state}.dxf"
+
+
+def write_traces_dxf(art, out_dir, name):
+    from gerber2rml.engine import soldermask
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / traces_filename(art, name)
+    path.write_text(
+        soldermask.shapes_dxf_text(art.apertures, art.outline,
+                                   soldermask.LAYER_TRACES),
+        encoding="ascii")
+    return path
+
+
+def _clip_ring_to(coords, clip):
+    """Closed ring coordinate list clipped to ``clip`` (artwork frame)."""
+    from shapely.geometry import LineString, MultiLineString
+    if clip is None:
+        return [coords]
+    line = LineString(coords)
+    if line.is_empty:
+        return []
+    if clip.contains(line):
+        return [coords]
+    if not line.intersects(clip):
+        return []
+    cut = line.intersection(clip)
+    parts = list(cut.geoms) if isinstance(cut, MultiLineString) else (
+        [cut] if isinstance(cut, LineString) else [])
+    return [list(p.coords) for p in parts if not p.is_empty and p.length > 1e-4]
+
+
+def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
+    """Concentric isolation rings per offset, in bed coordinates, ordered by
+    nearest neighbour. Cached in the artwork frame so dragging or tweaking
+    power/speed/passes stays instantaneous."""
+    from shapely.geometry import Point
+    from shapely.ops import unary_union
+    from gerber2rml.engine import soldermask
+
+    if art.copper is None or art.copper.is_empty:
+        _, outline = stencil_paths(art, origin)
+        return [], outline
+
+    only_key = frozenset(only) if only else None
+    key = (recipe.offsets, round(recipe.kerf, 4), round(recipe.lines_per_cm, 2),
+           bool(recipe.spot_drills), only_key)
+    cache = art._ring_cache
+    if cache is None:
+        cache = {}
+        art._ring_cache = cache
+
+    if key not in cache:
+        spots = (_drill_spots(art.drills)
+                 if recipe.spot_drills and art.drills else None)
+        cu = art.copper.difference(spots) if spots is not None else art.copper
+        clip = None
+        if only_key:
+            sel = [art.apertures[k] for k in only_key
+                   if 0 <= k < len(art.apertures)]
+            if sel:
+                clip = unary_union(sel).buffer(recipe.stepover * 1.5)
+        groups = []
+        for i in range(recipe.offsets):
+            d_i = recipe.kerf / 2 + i * recipe.stepover
+            grown = cu.buffer(d_i).intersection(art.outline)
+            rings = []
+            for poly in soldermask._polygons(grown):
+                rings += _clip_ring_to(list(poly.exterior.coords), clip)
+                for intr in poly.interiors:
+                    rings += _clip_ring_to(list(intr.coords), clip)
+            if rings:
+                groups.append(_nearest_order(rings))
+        cache[key] = groups
+
+    _, h = art.size
+    bed_groups = [[to_bed(rg, origin, h) for rg in grp] for grp in cache[key]]
+    outline = [to_bed(list(r.coords), origin, h)
+               for r in (art.outline.exterior, *art.outline.interiors)]
+    return bed_groups, outline
+
+
+def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
+    """One GS002 file to etch PCB copper traces on the F1 Ultra."""
+    from shapely.geometry import Polygon
+
+    if recipe.strategy in ("moat", "rubout"):
+        _, h = art.size
+        pick = only or None
+        shapes = []
+        for k, poly in enumerate(art.apertures):
+            if pick is not None and k not in pick:
+                continue
+            shapes.append(Polygon(to_bed(list(poly.exterior.coords), origin, h),
+                                  [to_bed(list(r.coords), origin, h)
+                                   for r in poly.interiors]))
+        _, outline = stencil_paths(art, origin)
+        fill_r = FillRecipe(
+            power=recipe.power, speed=recipe.speed, frequency=recipe.frequency,
+            passes=recipe.passes, lines_per_cm=recipe.lines_per_cm,
+            cross_hatch=recipe.cross_hatch, one_way=recipe.one_way,
+            mark_outline=recipe.mark_outline, mark_power=recipe.mark_power)
+        return fill_job(shapes, outline, fill_r)
+
+    groups, outline = traces_rings(art, origin, recipe, only=only)
+    all_rings = [rg for grp in groups for rg in grp]
+    check_on_bed(all_rings + outline)
+    park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
+    body, secs, timeline = [], 0.0, []
+    for rnd in range(recipe.passes):
+        order = groups if rnd % 2 == 0 else list(reversed(groups))
+        round_rings = [rg for grp in order for rg in grp]
+        body += _passes(round_rings, recipe.power, recipe.speed, 1)
+        dt = sum(_length(p) for p in round_rings) / recipe.speed
+        timeline.append((secs, secs + dt, 0, rnd))
+        secs += dt
+        if rnd < recipe.passes - 1 and recipe.rest_s > 0:
+            body += _rest(park, recipe.rest_s)
+            secs += recipe.rest_s
+    if outline and recipe.mark_outline:
+        body += _passes(outline, recipe.mark_power, recipe.speed, 1)
+        dt = sum(_length(p) for p in outline) / recipe.speed
+        timeline.append((secs, secs + dt, -1, recipe.passes))
+        secs += dt
+    lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
+    return Job(text="\r\n".join(lines), zones=[len(all_rings)], seconds=secs,
+               passes=recipe.passes, zone_paths=[all_rings], timeline=timeline)
