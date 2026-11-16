@@ -77,6 +77,9 @@ def _isolated_qsettings(tmp_path_factory):
     d.mkdir(parents=True, exist_ok=True)
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(d))
+    # The explicit (organization, application) constructor still uses Native
+    # format, even after setDefaultFormat. Isolate that overload as well.
+    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(d))
     yield
 
 

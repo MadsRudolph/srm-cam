@@ -58,10 +58,11 @@ _SLIVER_MM2 = 1e-4        # what a shrink can leave behind that is not an openin
 LAYER_OPENINGS = "MASK_OPENINGS"
 LAYER_OUTLINE = "OUTLINE"
 LAYER_SILKSCREEN = "SILKSCREEN"     # engine/silkscreen.py writes through here too
+LAYER_TRACES = "LASER_TRACES"       # engine/xtool.py writes laser traces through here
 # AutoCAD colour numbers: ones that read apart from each other on a dark or light
 # screen, so a reader that honours colours separates the outline by itself.
 _COLOUR = {LAYER_OPENINGS: 5, LAYER_OUTLINE: 1,     # blue, red
-           LAYER_SILKSCREEN: 3}                     # green
+           LAYER_SILKSCREEN: 3, LAYER_TRACES: 4}    # green, cyan
 
 _MASK_PATTERNS = {"bottom": ("*-B_Mask.*", "*.gbs"),
                   "top": ("*-F_Mask.*", "*.gts")}

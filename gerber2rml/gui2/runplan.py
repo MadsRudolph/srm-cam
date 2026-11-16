@@ -473,6 +473,9 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                 caution="Runs last - it frees the board and the dowel waste",
                 note=CUTOUT_NOTE)
 
+    seq.add(Step("laser", "tool", "xTool F1 Ultra",
+                 detail="Traces, solder mask, silkscreen, stencil",
+                 op="board"))
     seq.add(Step("level", "tool", "Level the bed",
                  detail="Measure the surface so cut depth follows it",
                  op="level"))

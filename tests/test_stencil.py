@@ -199,7 +199,8 @@ def win(qt_app, monkeypatch):
 def test_off_by_default_and_hidden(win, tmp_path):
     setup = win.inspector.setup
     assert not setup.stencil.isChecked()
-    assert setup.stencil_cut_btn.isHidden()
+    assert setup.stencil_write_btn.isHidden()
+    assert not setup.stencil_cut_btn.isHidden()
     win.export_to(tmp_path)
     assert not list(tmp_path.glob("*stencil*"))
 
@@ -509,3 +510,211 @@ def test_mask_and_silkscreen_open_the_laser_page(qt_app, monkeypatch, action, ki
         d.close()
     finally:
         w.close()
+
+
+# ---------------------------------------------------------------- laser traces
+
+def test_build_laser_traces_with_drill_spots_and_dxf(tmp_path):
+    art_with = xtool.build_laser_traces(BUCK, mirror=True, spot_drills=True)
+    art_no = xtool.build_laser_traces(BUCK, mirror=True, spot_drills=False)
+    assert art_with.kind == "traces" and art_with.mirrored
+    assert len(art_with.drills) == 27 and len(art_with.features) == 27
+    # Drill spots open circular apertures inside pads, creating more cleared polygons
+    assert len(art_with.apertures) > len(art_no.apertures)
+    dxf = xtool.write_traces_dxf(art_with, tmp_path, "buck")
+    assert dxf.name == "buck_traces_bottom_mirrored.dxf"
+    text = dxf.read_text()
+    assert "LASER_TRACES" in text and "OUTLINE" in text
+
+
+def test_concentric_traces_job_beats_rubout_and_clears_drills():
+    art = xtool.build_laser_traces(BUCK, mirror=True, spot_drills=True)
+    # 1. Concentric isolation (FlatCAM style)
+    con_job = xtool.traces_job(art, (40.0, 40.0), xtool.DEFAULT_TRACES_RECIPE)
+    lines = con_job.text.split("\r\n")
+    assert "G22" in lines and "G0Q30" in lines and "G21" not in lines
+    assert any(l.endswith("S1000F36000") for l in lines)
+    assert len(con_job.timeline) == 10
+    # Alternating offset sweep order between round 0 and round 1
+    groups, _ = xtool.traces_rings(art, (40.0, 40.0), xtool.DEFAULT_TRACES_RECIPE)
+    assert len(groups) == 6
+    # Verify round 0 starts at offset 0 and round 1 starts at offset -1 (reversed)
+    g0_moves = [l for l in lines if l.startswith("G0X") or l.startswith("G1X")]
+    first_x0, first_y0 = groups[0][0][0]
+    assert g0_moves[0] == f"G0X{first_x0:.3f}Y{first_y0:.3f}"
+    # Drill hole centre spotting clears pilot circles inside pads
+    art_no = xtool.build_laser_traces(BUCK, mirror=True, spot_drills=False)
+    assert len(art.apertures) > len(art_no.apertures)
+
+    # 2. Full rubout (XCS style)
+    rub_art = xtool.build_laser_traces(BUCK, mirror=True, strategy="rubout",
+                                       lines_per_cm=120.0, spot_drills=True)
+    rub_r = xtool.TracesRecipe(strategy="rubout", lines_per_cm=120.0, passes=10)
+    rub_job = xtool.traces_job(rub_art, (40.0, 40.0), rub_r)
+
+    def _stats(gcode_lines):
+        g0s = [l for l in gcode_lines if l.startswith("G0X")]
+        g1s = [l for l in gcode_lines if l.startswith("G1X")]
+        return len(g0s), len(g1s)
+
+    con_g0, con_g1 = _stats(lines)
+    rub_g0, rub_g1 = _stats(rub_job.text.split("\r\n"))
+    assert rub_g0 / con_g0 > 20
+
+
+def test_laser_dialog_traces_strategies_and_job_switcher(qt_app, monkeypatch):
+    monkeypatch.setenv("SRM_CAM_MODE", "pro")
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.window import MainWindow
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
+    opened = []
+    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
+    w = MainWindow()
+    try:
+        w.load_folder(str(BUCK))
+        w.action_traces_laser()
+        (d,) = opened
+        assert d.kind == "traces" and d.cut_btn.text() == "Etch the traces"
+        assert d.job_switch.current() == "traces"
+        d.x.setValue(45.0)
+        d.y.setValue(55.0)
+        n_concentric = len(d.art.apertures)
+
+        # Switch strategy to rubout -> polygon count changes live
+        idx_rub = d.strategy.findData("rubout")
+        d.strategy.setCurrentIndex(idx_rub)
+        assert d.recipe().strategy == "rubout"
+        assert d.offsets_field.isHidden()
+        assert len(d.art.apertures) != n_concentric
+
+        # Switch back to concentric and change isolation offsets & drill spotting
+        idx_con = d.strategy.findData("concentric")
+        d.strategy.setCurrentIndex(idx_con)
+        assert not d.offsets_field.isHidden()
+        d.spot_drills.setChecked(False)
+        n_no_drill = len(d.art.apertures)
+        d.spot_drills.setChecked(True)
+        assert len(d.art.apertures) > n_no_drill
+
+        # Switch jobs right inside the laser window, preserving X/Y
+        d.switch_kind("mask")
+        assert d.kind == "mask" and d.job_switch.current() == "mask"
+        assert d.cut_btn.text() == "Open the mask"
+        assert (d.x.value(), d.y.value()) == pytest.approx((45.0, 55.0))
+
+        d.switch_kind("silk")
+        assert d.kind == "silk" and d.job_switch.current() == "silk"
+        assert d.cut_btn.text() == "Mark the silkscreen"
+        assert (d.x.value(), d.y.value()) == pytest.approx((45.0, 55.0))
+
+        # Switching back to traces works and preserves placement
+        d.switch_kind("traces")
+        assert d.kind == "traces" and d.job_switch.current() == "traces"
+        assert (d.x.value(), d.y.value()) == pytest.approx((45.0, 55.0))
+        d.close()
+    finally:
+        w.close()
+
+
+def test_setup_page_laser_traces_dxf_export(qt_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("SRM_CAM_MODE", "pro")
+    from gerber2rml.gui2.window import MainWindow
+    w = MainWindow()
+    try:
+        w.load_folder(str(BUCK))
+        setup = w.inspector.setup
+        assert not setup.laser_traces.isChecked()
+        assert setup.laser_traces_write_btn.isHidden()
+        assert not setup.laser_traces_run_btn.isHidden()
+        setup.laser_traces.setChecked(True)
+        assert not setup.laser_traces_write_btn.isHidden()
+        setup.laser_offsets.setValue(8)
+        assert w._laser_offsets == 8
+        w.export_to(tmp_path)
+        dxf = list(tmp_path.glob("*_traces_bottom_mirrored.dxf"))
+        assert len(dxf) == 1 and dxf[0].name in w.laser_traces_status()[1]
+    finally:
+        w.close()
+
+
+def test_laser_rail_tab_and_header_button(qt_app, monkeypatch):
+    monkeypatch.setenv("SRM_CAM_MODE", "pro")
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.window import MainWindow
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
+    opened = []
+    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
+    w = MainWindow()
+    try:
+        w.load_folder(str(BUCK))
+        assert w.plan.by_key("laser") is not None
+        w.select_step("laser")
+        assert w.inspector.stack.currentWidget() is w.laser_page
+        assert w.laser_page.traces_run_btn.isEnabled()
+        w.header_laser_btn.click()
+        (d,) = opened
+        assert d.kind == "traces"
+        d.close()
+    finally:
+        w.close()
+
+
+def test_curtain_drive_top_traces_can_be_selected(qt_app, monkeypatch):
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.window import MainWindow
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "curtain-laser"))
+    opened = []
+    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
+    w = MainWindow()
+    try:
+        w.load_folder(str(Path(__file__).parent / "fixtures" / "curtain_drive"))
+        w.action_traces_laser()
+        (d,) = opened
+        assert d.art.side == "bottom"
+        assert d.art.copper.area < 10  # B.Cu contains only four small shapes.
+        d.x.setValue(45)
+        d.y.setValue(55)
+        d.copper_side.setCurrentIndex(d.copper_side.findData("top"))
+        assert d.art.side == "top" and not d.art.mirrored
+        assert d.art.copper.area > 3000  # The routed circuit is on F.Cu.
+        assert "F.Cu (top)" in d.size_lbl.text()
+        assert len(d.item.holes) == len(d.art.apertures) > 4
+        assert (d.x.value(), d.y.value()) == pytest.approx((45, 55))
+        assert xtool.traces_job(d.art, (45, 55), d.recipe()).seconds > 0
+        # Missing jobs must not discard the selected copper face.
+        d.switch_kind("stencil")
+        assert d.kind == "traces" and d.art.side == "top"
+        d.copper_side.setCurrentIndex(d.copper_side.findData("bottom"))
+        assert d.art.side == "bottom" and d.art.mirrored
+        assert "B.Cu (bottom)" in d.size_lbl.text()
+        d.close()
+    finally:
+        w.close()
+
+
+def test_vector_passes_remove_moves_that_collapse_at_output_precision():
+    paths = [[(0, 0), (0.0001, -0.0001), (1, 0), (1.0001, 0), (0, 0)],
+             [(2, 2), (2.0001, 2.0001)], []]
+    lines = xtool._passes(paths, power=100, speed=600, n=2)
+    assert lines == ["G0X0.000Y0.000", "G1X1.000Y0.000S1000F36000",
+                     "G1X0.000Y0.000"] * 2
+
+
+def test_curtain_vectors_never_emit_a_stationary_cutting_move():
+    import re
+    folder = Path(__file__).parent / "fixtures" / "curtain_drive"
+    art = xtool.build_laser_traces(folder, side="top", mirror=False)
+    recipe = xtool.TracesRecipe(passes=1)
+    job = xtool.traces_job(art, (40, 40), recipe)
+    previous = None
+    cuts = 0
+    for line in job.text.splitlines():
+        match = re.match(r"G([01])X([-\d.]+)Y([-\d.]+)", line)
+        if not match:
+            continue
+        position = float(match[2]), float(match[3])
+        if match[1] == "1":
+            assert position != previous
+            cuts += 1
+        previous = position
+    assert cuts > 1000

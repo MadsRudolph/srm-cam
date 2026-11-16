@@ -1,0 +1,32 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,10.0.7*%
+%TF.CreationDate,2026-11-16T18:31:56+01:00*%
+%TF.ProjectId,curtain-drive,63757274-6169-46e2-9d64-726976652e6b,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Copper,L2,Bot*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 10.0.7) date 2026-11-16 18:31:56*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,ComponentPad*%
+%ADD10O,2.100000X1.000000*%
+%TD*%
+%TA.AperFunction,ComponentPad*%
+%ADD11O,1.600000X1.000000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+%TO.P,J2,SH*%
+%TO.N,GND*%
+X173670000Y-124070000D03*
+D11*
+X177850000Y-124070000D03*
+D10*
+X173670000Y-115430000D03*
+D11*
+X177850000Y-115430000D03*
+%TD*%
+M02*

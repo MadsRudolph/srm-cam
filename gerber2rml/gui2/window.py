@@ -52,6 +52,7 @@ from gerber2rml.engine import silkscreen
 from gerber2rml.engine import soldermask
 from gerber2rml.engine import stencil
 from gerber2rml.engine import spoilboard
+from gerber2rml.engine import xtool
 
 FOIL_MM = 0.035        # copper foil on 1.6 mm FR-4; what a cut must break
 
@@ -132,7 +133,7 @@ from gerber2rml.gui2 import (theme, widgets, style, runplan, tier, workspace,
                              dialogs)
 from gerber2rml.gui2.stage import Stage
 from gerber2rml.gui2.traveller import Traveller
-from gerber2rml.gui2.inspector import Inspector
+from gerber2rml.gui2.inspector import Inspector, LaserPage
 from gerber2rml.gui2.machine import MachineLink, MachineBar, RunTracker
 from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
@@ -366,6 +367,10 @@ class MainWindow(QMainWindow):
         self._stencil = False
         self._stencil_kerf = stencil.DEFAULT_KERF
         self._stencil_result = None
+        # And PCB traces etched directly on the xTool F1 Ultra.
+        self._laser_traces = False
+        self._laser_offsets = xtool.DEFAULT_TRACE_OFFSETS
+        self._laser_traces_result = None
         self._registration = "fiducial"     # the lab standard; dowels drill the bed
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
@@ -518,6 +523,7 @@ class MainWindow(QMainWindow):
         h.addWidget(self.split, 1)
 
         self.inspector = Inspector(self)
+        self.laser_page = self.inspector.add_page("laser", LaserPage(self))
         self.level_page = self.inspector.add_page("level", LevelPage(self))
         self.rework_page = self.inspector.add_page("rework", ReworkPage(self))
         self.flipfit_page = self.inspector.add_page("fitflip", FlipFitPage(self))
@@ -670,6 +676,11 @@ class MainWindow(QMainWindow):
         self.travel_btn.setCheckable(True)
         self.travel_btn.setChecked(True)
         h.addWidget(self.travel_btn)
+        self.header_laser_btn = widgets.button(
+            "xTool laser…", on=self.action_open_laser_hub,
+            tip="Open the xTool F1 Ultra laser window (Traces, Solder mask, "
+                "Silkscreen, Stencil)")
+        h.addWidget(self.header_laser_btn)
 
         h.addStretch(1)
         # One glance at the measured state of the job, in the order the work
@@ -1533,6 +1544,8 @@ class MainWindow(QMainWindow):
         self._sync_job_header()
         self._sync_window_title()
         # The first rebuild runs before the pages exist.
+        if getattr(self, "laser_page", None) is not None:
+            self.laser_page.sync()
         if getattr(self, "level_page", None) is not None:
             self.level_page.sync_job()      # tier, sidedness, registration
         self.traveller.set_export_enabled(
@@ -1583,6 +1596,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(
             0, lambda: self.level_page.follow_step(self.current_side()))
         self.traveller.select(key)
+        if key == "laser" and getattr(self, "laser_page", None) is not None:
+            self.laser_page.sync()
         self.inspector.show_step(step, self.plan)
         self.centre.setCurrentWidget(self.stage)
         self._draw_step(step)
@@ -3171,6 +3186,7 @@ class MainWindow(QMainWindow):
         self._mask_result = None
         self._silk_result = None
         self._stencil_result = None
+        self._laser_traces_result = None
         self.traveller.clear_done()
         self.rework_page._clear()
         # Pads of the last board, measured on the last piece of copper.
@@ -3747,6 +3763,7 @@ class MainWindow(QMainWindow):
         self.state.mirror = on
         self._mask_result = None
         self._stencil_result = None
+        self._laser_traces_result = None
         if self.state.boards:
             try:
                 self.state.reload()
@@ -3775,6 +3792,7 @@ class MainWindow(QMainWindow):
                                   "double" if on else "single")
         self._mask_result = None
         self._silk_result = None
+        self._laser_traces_result = None
         self._paths_cache = {}
         self.inspector.setup.registration_field.setVisible(
             tier.is_full() and self._double)
@@ -4331,6 +4349,8 @@ class MainWindow(QMainWindow):
         # are worth having and not worth failing an export over.
         extras = self._write_export_extras(self._export_dir)
         wear = self._note_tool_wear()
+        ltraces = (self.write_laser_traces_to(self._export_dir)
+                   if self._laser_traces else None)
         mask = (self.write_mask_to(self._export_dir)
                 if self._solder_mask else None)
         silk = (self.write_silk_to(self._export_dir)
@@ -4346,17 +4366,20 @@ class MainWindow(QMainWindow):
             silk=silk)
         self.centre.setCurrentWidget(self.sheet)
         total = self.plan.total_seconds
-        self.say("warn" if "WORN" in wear or (mask and mask[1])
+        self.say("warn" if "WORN" in wear or (ltraces and ltraces[1])
+                 or (mask and mask[1])
                  or (silk and silk[1]) or (paste and paste[1]) else "ok",
                  f"{len(written)} files written"
                  + (f" · about {format_duration(total)} of cutting"
                     if total else "")
                  + (" · plus a picture and a summary of the board"
                     if extras else "")
+                 + (" · plus the laser traces file" if ltraces and ltraces[0] else "")
                  + (" · plus the solder mask file" if mask and mask[0] else "")
                  + (" · plus the silkscreen file" if silk and silk[0] else "")
                  + (" · plus the stencil file" if paste and paste[0] else "")
                  + wear
+                 + (f" · Laser traces: {ltraces[1][0]}" if ltraces and ltraces[1] else "")
                  + (f" · Solder mask: {mask[1][0]}" if mask and mask[1] else "")
                  + (f" · Silkscreen: {silk[1][0]}" if silk and silk[1] else "")
                  + (f" · Stencil: {paste[1][0]}" if paste and paste[1] else ""))
@@ -4374,6 +4397,8 @@ class MainWindow(QMainWindow):
         self._mask_shrink = float(value)
         self._mask_result = None
         self.inspector.setup.sync_mask()
+        if getattr(self, "laser_page", None) is not None:
+            self.laser_page.sync()
 
     def mask_status(self):
         """``(level, text)`` for the setup page: what the last write made,
@@ -4549,6 +4574,8 @@ class MainWindow(QMainWindow):
         self._stencil_kerf = float(value)
         self._stencil_result = None
         self.inspector.setup.sync_stencil()
+        if getattr(self, "laser_page", None) is not None:
+            self.laser_page.sync()
 
     def _stencil_sides(self):
         """The faces that get a stencil: the milled bottom, mirrored like the
@@ -4640,13 +4667,110 @@ class MainWindow(QMainWindow):
             self.say("ok", f"Wrote {', '.join(p.name for p in paths)} "
                            f"· Import it into XCS to place it on the foil.")
 
+    # -------------------------------------------------------- the laser traces
+    def action_laser_traces(self, on):
+        self._laser_traces = bool(on)
+        self.inspector.setup.sync_laser_traces()
+        level, text = self.laser_traces_status()
+        if on and level == "warn":
+            self.say("warn", text)
+
+    def action_laser_offsets(self, value):
+        self._laser_offsets = max(1, int(value))
+        self._laser_traces_result = None
+        self.inspector.setup.sync_laser_traces()
+        if getattr(self, "laser_page", None) is not None:
+            self.laser_page.sync()
+
+    def _traces_sides(self):
+        sides = [("bottom", bool(self.state.mirror) or self._double)]
+        if self._double:
+            sides.append(("top", False))
+        return sides
+
+    def _traces_arts(self, gerber_dir):
+        arts, notes = [], []
+        for side, mirror in self._traces_sides():
+            try:
+                arts.append(xtool.build_laser_traces(
+                    gerber_dir, side=side, mirror=mirror,
+                    offsets=self._laser_offsets))
+            except xtool.TracesError as e:
+                notes.append(str(e))
+        if not arts and not self._double:
+            try:
+                arts.append(xtool.build_laser_traces(
+                    gerber_dir, side="top", mirror=False,
+                    offsets=self._laser_offsets))
+            except xtool.TracesError as e:
+                notes.append(str(e))
+        return arts, ([] if arts else notes[:1])
+
+    def laser_traces_status(self):
+        st = self.state
+        if st.gerber_dir is None:
+            return "info", "Load a Gerber folder first."
+        if self._laser_traces_result is not None:
+            paths, notes = self._laser_traces_result
+            bits = [f"Wrote {p.name}" for p in paths] + notes
+            return ("warn" if notes else "info"), ". ".join(bits)
+        missing = [m.gerber_dir for m in st.boards
+                   if xtool.copper_layer_path(m.gerber_dir) is None
+                   and xtool.copper_layer_path(m.gerber_dir, "top") is None]
+        if missing:
+            return "warn", (
+                f"No copper Gerber in {missing[0].name}. Plot B.Cu (or F.Cu) "
+                f"and Edge.Cuts into the same folder, and load it again.")
+        return "info", (
+            "Reads B.Cu (or F.Cu), Edge.Cuts and drills: FlatCAM-style "
+            "concentric isolation rings, dozens of times faster than XCS fill.")
+
+    def write_laser_traces_to(self, out_dir):
+        """Write the laser traces DXF or DXFs into ``out_dir``."""
+        st = self.state
+        paths, notes, seen = [], [], set()
+        for m in st.boards:
+            if m.gerber_dir in seen:
+                continue
+            seen.add(m.gerber_dir)
+            name = clean_name(m.name) if st.is_panel else st.name
+            try:
+                arts, why = self._traces_arts(m.gerber_dir)
+                notes += why
+                for art in arts:
+                    path = xtool.write_traces_dxf(art, out_dir, name)
+                    paths.append(path)
+                    self._exported[path.name] = path
+                    notes += art.warnings()
+            except Exception as e:
+                notes.append(f"{name}'s traces file could not be written: {e}")
+        self._laser_traces_result = (paths, notes)
+        self.inspector.setup.sync_laser_traces()
+        return paths, notes
+
+    def action_write_laser_traces(self):
+        if self.state.board is None:
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        d = QFileDialog.getExistingDirectory(
+            self, "Where should the laser traces file go?",
+            workspace.remembered_dir("out", "exports"))
+        if not d:
+            return
+        workspace.remember_dir("out", d)
+        paths, notes = self.write_laser_traces_to(d)
+        if notes:
+            self.say("warn", notes[0])
+        else:
+            self.say("ok", f"Wrote {', '.join(p.name for p in paths)}.")
+
     def _laser_board(self):
         st = self.state
         return st.boards[st.current] if st.is_panel else st.boards[0]
 
     def _open_laser(self, art, name):
         from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-        StencilLaserDialog(art, self, name=name).exec()
+        StencilLaserDialog(art, self, name=name, jobs=self._laser_art_for).exec()
 
     @staticmethod
     def _raw_outline(folder):
@@ -4654,70 +4778,103 @@ class MainWindow(QMainWindow):
         edge = _find_layer(folder, "*-Edge_Cuts.*", "*.gm1")
         return soldermask._read_outline(edge) if edge else None
 
-    def action_mask_laser(self):
-        """The solder mask on the xTool: the openings filled with the
-        RemoveSolderMask recipe, aligned on the drilled holes."""
-        from gerber2rml.engine import xtool
+    def _laser_art_for(self, kind, *, side=None):
+        """Build the :class:`xtool.LaserArt` for ``kind`` on the selected board."""
+        st = self.state
+        if st.board is None:
+            raise ValueError("Load a Gerber folder first.")
+        m = self._laser_board()
+        if kind == "traces":
+            if side is not None:
+                return xtool.build_laser_traces(
+                    m.gerber_dir, side=side,
+                    mirror=(bool(st.mirror) or self._double) if side == "bottom" else False,
+                    offsets=self._laser_offsets)
+            arts, notes = self._traces_arts(m.gerber_dir)
+            if not arts:
+                raise xtool.TracesError(notes[0] if notes else "No copper on this board.")
+            return arts[0]
+        if kind == "mask":
+            mirror = bool(st.mirror) or self._double
+            art = soldermask.build_mask(m.gerber_dir, shrink=self._mask_shrink,
+                                        mirror=mirror)
+            try:
+                feats = xtool.drill_features(m.gerber_dir, mirror,
+                                             self._raw_outline(m.gerber_dir))
+            except Exception:                       # noqa: BLE001 - Align only
+                feats = []
+            return xtool.LaserArt(
+                kind="mask", apertures=art.openings, outline=art.outline,
+                mirrored=art.mirrored, notes=art.warnings(), features=feats,
+                note=f"shrunk {art.shrink:g} mm a side")
+        if kind == "silk":
+            art = silkscreen.build_silk(m.gerber_dir)
+            try:
+                feats = xtool.drill_features(m.gerber_dir, art.mirrored,
+                                             self._raw_outline(m.gerber_dir))
+            except Exception:                       # noqa: BLE001 - Align only
+                feats = []
+            return xtool.LaserArt(
+                kind="silk", apertures=art.shapes, outline=art.outline,
+                mirrored=art.mirrored, notes=art.warnings(), features=feats)
+        if kind == "stencil":
+            arts, notes = self._stencil_arts(m.gerber_dir)
+            if not arts:
+                raise stencil.StencilError(notes[0] if notes else "No paste on this board.")
+            return arts[0]
+        raise ValueError(f"Unknown laser job kind: {kind}")
+
+    def _open_laser_kind(self, kind):
         st = self.state
         if st.board is None:
             self.say("warn", "Load a Gerber folder first.")
             return
         m = self._laser_board()
-        mirror = bool(st.mirror) or self._double
         try:
-            art = soldermask.build_mask(m.gerber_dir, shrink=self._mask_shrink,
-                                        mirror=mirror)
-        except soldermask.MaskError as e:
+            art = self._laser_art_for(kind)
+        except (xtool.TracesError, soldermask.MaskError, silkscreen.SilkError,
+                stencil.StencilError, ValueError) as e:
             self.say("warn", str(e))
             return
-        try:
-            feats = xtool.drill_features(m.gerber_dir, mirror,
-                                         self._raw_outline(m.gerber_dir))
-        except Exception:                           # noqa: BLE001 - Align only
-            feats = []
-        self._open_laser(xtool.LaserArt(
-            kind="mask", apertures=art.openings, outline=art.outline,
-            mirrored=art.mirrored, notes=art.warnings(), features=feats,
-            note=f"shrunk {art.shrink:g} mm a side"),
-            m.name if st.is_panel else st.name)
+        self._open_laser(art, m.name if st.is_panel else st.name)
+
+    def action_open_laser_hub(self):
+        """Open the xTool F1 Ultra dialog on the first available laser job."""
+        st = self.state
+        if st.board is None:
+            if self.plan is not None and self.plan.by_key("laser") is not None:
+                self.select_step("laser")
+            self.say("warn", "Load a Gerber folder first.")
+            return
+        m = self._laser_board()
+        last_err = None
+        for kind in ("traces", "mask", "silk", "stencil"):
+            try:
+                art = self._laser_art_for(kind)
+                self._open_laser(art, m.name if st.is_panel else st.name)
+                return
+            except (xtool.TracesError, soldermask.MaskError, silkscreen.SilkError,
+                    stencil.StencilError, ValueError) as e:
+                last_err = str(e)
+        self.say("warn", last_err or "No laser-ready Gerber layers in this folder.")
+
+    def action_traces_laser(self):
+        """The copper traces on the xTool: FlatCAM-style concentric isolation."""
+        self._open_laser_kind("traces")
+
+    def action_mask_laser(self):
+        """The solder mask on the xTool: the openings filled with the
+        RemoveSolderMask recipe, aligned on the drilled holes."""
+        self._open_laser_kind("mask")
 
     def action_silk_laser(self):
         """The silkscreen on the xTool: the artwork filled, aligned on the
         drilled holes. The component side, as KiCad drew it: not mirrored."""
-        from gerber2rml.engine import xtool
-        st = self.state
-        if st.board is None:
-            self.say("warn", "Load a Gerber folder first.")
-            return
-        m = self._laser_board()
-        try:
-            art = silkscreen.build_silk(m.gerber_dir)
-        except silkscreen.SilkError as e:
-            self.say("warn", str(e))
-            return
-        try:
-            feats = xtool.drill_features(m.gerber_dir, art.mirrored,
-                                         self._raw_outline(m.gerber_dir))
-        except Exception:                           # noqa: BLE001 - Align only
-            feats = []
-        self._open_laser(xtool.LaserArt(
-            kind="silk", apertures=art.shapes, outline=art.outline,
-            mirrored=art.mirrored, notes=art.warnings(), features=feats),
-            m.name if st.is_panel else st.name)
+        self._open_laser_kind("silk")
 
     def action_cut_stencil(self):
         """The laser window for the selected board's stencil."""
-        st = self.state
-        if st.board is None:
-            self.say("warn", "Load a Gerber folder first.")
-            return
-        m = st.boards[st.current] if st.is_panel else st.boards[0]
-        arts, notes = self._stencil_arts(m.gerber_dir)
-        if not arts:
-            self.say("warn", notes[0] if notes else "No paste on this board.")
-            return
-        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-        StencilLaserDialog(arts[0], self, name=m.name if st.is_panel else st.name).exec()
+        self._open_laser_kind("stencil")
 
     def _write_export_extras(self, out_dir):
         """A picture of the stage and a board summary next to the machine
@@ -4920,6 +5077,7 @@ class MainWindow(QMainWindow):
             "cutout": asdict(self.state.cutout),
             "double_sided": self._double, "registration": self._registration,
             "screwed": self.screwed, "stock": list(self.stock),
+            "laser_traces": self._laser_traces, "laser_offsets": self._laser_offsets,
             "solder_mask": self._solder_mask, "mask_shrink": self._mask_shrink,
             "silkscreen": self._silkscreen,
             "fid_diameter": self._fid_diameter, "hold": self._hold,
@@ -5065,6 +5223,12 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 setattr(self, attr, default)
         self.screwed = bool(data.get("screwed", False))
+        self._laser_traces = bool(data.get("laser_traces", False))
+        try:
+            self._laser_offsets = max(1, int(
+                data.get("laser_offsets", xtool.DEFAULT_TRACE_OFFSETS)))
+        except (TypeError, ValueError):
+            self._laser_offsets = xtool.DEFAULT_TRACE_OFFSETS
         self._solder_mask = bool(data.get("solder_mask", False))
         self._silkscreen = bool(data.get("silkscreen", False))
         try:

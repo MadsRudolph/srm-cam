@@ -573,23 +573,99 @@ inside of a letter like O stays a loop of its own, which the laser's fill leaves
 unmarked. Nothing is shrunk. Artwork past the board edge is cut off at the outline
 and the clipped area is reported. Engine: `engine/silkscreen.py`.
 
-## Solder mask and silkscreen on the xTool
+## Copper traces, solder mask, and silkscreen on the xTool
 
-The solder mask and silkscreen sections each have a button that opens the same
-laser page as the stencil, with the same photo, autofocus, placement, Align,
-selection, presets and STOP:
+The Setup page lets you send any laser job directly to the xTool F1 Ultra (no
+XCS required), and the laser window has a **Traces | Mask | Silk | Stencil**
+switcher at the top of the right panel so you can step through all four jobs
+without losing board placement, focus, or camera alignment:
+
+- **Etch the traces on the xTool…** isolates every net on `B.Cu` (or `F.Cu`
+  when `B.Cu` is absent/empty) directly from the Gerber folder. Use **Copper face**
+  in the laser window to select **F.Cu — top copper** for a circuit routed on
+  the front, such as curtain-drive. The preview labels the chosen layer and
+  mirror state; top copper is not mirrored.
 - **Open the mask on the xTool…** fills every mask opening, ablating the cured
   ink off the pads.
 - **Mark it on the xTool…** fills the silkscreen artwork.
 
-What changes:
+### Native vector isolation and material calibration
 
-| | Stencil | Solder mask | Silkscreen |
-|---|---|---|---|
-| Laser work | outline cut, 30 passes in zones | filled, hatch lines | filled, hatch lines |
-| Default preset | 0.1 mm 304 stainless | RemoveSolderMask (sphawes) | RemoveSolderMask (sphawes) |
-| Align locks onto | the holes it cut | the drilled holes | the drilled holes |
-| Learn the camera offset | yes | no (uses the stencil's) | no (uses the stencil's) |
+XCS turns a Vector Engrave fill into full-board scanlines that cut across narrow
+trace gaps and rapid-jump back and forth across copper tracks tens of thousands
+of times. SRM-CAM defaults to **Concentric passes (FlatCAM style)**:
+
+| Method | What it does | When to use |
+|---|---|---|
+| **Concentric passes (FlatCAM)** | Follows copper boundaries outward in concentric vector rings (default geometry: 6 rings ≈ 0.22 mm band), alternating sweep order each round | Native vector isolation, after calibrating on the same copper stock |
+| **Moat hatch (cross-hatched band)** | Hatches only the isolation band around copper traces and pads | When you want a cross-hatched moat without full rubout |
+| **Full rubout (sphawes / XCS)** | Hatches every empty millimetre inside the board outline | When all unused copper must be removed |
+
+**Copper calibration.** The built-in copper profiles are uncalibrated starting
+values. XTool Studio fill parameters do not establish an effective native
+concentric-vector exposure. Board thickness and copper foil thickness are
+separate measurements.
+
+From **Traces → Recipe → Calibrate copper vectors…**, use a fresh flat scrap
+of the same stock. The coupon frame is 40 × 40 mm. Its labels and outline are
+preview guides only; the fiber engraves neither. The preview shows the exact
+paths sent by the same native vector writer used for production isolation.
+
+1. **Single lines:** five independent 12 mm lines. Place the frame over fresh
+   copper, autofocus on its surface, check **Fresh copper positioned for this
+   stage**, and press **Run cell 1 · ONE pass**. Initial 10% power, 2000 mm/s
+   and 30 kHz are an exploratory low-exposure starting point, not a verified
+   copper recipe. Inspect after each pass. Compare changed exposures on fresh
+   cells, or repeat the same cell after cooling to measure cumulative depth.
+   Stop an experiment on laminate damage. A dark mark alone does not establish
+   copper removal. Measure the cleared substrate width and enter **Cleared
+   width** only once copper has actually been removed.
+2. **Spacing:** derives five parallel-line pitches (40–100% of the measured
+   width, rounded to the output grid). Use a fresh coupon area and the exposure
+   that produced the width measurement. Run each cell separately and identify
+   continuous clearing without copper ridges; enter the successful **Tested
+   pitch**. Do not reuse the single-line area for this stage.
+3. **Corners and pads:** uses production concentric generation for a straight
+   track, corners, a square pad, two tracks with a nominal 0.30 mm gap, and a
+   round pad. Use fresh copper again. Run one cell/one depth pass at a time.
+   Check track continuity, isolation from surrounding copper, and laminate
+   condition after cleaning. This test does not certify finer actual-board
+   features; inspect and test those separately.
+
+Each attempt saves `.gcode` and `.json` files in
+`Documents/SRM-CAM/exports/copper-calibration/` (or the configured workspace).
+Records include material, selected cell, measured geometry, exposure, position,
+head Z, camera correction, exact job hash and completion state. Completed pass
+counts belong to the same sample, geometry and bed position. Interrupted or
+failed attempts are recorded as uncertain, not credited as completed passes.
+**New scrap / new sample** starts a fresh history. **Record observation** saves
+what you actually inspected; it does not infer isolation from a camera image.
+
+After recording **Clean isolation** on all five corners/pads cells at one
+common exposure and cumulative pass count,
+**Save measured one-pass recipe…** transfers the exposure, measured cleared
+width, tested pitch and ring count into Traces. The recipe deliberately retains
+**one pass**: manual cooling and inspection between experiments do not qualify
+an uninterrupted multi-pass production run. The required cumulative pass count
+is retained in calibration metadata and the run records.
+Mixed exposures, inconsistent pass counts and interrupted attempts cannot
+become a production preset.
+Closing the calibration window loads the saved recipe in the parent Traces
+window, retaining the board's placement. Camera correction is shared, and
+focus/photo tools are available throughout calibration.
+
+When a drill file is present, **Etch drill hole centres inside pads** (on by
+default) clears the copper at each hole centre so drill bits self-centre and
+`Drill a board made elsewhere` can probe isolated pads.
+
+What changes across the four jobs:
+
+| | Traces | Stencil | Solder mask | Silkscreen |
+|---|---|---|---|---|
+| Laser work | concentric vector rings (or moat/rubout) | outline cut, 30 passes in zones | filled, hatch lines | filled, hatch lines |
+| Default preset | FlatCAM isolation (concentric; uncalibrated) | 0.1 mm 304 stainless | RemoveSolderMask (sphawes) | RemoveSolderMask (sphawes) |
+| Align locks onto | the drilled holes (if present) | the holes it cut | the drilled holes | the drilled holes |
+| Learn the camera offset | no (uses the stencil's) | yes | no (uses the stencil's) | no (uses the stencil's) |
 
 **The fill presets** are the ones in sphawes/fiber-laser-pcb-fab's
 `settings.json`, which the lab imports into XCS:
@@ -661,7 +737,7 @@ focus.
    - The cross sits at the stencil's middle, on the factory's 10 mm grid.
      Right-click → **Autofocus here** measures somewhere else.
    - You can also type XCS's thickness and press **Set**.
-3. **Photo** again, then place the stencil. Any of these work:
+3. The photo refreshes after focus or a thickness change. Place the stencil:
    - Drag it.
    - Nudge it with the arrow keys: 0.1 mm, or 1 mm with Shift, or 10 mm with Ctrl.
    - Type X/Y, which is the top-left corner of the outline.
@@ -702,16 +778,49 @@ The **Camera** section stores a correction, and every photo is moved by it:
 2. It finds the holes in a photo and stores the difference.
 
 The photo taken after a cut is checked automatically, and the status says when
-the photo is more than 0.3 mm off. **Reset** clears the correction.
+the photo is more than 0.3 mm off. Learning uses the recorded laser cut position,
+even if the overlay has since moved. The material must still be where it was
+cut. Learning is available after a successful stencil cut in this window.
+**Correction X/Y** adjusts the stored correction by hand; **Reset** clears it.
+Both immediately reproject the current photo without moving the drawing or
+the laser job. Picked photo references follow the corrected coordinates.
 
 On the lab's machine, learning from the curtain-drive stencil (114 holes) took
 the photo from −0.51, −0.88 mm off down to 0.07 mm.
 
+**Pick matching points (any board).** The **Alignment** section works without
+mounting holes or a drill file:
+
+1. Take a photo and press **Pick matching points**.
+2. Choose snapping to hole centres or artwork centres, or **Free points /
+   corners / marks**. Click a reference in the drawing. The drawing temporarily
+   hides so the photo is unobstructed.
+3. Click the same physical feature in the photo. Repeat for two distant points,
+   preferably three or more distributed over the board. Zoom in with the wheel;
+   the photo is displayed at 8 pixels/mm. Numbered drawing/photo markers show
+   each pair. **Remove** deletes the selected pair; **Clear** starts over;
+   Escape exits picking.
+4. Press **Apply point alignment**. The drawing rotates and translates to fit,
+   without scaling or mirroring. RMS and worst error are shown. Inconsistent
+   pairs (over 0.3 mm residual), duplicates, and references less than 5 mm apart
+   are rejected without moving the job. Two points cannot independently verify
+   the fit, so add a third to check it.
+
+These references never change the shapes selected for etching. A new photo
+clears manual pairs because the board may have moved. Board alignment changes
+the job position; it does not teach the camera offset.
+
+**Automatic alignment.** Expand **Automatic alignment references** to choose
+drilled holes or artwork shapes, then tick only features that already exist on
+the material. Selecting a row highlights that feature in the viewer. Choose
+dark holes/marks or bright pads/marks to match the photo. At least two enabled
+references are required. Artwork references must physically exist already;
+use corners or other visible marks on a blank copper board.
+
 **Align after moving the foil.** If the foil or board has been lifted and put
 back, for example to push out slugs before a re-cut:
 1. Drag the stencil roughly onto it.
-2. Press **Align**. It takes a photo and finds the holes already cut, which
-   show up as dark spots in bright foil or burned marks on FR4.
+2. Press **Align**. It takes a photo and finds the enabled references.
 3. The stencil is moved and turned onto them, including small angles. If the
    board went back a quarter turn round, the other three orientations are
    tried as well.
