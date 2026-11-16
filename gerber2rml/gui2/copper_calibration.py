@@ -36,22 +36,34 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         self.none_btn.hide()
         self.calibrate_btn.hide()
         self.reference_snap.setCurrentIndex(self.reference_snap.findData("free"))
-        self.passes.setRange(1, 1)
+        self.passes.setRange(1, 200)
+        self.passes.setValue(1)
         self.mark.setChecked(False)
         self.photo_after.setChecked(True)
         self.set_look("outlines")
 
         recipe_section = self.preset.parentWidget()
-        section = widgets.Section("One experiment at a time")
-        section.add(widgets.hint("40 × 40 mm coupon. Only the selected cell fires, once. "
-                                 "Start with a single line; inspect and measure before progressing. "
-                                 "Labels and frame are guides, never engraved. "
-                                 "Initial exposure is exploratory, not a copper recipe."))
+        section = widgets.Section("Copper calibration")
+        self.stage_hint = widgets.hint("")
+        section.add(self.stage_hint)
         self.coupon_stage = QComboBox()
         self.coupon_stage.addItems(cc.STAGES)
         section.add(widgets.Field("Stage", self.coupon_stage))
         self.coupon_cell = QComboBox()
-        section.add(widgets.Field("Cell", self.coupon_cell))
+        self.cell_field = widgets.Field("Cell", self.coupon_cell)
+        section.add(self.cell_field)
+        # The exposure grid's axes: columns are speeds, rows are pass counts.
+        self.grid_speeds = QLineEdit(", ".join(f"{v:g}" for v in cc.GRID_SPEEDS))
+        self.grid_passes = QLineEdit(", ".join(str(n) for n in cc.GRID_PASSES))
+        self.grid_speeds_field = widgets.Field("Speeds", self.grid_speeds, unit="mm/s",
+                                               help="One column each, comma-separated.")
+        self.grid_passes_field = widgets.Field("Passes", self.grid_passes,
+                                               help="One row each. Every line in a row "
+                                                    "gets that many passes.")
+        section.add(self.grid_speeds_field)
+        section.add(self.grid_passes_field)
+        self.grid_speeds.editingFinished.connect(self._change_coupon)
+        self.grid_passes.editingFinished.connect(self._change_coupon)
         self.material = QLineEdit("FR4 · 1.6 mm board · copper unknown")
         section.add(widgets.Field("Material", self.material))
         self.fresh_stage = QCheckBox("Fresh copper positioned for this stage")
@@ -60,18 +72,20 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         self.measured_width = sl._spin(0, 0, .2, .001, 3, suffix=" mm")
         self.tested_pitch = sl._spin(0, 0, .2, .001, 3, suffix=" mm")
         self.test_rings = sl._ispin(6, 1, 12)
-        section.add(widgets.Field("Cleared width", self.measured_width,
-                                  help="Measure the exposed substrate width of a line that "
-                                       "actually cleared the copper. Leave at zero until measured."))
-        section.add(widgets.Field("Tested pitch", self.tested_pitch,
-                                  help="After the spacing test, enter a pitch that gave continuous clearing."))
-        section.add(widgets.Field("Isolation rings", self.test_rings))
+        self.width_field = widgets.Field(
+            "Cleared width", self.measured_width,
+            help="Measure the exposed substrate width of a line that actually cleared "
+                 "the copper. Leave at zero until measured.")
+        self.pitch_field = widgets.Field("Tested pitch", self.tested_pitch,
+                                         help="After the spacing test, enter a pitch that "
+                                              "gave continuous clearing.")
+        self.rings_field = widgets.Field("Isolation rings", self.test_rings)
+        for f in (self.width_field, self.pitch_field, self.rings_field):
+            section.add(f)
         # Move the real exposure controls here; there is no separate XCS preset.
-        for field in (self.power_field, self.speed_field, self.freq_field):
+        for field in (self.power_field, self.speed_field, self.freq_field,
+                      self.passes_field):
             section.add(field)
-        section.add(widgets.hint("Every press runs exactly one pass. To compare exposures, "
-                                 "choose a fresh cell. To test depth, repeat the same cell "
-                                 "after cooling and inspection. Stop on laminate damage."))
         self.count_note = widgets.hint("")
         section.add(self.count_note)
         self.result = QComboBox()
@@ -82,7 +96,7 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         section.add(self.notes)
         self.record_btn = widgets.button("Record observation", on=self.record_observation)
         section.add(self.record_btn)
-        self.qualified_btn = widgets.button("Save measured one-pass recipe…", on=self.save_measured_recipe)
+        self.qualified_btn = widgets.button("Save measured recipe…", on=self.save_measured_recipe)
         section.add(self.qualified_btn)
         self.new_scrap_btn = widgets.button("New scrap / new sample", kind="ghost", on=self.new_sample)
         section.add(self.new_scrap_btn)
@@ -92,6 +106,7 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         panel_layout.insertWidget(1, section)
         recipe_section.hide()
         self._coupon_controls = [self.coupon_stage, self.coupon_cell, self.material,
+                                 self.grid_speeds, self.grid_passes,
                                  self.fresh_stage,
                                  self.measured_width, self.tested_pitch, self.test_rings,
                                  self.result, self.notes, self.record_btn,
@@ -101,9 +116,23 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         self.tested_pitch.valueChanged.connect(self._change_coupon)
         self.test_rings.valueChanged.connect(self._change_coupon)
         self.coupon_cell.currentIndexChanged.connect(self._change_cell)
+        self.power.setValue(100)
+        self.freq.setValue(30)
+        self.passes.valueChanged.connect(lambda *_: self._paint())
         self._change_coupon()
-        self._say("Place fresh scrap, focus on its copper surface, then run Line 1 once. "
-                  "10% / 2000 mm/s / 30 kHz is an exploratory starting exposure, not a proven recipe.")
+        self._say("Put fresh scrap under the 40 × 40 mm square, autofocus on its copper, "
+                  "tick 'Fresh copper positioned' and run the exposure grid.")
+
+    # -- the exposure grid ------------------------------------------------------
+    def _grid(self):
+        return self._coupon.stage == cc.EXPOSURE
+
+    @staticmethod
+    def _numbers(text, kind):
+        try:
+            return [kind(float(t)) for t in text.replace(";", ",").split(",") if t.strip()]
+        except ValueError:
+            raise ValueError("Write the speeds and passes as numbers separated by commas.")
 
     def _paths_on_bed(self, cell=None):
         paths = self._coupon.cells[self._cell if cell is None else cell]
@@ -116,6 +145,21 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
     def _build_item(self):
         super()._build_item()
         self._coupon_labels = []
+        grid = self._coupon.stage == cc.EXPOSURE
+        if grid:
+            xs, ys = cc.grid_layout(len(self._coupon.speeds), len(self._coupon.pass_counts))
+            heads = [(f"{v:g}", (x + 1.0, 2.0)) for v, x in zip(self._coupon.speeds, xs)]
+            heads += [(f"{n}×", (0.6, y - 1.0)) for n, y in zip(self._coupon.pass_counts, ys)]
+            heads.append(("speed mm/s →   passes ↓", (0.0, -4.5)))
+            for text, (lx, ly) in heads:
+                x, y = self._reference_to_bed((lx, cc.SIZE - ly))
+                label = self.scene.addSimpleText(text)
+                label.setParentItem(self.item)
+                label.setPos(x - self.x.value(), y - self.y.value())
+                label.setBrush(sl._c(theme.TEXT_2))
+                label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+                label.setAcceptedMouseButtons(Qt.NoButton)
+                self._coupon_labels.append(label)
         for i, hole in enumerate(self.item.holes):
             path = QPainterPath()
             for vector in self._paths_on_bed(i):
@@ -124,6 +168,8 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
                     path.moveTo(p) if j == 0 else path.lineTo(p)
             hole.setPath(path)
             hole.setToolTip(f"Cell {i+1}: {self._coupon.labels[i]}")
+            if grid:
+                continue
             x, y = self._reference_to_bed((18, cc.SIZE-(5+i*7)))
             label = self.scene.addSimpleText(f"{i+1}  {self._coupon.labels[i]}")
             label.setParentItem(self.item)
@@ -132,7 +178,7 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
             label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
             label.setAcceptedMouseButtons(Qt.NoButton)
             self._coupon_labels.append(label)
-        self.selected = {self._cell}
+        self.selected = set(range(len(self._coupon.cells))) if grid else {self._cell}
         self._paint(estimate=False)
 
     def _paint(self, active=None, *, estimate=True):
@@ -140,7 +186,12 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         if self.item is not None:
             for hole in self.item.holes:
                 hole.setBrush(QBrush(Qt.NoBrush))
-        self.cut_btn.setText(f"Run cell {self._cell+1} · ONE pass")
+        if self._coupon.stage == cc.EXPOSURE:
+            n = sum(p for _v, p in self._coupon.exposures)
+            self.cut_btn.setText(f"Run the exposure grid · {len(self._coupon.cells)} lines")
+        else:
+            n = self.passes.value()
+            self.cut_btn.setText(f"Run cell {self._cell+1} · {n} pass{'' if n == 1 else 'es'}")
 
     def _estimate(self):
         if not hasattr(self, "time_read") or self.item is None:
@@ -152,14 +203,21 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
             self.time_read.set("—")
 
     def _make_job(self):
+        if self._coupon.stage == cc.EXPOSURE:
+            cells = [self._paths_on_bed(i) for i in range(len(self._coupon.cells))]
+            return cc.exposure_job(cells, self._coupon.exposures,
+                                   power=self.power.value(), frequency=self.freq.value())
         return cc.vector_job(self._paths_on_bed(), power=self.power.value(),
-                             speed=self.speed.value(), frequency=self.freq.value())
+                             speed=self.speed.value(), frequency=self.freq.value(),
+                             passes=self.passes.value())
 
     def _change_coupon(self, *_a):
         stage = self.coupon_stage.currentText()
         try:
             coupon = cc.make_coupon(stage, width=self.measured_width.value(),
-                                     pitch=self.tested_pitch.value(), rings=self.test_rings.value())
+                                     pitch=self.tested_pitch.value(), rings=self.test_rings.value(),
+                                     speeds=self._numbers(self.grid_speeds.text(), float),
+                                     pass_counts=self._numbers(self.grid_passes.text(), int))
         except ValueError as e:
             self.coupon_stage.blockSignals(True)
             self.coupon_stage.setCurrentText(self._coupon.stage)
@@ -191,11 +249,32 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         self.coupon_cell.blockSignals(False)
         self._populate_auto_references()
         self._build_item()
+        self._show_stage_controls()
         self._update_count()
         self._sync_run_ready()
         if changed_stage:
             self._say("Move the coupon onto fresh copper for this stage, then confirm its position. "
                       "Keep the exposure used to measure the cleared width.")
+
+    def _show_stage_controls(self):
+        grid = self._grid()
+        for w in (self.grid_speeds_field, self.grid_passes_field):
+            w.setVisible(grid)
+        for w in (self.cell_field, self.speed_field, self.passes_field,
+                  self.width_field, self.pitch_field, self.rings_field, self.qualified_btn):
+            w.setVisible(not grid)
+        if grid:
+            self.stage_hint.setText(
+                "Columns are speeds, rows are pass counts, all at the power below; one "
+                "6 mm line per cell, fired in one job. The passes go round-robin with a "
+                "short laser-off rest each round, as on a real board. Afterwards find the "
+                "cell that cleared the copper with the fewest passes and no charring, then "
+                "use its speed and passes for the single-line stage.")
+        else:
+            self.stage_hint.setText(
+                "Use the speed and passes the exposure grid found. Only the selected cell "
+                "fires. Inspect and measure before the next stage. Labels and frame are "
+                "guides, never lasered.")
 
     def _sync_run_ready(self, *_a):
         if hasattr(self, "fresh_stage"):
@@ -220,7 +299,11 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         if not hasattr(self, "count_note"):
             return
         key = self._geometry_key()
-        count = sum(r["status"] == "completed" and r["geometry_key"] == key for r in self._records)
+        count = sum(r.get("passes_requested", 1) for r in self._records
+                    if r["status"] == "completed" and r["geometry_key"] == key)
+        if self._grid():
+            self.count_note.setText("")
+            return
         self.count_note.setText(f"Cell {self._cell+1}: {count} completed passes at this position "
                                 "on this sample. Interrupted attempts are recorded separately.")
 
@@ -244,11 +327,17 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         gcode_path = directory / f"{run_id}.gcode"
         gcode_path.write_text(job.text, encoding="ascii", newline="")
         record = dict(id=run_id, sample=self._sample_id, material=self.material.text(),
-                      stage=self._coupon.stage, cell=self._cell+1, label=self._coupon.labels[self._cell],
+                      stage=self._coupon.stage, cell=None if self._grid() else self._cell+1,
+                      label="Exposure grid" if self._grid() else self._coupon.labels[self._cell],
                       coupon_mm=[cc.SIZE, cc.SIZE], measured_width_mm=self._coupon.width,
                       pitch_mm=self._coupon.pitch, rings=self._coupon.rings,
-                      power_percent=self.power.value(), speed_mm_s=self.speed.value(),
-                      frequency_khz=self.freq.value(), passes_requested=1,
+                      power_percent=self.power.value(),
+                      speed_mm_s=None if self._grid() else self.speed.value(),
+                      frequency_khz=self.freq.value(),
+                      passes_requested=job.passes,
+                      grid=([{"cell": i + 1, "speed_mm_s": v, "passes": n}
+                             for i, (v, n) in enumerate(self._coupon.exposures)]
+                            if self._grid() else None),
                       origin_mm=list(self.origin()), turns=self.turns, fine_degrees=self.fine,
                       camera_offset_mm=list(self.cam_offset),
                       geometry_key=self._geometry_key(), gcode_sha256=hashlib.sha256(job.text.encode("ascii")).hexdigest(),
@@ -261,7 +350,7 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         self._latest = record
         self._stopped = False
         self._job = job
-        self._zone_holes = [{self._cell}]
+        self._zone_holes = [set(range(len(self._coupon.cells))) if self._grid() else {self._cell}]
         self.bar.setRange(0, max(1, int(job.seconds)))
         self.bar.setValue(0)
         self.bar.setVisible(True)
@@ -296,9 +385,17 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
             self._update_count()
             if self._stopped:
                 return "Stopped. This attempt may be partial; use a fresh cell for a counted comparison."
-            return (f"Cell {record['cell']}: one pass completed. Cool, inspect and record the result. "
-                    "Run again only after inspection." + (f" Photo failed: {error}" if error else ""))
-        self._start(work, f"Running ONLY cell {self._cell+1}, one vector pass…", done)
+            if self._grid():
+                return ("Grid done. Look at it under a loupe: find the cell where the copper is "
+                        "cleared all along the line with the fewest passes and no charring. "
+                        "Record it, then switch to Single lines with that speed and passes."
+                        + (f" Photo failed: {error}" if error else ""))
+            return (f"Cell {record['cell']}: {job.passes} pass{'' if job.passes == 1 else 'es'} "
+                    "completed. Cool, inspect and record the result."
+                    + (f" Photo failed: {error}" if error else ""))
+        what = ("the exposure grid" if self._grid()
+                else f"ONLY cell {self._cell+1}, {job.passes} pass{'' if job.passes == 1 else 'es'}")
+        self._start(work, f"Running {what}…", done)
 
     def _done(self, msg, warn):
         if warn and self._pending_record is not None:
@@ -358,7 +455,8 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         fields = ("power_percent", "speed_mm_s", "frequency_khz")
         if any(any(p[f] != r[f] for f in fields) for p in attempts):
             return self._say("This cell used mixed exposures. Qualify a fresh cell at one exposure before saving.", warn=True)
-        counts = {sum(p["cell"] == cell for p in attempts) for cell in range(1, 6)}
+        counts = {sum(p.get("passes_requested", 1) for p in attempts if p["cell"] == cell)
+                  for cell in range(1, 6)}
         if len(counts) != 1:
             return self._say("The five cells were tested at different pass counts. A production recipe "
                              "needs one common pass count that clears all five without damage.", warn=True)
@@ -368,7 +466,7 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
         if not ok or not name.strip():
             return
         recipe = xtool.TracesRecipe(power=r["power_percent"], speed=r["speed_mm_s"],
-                                    frequency=r["frequency_khz"], passes=1,
+                                    frequency=r["frequency_khz"], passes=pass_count,
                                     kerf=r["measured_width_mm"], lines_per_cm=10/r["pitch_mm"],
                                     offsets=r["rings"], spot_drills=False, mark_outline=False)
         cfg = QSettings(*sl._SETTINGS)
@@ -390,5 +488,5 @@ class CopperCalibrationDialog(sl.StencilLaserDialog):
             return self._say("The measured recipe could not be saved to settings. "
                              "The experiment files are still in the export folder.", warn=True)
         self.saved_recipe_name = name.strip()
-        self._say(f"Saved {name.strip()} as ONE pass. The coupon needed {pass_count} inspected passes. "
-                  "Manual cooling does not qualify an uninterrupted multi-pass production run.")
+        self._say(f"Saved {name.strip()} with {pass_count} passes, the count that cleared all "
+                  "five cells.")

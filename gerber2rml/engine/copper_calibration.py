@@ -1,7 +1,15 @@
-"""Small, separately fired coupons for SRM CAM's native vector path writer.
+"""Small coupons for SRM CAM's native vector path writer.
 
-No XCS fill recipe, automatic exposure sweep, outline engraving, or automatic
-repeat. Stages 2 and 3 require measurements from the preceding experiments.
+Stage 1, "Find the exposure", is a grid: one short line per cell, the columns
+at different speeds and the rows at different pass counts, all at one power,
+fired in one job. The passes go round-robin, one pass on every line that still
+needs one, then the next, so each line cools while the others are drawn (the
+trick that keeps a stencil flat). Look for the cell that clears the copper with
+the fewest passes and no charring.
+
+Stages 2-4 then use that exposure: a single line to measure the cleared width,
+spacing, then corners and pads. They require measurements from the stage
+before. No XCS fill recipe and no outline engraving.
 """
 from dataclasses import dataclass
 import math
@@ -13,7 +21,11 @@ from shapely.ops import unary_union
 from gerber2rml.engine import xtool
 
 SIZE = 40.0
-STAGES = ("Single lines", "Spacing", "Corners and pads")
+EXPOSURE = "Find the exposure"
+STAGES = (EXPOSURE, "Single lines", "Spacing", "Corners and pads")
+GRID_SPEEDS = (300.0, 600.0, 1000.0, 2000.0)     # mm/s, the columns
+GRID_PASSES = (5, 10, 20, 40)                     # the rows
+GRID_LINE = 6.0                                   # mm
 
 
 @dataclass
@@ -24,6 +36,10 @@ class Coupon:
     width: float = 0.0
     pitch: float = 0.0
     rings: int = 6
+    # The exposure grid only: (speed mm/s, passes) per cell, and the grid's axes.
+    exposures: list = None
+    speeds: tuple = ()
+    pass_counts: tuple = ()
 
     def artwork(self):
         # Cell envelopes support selection; the GUI draws the exact vectors.
@@ -38,9 +54,37 @@ class Coupon:
                               note="40 × 40 mm · vectors only · one cell, one pass")
 
 
-def make_coupon(stage="Single lines", *, width=0.0, pitch=0.0, rings=6):
+def grid_layout(n_cols, n_rows):
+    """(x of each column's line start, y of each row) in coupon mm, Y down."""
+    left, top = 6.0, 7.0
+    dx = (SIZE - left - 2.0 - GRID_LINE) / max(n_cols - 1, 1)
+    dy = (SIZE - top - 3.0) / max(n_rows - 1, 1)
+    return ([left + c * dx for c in range(n_cols)],
+            [top + r * dy for r in range(n_rows)])
+
+
+def make_coupon(stage=EXPOSURE, *, width=0.0, pitch=0.0, rings=6,
+                speeds=GRID_SPEEDS, pass_counts=GRID_PASSES):
     if stage not in STAGES:
         raise ValueError("Unknown copper calibration stage.")
+    if stage == EXPOSURE:
+        speeds = tuple(float(v) for v in speeds)
+        pass_counts = tuple(int(v) for v in pass_counts)
+        if not 1 <= len(speeds) <= 6 or not 1 <= len(pass_counts) <= 6:
+            raise ValueError("Use 1–6 speeds and 1–6 pass counts.")
+        if any(not 10 <= v <= 5000 for v in speeds):
+            raise ValueError("Speeds must be 10–5000 mm/s.")
+        if any(not 1 <= n <= 200 for n in pass_counts):
+            raise ValueError("Pass counts must be 1–200.")
+        xs, ys = grid_layout(len(speeds), len(pass_counts))
+        cells, labels, exposures = [], [], []
+        for r, n in enumerate(pass_counts):
+            for c, v in enumerate(speeds):
+                cells.append([[(xs[c], ys[r]), (xs[c] + GRID_LINE, ys[r])]])
+                labels.append(f"{v:g} mm/s · {n} passes")
+                exposures.append((v, n))
+        return Coupon(stage, cells, labels, exposures=exposures,
+                      speeds=speeds, pass_counts=pass_counts)
     if not 1 <= rings <= 12:
         raise ValueError("Use 1–12 isolation rings for this coupon.")
     if stage != "Single lines" and (not math.isfinite(width) or not 0.002 <= width <= 0.2):
@@ -81,8 +125,8 @@ def make_coupon(stage="Single lines", *, width=0.0, pitch=0.0, rings=6):
     return Coupon(stage, cells, labels, width, pitch, rings)
 
 
-def vector_job(paths, *, power, speed, frequency):
-    """Exactly one native vector pass over the supplied cell, no outline."""
+def vector_job(paths, *, power, speed, frequency, passes=1):
+    """``passes`` native vector passes over the supplied cell, no outline."""
     if not (math.isfinite(power) and 0 < power <= 100 and
             math.isfinite(speed) and 10 <= speed <= 5000 and
             math.isfinite(frequency) and 1 <= frequency <= 60):
@@ -90,10 +134,40 @@ def vector_job(paths, *, power, speed, frequency):
     if not paths or not any(len(p) > 1 for p in paths):
         raise ValueError("The selected calibration cell has no vectors.")
     xtool.check_on_bed(paths)
-    body = xtool._passes(paths, power, speed, 1)
+    if not 1 <= int(passes) <= 200:
+        raise ValueError("Use 1–200 passes.")
+    body = xtool._passes(paths, power, speed, int(passes))
     if not body:
         raise ValueError("The selected cell collapses at laser output precision.")
-    seconds = sum(xtool._length(p) for p in paths) / speed
+    seconds = int(passes) * sum(xtool._length(p) for p in paths) / speed
     text = "\r\n".join(xtool._head("fiber", frequency, power/100) + body + xtool._TAIL)
-    return xtool.Job(text, [len(paths)], seconds, 1, [paths],
+    return xtool.Job(text, [len(paths)], seconds, int(passes), [paths],
                      [(0.0, seconds, 0, 0)])
+
+
+def exposure_job(cells, exposures, *, power, frequency, rest_s=0.5):
+    """The whole exposure grid in one file. ``cells`` are each cell's paths on
+    the bed, ``exposures`` its (speed, passes). Round k draws every line that
+    still needs a k-th pass, so no line gets its passes back to back, then the
+    laser rests ``rest_s`` (off, S0): on a real board a track waits a whole
+    board-pass between visits, and the late rounds here have few lines left."""
+    if not (math.isfinite(power) and 0 < power <= 100 and
+            math.isfinite(frequency) and 1 <= frequency <= 60):
+        raise ValueError("Exposure is outside the laser controls' supported range.")
+    if len(cells) != len(exposures) or not cells:
+        raise ValueError("The grid has no cells.")
+    xtool.check_on_bed([p for c in cells for p in c])
+    body, secs, timeline = [], 0.0, []
+    for k in range(max(n for _v, n in exposures)):
+        t0 = secs
+        for paths, (speed, n) in zip(cells, exposures):
+            if k < n:
+                body += xtool._passes(paths, power, speed, 1)
+                secs += sum(xtool._length(p) for p in paths) / speed
+        timeline.append((t0, secs, 0, k))
+        if rest_s > 0 and k < max(n for _v, n in exposures) - 1:
+            body += xtool._rest(cells[0][0][0], rest_s)
+            secs += rest_s
+    text = "\r\n".join(xtool._head("fiber", frequency, power/100) + body + xtool._TAIL)
+    return xtool.Job(text, [len(cells)], secs, max(n for _v, n in exposures),
+                     [[p for c in cells for p in c]], timeline)

@@ -12,7 +12,7 @@ from gerber2rml.gui2.copper_calibration import CopperCalibrationDialog
 
 
 def test_single_lines_are_separate_open_vectors_without_an_outline_cut():
-    coupon = cc.make_coupon()
+    coupon = cc.make_coupon('Single lines')
     assert len(coupon.cells) == 5
     for paths in coupon.cells:
         assert len(paths) == 1 and len(paths[0]) == 2
@@ -62,23 +62,25 @@ def dialog(qt_app, monkeypatch):
     d.close()
 
 
-def test_calibration_opens_without_firing_or_inheriting_production_recipe(dialog):
+def test_calibration_opens_on_the_exposure_grid_without_firing(dialog):
     d = dialog
     assert d.kind == 'calibration'
-    assert d.power.value() == 10 and d.speed.value() == 2000
-    assert d.recipe().passes == 1
-    assert d.passes.minimum() == d.passes.maximum() == 1
+    assert d.coupon_stage.currentText() == cc.EXPOSURE
+    assert d.power.value() == 100 and d.freq.value() == 30
     assert d.job_switch.isHidden()
     assert not d.cut_btn.isEnabled()
     d.fresh_stage.setChecked(True)
     assert d.cut_btn.isEnabled()
-    assert d.selected == {0}
-    assert 'ONE pass' in d.cut_btn.text()
-    assert d._make_job().passes == 1
+    assert d.selected == set(range(16))
+    assert d.cut_btn.text() == 'Run the exposure grid · 16 lines'
+    assert d.cell_field.isHidden() and d.speed_field.isHidden()
+    assert not d.grid_speeds_field.isHidden()
+    assert d._make_job().passes == 40
 
 
 def test_exact_preview_vectors_match_emitted_job_after_rotation(dialog):
     d = dialog
+    d.coupon_stage.setCurrentText('Single lines')
     d._turn_to(1, 2.5)
     d.coupon_cell.setCurrentIndex(3)
     paths = d._paths_on_bed()
@@ -95,6 +97,7 @@ def test_exact_preview_vectors_match_emitted_job_after_rotation(dialog):
 
 def test_invalid_stage_does_not_sneak_old_geometry_into_a_run(dialog):
     d = dialog
+    d.coupon_stage.setCurrentText('Single lines')
     d.coupon_stage.setCurrentText('Spacing')
     assert d.coupon_stage.currentText() == 'Single lines'
     assert 'measured' in d.status.text()
@@ -141,6 +144,7 @@ def test_single_cell_run_records_exact_exposure_and_observation(dialog, monkeypa
     d.laser = FakeLaser()
     synchronous_run(d, monkeypatch)
     d.photo_after.setChecked(False)
+    d.coupon_stage.setCurrentText('Single lines')
     d.fresh_stage.setChecked(True)
     d.coupon_cell.setCurrentIndex(2)
     d.power.setValue(23)
@@ -172,6 +176,7 @@ def test_uncertain_attempt_is_not_counted_as_a_complete_pass(dialog, monkeypatch
     d.laser.error = True
     synchronous_run(d, monkeypatch)
     d.photo_after.setChecked(False)
+    d.coupon_stage.setCurrentText('Single lines')
     d.fresh_stage.setChecked(True)
     d.cut()
     assert d._latest['status'] == 'failed_or_partial'
@@ -210,7 +215,7 @@ def test_only_tested_uniform_exposure_can_be_saved_as_production_recipe(dialog, 
     assert QSettings(*sl._SETTINGS).value('presets_traces'), (d.status.text(), d._latest)
     presets = json.loads(QSettings(*sl._SETTINGS).value('presets_traces'))
     recipe = presets['My tested vectors']
-    assert recipe['passes'] == 1 and recipe['kerf'] == .035
+    assert recipe['passes'] == 2 and recipe['kerf'] == .035
     assert recipe['_calibration']['qualifying_passes_with_manual_inspection'] == 2
     assert recipe['lines_per_cm'] == 500 and recipe['strategy'] == 'concentric'
     assert not recipe['spot_drills'] and not recipe['mark_outline']
@@ -239,3 +244,54 @@ def test_measured_width_and_fine_pitch_survive_loading_in_production(dialog):
         assert d.recipe().passes == 2
     finally:
         d.close()
+
+
+# ---------------------------------------------------------------- the exposure grid
+
+def test_the_grid_is_speeds_by_passes():
+    c = cc.make_coupon(speeds=(300, 1000), pass_counts=(5, 20, 40))
+    assert len(c.cells) == 6 and c.exposures[0] == (300, 5) and c.exposures[-1] == (1000, 40)
+    assert all(xtool._length(cell[0]) == cc.GRID_LINE for cell in c.cells)
+    for cell in c.cells:
+        assert all(0 < x < cc.SIZE and 0 < y < cc.SIZE for x, y in cell[0])
+    with pytest.raises(ValueError):
+        cc.make_coupon(speeds=(), pass_counts=(5,))
+    with pytest.raises(ValueError):
+        cc.make_coupon(speeds=(9000,), pass_counts=(5,))
+
+
+def test_grid_job_goes_round_robin_with_rests():
+    c = cc.make_coupon(speeds=(300, 600), pass_counts=(1, 3))
+    cells = [[[(x + 60, y + 60) for x, y in p] for p in cell] for cell in c.cells]
+    job = cc.exposure_job(cells, c.exposures, power=100, frequency=30, rest_s=0.5)
+    lines = job.text.split('\r\n')
+    cuts = [l for l in lines if l.startswith('G1X') and 'S1000' in l]
+    assert len(cuts) == 1 + 1 + 3 + 3
+    # round 1 fires all four cells before any cell's second pass
+    assert len({l.split('Y')[1].split('S')[0] for l in cuts[:4]}) == 2
+    assert sum(1 for l in lines if l.endswith('S0F60')) > 0       # laser-off rests
+    assert len(job.timeline) == 3 and job.passes == 3
+
+
+def test_a_grid_run_records_every_cell_exposure(dialog, monkeypatch):
+    d = dialog
+    d.laser = FakeLaser()
+    synchronous_run(d, monkeypatch)
+    d.photo_after.setChecked(False)
+    d.fresh_stage.setChecked(True)
+    d.cut()
+    assert len(d.laser.calls) == 1
+    r = d._latest
+    assert r['status'] == 'completed' and r['label'] == 'Exposure grid' and r['cell'] is None
+    assert len(r['grid']) == 16 and r['grid'][0] == {'cell': 1, 'speed_mm_s': 300.0, 'passes': 5}
+    assert r['passes_requested'] == 40 and r['power_percent'] == 100
+    assert 'Grid done' in d.status.text()
+
+
+def test_later_stages_take_a_pass_count(dialog):
+    d = dialog
+    d.coupon_stage.setCurrentText('Single lines')
+    d.passes.setValue(20)
+    assert d.cut_btn.text() == 'Run cell 1 · 20 passes'
+    job = d._make_job()
+    assert job.passes == 20 and job.text.count('G1X') == 20

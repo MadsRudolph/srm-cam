@@ -37,6 +37,8 @@ srm-cam-stencil = "gerber2rml.stencil_cli:main"
 
 [project.gui-scripts]
 srm-cam = "gerber2rml.gui2.app:main"
+# The xTool laser page on its own.
+srm-cam-laser = "gerber2rml.gui2.laser_app:main"
 # The name the desktop shortcut and the older docs use.
 gerber2rml = "gerber2rml.gui2.app:main"
 # The first interface. Superseded, kept launchable while the second one
