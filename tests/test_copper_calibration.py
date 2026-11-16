@@ -251,9 +251,10 @@ def test_measured_width_and_fine_pitch_survive_loading_in_production(dialog):
 def test_the_grid_is_speeds_by_passes():
     c = cc.make_coupon(speeds=(300, 1000), pass_counts=(5, 20, 40))
     assert len(c.cells) == 6 and c.exposures[0] == (300, 5) and c.exposures[-1] == (1000, 40)
-    assert all(xtool._length(cell[0]) == cc.GRID_LINE for cell in c.cells)
     for cell in c.cells:
-        assert all(0 < x < cc.SIZE and 0 < y < cc.SIZE for x, y in cell[0])
+        # real traces: closed isolation rings round two tracks, not one line
+        assert len(cell) >= 6 and all(p[0] == p[-1] for p in cell)
+        assert all(0 < x < cc.SIZE and 0 < y < cc.SIZE for p in cell for x, y in p)
     with pytest.raises(ValueError):
         cc.make_coupon(speeds=(), pass_counts=(5,))
     with pytest.raises(ValueError):
@@ -266,9 +267,11 @@ def test_grid_job_goes_round_robin_with_rests():
     job = cc.exposure_job(cells, c.exposures, power=100, frequency=30, rest_s=0.5)
     lines = job.text.split('\r\n')
     cuts = [l for l in lines if l.startswith('G1X') and 'S1000' in l]
-    assert len(cuts) == 1 + 1 + 3 + 3
-    # round 1 fires all four cells before any cell's second pass
-    assert len({l.split('Y')[1].split('S')[0] for l in cuts[:4]}) == 2
+    # each path starts with one powered move; every cell gets its passes
+    assert len(cuts) == sum(len(cell) * n for cell, (_v, n) in zip(cells, c.exposures))
+    # round 1 fires all four cells, at both speeds, before any second pass
+    first = cuts[:sum(len(cell) for cell in cells)]
+    assert {l.split('F')[1] for l in first} == {'18000', '36000'}
     assert sum(1 for l in lines if l.endswith('S0F60')) > 0       # laser-off rests
     assert len(job.timeline) == 3 and job.passes == 3
 
@@ -295,3 +298,16 @@ def test_later_stages_take_a_pass_count(dialog):
     assert d.cut_btn.text() == 'Run cell 1 · 20 passes'
     job = d._make_job()
     assert job.passes == 20 and job.text.count('G1X') == 20
+
+
+def test_grid_cells_isolate_real_tracks_with_the_production_rings():
+    from shapely.geometry import LineString, Point, Polygon
+    from shapely.ops import unary_union
+    xs, ys = cc.grid_layout(4, 4)
+    a, b = cc.trace_copper(xs[0], ys[0])
+    copper = unary_union([a, b])
+    rings = cc.trace_cell(xs[0], ys[0])
+    # no ring touches the copper; the gap between the tracks gets rings
+    assert all(not Polygon(p).exterior.intersects(copper.buffer(-1e-3)) for p in rings)
+    gap = LineString([(xs[0] + 3, ys[0] - 0.1), (xs[0] + 3, ys[0] + 0.1)])
+    assert any(LineString(p).distance(gap) < 0.05 for p in rings)

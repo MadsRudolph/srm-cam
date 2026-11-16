@@ -1,8 +1,12 @@
 """Small coupons for SRM CAM's native vector path writer.
 
-Stage 1, "Find the exposure", is a grid: one short line per cell, the columns
-at different speeds and the rows at different pass counts, all at one power,
-fired in one job. The passes go round-robin, one pass on every line that still
+Stage 1, "Find the exposure", is a grid of small real traces: in every cell
+two parallel 0.4 mm tracks with a 0.3 mm gap, each ending in a pad, isolated
+with the production concentric rings exactly as a board would be. The columns
+are at different speeds and the rows at different pass counts, all at one
+power, fired in one job. A single vector line only cuts a hairline, too thin
+to judge whether copper is cleared; a ring band around real tracks is what the
+board will get. The passes go round-robin, one pass on every line that still
 needs one, then the next, so each line cools while the others are drawn (the
 trick that keeps a stencil flat). Look for the cell that clears the copper with
 the fewest passes and no charring.
@@ -25,7 +29,7 @@ EXPOSURE = "Find the exposure"
 STAGES = (EXPOSURE, "Single lines", "Spacing", "Corners and pads")
 GRID_SPEEDS = (300.0, 600.0, 1000.0, 2000.0)     # mm/s, the columns
 GRID_PASSES = (5, 10, 20, 40)                     # the rows
-GRID_LINE = 6.0                                   # mm
+GRID_LINE = 6.0                                   # mm, a cell's width
 
 
 @dataclass
@@ -63,6 +67,36 @@ def grid_layout(n_cols, n_rows):
             [top + r * dy for r in range(n_rows)])
 
 
+TRACE_W = 0.4          # mm, the test tracks
+TRACE_GAP = 0.3        # mm between them: the hardest place to clear
+PAD = 1.2              # mm square pads at the track ends
+
+
+def trace_copper(x0, y):
+    """Two parallel tracks with a pad at alternate ends, in coupon mm (Y down),
+    starting at ``x0`` with the gap centred on ``y``."""
+    half = (TRACE_W + TRACE_GAP) / 2
+    a = LineString([(x0 + PAD, y - half), (x0 + GRID_LINE - 0.2, y - half)]).buffer(
+        TRACE_W / 2, cap_style="flat")
+    b = LineString([(x0 + 0.2, y + half), (x0 + GRID_LINE - PAD, y + half)]).buffer(
+        TRACE_W / 2, cap_style="flat")
+    pa = box(x0, y - half - PAD / 2, x0 + PAD, y - half + PAD / 2)
+    pb = box(x0 + GRID_LINE - PAD, y + half - PAD / 2, x0 + GRID_LINE, y + half + PAD / 2)
+    return unary_union([a, pa]), unary_union([b, pb])
+
+
+def trace_cell(x0, y, *, rings=xtool.DEFAULT_TRACE_OFFSETS):
+    """The isolation paths for one grid cell, from the production ring
+    generator, in coupon mm (Y down)."""
+    copper = unary_union(trace_copper(x0, y))
+    copper = translate(scale(copper, yfact=-1, origin=(0, 0)), yoff=SIZE)
+    art = xtool.LaserArt(kind="traces", apertures=[], outline=box(0, 0, SIZE, SIZE),
+                         copper=copper)
+    recipe = xtool.TracesRecipe(offsets=rings, spot_drills=False, passes=1)
+    groups, _ = xtool.traces_rings(art, (0, 0), recipe)
+    return [path for group in groups for path in group]
+
+
 def make_coupon(stage=EXPOSURE, *, width=0.0, pitch=0.0, rings=6,
                 speeds=GRID_SPEEDS, pass_counts=GRID_PASSES):
     if stage not in STAGES:
@@ -80,7 +114,7 @@ def make_coupon(stage=EXPOSURE, *, width=0.0, pitch=0.0, rings=6,
         cells, labels, exposures = [], [], []
         for r, n in enumerate(pass_counts):
             for c, v in enumerate(speeds):
-                cells.append([[(xs[c], ys[r]), (xs[c] + GRID_LINE, ys[r])]])
+                cells.append(trace_cell(xs[c], ys[r], rings=rings))
                 labels.append(f"{v:g} mm/s · {n} passes")
                 exposures.append((v, n))
         return Coupon(stage, cells, labels, exposures=exposures,
