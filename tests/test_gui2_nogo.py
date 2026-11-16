@@ -450,3 +450,20 @@ def test_a_clamp_on_the_edge_of_a_board_left_in_the_sheet_is_no_concern(win):
     mid = (b[1] + b[3]) / 2.0
     w.autorun_page.add_nogo(b[0] - 8.0, mid - 4.0, b[0] - 1.5, mid + 4.0)
     assert [x.level for x in w._nogo_checks()] == ["ok"]
+
+
+def test_the_checks_take_a_clamp_as_the_disc_it_is(win, qt_app):
+    """A marked clamp is ``(cx, cy, d)``, not a box: the check that says
+    which work lies in a zone read it as one and raised an IndexError."""
+    win.load_folder(str(FIXT))
+    win.select_step("autorun")
+    page = win.autorun_page
+    b = win.work_bounds()
+    cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    page._nogo = [(cx, cy, 26.0)]
+    page._save_nogo()                         # runs the checks: no error
+    found = win._nogo_checks()
+    assert found and "clamp 1" in found[0].detail
+    page._nogo = [(b[2] + 60.0, b[3] + 60.0, 26.0)]   # nowhere near the work
+    far = win._nogo_checks()
+    assert [c.level for c in far] == ["ok"]
