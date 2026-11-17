@@ -937,6 +937,56 @@ def traces_art(copper, outline_raw, raw_drills, *, side="bottom", mirror=True,
                     kerf=kerf, copper=copper, drills=drills, side=side)
 
 
+POUR_SHARE = 0.25       # of the board: a copper piece this big is a pour
+
+
+def needless_trenches(art, *, eps=0.02):
+    """Indices of ``art.apertures`` (traces) that isolate nothing: each one
+    borders a single piece of real copper, a pour, and otherwise only bare
+    stock copper. The trench round the pour along the board's edge and the
+    ring round a mounting hole's clearance are such; skipping them only makes
+    the pour bigger. A via or pad on any other net is never among them.
+
+    Taken one by one, merging what each skipped trench joins (stock regions
+    included), so no set of skips can connect two nets."""
+    from shapely.strtree import STRtree
+    from shapely.ops import unary_union
+    from gerber2rml.engine import soldermask
+    if art.copper is None or art.copper.is_empty or not art.apertures:
+        return set()
+    pieces = soldermask._polygons(art.copper)
+    pours = {i for i, p in enumerate(pieces)
+             if p.area >= POUR_SHARE * art.outline.area}
+    if not pours:
+        return set()
+    stock = [g for g in soldermask._polygons(
+        art.outline.difference(art.copper).difference(unary_union(art.apertures)))
+        if g.area > 1e-4]
+    nodes = pieces + stock
+    tree = STRtree(nodes)
+    parent = list(range(len(nodes)))
+    nets = [{i} if i < len(pieces) else set() for i in range(len(nodes))]
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    out = set()
+    for k, ap in enumerate(art.apertures):
+        g = ap.buffer(eps)
+        roots = {find(int(j)) for j in tree.query(g) if nodes[int(j)].intersects(g)}
+        joined = set().union(*(nets[r] for r in roots)) if roots else set()
+        if len(joined) != 1 or not joined <= pours:
+            continue
+        out.add(k)
+        roots = list(roots)
+        for r in roots[1:]:
+            parent[r] = roots[0]
+            nets[roots[0]] |= nets[r]
+    return out
+
+
 def traces_filename(art, name):
     state = "mirrored" if art.mirrored else "not_mirrored"
     return f"{name}_traces_{art.side}_{state}.dxf"

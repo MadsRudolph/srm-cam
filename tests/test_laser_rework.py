@@ -179,3 +179,92 @@ def test_the_align_test_board_is_estimated_as_it_ran():
     art = job_builder(board)("traces", side="top")
     job = xtool.traces_job(art, (60.0, 60.0), xtool.FR4_TRACES_RECIPE)
     assert job.seconds == pytest.approx(48, abs=4)
+
+
+# -- trenches that isolate nothing -----------------------------------------
+
+def _pour_board():
+    """40 x 30 board. A ground pour 0.5 mm in from the edge with: a mounting
+    hole's empty clearance (r 2.5 at (5, 5)), a signal pad in its own
+    clearance (r 1 in a 1.4 clearance at (20, 15)), and a ground pad that is
+    part of the pour (no clearance, at (30, 15))."""
+    from shapely.geometry import Point, box
+    outline = box(0, 0, 40, 30)
+    pour = (box(0.5, 0.5, 39.5, 29.5)
+            .difference(Point(5, 5).buffer(2.5))
+            .difference(Point(20, 15).buffer(1.4)))
+    signal = Point(20, 15).buffer(1.0)
+    copper = pour.union(signal)
+    drills = [(5.0, 5.0, 3.2), (20.0, 15.0, 0.8), (30.0, 15.0, 0.8)]
+    return xtool.traces_art(copper, outline, drills, side="top", mirror=False)
+
+
+def _where(art, k):
+    c = art.apertures[k].centroid
+    return round(c.x, 1), round(c.y, 1)
+
+
+def test_the_edge_and_the_mounting_hole_isolate_nothing_the_signal_pad_does():
+    art = _pour_board()
+    skip = xtool.needless_trenches(art)
+    kept = set(range(len(art.apertures))) - skip
+    from shapely.geometry import Point
+    sig = [k for k, g in enumerate(art.apertures) if g.distance(Point(20, 15)) < 1.5]
+    mount = [k for k, g in enumerate(art.apertures) if g.distance(Point(5, 5)) < 2.6]
+    edge = [k for k, g in enumerate(art.apertures) if g.distance(art.outline.exterior) < 0.4]
+    assert sig and set(sig) <= kept                 # the signal pad stays isolated
+    assert mount and set(mount) <= skip
+    assert edge and set(edge) <= skip
+
+
+def test_a_board_without_a_pour_skips_nothing():
+    from shapely.geometry import Point, box
+    copper = Point(10, 10).buffer(1).union(Point(30, 10).buffer(1))
+    art = xtool.traces_art(copper, box(0, 0, 40, 20), [], side="top", mirror=False)
+    assert xtool.needless_trenches(art) == set()
+
+
+def test_the_page_skips_them_and_runs_the_rest(qt_app, monkeypatch):
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "skip"))
+    art = _pour_board()
+    d = sl.StencilLaserDialog(art)
+    try:
+        d.skip_auto.setChecked(True)
+        d._find_skips(force=True)
+        auto = set(d.skipped)
+        assert auto == xtool.needless_trenches(d.base_art) and auto
+        assert not d.skip_note.isHidden()
+        keep = d._traces_only()
+        assert keep == set(range(len(d.art.apertures))) - auto
+        whole = xtool.traces_job(d.art, d.origin(), d._run_recipe()).seconds
+        part = xtool.traces_job(d.art, d.origin(), d._run_recipe(), only=keep).seconds
+        assert part < whole
+        # Skip mode: a click on the signal pad's trench leaves it out too, and back
+        from PySide6.QtCore import QPointF, QRectF
+        d.mode.set_current("skip")
+        d._set_mode("skip")
+        ox, oy = d.origin()
+        _, h = d.art.size
+        at = QPointF(ox + 20 + 1.1, oy + (h - 15))      # just outside the pad
+        d._boxed(QRectF(at, at), False)
+        assert len(d.skipped) == len(auto) + 1
+        d._boxed(QRectF(at, at), False)
+        assert d.skipped == auto
+        d.skip_auto.setChecked(False)
+        assert d.skipped == set() and d._traces_only() is None
+    finally:
+        d.close()
+
+
+def test_skip_mode_is_only_for_traces(qt_app, monkeypatch):
+    from shapely.geometry import box
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "skip2"))
+    d = sl.StencilLaserDialog(xtool.LaserArt(kind="mask", outline=box(0, 0, 20, 20),
+                                             apertures=[box(5, 5, 8, 8)]))
+    try:
+        d._set_mode("skip")
+        assert d._mode != "skip" and d.skip_auto.isHidden()
+    finally:
+        d.close()
