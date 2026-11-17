@@ -116,6 +116,38 @@ def rotated(art, quarter_turns, degrees=0.0):
     return out
 
 
+def reoriented(art, mirror=False, flip=False):
+    """The artwork mirrored left to right and/or flipped top to bottom within
+    its own outline, which stays at (0, 0). ``mirrored`` and ``flipped`` say
+    the result's state. For any job: a Gerber's or a DXF's, traces, mask,
+    silkscreen or stencil."""
+    from dataclasses import replace as _replace
+    from shapely.affinity import scale
+    from shapely.geometry import Point
+    if not mirror and not flip:
+        return art
+    x0, y0, x1, y1 = art.outline.bounds
+    c = ((x0 + x1) / 2, (y0 + y1) / 2)
+    fx, fy = (-1 if mirror else 1), (-1 if flip else 1)
+    turn = lambda g: scale(g, xfact=fx, yfact=fy, origin=c)       # noqa: E731
+    out = _replace(art, outline=turn(art.outline),
+                   apertures=[turn(p) for p in art.apertures])
+    if hasattr(art, "_ring_cache"):
+        out = _replace(out, _ring_cache=None)
+    if getattr(art, "features", None):
+        out = _replace(out, features=[turn(p) for p in art.features])
+    if getattr(art, "copper", None) is not None:
+        out = _replace(out, copper=turn(art.copper))
+    if getattr(art, "drills", None):
+        out = _replace(out, drills=[(q.x, q.y, d) for q, d in
+                                    ((turn(Point(x, y)), d) for x, y, d in art.drills)])
+    if mirror and hasattr(art, "mirrored"):
+        out = _replace(out, mirrored=not art.mirrored)
+    if flip and hasattr(art, "flipped"):
+        out = _replace(out, flipped=not art.flipped)
+    return out
+
+
 def snap_to_grid(point, step=10.0, extent=220.0):
     """The calibrated point nearest ``point``: autofocus measures on the
     factory's 10 mm grid."""

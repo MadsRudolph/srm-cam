@@ -390,20 +390,53 @@ def test_mirror_can_be_chosen_whatever_the_face(tmp_path):
 def test_the_page_mirrors_and_flips_a_dxf(page, tmp_path):
     p = write(tmp_path, proof_board_entities(), name="proof.dxf")
     page.load_dxf_art(dxf_traces.build_dxf_traces(p), p)
-    assert not page.dxf_orient.isHidden()
-    assert not page.dxf_mirror.isChecked() and not page.dxf_flip.isChecked()
-    page.dxf_flip.setChecked(True)
+    assert not page.orient_row.isHidden()
+    assert not page.mirror_box.isChecked() and not page.flip_box.isChecked()
+    page.flip_box.setChecked(True)
     assert page.base_art.flipped and not page.base_art.mirrored
     assert len(page.base_art.drills) == 12 and page.art.apertures
-    page.dxf_mirror.setChecked(True)
+    assert any(math.dist((x, y), (30, 4)) < 1e-6 for x, y, _ in page.base_art.drills)
+    page.mirror_box.setChecked(True)
     assert page.base_art.mirrored and page.base_art.flipped
     assert "flipped" in page.size_lbl.text()
     # a new copper face starts from its own mirroring; the flip is kept
     page.copper_side.setCurrentIndex(page.copper_side.findData("bottom"))
-    assert page.base_art.mirrored and page.dxf_mirror.isChecked()
-    page.dxf_mirror.setChecked(False)
+    assert page.base_art.mirrored and page.mirror_box.isChecked()
+    assert page.base_art.flipped and page.flip_box.isChecked()
+    page.mirror_box.setChecked(False)
     assert not page.base_art.mirrored and page.base_art.side == "bottom"
 
 
-def test_the_boxes_are_only_there_for_a_dxf(page):
-    assert page.dxf_orient.isHidden()          # a Gerber-style job: none
+def test_a_gerber_job_can_be_mirrored_and_flipped_too(qt_app, monkeypatch):
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.laser_app import job_builder
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "orient"))
+    jobs = job_builder(EXAMPLE)
+    d = sl.StencilLaserDialog(jobs("traces", side="top"), None, jobs=jobs)
+    try:
+        assert not d.orient_row.isHidden() and not d.mirror_box.isChecked()
+        before = {(round(x, 3), round(y, 3)) for x, y, _ in d.base_art.drills}
+        assert (30.0, 26.0) in before
+        d.mirror_box.setChecked(True)
+        assert d.base_art.mirrored
+        assert (10.0, 26.0) in {(round(x, 3), round(y, 3)) for x, y, _ in d.base_art.drills}
+        d.flip_box.setChecked(True)
+        assert (10.0, 4.0) in {(round(x, 3), round(y, 3)) for x, y, _ in d.base_art.drills}
+        assert d.base_art.copper.area == pytest.approx(
+            jobs("traces", side="top").copper.area)
+        assert d.art.apertures                           # isolation from the new copper
+        d.mirror_box.setChecked(False)
+        d.flip_box.setChecked(False)
+        assert {(round(x, 3), round(y, 3)) for x, y, _ in d.base_art.drills} == before
+    finally:
+        d.close()
+
+
+def test_reoriented_keeps_the_outline_at_the_origin_and_says_what_it_did():
+    art = xtool.calibration_art()
+    from shapely.geometry import Point
+    art = xtool.reoriented(art, mirror=True, flip=True)
+    assert art.outline.bounds == pytest.approx((0, 0, 40, 30))
+    assert art.mirrored and art.flipped
+    back = xtool.reoriented(art, mirror=True, flip=True)
+    assert not back.mirrored and not back.flipped
