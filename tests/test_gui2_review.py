@@ -474,7 +474,12 @@ def test_a_cut_out_rework_is_ramped_not_copied(loaded, tmp_path, monkeypatch):
     monkeypatch.setattr("PySide6.QtWidgets.QFileDialog.getSaveFileName",
                         lambda *a, **k: (str(out), ""))
     page._export()
-    assert _zs_below_zero(out) == {-0.6, -1.2}
+    # Ramped by the cut-out's own depth per pass (1.0 mm since the cut-out
+    # ladder card; 0.6 before), down to the rework depth.
+    step = loaded.state.cutout.cut_depth
+    levels = {-round(min(k * step, 1.2), 3) for k in range(1, int(-(-1.2 // step)) + 1)}
+    assert len(levels) >= 2
+    assert _zs_below_zero(out) == levels
 
 
 # ---------------------------------------------------------- the 3D view
