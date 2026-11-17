@@ -25,6 +25,7 @@ Every laser call runs on a worker thread; the page only shows what comes back.
 """
 import json
 from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QThread, Signal
 from PySide6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath, QPen,
@@ -107,6 +108,12 @@ def as_laser_art(art):
                           outline=art.outline, mirrored=art.mirrored,
                           kerf=art.kerf, notes=art.warnings(),
                           note=f"kerf {art.kerf:g} mm")
+
+
+def _brightness(rgb):
+    """Mean brightness of a photo, from a sparse sample (it is 16 Mpx)."""
+    import numpy as np
+    return float(np.asarray(rgb)[::16, ::16].mean())
 
 
 def _c(token, a=1.0):
@@ -417,9 +424,18 @@ class StencilLaserDialog(QDialog):
     """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork` or an
     :class:`xtool.LaserArt` (traces, solder mask, silkscreen, or stencil)."""
 
-    def __init__(self, art, parent=None, laser=None, name="stencil", jobs=None):
+    def __init__(self, art=None, parent=None, laser=None, name="stencil",
+                 jobs=None, dxf=None):
         super().__init__(parent)
+        self._empty = art is None           # nothing loaded: a calibration area
+        if art is None:
+            art = xtool.calibration_art()
+            name = "No job loaded"
         art = as_laser_art(art)
+        self._dxf = Path(dxf) if dxf else None    # traces come from this DXF
+        self._mode = "move"
+        self.rework_boxes = []              # (x0, y0, x1, y1), bed mm
+        self._rework_items = []
         self.kind = art.kind
         self.k = KINDS[self.kind]
         self._jobs = jobs
@@ -490,8 +506,11 @@ class StencilLaserDialog(QDialog):
         self.mode = widgets.Segmented([
             ("move", "Move", "Drag, nudge with the arrow keys, turn"),
             ("select", "Select", "Click shapes or drag a box; Ctrl or Shift "
-                                 "adds. The run then does only those.")], "move")
-        self.mode.changed.connect(lambda k: self._select_mode(k == "select"))
+                                 "adds. The run then does only those."),
+            ("rework", "Rework", "Traces: drag boxes over spots that did not "
+                                 "cut through; click a box to remove it. "
+                                 "Re-etch runs only inside the boxes.")], "move")
+        self.mode.changed.connect(self._set_mode)
         self.photo_btn = widgets.button("Photo", on=self.take_photo,
                                         tip="Take a picture of the bed")
         self.focus_btn = widgets.button(
@@ -558,6 +577,27 @@ class StencilLaserDialog(QDialog):
         s.add(self.name_lbl)
         self.size_lbl = widgets.hint("")
         s.add(self.size_lbl)
+        self.dxf_btn = widgets.button(
+            "Open DXF…", kind="ghost", on=self.open_dxf,
+            tip="Copper traces from a DXF drawing instead of the Gerber folder: "
+                "closed shapes are copper, circles in pads are drills, the edge "
+                "goes on a layer named Edge.Cuts or Outline")
+        self.gerber_btn = widgets.button(
+            "Open Gerber folder…", kind="ghost", on=self.open_gerber,
+            tip="A KiCad Gerber folder: traces, mask, silkscreen and stencil")
+        s.add(_row(self.gerber_btn, self.dxf_btn))
+        self.empty_hint = widgets.hint(
+            "Nothing loaded. Open a Gerber folder or a DXF to etch, or drag the "
+            "calibration area onto the material and run Calibrate the camera "
+            "(Alignment) or the copper calibration.")
+        s.add(self.empty_hint)
+        self.empty_cal_btn = widgets.button(
+            "Copper calibration…", on=self.open_copper_calibration,
+            tip="Find the power, speed and passes that clear copper, a coupon "
+                "at a time")
+        s.add(self.empty_cal_btn)
+        self.empty_hint.setVisible(self._empty)
+        self.empty_cal_btn.setVisible(self._empty)
         self.copper_side = QComboBox()
         self.copper_side.addItem("B.Cu — bottom copper", "bottom")
         self.copper_side.addItem("F.Cu — top copper", "top")
@@ -583,14 +623,34 @@ class StencilLaserDialog(QDialog):
         s.add(place)
         pv.addWidget(s)
 
+        s = widgets.Section("Rework")
+        self.rework_section = s
+        s.add(widgets.hint(
+            "Spots that did not cut through: choose Rework above the bed and "
+            "drag a box over each one. Re-etch runs the isolation again only "
+            "inside the boxes; click a box to remove it."))
+        self.rework_count = widgets.hint("No boxes yet.")
+        s.add(self.rework_count)
+        self.rework_passes = _ispin(int(QSettings(*_SETTINGS).value(
+            "rework_passes", 5)), 1, 200)
+        self.rework_passes.valueChanged.connect(
+            lambda v: QSettings(*_SETTINGS).setValue("rework_passes", v))
+        s.add(widgets.Field(
+            "Rework passes", self.rework_passes,
+            help="Passes over the boxes, on top of the job's. Power and speed "
+                 "are the recipe's."))
+        self.rework_btn = widgets.button(
+            "Re-etch the boxes", kind="primary", on=self.rework, enabled=False)
+        self.rework_clear_btn = widgets.button(
+            "Clear boxes", kind="ghost", on=self.clear_rework, enabled=False)
+        s.add(_row(self.rework_btn, self.rework_clear_btn))
+        pv.addWidget(s)
+
         s = widgets.Section("Alignment")
-        self.proof_hint = widgets.hint(
-            "Proof: the laser makes a few faint marks, photographs them and the "
-            "drilled holes together, and moves the job onto the holes. Drag the "
-            "drawing roughly onto the board first.")
+        self.proof_hint = widgets.hint("")
         s.add(self.proof_hint)
         self.proof_btn = widgets.button(
-            "Proof on the drilled holes", on=self.proof,
+            "Calibrate the camera", on=self.proof,
             tip="Marks the waste beside the board if there is any, otherwise the "
                 "isolation the job removes anyway")
         s.add(self.proof_btn)
@@ -974,6 +1034,9 @@ class StencilLaserDialog(QDialog):
                           "Score the board outline afterwards, faintly")
 
     def _trace_art_for(self, side):
+        if self._dxf is not None:
+            from gerber2rml.engine import dxf_traces
+            return dxf_traces.build_dxf_traces(self._dxf, side=side)
         if callable(self._jobs):
             return self._jobs("traces", side=side)
         if self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
@@ -992,23 +1055,95 @@ class StencilLaserDialog(QDialog):
             self.copper_side.blockSignals(False)
             self._say(str(e), warn=True)
             return
+        self._take_traces_art(art)
+        self._say(f"Showing {'F.Cu (top)' if side == 'top' else 'B.Cu (bottom)'}. "
+                  "Place that copper face upwards on the laser bed.")
+
+    def _take_traces_art(self, art):
+        """A new traces drawing on the page, the recipe as it is."""
         self.base_art = as_laser_art(art)
+        self._trace_side = self.base_art.side
+        self.copper_side.blockSignals(True)
+        self.copper_side.setCurrentIndex(self.copper_side.findData(self._trace_side))
+        self.copper_side.blockSignals(False)
         self._clear_references()
         self._populate_auto_references()
-        self._trace_side = side
         self.selected.clear()
         self._refresh_traces_art()
         self._sync_warnings()
         self._sync_recipe_widgets()
-        self._say(f"Showing {'F.Cu (top)' if side == 'top' else 'B.Cu (bottom)'}. "
-                  "Place that copper face upwards on the laser bed.")
 
-    def switch_kind(self, kind):
-        if kind == self.kind:
+    def open_gerber(self):
+        """A Gerber folder's jobs on the page, as srm-cam-laser opens them."""
+        from PySide6.QtWidgets import QFileDialog
+        from gerber2rml.gui2.laser_app import first_job, job_builder
+        cfg = QSettings(*_SETTINGS)
+        picked = QFileDialog.getExistingDirectory(
+            self, "Gerber folder for the laser", str(cfg.value("gerber_dir", "")))
+        if not picked:
+            return
+        folder = Path(picked)
+        cfg.setValue("gerber_dir", str(folder))
+        try:
+            kind, _art = first_job(folder, "traces")
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        self._jobs = job_builder(folder)
+        self._dxf = None
+        self._trace_side = None             # the face with the most copper
+        self._empty = False
+        self.name_lbl.setText(folder.name)
+        self.switch_kind(kind, force=True)
+        self._sync_empty()
+        self._say(f"Opened {folder.name}: {self.k['window']}.")
+
+    def _sync_empty(self):
+        for w in (self.empty_hint, self.empty_cal_btn):
+            w.setVisible(self._empty)
+
+    def open_dxf(self):
+        """Copper traces from a DXF: the drawing as seen from above, F.Cu."""
+        from PySide6.QtWidgets import QFileDialog
+        from gerber2rml.engine import dxf_traces
+        cfg = QSettings(*_SETTINGS)
+        picked, _ = QFileDialog.getOpenFileName(
+            self, "Copper traces DXF", str(cfg.value("dxf_dir", "")),
+            "DXF drawings (*.dxf);;All files (*)")
+        if not picked:
+            return
+        path = Path(picked)
+        cfg.setValue("dxf_dir", str(path.parent))
+        try:
+            art = dxf_traces.build_dxf_traces(path)
+        except xtool.TracesError as e:
+            return self._say(str(e), warn=True)
+        self.load_dxf_art(art, path)
+
+    def load_dxf_art(self, art, path):
+        """Show ``art``, read from the DXF at ``path``, as the traces job."""
+        self._dxf = Path(path)
+        self._empty = False
+        self._sync_empty()
+        self.name_lbl.setText(self._dxf.name)
+        self._trace_side = as_laser_art(art).side
+        if self.kind != "traces":
+            self.switch_kind("traces")
+        else:
+            self._take_traces_art(art)
+        n = len(self.base_art.drills or [])
+        face = ("B.Cu, mirrored for the bottom face" if self.base_art.side == "bottom"
+                else "F.Cu, as drawn")
+        self._say(f"Opened {self._dxf.name}: {face}, {n} drilled "
+                  f"hole{'' if n == 1 else 's'}. The copper face switch "
+                  f"changes it.")
+
+    def switch_kind(self, kind, force=False):
+        if kind == self.kind and not force:
             return
         try:
-            if kind == "traces" and self._trace_side is not None:
-                new_art = self._trace_art_for(self._trace_side)
+            if kind == "traces" and (self._trace_side is not None
+                                     or self._dxf is not None):
+                new_art = self._trace_art_for(self._trace_side or "top")
             elif callable(self._jobs):
                 new_art = self._jobs(kind)
             elif isinstance(self._jobs, dict) and kind in self._jobs:
@@ -1016,7 +1151,8 @@ class StencilLaserDialog(QDialog):
             elif self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
                 new_art = self.parent()._laser_art_for(kind)
             else:
-                raise RuntimeError(f"No {KINDS[kind]['window']} job is loaded.")
+                raise RuntimeError(f"No {KINDS[kind]['window']} job is loaded: "
+                                   f"open a Gerber folder first.")
         except Exception as e:                  # noqa: BLE001 - shown in status bar
             self.job_switch.set_current(self.kind)
             self._say(str(e), warn=True)
@@ -1163,6 +1299,104 @@ class StencilLaserDialog(QDialog):
             self._place_focus_mark()
 
     # -- selection ---------------------------------------------------------
+    def _set_mode(self, mode):
+        """Move, Select, or Rework (boxes on the bed for a second pass)."""
+        if mode == "rework" and self.kind != "traces":
+            self.mode.set_current(self._mode)
+            return self._say("Rework is for copper traces: switch to Traces.",
+                             warn=True)
+        self._mode = mode
+        self._select_mode(mode != "move")
+        if mode == "rework":
+            self._say("Rework: drag a box over each spot that did not cut "
+                      "through. Click a box to remove it.")
+
+    def _rework_boxed(self, rect):
+        """A box dragged in Rework mode is added; a click inside one drops it."""
+        if rect.width() == 0 and rect.height() == 0:
+            p = rect.topLeft()
+            for i in range(len(self.rework_boxes) - 1, -1, -1):
+                x0, y0, x1, y1 = self.rework_boxes[i]
+                if x0 <= p.x() <= x1 and y0 <= p.y() <= y1:
+                    del self.rework_boxes[i]
+                    break
+        elif rect.width() >= 0.3 and rect.height() >= 0.3:
+            r = rect.normalized()
+            self.rework_boxes.append((r.left(), r.top(), r.right(), r.bottom()))
+        self._draw_rework()
+
+    def _draw_rework(self):
+        for it in self._rework_items:
+            self.scene.removeItem(it)
+        self._rework_items = []
+        for i, (x0, y0, x1, y1) in enumerate(self.rework_boxes):
+            it = self.scene.addRect(QRectF(x0, y0, x1 - x0, y1 - y0),
+                                    _pen(theme.CAUTION, 1.6),
+                                    QBrush(_c(theme.CAUTION, 0.14)))
+            it.setZValue(8)
+            label = QGraphicsSimpleTextItem(str(i + 1))
+            label.setBrush(QBrush(_c(theme.CAUTION)))
+            label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+            label.setPos(x0, y0)
+            label.setZValue(9)
+            self.scene.addItem(label)
+            self._rework_items += [it, label]
+        n = len(self.rework_boxes)
+        self.rework_count.setText(f"{n} box{'' if n == 1 else 'es'} on the bed."
+                                  if n else "No boxes yet.")
+        self.rework_btn.setEnabled(bool(n))
+        self.rework_clear_btn.setEnabled(bool(n))
+        self.rework_btn.setText(f"Re-etch {n} box{'' if n == 1 else 'es'}"
+                                if n else "Re-etch the boxes")
+
+    def clear_rework(self):
+        self.rework_boxes = []
+        self._draw_rework()
+
+    def _sync_rework(self):
+        on = self.kind == "traces"
+        self.rework_section.setVisible(on)
+        if not on and self._mode == "rework":
+            self.mode.set_current("move")
+            self._set_mode("move")
+
+    def rework(self):
+        """The traces again, only inside the rework boxes: the CNC's rework
+        on the laser. The recipe's power and speed, Rework passes deep."""
+        if self.kind != "traces" or not self.rework_boxes:
+            return
+        r = replace(self._run_recipe(), passes=self.rework_passes.value())
+        try:
+            job = xtool.traces_job(self.art, self.origin(), r,
+                                   boxes=self.rework_boxes)
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        self._remember()
+        self._job = job
+        self._zone_holes = [set()]
+        self.bar.setRange(0, max(1, int(job.seconds)))
+        self.bar.setValue(0)
+        self.bar.setVisible(True)
+        take_photo = self.photo_after.isChecked()
+        n = len(self.rework_boxes)
+        before = self._raw_rgb
+
+        def work(progress):
+            z = self.laser.z()
+            self.laser.run(job.text)
+            self.laser.wait(job.seconds * 2 + 120, progress=progress)
+            return z, (self._photo_after_job(before) if take_photo else None)
+
+        def done(res):
+            z, rgb = res
+            if rgb is not None:
+                self.show_bed(rgb)
+            return (f"Reworked at Z {z:.2f}: {n} box{'' if n == 1 else 'es'}, "
+                    f"{job.passes} passes. Check them on the photo; clear the "
+                    f"boxes that are through and run the rest again.")
+        self._start(work, f"Rework: {n} box{'' if n == 1 else 'es'}, "
+                          f"{job.passes} passes…", done)
+
     def _select_mode(self, on):
         self.view.set_select_mode(on)
         if self.item is not None:
@@ -1171,6 +1405,8 @@ class StencilLaserDialog(QDialog):
         self._paint()
 
     def _boxed(self, rect, add):
+        if self._mode == "rework":
+            return self._rework_boxed(rect)
         if self.item is None:
             return
         if not add:
@@ -1704,12 +1940,32 @@ class StencilLaserDialog(QDialog):
             self._cal = self.laser.calibration()
         return self._cal
 
-    def _raw_photo(self):
+    PHOTO_TRIES = 6
+    PHOTO_DARK = 0.85           # of the photo before: darker is not lit yet
+
+    def _raw_photo(self, like=None):
+        """The camera's picture. ``like``: a photo of the same bed taken
+        before a job. Straight after a job the light and the exposure take a
+        moment to come back; a photo clearly darker than ``like`` is taken
+        again, a second apart, until it is not."""
+        import time
         from gerber2rml.engine.xtool_camera import decode_jpeg
         self._calibration()
         self.laser.lights(True)
-        self._raw_rgb = decode_jpeg(self.laser.snap())
-        return self._raw_rgb
+        raw = decode_jpeg(self.laser.snap())
+        if like is not None:
+            want = self.PHOTO_DARK * _brightness(like)
+            for _ in range(self.PHOTO_TRIES - 1):
+                if _brightness(raw) >= want:
+                    break
+                time.sleep(1.0)
+                raw = decode_jpeg(self.laser.snap())
+        self._raw_rgb = raw
+        return raw
+
+    def _photo_after_job(self, before):
+        """The bed straightened, after a job: lit like ``before`` was."""
+        return self._photo(_PX_PER_MM, self._raw_photo(like=before))
 
     def _photo(self, px_per_mm=_PX_PER_MM, raw=None, offset=None):
         raw = self._raw_photo() if raw is None else raw
@@ -1789,8 +2045,33 @@ class StencilLaserDialog(QDialog):
         self._start(work, "Learning the camera's offset from the cut…", done)
 
     def _sync_proof(self):
-        """A proof needs drilled holes to tie the laser to: traces only."""
-        on = self.kind == "traces" and len(self.base_art.drills or []) >= 2
+        """The camera calibration, on every traces job; with drilled holes it
+        also puts the job on them."""
+        if hasattr(self, "rework_section"):
+            self._sync_rework()             # traces only, like the proof
+        on = self.kind == "traces"
+        holes = len(self.base_art.drills or []) >= 2
+        self.proof_btn.setText("Calibrate and lock onto the holes" if holes
+                               else "Calibrate the camera")
+        if getattr(self, "_empty", False):
+            self.proof_hint.setText(
+                "The laser makes a few faint marks inside the calibration area "
+                "and photographs them: where they land corrects the camera. Drag "
+                "the area onto the material first.")
+            for w in (self.proof_hint, self.proof_btn):
+                w.setVisible(True)
+            self.proof_more.setVisible(False)       # the marks go in the area
+            if hasattr(self, "rework_section"):
+                self.rework_section.setVisible(False)
+            return
+        self.proof_hint.setText(
+            "The laser makes a few faint marks and photographs them: where they "
+            "land corrects the camera, so the photo shows where it really fires. "
+            + ("The drilled holes in the same photo then move the job onto "
+               "them. Drag the drawing roughly onto the board first."
+               if holes else
+               "Works on a blank. Drag the drawing onto the blank first; the "
+               "marks go beside it or on copper the job removes anyway."))
         for w in (self.proof_hint, self.proof_btn, self.proof_more):
             w.setVisible(on)
         if not on:
@@ -1805,6 +2086,8 @@ class StencilLaserDialog(QDialog):
 
     def _proof_plans(self):
         """The marks to try, best first, for the choice under Proof options."""
+        if self._empty:
+            return [xtool.proof_in_area(self.art, self.origin(), self.recipe())], False
         want = self.proof_where.currentData()
         recipe, plans, errors = self.recipe(), [], []
         for where, build in (("waste", xtool.proof_in_waste),
@@ -1825,15 +2108,16 @@ class StencilLaserDialog(QDialog):
         holes are in the same pictures. The camera's correction is set from the
         marks and the job is moved onto the holes."""
         from gerber2rml.engine import xtool_camera as cam
-        if self.kind != "traces" or len(self.art.drills or []) < 2:
-            return self._say("A proof needs a traces job with at least two "
-                             "drilled holes.", warn=True)
+        if self.kind != "traces":
+            return self._say("The camera calibration runs on a traces job.",
+                             warn=True)
         try:
             plans, auto = self._proof_plans()
         except ValueError as e:
             return self._say(str(e), warn=True)
         recipe, passes = self.recipe(), self.proof_passes.value()
-        holes = self._hole_paths()
+        holes = (self._hole_paths() if len(self.art.drills or []) >= 2
+                 else [])                   # a blank: the camera only
         old = self.cam_offset
         hi = 8
         self._remember()
@@ -1849,24 +2133,26 @@ class StencilLaserDialog(QDialog):
             text, secs = xtool.proof_job(plan, recipe, passes)
             self.laser.run(text)
             self.laser.wait(secs * 2 + 60)
-            raw_b = self._raw_photo()
+            raw_b = self._raw_photo(like=raw_a)
             m = cam.locate_change(before, self._photo(hi, raw_b), hi, plan.marks)
             if not m.ok:
                 return plan, raw_b, m, None, old
             new = (old[0] + m.dx, old[1] + m.dy)
+            if not holes:
+                return plan, raw_b, m, None, new
             # The holes, in the photo from before the marks, seen through the
             # corrected camera: what is left is the job being off the board.
             try:
                 a = cam.align(self._photo(hi, raw_a, new), hi, holes,
-                              search_mm=4.0, max_turn=1.5)
+                              search_mm=4.0, max_turn=1.5, need=cam.DRILLED_NEED)
             except cam.CameraError:
                 a = None
             return plan, raw_b, m, a, new
 
         def done(res):
             plan, raw_b, m, a, new = res
-            where = ("the waste beside the board" if plan.where == "waste"
-                     else "the isolation")
+            where = {"waste": "the waste beside the board",
+                     "area": "the calibration area"}.get(plan.where, "the isolation")
             self._last_proof = None
             if not m.ok:
                 self.show_bed(self._photo(_PX_PER_MM, raw_b))
@@ -1883,9 +2169,19 @@ class StencilLaserDialog(QDialog):
             cam_mm = (m.dx ** 2 + m.dy ** 2) ** 0.5
             said = (f"Proof on {m.found} marks in {where}: the camera was "
                     f"{cam_mm:.2f} mm off and is corrected.")
+            if not holes:
+                msg = said + (" Open a Gerber folder or DXF and place it on the "
+                          "photo." if self._empty else
+                          " No drilled holes, so the job stays where it is: "
+                          "check it on the photo, then etch.")
+                self._last_proof = {"where": plan.where, "camera": (m.dx, m.dy)}
+                self.proof_note.setText(msg)
+                self.proof_note.setVisible(True)
+                return msg
             if a is None or not a.ok:
-                msg = (said + " The drilled holes could not be found, so the job "
-                       "was not moved: drag it closer and press Align.")
+                seen = (f" (found {a.found} of {a.total})" if a is not None else "")
+                msg = (said + f" The drilled holes could not be found{seen}, so "
+                       "the job was not moved: drag it closer and press Align.")
                 self.proof_note.setText(msg)
                 self.proof_note.setVisible(True)
                 return msg
@@ -1906,7 +2202,7 @@ class StencilLaserDialog(QDialog):
             self.proof_note.setText(msg)
             self.proof_note.setVisible(True)
             return msg
-        self._start(work, "Proof: photo, marks, photo…", done)
+        self._start(work, "Calibrating the camera: photo, marks, photo…", done)
 
     def align(self):
         """Find the holes already cut and put the stencil back on them. Tries the
@@ -1925,12 +2221,16 @@ class StencilLaserDialog(QDialog):
             candidates.append((k, self._features(art, (cx - w / 2, cy - h / 2))))
         hi = 8
         contrast = self.auto_contrast.currentData()
+        # Drilled holes over the bed's slats do not all read dark: see
+        # xtool_camera.DRILLED_NEED. Holes cut in a stencil keep 85 %.
+        need = (cam.DRILLED_NEED if self.kind != "stencil"
+                and self.auto_reference_source.currentData() == "holes" else 0.85)
 
         def work(_p):
             rgb = self._photo(hi)
             tried = []
             for k, holes in candidates:
-                a = cam.align(rgb, hi, holes, polarity=contrast)
+                a = cam.align(rgb, hi, holes, polarity=contrast, need=need)
                 tried.append((k, holes, a))
                 if a.ok and k == 0:
                     break
@@ -1942,7 +2242,8 @@ class StencilLaserDialog(QDialog):
             rgb, (k, holes, a), good = res
             self.show_bed(rgb[::hi // _PX_PER_MM, ::hi // _PX_PER_MM].copy())
             if not good:
-                return (f"Could not match the references: at best {a.found} of {a.total}. "
+                return (f"Could not match the references: at best {a.found} of {a.total} "
+                        f"(needs {int(-(-a.need * a.total // 1))}). "
                         "Drag the drawing closer, choose clearer references, or pick matching points.")
             target = self._middle(holes) + (a.dx, a.dy)
             self._turn_to(self.turns + k, self.fine + a.turn, preserve_selection=True)
@@ -1954,8 +2255,9 @@ class StencilLaserDialog(QDialog):
             turned = (90 * k + a.turn + 180) % 360 - 180
             self._clear_references()
             what = "references"
-            return (f"Aligned on {a.found} of {a.total} {what}: moved {moved:.1f} mm, "
-                    f"turned {turned:+.1f}°. Check with Show where before cutting.")
+            return (f"Aligned on {a.found} of {a.total} {what}: moved {moved:.2f} mm "
+                    f"(X {a.dx:+.2f}, Y {a.dy:+.2f}), turned {turned:+.1f}°. Check "
+                    f"with Show where before cutting.")
         self._start(work, "Aligning: photo, then looking for the chosen references…", done)
 
     def _focused(self, z, how):
@@ -2032,6 +2334,7 @@ class StencilLaserDialog(QDialog):
         self._job = job
         self._zone_holes = [{owner[id(p)] for p in z if id(p) in owner}
                             for z in job.zone_paths]
+        before = self._raw_rgb
         self.bar.setRange(0, max(1, int(job.seconds)))
         self.bar.setValue(0)
         self.bar.setVisible(True)
@@ -2043,7 +2346,7 @@ class StencilLaserDialog(QDialog):
             self.laser.wait(job.seconds * 2 + 120, progress=progress)
             if not take_photo:
                 return z, None, None
-            raw = self._raw_photo()
+            raw = self._raw_photo(like=before)
             try:
                 a = self._residual(self._photo(8, raw), 8, holes)
             except Exception:           # noqa: BLE001 - a check, never a failure
@@ -2068,6 +2371,9 @@ class StencilLaserDialog(QDialog):
 
     def _fill(self):
         """A traces, solder mask, or silkscreen job."""
+        if self._empty:
+            return self._say("Nothing loaded to etch: open a Gerber folder or a "
+                             "DXF first.", warn=True)
         try:
             if self.kind == "traces":
                 job = xtool.traces_job(
@@ -2086,12 +2392,13 @@ class StencilLaserDialog(QDialog):
         self.bar.setValue(0)
         self.bar.setVisible(True)
         take_photo = self.photo_after.isChecked()
+        before = self._raw_rgb
 
         def work(progress):
             z = self.laser.z()
             self.laser.run(job.text)
             self.laser.wait(job.seconds * 2 + 120, progress=progress)
-            return z, (self._photo() if take_photo else None)
+            return z, (self._photo_after_job(before) if take_photo else None)
 
         def done(res):
             z, rgb = res
@@ -2166,6 +2473,7 @@ class StencilLaserDialog(QDialog):
                   self.learn_btn, self.reset_off_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
                   self.mode, self.job_switch, self.strategy,
+                  self.rework_btn, self.rework_clear_btn, self.rework_passes,
                   self.all_btn, self.none_btn, self.x, self.y,
                   self.preset, self.save_btn, self.copper_side,
                   self.pick_refs_btn, self.apply_refs_btn, self.remove_ref_btn,

@@ -214,10 +214,19 @@ class Alignment:
     found: int          # holes that sit on a dark spot after the move
     total: int
     score: float        # 0..1, how much of the pattern's area lands on darkness
+    need: float = 0.85  # of the holes found before the fit is believed
 
     @property
     def ok(self):
-        return self.total >= 2 and self.found >= max(2, 0.85 * self.total) and self.score > 0.2
+        return (self.total >= 2 and self.found >= max(2, self.need * self.total)
+                and self.score > 0.2)
+
+
+# Holes cut in steel show bright plate through every one: 85 %. Holes drilled
+# in a board sit over the bed's slats, and over a bright slat a hole hardly
+# reads dark: at the machine 42-44 of 52 on a drilled board, the fit the same
+# every time. A wrong place or a wrong way round finds far fewer.
+DRILLED_NEED = 0.75
 
 
 @dataclass
@@ -254,7 +263,8 @@ def fit_reference_points(drawing, photo, *, max_error_mm=0.3):
     return PointAlignment(transform, errors, rms(transform, p, q))
 
 
-def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0, polarity="dark"):
+def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0, polarity="dark",
+          need=0.85):
     """Where the cut ``holes`` (bed mm, as the overlay has them now) really are
     in a straightened photo ``bed_rgb`` of ``px_per_mm``.
 
@@ -322,7 +332,7 @@ def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0, polarity="
         if a > 0 and (D * T).sum() / a > 0.2:
             found += 1
     return Alignment(dx=dx_mm, dy=dy_mm, turn=float(deg), found=found,
-                     total=len(holes), score=float(s))
+                     total=len(holes), score=float(s), need=need)
 
 
 # ---------------------------------------------------------------------------
