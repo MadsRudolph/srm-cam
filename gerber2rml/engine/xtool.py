@@ -788,7 +788,6 @@ def build_laser_traces(folder, *, side="bottom", mirror=True,
     """Read one face's copper, outline, and drills from a Gerber folder into a
     :class:`LaserArt` ready for the xTool laser page or DXF export."""
     from gerbonara import GerberFile
-    from shapely.affinity import scale, translate
     from gerber2rml.engine import soldermask
     from gerber2rml.loader import _find_layer, select_drill_holes
 
@@ -823,7 +822,21 @@ def build_laser_traces(folder, *, side="bottom", mirror=True,
         raw_drills = select_drill_holes(folder, outline_raw)
     except Exception:
         raw_drills = []
+    return traces_art(copper, outline_raw, raw_drills, side=side, mirror=mirror,
+                      notes=notes, offsets=offsets, kerf=kerf,
+                      lines_per_cm=lines_per_cm, strategy=strategy,
+                      spot_drills=spot_drills)
 
+
+def traces_art(copper, outline_raw, raw_drills, *, side="bottom", mirror=True,
+               notes=None, offsets=DEFAULT_TRACE_OFFSETS,
+               kerf=DEFAULT_TRACE_KERF, lines_per_cm=DEFAULT_TRACE_DENSITY,
+               strategy="concentric", spot_drills=True):
+    """Copper, outline and drills as drawn (mm, Y up, any origin) into a
+    traces :class:`LaserArt`: mirrored if asked, the outline's lower-left
+    corner moved to 0, 0. A Gerber folder and a DXF both end here."""
+    from shapely.affinity import scale, translate
+    notes = list(notes or [])
     outline = outline_raw
     if mirror:
         outline = scale(outline, xfact=-1, yfact=1, origin=(0, 0))
@@ -887,10 +900,30 @@ def _clip_ring_to(coords, clip):
     return [list(p.coords) for p in parts if not p.is_empty and p.length > 1e-4]
 
 
-def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
+def boxes_region(boxes):
+    """Rework boxes ``[(x0, y0, x1, y1), ...]`` (bed mm, any corner order)
+    as one shapely geometry on the bed, or None when there are none."""
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+    shapes = [box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+              for x0, y0, x1, y1 in (boxes or ())
+              if abs(x1 - x0) > 1e-6 and abs(y1 - y0) > 1e-6]
+    return unary_union(shapes) if shapes else None
+
+
+def _boxes_in_art(boxes, origin, height):
+    """Bed boxes in the artwork frame (Y up), as :func:`to_bed` inverted."""
+    ox, oy = origin
+    return [(x0 - ox, height - (y0 - oy), x1 - ox, height - (y1 - oy))
+            for x0, y0, x1, y1 in boxes]
+
+
+def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
+                 boxes=None):
     """Concentric isolation rings per offset, in bed coordinates, ordered by
     nearest neighbour. Cached in the artwork frame so dragging or tweaking
-    power/speed/passes stays instantaneous."""
+    power/speed/passes stays instantaneous. ``boxes`` (bed mm) keeps only
+    what lies inside them: a rework of the spots that did not cut through."""
     from shapely.geometry import Point
     from shapely.ops import unary_union
     from gerber2rml.engine import soldermask
@@ -900,8 +933,12 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
         return [], outline
 
     only_key = frozenset(only) if only else None
+    _, h_art = art.size
+    art_boxes = (tuple(tuple(round(v, 4) for v in b)
+                       for b in _boxes_in_art(boxes, origin, h_art))
+                 if boxes else None)
     key = (recipe.offsets, round(recipe.kerf, 4), round(recipe.lines_per_cm, 2),
-           bool(recipe.spot_drills), only_key)
+           bool(recipe.spot_drills), only_key, art_boxes)
     cache = art._ring_cache
     if cache is None:
         cache = {}
@@ -917,6 +954,12 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
                    if 0 <= k < len(art.apertures)]
             if sel:
                 clip = unary_union(sel).buffer(recipe.stepover * 1.5)
+        if art_boxes:
+            region = boxes_region(art_boxes)
+            if region is None:
+                cache[key] = []
+            else:
+                clip = region if clip is None else clip.intersection(region)
         # Where copper reaches the board's edge, the grown shape is cut off
         # by the outline and its ring would follow the edge. There is nothing
         # past the edge to isolate from, so that part is not drawn.
@@ -934,7 +977,7 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
                     out += _clip_ring_to(part, inside)
             return out
         groups = []
-        for i in range(recipe.offsets):
+        for i in (range(recipe.offsets) if key not in cache else ()):
             d_i = recipe.kerf / 2 + i * recipe.stepover
             grown = cu.buffer(d_i).intersection(art.outline)
             rings = []
@@ -944,7 +987,7 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
                     rings += kept(list(intr.coords))
             if rings:
                 groups.append(_nearest_order(rings))
-        cache[key] = groups
+        cache.setdefault(key, groups)
 
     _, h = art.size
     bed_groups = [[to_bed(rg, origin, h) for rg in grp] for grp in cache[key]]
@@ -953,9 +996,20 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
     return bed_groups, outline
 
 
-def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
-    """One GS002 file to etch PCB copper traces on the F1 Ultra."""
+def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
+               boxes=None):
+    """One GS002 file to etch PCB copper traces on the F1 Ultra.
+
+    ``boxes`` (bed mm): a rework. Only the passes inside the boxes are run,
+    as the CNC's rework clips its pass, and the outline is not scored again."""
+    from dataclasses import replace as _replace
     from shapely.geometry import Polygon
+    region = None
+    if boxes:
+        region = boxes_region(boxes)
+        if region is None:
+            raise ValueError("Draw a rework box over the traces first.")
+        recipe = _replace(recipe, mark_outline=False)
 
     if recipe.strategy in ("moat", "rubout"):
         _, h = art.size
@@ -964,9 +1018,16 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
         for k, poly in enumerate(art.apertures):
             if pick is not None and k not in pick:
                 continue
-            shapes.append(Polygon(to_bed(list(poly.exterior.coords), origin, h),
-                                  [to_bed(list(r.coords), origin, h)
-                                   for r in poly.interiors]))
+            shape = Polygon(to_bed(list(poly.exterior.coords), origin, h),
+                            [to_bed(list(r.coords), origin, h)
+                             for r in poly.interiors])
+            if region is not None:
+                from gerber2rml.engine import soldermask
+                shapes += soldermask._polygons(shape.intersection(region))
+            else:
+                shapes.append(shape)
+        if region is not None and not shapes:
+            raise ValueError("No isolation inside the rework boxes.")
         _, outline = stencil_paths(art, origin)
         fill_r = FillRecipe(
             power=recipe.power, speed=recipe.speed, frequency=recipe.frequency,
@@ -975,8 +1036,10 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
             mark_outline=recipe.mark_outline, mark_power=recipe.mark_power)
         return fill_job(shapes, outline, fill_r)
 
-    groups, outline = traces_rings(art, origin, recipe, only=only)
+    groups, outline = traces_rings(art, origin, recipe, only=only, boxes=boxes)
     all_rings = [rg for grp in groups for rg in grp]
+    if region is not None and not all_rings:
+        raise ValueError("No isolation inside the rework boxes.")
     check_on_bed(all_rings + outline)
     park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
     body, secs, timeline = [], 0.0, []

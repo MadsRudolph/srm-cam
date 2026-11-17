@@ -2,6 +2,7 @@
 
     srm-cam-laser                      the last Gerber folder, or ask for one
     srm-cam-laser <gerber-folder>      that board: traces, mask, silkscreen, stencil
+    srm-cam-laser <board.dxf>          copper traces from a DXF drawing
     srm-cam-laser --job mask <folder>  open on that job
     srm-cam-laser --calibrate          the copper calibration window
 
@@ -87,7 +88,8 @@ def first_job(folder, prefer=None):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="srm-cam-laser", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("folder", nargs="?", type=Path)
+    ap.add_argument("folder", nargs="?", type=Path,
+                    help="a Gerber folder, or a .dxf of the copper")
     ap.add_argument("--job", choices=KINDS)
     ap.add_argument("--calibrate", action="store_true")
     a = ap.parse_args(argv)
@@ -112,6 +114,17 @@ def main(argv=None):
     if a.calibrate:
         from gerber2rml.gui2.copper_calibration import CopperCalibrationDialog
         CopperCalibrationDialog().exec()
+        return 0
+
+    if a.folder is not None and a.folder.suffix.lower() == ".dxf":
+        from gerber2rml.engine import dxf_traces, xtool
+        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+        try:
+            art = dxf_traces.build_dxf_traces(a.folder)
+        except xtool.TracesError as e:
+            QMessageBox.warning(None, "SRM-CAM laser", str(e))
+            return 1
+        StencilLaserDialog(art, None, name=a.folder.name, dxf=a.folder).exec()
         return 0
 
     cfg = QSettings(*_SETTINGS)

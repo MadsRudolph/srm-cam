@@ -1662,8 +1662,12 @@ class LaserPage(Page):
         self.traces_dxf_btn = widgets.button(
             "Write the traces DXF now…",
             on=ctl.action_write_laser_traces)
+        self.traces_from_dxf_btn = widgets.button(
+            "Etch traces from a DXF…", on=ctl.action_traces_laser_dxf,
+            tip="Copper drawn in another CAD program: no Gerber folder needed")
         sec_t.add(self.traces_run_btn)
         sec_t.add(self.traces_dxf_btn)
+        sec_t.add(self.traces_from_dxf_btn)
         self.add(sec_t)
 
         # 2. Solder mask
