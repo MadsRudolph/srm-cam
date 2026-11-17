@@ -9,7 +9,7 @@ Order: 0) airpass  1) drill  2) traces  3) cutout. Re-set Z-zero after each bit 
 Board mirrored for bottom-up milling: True.
 Estimated run time (excludes tool changes, spin-up and pauses):
    golden_rml_airpass.rml: ~38s
-   golden_rml_drill.rml: ~2m 41s
+   golden_rml_drill.rml: ~2m 17s
    golden_rml_traces.rml: ~14m 49s
    golden_rml_cutout.rml: ~5m 31s
-   TOTAL: ~23m 38s
+   TOTAL: ~23m 15s

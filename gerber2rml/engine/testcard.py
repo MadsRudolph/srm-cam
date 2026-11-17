@@ -165,3 +165,143 @@ def render_feed_ladder(machine="Roland SRM-20 (G-code)", plunge_feed=1.0,
     text = backend.render(paths, xy_feed=per_path[0], plunge_feed=plunge_feed,
                           travel_z=travel_z, xy_feeds=per_path)
     return text, bbox
+
+
+# --- Drill ladder: how fast can the bit go into the board? ------------------
+DRILL_FEEDS = (1.0, 1.5, 2.0, 3.0, 4.0, 5.0)     # plunge feed, mm/s (rows)
+DRILL_PECKS = (0.6, 0.9, 1.8)                    # peck depth, mm (column groups)
+
+
+def drill_ladder_card(feeds=DRILL_FEEDS, pecks=DRILL_PECKS, origin=(20.0, 20.0),
+                      holes_per_cell=4, pitch=2.54, row_pitch=4.0, group_gap=5.0,
+                      total_depth=1.8, peck_retract=0.5, travel_z=2.0,
+                      bit_diameter=0.8):
+    """A grid of plain plunged holes. Row r (front to back, +Y) is plunged at
+    ``feeds[r]``; column group g (left to right, +X) pecks ``pecks[g]`` deep.
+    A peck of ``total_depth`` or more is a single plunge.
+
+    Cut order is gentlest first: row by row from the front, groups left to
+    right. If the bit breaks, the last good hole marks the limit.
+
+    Returns (toolpaths, plunge_feeds, bbox, cells): one plunge feed per
+    toolpath, the (x0, y0, x1, y1) the scrap must cover, and per cell
+    ``(feed, peck, [(x, y), ...])`` for the legend."""
+    from types import SimpleNamespace
+    from gerber2rml.engine.drill import drill_holes
+    ox, oy = origin
+    group_w = (holes_per_cell - 1) * pitch + group_gap
+    paths, per_path, cells = [], [], []
+    for r, f in enumerate(feeds):
+        y = oy + r * row_pitch
+        for g, pk in enumerate(pecks):
+            x0 = ox + g * group_w
+            pts = [(x0 + k * pitch, y) for k in range(holes_per_cell)]
+            job = SimpleNamespace(total_depth=total_depth,
+                                  cut_depth=min(pk, total_depth),
+                                  peck_retract=peck_retract, travel_z=travel_z)
+            tps = drill_holes([(x, y, bit_diameter) for x, y in pts], job)
+            paths += tps
+            per_path += [float(f)] * len(tps)
+            cells.append((float(f), float(pk), pts))
+    xs = [m.x for tp in paths for m in tp]
+    ys = [m.y for tp in paths for m in tp]
+    margin = bit_diameter / 2.0 + 2.0
+    bbox = (min(xs) - margin, min(ys) - margin,
+            max(xs) + margin, max(ys) + margin)
+    return paths, per_path, bbox, cells
+
+
+def render_drill_ladder(machine="Roland SRM-20 (G-code)", xy_feed=4.0,
+                        **card_kwargs):
+    """Render the drill ladder to NC text. Returns (text, bbox, legend)."""
+    from gerber2rml.backends import BACKENDS
+    paths, per_path, bbox, cells = drill_ladder_card(**card_kwargs)
+    backend = BACKENDS[machine]
+    if "gcode" not in backend.render.__module__:
+        raise ValueError("drill ladder needs the G-code backend (per-path feeds)")
+    travel_z = card_kwargs.get("travel_z", 2.0)
+    text = backend.render(paths, xy_feed=xy_feed, plunge_feed=per_path[0],
+                          travel_z=travel_z, plunge_feeds=per_path,
+                          header=["drill ladder test card",
+                                  "rows front to back = plunge feed, "
+                                  "groups left to right = peck depth"])
+    lines = ["Drill ladder - plunge feed x peck depth",
+             f"Scrap must cover X {bbox[0]:.1f}..{bbox[2]:.1f}  "
+             f"Y {bbox[1]:.1f}..{bbox[3]:.1f} (machine mm); zero Z on the scrap.",
+             "Cut order: front row first, groups left to right (gentlest first).",
+             "",
+             f"{'row':>3}  {'plunge mm/s':>11}  {'peck mm':>7}  first hole X,Y"]
+    pecks = card_kwargs.get("pecks", DRILL_PECKS)
+    for i, (f, pk, pts) in enumerate(cells):
+        lines.append(f"{i // len(pecks) + 1:>3}  {f:>11g}  {pk:>7g}  "
+                     f"{pts[0][0]:.2f}, {pts[0][1]:.2f}")
+    return text, bbox, "\n".join(lines) + "\n"
+
+
+# --- Cut-out ladder: how few passes, how fast? -------------------------------
+CUTOUT_FEEDS = (4.0, 6.0, 8.0, 10.0, 12.0)       # XY feed, mm/s (rows)
+CUTOUT_PASSES = (3, 2, 1)                        # passes to full depth (columns)
+
+
+def cutout_ladder_card(feeds=CUTOUT_FEEDS, passes=CUTOUT_PASSES,
+                       origin=(104.0, 100.43), slot_len=10.0, col_gap=4.0,
+                       row_pitch=5.0, total_depth=2.0, travel_z=2.0,
+                       bit_diameter=0.8):
+    """Straight full-width slots, cut the way the cut-out cuts: plunge at the
+    start, run along at depth, step down, run back. Row r (front to back, +Y)
+    runs at ``feeds[r]``; column c (left to right) reaches ``total_depth`` in
+    ``passes[c]`` equal passes. Gentlest first: front row, left to right.
+
+    Returns (toolpaths, xy_feeds, bbox, cells) like the drill ladder."""
+    ox, oy = origin
+    paths, per_path, cells = [], [], []
+    for r, f in enumerate(feeds):
+        y = oy + r * row_pitch
+        for c, n in enumerate(passes):
+            x0 = ox + c * (slot_len + col_gap)
+            x1 = x0 + slot_len
+            tp = [Move(x0, y, travel_z, rapid=True)]
+            here = x0
+            for k in range(1, n + 1):
+                depth = total_depth * k / n
+                tp.append(Move(here, y, -depth))             # step down
+                here = x1 if here == x0 else x0
+                tp.append(Move(here, y, -depth))             # run along
+            tp.append(Move(here, y, travel_z, rapid=True))
+            paths.append(tp)
+            per_path.append(float(f))
+            cells.append((float(f), int(n), (x0, y), (x1, y)))
+    margin = bit_diameter / 2.0 + 2.0
+    xs = [m.x for tp in paths for m in tp]
+    ys = [m.y for tp in paths for m in tp]
+    bbox = (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
+    return paths, per_path, bbox, cells
+
+
+def render_cutout_ladder(machine="Roland SRM-20 (G-code)", plunge_feed=5.0,
+                         **card_kwargs):
+    """Render the cut-out ladder to NC text. Returns (text, bbox, legend)."""
+    from gerber2rml.backends import BACKENDS
+    paths, per_path, bbox, cells = cutout_ladder_card(**card_kwargs)
+    backend = BACKENDS[machine]
+    if "gcode" not in backend.render.__module__:
+        raise ValueError("cut-out ladder needs the G-code backend (per-path feeds)")
+    text = backend.render(paths, xy_feed=per_path[0], plunge_feed=plunge_feed,
+                          travel_z=card_kwargs.get("travel_z", 2.0),
+                          xy_feeds=per_path,
+                          header=["cut-out ladder test card",
+                                  "rows front to back = XY feed, "
+                                  "columns left to right = passes"])
+    depth = card_kwargs.get("total_depth", 2.0)
+    lines = ["Cut-out ladder - XY feed x passes to full depth",
+             f"Scrap must cover X {bbox[0]:.1f}..{bbox[2]:.1f}  "
+             f"Y {bbox[1]:.1f}..{bbox[3]:.1f} (machine mm); zero Z on the scrap.",
+             f"Every slot is {depth:g} mm deep. Cut order: front row first, "
+             "left to right (gentlest first).",
+             "",
+             f"{'row':>3}  {'XY mm/s':>7}  {'passes':>6}  {'mm/pass':>7}  slot from X,Y"]
+    per_row = len(card_kwargs.get("passes", CUTOUT_PASSES))
+    for i, (f, n, a, _b) in enumerate(cells):
+        lines.append(f"{i // per_row + 1:>3}  {f:>7g}  {n:>6}  {depth / n:>7.2f}  "
+                     f"{a[0]:.2f}, {a[1]:.2f}")
+    return text, bbox, "\n".join(lines) + "\n"
