@@ -4842,10 +4842,10 @@ class MainWindow(QMainWindow):
         """Open the xTool F1 Ultra dialog on the first available laser job."""
         st = self.state
         if st.board is None:
-            if self.plan is not None and self.plan.by_key("laser") is not None:
-                self.select_step("laser")
-            self.say("warn", "Load a Gerber folder first (or use Etch traces "
-                             "from a DXF in the xTool step).")
+            # Nothing loaded: the page opens on its own, to load a Gerber
+            # folder or a DXF there or to calibrate.
+            from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+            StencilLaserDialog(None, self).exec()
             return
         m = self._laser_board()
         last_err = None

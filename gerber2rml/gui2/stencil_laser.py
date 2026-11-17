@@ -418,9 +418,13 @@ class StencilLaserDialog(QDialog):
     """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork` or an
     :class:`xtool.LaserArt` (traces, solder mask, silkscreen, or stencil)."""
 
-    def __init__(self, art, parent=None, laser=None, name="stencil", jobs=None,
-                 dxf=None):
+    def __init__(self, art=None, parent=None, laser=None, name="stencil",
+                 jobs=None, dxf=None):
         super().__init__(parent)
+        self._empty = art is None           # nothing loaded: a calibration area
+        if art is None:
+            art = xtool.calibration_art()
+            name = "No job loaded"
         art = as_laser_art(art)
         self._dxf = Path(dxf) if dxf else None    # traces come from this DXF
         self._mode = "move"
@@ -572,7 +576,22 @@ class StencilLaserDialog(QDialog):
             tip="Copper traces from a DXF drawing instead of the Gerber folder: "
                 "closed shapes are copper, circles in pads are drills, the edge "
                 "goes on a layer named Edge.Cuts or Outline")
-        s.add(self.dxf_btn)
+        self.gerber_btn = widgets.button(
+            "Open Gerber folder…", kind="ghost", on=self.open_gerber,
+            tip="A KiCad Gerber folder: traces, mask, silkscreen and stencil")
+        s.add(_row(self.gerber_btn, self.dxf_btn))
+        self.empty_hint = widgets.hint(
+            "Nothing loaded. Open a Gerber folder or a DXF to etch, or drag the "
+            "calibration area onto the material and run Calibrate the camera "
+            "(Alignment) or the copper calibration.")
+        s.add(self.empty_hint)
+        self.empty_cal_btn = widgets.button(
+            "Copper calibration…", on=self.open_copper_calibration,
+            tip="Find the power, speed and passes that clear copper, a coupon "
+                "at a time")
+        s.add(self.empty_cal_btn)
+        self.empty_hint.setVisible(self._empty)
+        self.empty_cal_btn.setVisible(self._empty)
         self.copper_side = QComboBox()
         self.copper_side.addItem("B.Cu — bottom copper", "bottom")
         self.copper_side.addItem("F.Cu — top copper", "top")
@@ -1048,6 +1067,34 @@ class StencilLaserDialog(QDialog):
         self._sync_warnings()
         self._sync_recipe_widgets()
 
+    def open_gerber(self):
+        """A Gerber folder's jobs on the page, as srm-cam-laser opens them."""
+        from PySide6.QtWidgets import QFileDialog
+        from gerber2rml.gui2.laser_app import first_job, job_builder
+        cfg = QSettings(*_SETTINGS)
+        picked = QFileDialog.getExistingDirectory(
+            self, "Gerber folder for the laser", str(cfg.value("gerber_dir", "")))
+        if not picked:
+            return
+        folder = Path(picked)
+        cfg.setValue("gerber_dir", str(folder))
+        try:
+            kind, _art = first_job(folder, "traces")
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        self._jobs = job_builder(folder)
+        self._dxf = None
+        self._trace_side = None             # the face with the most copper
+        self._empty = False
+        self.name_lbl.setText(folder.name)
+        self.switch_kind(kind, force=True)
+        self._sync_empty()
+        self._say(f"Opened {folder.name}: {self.k['window']}.")
+
+    def _sync_empty(self):
+        for w in (self.empty_hint, self.empty_cal_btn):
+            w.setVisible(self._empty)
+
     def open_dxf(self):
         """Copper traces from a DXF: the drawing as seen from above, F.Cu."""
         from PySide6.QtWidgets import QFileDialog
@@ -1069,6 +1116,8 @@ class StencilLaserDialog(QDialog):
     def load_dxf_art(self, art, path):
         """Show ``art``, read from the DXF at ``path``, as the traces job."""
         self._dxf = Path(path)
+        self._empty = False
+        self._sync_empty()
         self.name_lbl.setText(self._dxf.name)
         self._trace_side = as_laser_art(art).side
         if self.kind != "traces":
@@ -1082,8 +1131,8 @@ class StencilLaserDialog(QDialog):
                   f"hole{'' if n == 1 else 's'}. The copper face switch "
                   f"changes it.")
 
-    def switch_kind(self, kind):
-        if kind == self.kind:
+    def switch_kind(self, kind, force=False):
+        if kind == self.kind and not force:
             return
         try:
             if kind == "traces" and (self._trace_side is not None
@@ -1096,7 +1145,8 @@ class StencilLaserDialog(QDialog):
             elif self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
                 new_art = self.parent()._laser_art_for(kind)
             else:
-                raise RuntimeError(f"No {KINDS[kind]['window']} job is loaded.")
+                raise RuntimeError(f"No {KINDS[kind]['window']} job is loaded: "
+                                   f"open a Gerber folder first.")
         except Exception as e:                  # noqa: BLE001 - shown in status bar
             self.job_switch.set_current(self.kind)
             self._say(str(e), warn=True)
@@ -1976,6 +2026,17 @@ class StencilLaserDialog(QDialog):
         holes = len(self.base_art.drills or []) >= 2
         self.proof_btn.setText("Calibrate and lock onto the holes" if holes
                                else "Calibrate the camera")
+        if getattr(self, "_empty", False):
+            self.proof_hint.setText(
+                "The laser makes a few faint marks inside the calibration area "
+                "and photographs them: where they land corrects the camera. Drag "
+                "the area onto the material first.")
+            for w in (self.proof_hint, self.proof_btn):
+                w.setVisible(True)
+            self.proof_more.setVisible(False)       # the marks go in the area
+            if hasattr(self, "rework_section"):
+                self.rework_section.setVisible(False)
+            return
         self.proof_hint.setText(
             "The laser makes a few faint marks and photographs them: where they "
             "land corrects the camera, so the photo shows where it really fires. "
@@ -1998,6 +2059,8 @@ class StencilLaserDialog(QDialog):
 
     def _proof_plans(self):
         """The marks to try, best first, for the choice under Proof options."""
+        if self._empty:
+            return [xtool.proof_in_area(self.art, self.origin(), self.recipe())], False
         want = self.proof_where.currentData()
         recipe, plans, errors = self.recipe(), [], []
         for where, build in (("waste", xtool.proof_in_waste),
@@ -2061,8 +2124,8 @@ class StencilLaserDialog(QDialog):
 
         def done(res):
             plan, raw_b, m, a, new = res
-            where = ("the waste beside the board" if plan.where == "waste"
-                     else "the isolation")
+            where = {"waste": "the waste beside the board",
+                     "area": "the calibration area"}.get(plan.where, "the isolation")
             self._last_proof = None
             if not m.ok:
                 self.show_bed(self._photo(_PX_PER_MM, raw_b))
@@ -2080,8 +2143,10 @@ class StencilLaserDialog(QDialog):
             said = (f"Proof on {m.found} marks in {where}: the camera was "
                     f"{cam_mm:.2f} mm off and is corrected.")
             if not holes:
-                msg = (said + " No drilled holes, so the job stays where it is: "
-                       "check it on the photo, then etch.")
+                msg = said + (" Open a Gerber folder or DXF and place it on the "
+                          "photo." if self._empty else
+                          " No drilled holes, so the job stays where it is: "
+                          "check it on the photo, then etch.")
                 self._last_proof = {"where": plan.where, "camera": (m.dx, m.dy)}
                 self.proof_note.setText(msg)
                 self.proof_note.setVisible(True)
@@ -2271,6 +2336,9 @@ class StencilLaserDialog(QDialog):
 
     def _fill(self):
         """A traces, solder mask, or silkscreen job."""
+        if self._empty:
+            return self._say("Nothing loaded to etch: open a Gerber folder or a "
+                             "DXF first.", warn=True)
         try:
             if self.kind == "traces":
                 job = xtool.traces_job(
