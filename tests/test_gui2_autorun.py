@@ -876,3 +876,50 @@ def test_left_in_the_sheet_a_double_sided_board_is_flipped_and_finished(
     assert any("top" in k for k in jobs)
     assert not any("cutout" in k for k in jobs)
     page.nocut_chk.setChecked(False)
+
+
+def test_traces_on_the_laser_drills_and_cuts_out_only(win, qt_app):
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.on_stock_click(110.0, 80.0)
+    assert not page.laser_chk.isChecked()              # never left on
+    assert any("traces" in k for k, _t in page._plan_rows())
+    page.level_chk.setChecked(True)
+    page.laser_chk.setChecked(True)
+    keys = [k for k, _t in page._plan_rows()]
+    assert not any("traces" in k for k in keys)
+    assert any("drill" in k for k in keys) and any("cutout" in k for k in keys)
+    assert not page.level_chk.isChecked() and not page.check_chk.isEnabled()
+    assert all("traces" not in str(page.start_box.itemData(i))
+               for i in range(page.start_box.count()))
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    page.start()
+    assert _wait(qt_app, lambda: bool(done), 120), "the run never finished"
+    assert done[0][0], done[0][1]
+    sent = sorted(p.name for p in page.run_dir.glob("*.nc"))
+    assert len(sent) == 2 and not any("trace" in n for n in sent), sent
+    page.laser_chk.setChecked(False)                   # as it was found
+    assert page.level_chk.isChecked() and not win._traces_on_laser
+    assert any("traces" in k for k, _t in page._plan_rows())
+
+
+def test_traces_on_the_laser_needs_no_flip_on_a_double_sided_board(win, qt_app):
+    win.inspector.setup.double.setChecked(True)
+    assert win._double
+    win.select_step("autorun")
+    page = win.autorun_page
+    said = []
+    win.say = lambda level, text: said.append((level, text))
+    page.laser_chk.setChecked(True)
+    assert not win._double and not win.inspector.setup.double.isChecked()
+    assert said and "single-sided" in said[-1][1]
+    keys = [k for k, _t in page._plan_rows()]
+    assert "flip" not in keys and not any("traces" in k for k in keys)
+    # Both faces are still there for the laser.
+    assert win._laser_art_for("traces", side="top").side == "top"
+    page.laser_chk.setChecked(False)
