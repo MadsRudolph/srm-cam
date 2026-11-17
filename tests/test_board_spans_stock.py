@@ -130,3 +130,44 @@ def test_copper_in_both_strips_is_refused():
     run, log = _run(Spanning(pad_at=("min", "max")))
     with pytest.raises(RunFailed, match="cut copper in two"):
         run.run()
+
+
+def test_in_the_bracket_the_side_cuts_stop_short_of_its_bar():
+    """The side cuts run edge to edge; one edge is against the bracket's
+    bar. Refused before 2026-11-17 ("would run off the stock into the
+    bracket"); now each stops short and leaves a tab."""
+    from gerber2rml.engine.bracket import path_hit
+    cx, cy = 41.3, 27.8                       # the stock's front-left corner
+    arms = [(cx - 10, cy - 10, cx + 51, cy),  # front bar
+            (cx - 10, cy - 10, cx, cy + 51)]  # left bar
+    sm.machine(speedup=1e6, corner=(41300, 27800), angle_deg=0.0,
+               size=(100000, 80000))
+    ser = spi_probe.open_link("SIM")
+    src, log = Spanning(), Log()
+    log.notes = []
+    log.note = log.notes.append
+    run = AutoRun(ser, sm.printer(), src, log, click_mm=(90, 70),
+                  stock_mm=(100, 80), double=False, runner_opts=FAST,
+                  level=False, datum=(cx, cy, "front-left"), arms=arms)
+    src.pose = None
+    real = run._find_stock
+
+    def find(key):
+        real(key)
+        src.pose = run.pose
+    run._find_stock = find
+    sent = []
+    real_leave = run._leave_out
+
+    def leave(key, paths):
+        out = real_leave(key, paths)
+        if "cutout" in key:
+            sent.append(out[0])
+        return out
+    run._leave_out = leave
+    assert run.run() is True
+    assert ("cutout", "done") in log.steps
+    assert any("thin tab" in n for n in log.notes)
+    for paths in sent:
+        for arm in arms:
+            assert path_hit(paths, arm, 0.8 / 2.0 + 0.1) is None

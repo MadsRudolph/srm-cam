@@ -25,6 +25,11 @@ tongue reaches over the stock, so the bit must stay out from under it
 (:meth:`Bracket.keepout`). Only the back-right part exists; the other corners
 are that shape mirrored.
 
+The plain bracket is the same L without the tongue (``tongue=False``): a
+straight inside corner with nothing over the stock, so no keepout. The probe
+wire is then clipped to the copper by hand. It is assumed to sit in the holes
+exactly as the printed one does; "Find it with the bit" checks that.
+
 The two front corners are not measured: they use their side's offset, mirrored.
 """
 from dataclasses import dataclass
@@ -63,6 +68,7 @@ class Bracket:
     i: int
     j: int
     corner: str = DEFAULT_CORNER
+    tongue: bool = True      # False: the plain L, nothing over the stock
 
     def _local(self, u, v, grid):
         """Bracket-local (u, v) mm -> machine (x, y). The origin is the
@@ -85,14 +91,17 @@ class Bracket:
         grid = grid or spoilboard.measured_grid()
         w = BAR_W
         u0, u1 = TONGUE_U
-        local = [(-w, -w), (ARM_X - w, -w), (ARM_X - w, 0.0), (u1, 0.0),
-                 (u1, TONGUE_V), (u0, TONGUE_V), (u0, 0.0), (0.0, 0.0),
-                 (0.0, ARM_Y - w), (-w, ARM_Y - w)]
+        tongue = ([(u1, 0.0), (u1, TONGUE_V), (u0, TONGUE_V), (u0, 0.0)]
+                  if self.tongue else [])
+        local = ([(-w, -w), (ARM_X - w, -w), (ARM_X - w, 0.0)] + tongue
+                 + [(0.0, 0.0), (0.0, ARM_Y - w), (-w, ARM_Y - w)])
         return [self._local(u, v, grid) for u, v in local]
 
     def keepout(self, grid=None):
         """(x0, y0, x1, y1) machine mm the bit must stay out of: the tongue
-        over the stock, with its clearance."""
+        over the stock, with its clearance. None for the plain bracket."""
+        if not self.tongue:
+            return None
         grid = grid or spoilboard.measured_grid()
         c = TONGUE_CLEARANCE
         ax, ay = self._local(TONGUE_U[0] - c, 0.0, grid)
@@ -141,14 +150,14 @@ def fits(bracket, grid=None, bed=None):
     return True
 
 
-def snap(x, y, corner=DEFAULT_CORNER, grid=None, bed=None):
+def snap(x, y, corner=DEFAULT_CORNER, grid=None, bed=None, tongue=True):
     """The position it can be screwed into whose inside corner is nearest
     (x, y), or None if it fits nowhere."""
     grid = grid or spoilboard.measured_grid()
     best, best_d = None, None
     for j in range(grid.ny):
         for i in range(grid.nx):
-            b = Bracket(i, j, corner)
+            b = Bracket(i, j, corner, tongue)
             if not fits(b, grid, bed):
                 continue
             cx, cy = b.inside_corner(grid)
@@ -165,15 +174,20 @@ OLD_DEFAULT = Bracket(1, 12, "back-left")
 
 
 def to_text(b):
-    return "%d,%d,%s" % (b.i, b.j, b.corner)
+    text = "%d,%d,%s" % (b.i, b.j, b.corner)
+    return text if b.tongue else text + ",plain"
 
 
 def from_text(raw):
-    """A saved ``"i,j,corner"``, or None if it is not one."""
+    """A saved ``"i,j,corner"`` (``",plain"`` after it for the plain
+    bracket), or None if it is not one."""
     try:
-        i, j, c = str(raw or "").split(",")
-        if c in CORNERS:
-            return Bracket(int(i), int(j), c)
+        parts = str(raw or "").split(",")
+        if len(parts) == 3:
+            parts.append("probe")
+        i, j, c, kind = parts
+        if c in CORNERS and kind in ("probe", "plain"):
+            return Bracket(int(i), int(j), c, kind == "probe")
     except ValueError:
         pass
     return None
@@ -516,3 +530,113 @@ def joined_nets(copper, nets, paths, sheet, radius):
                 names.setdefault(int(i), set()).update(net)
                 break
     return [sorted(n) for n in names.values() if len(n) > 1]
+
+
+# -- a cut-out that runs into the bracket's bars ----------------------------
+#
+# A board that spans its stock (engine/autorun.py, ``spans_stock``) is cut
+# on two sides only, and those cuts run the stock's full length - from one
+# edge of the sheet to the other. In the bracket, one of those edges is
+# against a bar, and the cutter cannot reach it without cutting the bar. So
+# the cut stops short of it, and what is left is a tab the width of the
+# clearance, broken or cut free by hand afterwards.
+
+# How high the bit travels, above the copper, in a cut-out that stops at the
+# bracket: its hops run past the bars, their screw heads and any clamp, all
+# taller than the usual 2 mm travel height.
+TAB_HOP_LIFT_MM = 10.0
+
+
+def tabs(paths, rects, inside=None, lift=TAB_HOP_LIFT_MM):
+    """``paths`` with every cutting move inside any of ``rects`` taken out.
+
+    ``rects`` is ``[((x0, y0, x1, y1), grow), ...]`` as for :func:`avoid`,
+    but unlike it each move keeps its own depth: a cut-out goes down in
+    passes. The pass lifts to its travel height at the zone's edge and comes
+    back down where it leaves it. A hop between passes that would cross a
+    bar - they stand taller than the travel height - is led round it,
+    staying inside ``inside`` (the stock). Returns ``(paths, tabs)``: the
+    new toolpaths and how many places a cut was stopped short. When any
+    cut is stopped short, every travel move of the job goes up to ``lift``
+    mm above the copper; the plunges still rapid down to just above it
+    (leadin.fast_approach)."""
+    from shapely.geometry import LineString, Point
+    from shapely.ops import unary_union
+    from gerber2rml.toolpath import Move
+    if not rects or not paths:
+        return paths, 0
+    zone = unary_union([_zone(r, g + AVOID_SPARE_MM) for r, g in rects])
+    out, stops = [], set()
+    for tp in paths:
+        cut = [m for m in tp if not m.rapid]
+        if len(cut) < 2 or not LineString(
+                [(m.x, m.y) for m in tp]).intersects(zone):
+            out.append(tp)
+            continue
+        travel = max(m.z for m in tp)
+        new = []
+        down = None           # (x, y, z) where the bit is, cutting
+        for a, b in zip(tp, tp[1:]):
+            if b.rapid:
+                if down is not None:
+                    new.append(Move(down[0], down[1], travel, rapid=True))
+                    down = None
+                continue
+            if (a.x, a.y) == (b.x, b.y):          # a plunge
+                if not zone.contains(Point(b.x, b.y)):
+                    if down is None:
+                        new.append(Move(b.x, b.y, travel, rapid=True))
+                    new.append(Move(b.x, b.y, b.z))
+                    down = (b.x, b.y, b.z)
+                continue
+            seg = LineString([(a.x, a.y), (b.x, b.y)])
+            kept = seg.difference(zone)
+            parts = [g for g in getattr(kept, "geoms", [kept])
+                     if g.geom_type == "LineString" and g.length > 1e-6]
+            parts.sort(key=lambda g: seg.project(Point(g.coords[0])))
+            if kept.length < seg.length - 1e-6:
+                for g in parts:
+                    for x, y in (g.coords[0], g.coords[-1]):
+                        if zone.distance(Point(x, y)) < 1e-3:
+                            stops.add((round(x), round(y)))
+            for g in parts:
+                (x0, y0), (x1, y1) = g.coords[0], g.coords[-1]
+                t0 = seg.project(Point(x0, y0)) / seg.length
+                t1 = seg.project(Point(x1, y1)) / seg.length
+                z0 = a.z + (b.z - a.z) * t0
+                z1 = a.z + (b.z - a.z) * t1
+                if down is None or abs(down[0] - x0) > 1e-6 \
+                        or abs(down[1] - y0) > 1e-6:
+                    if down is not None:
+                        new.append(Move(down[0], down[1], travel, rapid=True))
+                    new.append(Move(x0, y0, travel, rapid=True))
+                    new.append(Move(x0, y0, z0))
+                new.append(Move(x1, y1, z1))
+                down = (x1, y1, z1)
+            if parts and (abs(down[0] - b.x) > 1e-6
+                          or abs(down[1] - b.y) > 1e-6):
+                new.append(Move(down[0], down[1], travel, rapid=True))
+                down = None
+            elif not parts and down is not None:
+                new.append(Move(down[0], down[1], travel, rapid=True))
+                down = None
+        if down is not None:
+            new.append(Move(down[0], down[1], travel, rapid=True))
+        if any(not m.rapid for m in new):
+            out.append(new)
+    if inside is not None:
+        checked = [_zone(r, g) for r, g in rects]
+        for i in range(1, len(out)):
+            a, b = out[i - 1][-1], out[i][0]
+            travel = max(m.z for m in out[i])
+            way = _round((a.x, a.y), (b.x, b.y), checked, inside)
+            if way == []:
+                from gerber2rml.engine.nogo import route
+                way = route((a.x, a.y), (b.x, b.y), checked, inside) or []
+            if way:
+                out[i] = ([Move(x, y, travel, rapid=True) for x, y in way]
+                          + list(out[i]))
+    if stops and lift is not None:
+        out = [[Move(m.x, m.y, max(m.z, lift), rapid=True) if m.rapid else m
+                for m in tp] for tp in out]
+    return out, len(stops)
