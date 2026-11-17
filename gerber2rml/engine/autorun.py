@@ -171,9 +171,11 @@ class JobSource:
         """``[(key, label)]`` after the flip; [] single-sided."""
         return []
 
-    def place(self, pose, margin_mm):
+    def place(self, pose, margin_mm, flush=None):
         """Put the board on the stock: its corner at the stock corner plus
-        ``margin_mm``, unrotated."""
+        ``margin_mm``, unrotated. ``flush`` ``(fx, fy)``: per axis None, or
+        ``"min"``/``"max"`` to put that edge of the board on the stock's
+        edge instead (a board that spans the stock that way)."""
         raise NotImplementedError
 
     def extent(self, side):
@@ -252,6 +254,34 @@ def fills_stock(bw, bh, sw, sh, tol=SHEET_EDGE_MM):
     itself: each side within ``tol``, the same tolerance the cut-out uses to
     call a board edge "on the sheet's edge" and leave it uncut."""
     return abs(bw - sw) <= tol and abs(bh - sh) <= tol
+
+
+def spans_stock(bw, bh, sw, sh, tol=SHEET_EDGE_MM):
+    """``(across, along)``: does a ``bw`` x ``bh`` board reach the
+    ``sw`` x ``sh`` stock's two edges in X, and in Y - as big as the stock
+    there, or bigger. Bigger is a board drawn past its sheet (the synth's
+    brain, 101.6 mm on 100 mm stock): the sheet's edge is its edge, and the
+    strip past it is simply not there."""
+    return bw >= sw - tol, bh >= sh - tol
+
+
+def strip_damage(geoms, strip):
+    """How many pieces of copper in ``geoms`` the ``strip`` (a polygon of
+    what is not there) takes away whole or cuts in two. Nothing for a strip
+    of pour edge; something for a trace or a pad that runs through it."""
+    def parts(g):
+        if g is None or g.is_empty:
+            return []
+        return list(getattr(g, "geoms", [g]))
+    hurt = 0
+    for g in geoms:
+        for piece in parts(g):
+            if not piece.intersects(strip):
+                continue
+            left = piece.difference(strip)
+            if left.is_empty or len(parts(left)) > 1:
+                hurt += 1
+    return hurt
 
 
 def about(cx, cy, deg):
@@ -359,15 +389,26 @@ class AutoRun:
         p = self.pose
         x0, y0, x1, y1 = self.src.extent("bottom")
         self.whole = not self.double and fills_stock(x1 - x0, y1 - y0, p.w, p.h)
-        self.src.place(self.pose, 0.0 if self.whole else self.margin)
+        span = ((False, False) if self.double or self.whole else
+                spans_stock(x1 - x0, y1 - y0, p.w, p.h))
+        if any(span):
+            # As big as the stock one way, or bigger: the sheet's edges are
+            # the board's edges that way, and only the other two are cut.
+            flush = self._flush((x0, y0, x1, y1), span)
+            self.src.place(self.pose, self.margin, flush=flush)
+            self.whole = True
+        else:
+            self.src.place(self.pose, 0.0 if self.whole else self.margin)
         self.rotation = about(self.pose.x, self.pose.y, self.pose.angle)
         if self.whole:
             # The board IS the piece of stock: its edge is the stock's edge
             # and is not cut (the cut-out leaves out what lies on the sheet's
             # edge). What has to land on the copper, clear of the bracket, is
             # what the bit cuts, so that is what the gates below look at.
-            self.ev.note("The board is the whole piece of stock: its edge is "
-                         "left as it is, and only what lies inside it is cut.")
+            if not any(span):
+                self.ev.note("The board is the whole piece of stock: its edge "
+                             "is left as it is, and only what lies inside it "
+                             "is cut.")
             reach = self._cut_reach(self.src.bottom_steps())
             if reach is None:
                 raise RunFailed("the board fills the stock, and there is "
@@ -734,6 +775,71 @@ class AutoRun:
             self.ev.note("Once flipped, %.0f mm of the top's isolation lies "
                          "under the bracket and is left uncut. Milled out on "
                          "paper, it joins no nets." % left)
+
+    def _flush(self, ext, span):
+        """``(fx, fy)``: for each way the board spans the stock, which of its
+        edges is put on the stock's edge - ``"min"`` (front or left) or
+        ``"max"`` (back or right); None the other way, which keeps its
+        margin. The other edge hangs off, and whatever lies in that strip is
+        lost: it goes where that loses no copper - a strip of pour edge, not
+        a trace - on either face. Refused when both sides would."""
+        p = self.pose
+        x0, y0, x1, y1 = ext
+        geoms = []
+        for face in ("bottom", "top"):
+            try:
+                g = self.src.copper_nets(face, fitted=False)[0]
+            except Exception:   # a single-sided job has no top to give
+                g = None
+            if g is not None:
+                geoms.append(g)
+        if not geoms and any(
+                (hi - lo) - s > SHEET_EDGE_MM
+                for on, lo, hi, s in ((span[0], x0, x1, p.w),
+                                      (span[1], y0, y1, p.h)) if on):
+            # With no copper to look at, nothing says the strip that would
+            # hang off is empty.
+            raise RunFailed(
+                "the job is %.1f × %.1f mm and this stock is %.1f × %.1f mm. "
+                "Use a bigger piece." % (x1 - x0, y1 - y0, p.w, p.h))
+        from shapely.geometry import box
+        out = []
+        for axis, spans in enumerate(span):
+            if not spans:
+                out.append(None)
+                continue
+            lo, hi = (x0, x1) if axis == 0 else (y0, y1)
+            over = (hi - lo) - (p.w if axis == 0 else p.h)
+            if over <= SHEET_EDGE_MM:
+                out.append("min")           # the stock's size: both edges on
+                continue
+            far = 1e4
+
+            def strip(a, b):
+                return (box(a, -far, b, far) if axis == 0
+                        else box(-far, a, far, b))
+            lose_lo = strip_damage(geoms, strip(lo - 1.0, lo + over))
+            lose_hi = strip_damage(geoms, strip(hi - over, hi + 1.0))
+            names = (("left", "right") if axis == 0 else ("front", "back"))
+            if lose_lo and lose_hi:
+                raise RunFailed(
+                    "the board is %.1f mm bigger than the stock %s, and either "
+                    "way %.1f mm of it hanging off the %s or the %s edge would "
+                    "cut copper in two. Use a bigger piece."
+                    % (over, "across" if axis == 0 else "from front to back",
+                       over, names[0], names[1]))
+            # Kept edge on the stock's edge; the strip with nothing in it
+            # hangs off. Front or left when both are free.
+            side = "max" if not lose_lo else "min"
+            out.append(side)
+            self.ev.note(
+                "The board is %.1f mm %s than the stock: its %s edge is put on "
+                "the stock's edge and the %s %.1f mm hang off, so those edges "
+                "are the sheet's own and only the other two are cut."
+                % (over, "wider" if axis == 0 else "longer",
+                   names[1] if side == "max" else names[0],
+                   names[0] if side == "max" else names[1], over))
+        return tuple(out)
 
     def _reach(self, side):
         """What has to be on the stock: the job's extent, outline and all -

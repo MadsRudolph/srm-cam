@@ -117,6 +117,11 @@ class WindowSource(ar.JobSource):
         def go():
             w = self.w
             b = w.state.board
+            if side == "top" and not w._double:
+                # Milled as one side (traces on the laser): the top is not
+                # cut here, but it is still on the board, as drawn.
+                return (getattr(b, "copper_top", None),
+                        getattr(b, "copper_top_nets", None))
             if side == "top":
                 g = w._ds_layout().top_copper
                 nets = w._nets_aligned(getattr(b, "copper_top_nets", None),
@@ -167,7 +172,7 @@ class WindowSource(ar.JobSource):
         return self.gui(lambda: [(s.key, s.title)
                                  for s in self._plan_steps()[1]])
 
-    def place(self, pose, margin_mm):
+    def place(self, pose, margin_mm, flush=None):
         def go():
             w = self.w
             b = w.work_extent()
@@ -195,6 +200,13 @@ class WindowSource(ar.JobSource):
                 ox, oy = b[0] - sx, b[1] - sy
             else:
                 ox = oy = margin_mm
+            # A board as big as the stock one way, or bigger, has one edge on
+            # the stock's edge that way; the other hangs off (run._flush).
+            fx, fy = flush or (None, None)
+            if fx is not None:
+                ox = 0.0 if fx == "min" else pose.w - (b[2] - b[0])
+            if fy is not None:
+                oy = 0.0 if fy == "min" else pose.h - (b[3] - b[1])
             w.action_place(st.place_x + pose.x + ox - b[0],
                            st.place_y + pose.y + oy - b[1])
             w.action_stock(pose.w, pose.h, pose.x, pose.y, show=True)
