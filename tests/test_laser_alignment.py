@@ -308,6 +308,27 @@ def test_change_between_photos_is_found_whatever_the_board_looks_like():
     assert not nothing.ok and nothing.found == 0
 
 
+def test_waste_is_found_though_an_inside_point_lands_on_a_hole():
+    """The output board: marks by the corner mounting holes put their inside
+    points on the 3.2 mm holes, dark. There is still waste outside."""
+    art, origin, ppm, shape = _board(), (50.0, 60.0), 8, (1200, 1200)
+    proof = xtool.proof_in_waste(art, origin)
+    holes = [Point(q).buffer(1.6) for q in proof.inside[:2]]   # two land on holes
+    img = _scene(shape, ppm, dark=holes)
+    assert cam.sheet_continues(img, ppm, proof.spots, proof.inside)
+
+
+def test_isolation_marks_are_filled_not_traced():
+    art, origin = _board(), (50.0, 60.0)
+    proof = xtool.proof_on_isolation(art, origin)
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    burnt = unary_union([LineString(p).buffer(0.03) for p in proof.paths])
+    marks = unary_union(proof.marks)
+    assert burnt.intersection(marks).area > 0.6 * marks.area     # covered, not outlined
+    assert burnt.difference(marks.buffer(0.05)).area < 0.05       # only on the bands
+
+
 def test_sheet_continues_only_where_there_is_material():
     art, origin, ppm, shape = _board(), (50.0, 60.0), 8, (1200, 1200)
     proof = xtool.proof_in_waste(art, origin)

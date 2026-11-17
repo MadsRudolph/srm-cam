@@ -1161,19 +1161,15 @@ def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
                          "round them, so there is nothing to mark there.")
     keys = list(bands)
     keys = [keys[k] for k in spread([centres[i] for i in keys], n)]
-    discs = unary_union([Point(centres[i]).buffer(radius, quad_segs=16) for i in keys])
-    groups, _ = traces_rings(art, origin, recipe)
-    bx0, by0, bx1, by1 = discs.bounds
-    paths = []
-    for grp in groups:
-        for ring in grp:
-            xs, ys = [q[0] for q in ring], [q[1] for q in ring]
-            if max(xs) < bx0 or min(xs) > bx1 or max(ys) < by0 or min(ys) > by1:
-                continue
-            paths += _clip_ring_to(ring, discs)
+    # Filled, not traced: the isolation rings alone burned thin lines round
+    # each hole that the camera could hardly tell from the copper. Hatched
+    # like the waste squares, the whole band changes.
+    marks = [bands[i] for i in keys]
+    step = max(recipe.stepover, 0.02)
+    paths = [[a, b] for a, b in hatch(marks, step, one_way=False)]
     if not paths:
-        raise ValueError("No isolation passes fall where the marks would go.")
-    return Proof("isolation", paths, [bands[i] for i in keys])
+        raise ValueError("No isolation falls where the marks would go.")
+    return Proof("isolation", paths, marks)
 
 
 def proof_in_waste(art, origin, recipe=None, *, margin=PROOF_WASTE_MARGIN,

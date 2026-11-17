@@ -456,22 +456,38 @@ def locate_change(before, after, px_per_mm, marks, *, search_mm=3.0, min_level=8
     return ChangeFit(dx_mm, dy_mm, found, len(marks), s, level)
 
 
-def sheet_continues(rgb, px_per_mm, spots, inside, *, tolerance=28.0):
-    """Whether the material under each of ``spots`` (bed mm points outside the
-    board) looks like the board itself at the matching ``inside`` points: the
-    board is still in a bigger sheet, so there is waste to mark."""
+MATERIAL_MIN = 100.0     # brightness: below this a spot is the dark bed
+MATERIAL_SHARE = 0.5     # of the board's own brightness
+
+
+def sheet_continues(rgb, px_per_mm, spots, inside):
+    """Whether there is material under each of ``spots`` (bed mm points
+    outside the board): the board is still in a bigger sheet, so there is
+    waste to mark.
+
+    Material is bright and the bed is dark. A spot counts when it is bright in
+    itself and at least half as bright as the board, judged by the brightest
+    of the ``inside`` points (plain copper; another may land on a hole). It
+    used to have to match its own inside point in colour, and next to the
+    corners' mounting holes that point was the hole: the output board read as
+    having no waste and was marked on the isolation instead."""
     if not spots or len(spots) != len(inside):
         return False
     H, W = rgb.shape[:2]
     r = max(2, int(0.6 * px_per_mm))
 
-    def patch(p):
+    def lum(p):
         c, row = int(round(p[0] * px_per_mm)), int(round(p[1] * px_per_mm))
         if not (r <= c < W - r and r <= row < H - r):
             return None
-        return rgb[row - r:row + r + 1, c - r:c + r + 1].reshape(-1, 3).astype(np.float32).mean(axis=0)
-    for a, b in zip(spots, inside):
-        pa, pb = patch(a), patch(b)
-        if pa is None or pb is None or float(np.abs(pa - pb).max()) > tolerance:
+        q = rgb[row - r:row + r + 1, c - r:c + r + 1].reshape(-1, 3).astype(np.float32)
+        return float(q.mean(axis=0) @ np.array([0.299, 0.587, 0.114], np.float32))
+    board = [v for v in (lum(q) for q in inside) if v is not None]
+    if not board:
+        return False
+    need = max(MATERIAL_MIN, MATERIAL_SHARE * max(board))
+    for a in spots:
+        v = lum(a)
+        if v is None or v < need:
             return False
     return True
