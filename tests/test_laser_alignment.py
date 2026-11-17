@@ -252,6 +252,36 @@ def test_isolation_proof_marks_only_copper_the_job_removes():
     assert "G22" in text and secs < 5
 
 
+@pytest.mark.parametrize("grow", [0.0, 0.1, 0.2, 0.3])
+def test_a_burn_wider_than_its_mark_is_found_at_its_middle(grow):
+    """At the machine every mark burns a little wider than drawn. The fit must
+    land on the burn's middle, not on a corner of the equally good shifts."""
+    art, origin, ppm, shape = _board(), (50.0, 60.0), 8, (1200, 1200)
+    proof = xtool.proof_in_waste(art, origin)
+    from shapely.affinity import translate
+    before = _scene(shape, ppm)
+    after = _scene(shape, ppm, marks=[translate(m, 0.6, -0.9).buffer(grow, join_style=2)
+                                      for m in proof.marks])
+    fit = cam.locate_change(before, after, ppm, proof.marks)
+    assert fit.ok and fit.found == len(proof.marks)
+    assert (fit.dx, fit.dy) == pytest.approx((0.6, -0.9), abs=0.05)
+
+
+def test_a_burn_smeared_one_way_is_found_at_its_middle():
+    """Smeared 0.3 mm down (+Y), as at the machine: the middle of the burn."""
+    art, origin, ppm, shape = _board(), (50.0, 60.0), 8, (1200, 1200)
+    proof = xtool.proof_in_waste(art, origin)
+    from shapely.geometry import box as b
+    burns = []
+    for m in proof.marks:
+        x0, y0, x1, y1 = m.bounds
+        burns.append(b(x0, y0, x1, y1 + 0.3))
+    fit = cam.locate_change(_scene(shape, ppm), _scene(shape, ppm, marks=burns),
+                            ppm, proof.marks)
+    assert fit.ok
+    assert (fit.dx, fit.dy) == pytest.approx((0.0, 0.15), abs=0.05)
+
+
 def test_waste_proof_sits_outside_the_outline_and_on_the_bed():
     art, origin = _board(), (50.0, 60.0)
     proof = xtool.proof_in_waste(art, origin)
@@ -438,3 +468,13 @@ def test_on_a_blank_the_calibration_corrects_the_camera_and_moves_nothing(
     finally:
         d._set_offset((0.0, 0.0))
         d.close()
+
+
+
+def test_drilled_holes_need_three_quarters_found_stencils_more():
+    a = cam.Alignment(dx=0.1, dy=-0.3, turn=0.0, found=42, total=52, score=0.33)
+    assert not a.ok                                  # 81 % < 85 %: a stencil
+    a.need = cam.DRILLED_NEED
+    assert a.ok                                      # a drilled board: enough
+    a.found = 35                                     # 67 %: too few either way
+    assert not a.ok

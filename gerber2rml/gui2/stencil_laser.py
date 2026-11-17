@@ -2144,7 +2144,7 @@ class StencilLaserDialog(QDialog):
             # corrected camera: what is left is the job being off the board.
             try:
                 a = cam.align(self._photo(hi, raw_a, new), hi, holes,
-                              search_mm=4.0, max_turn=1.5)
+                              search_mm=4.0, max_turn=1.5, need=cam.DRILLED_NEED)
             except cam.CameraError:
                 a = None
             return plan, raw_b, m, a, new
@@ -2179,8 +2179,9 @@ class StencilLaserDialog(QDialog):
                 self.proof_note.setVisible(True)
                 return msg
             if a is None or not a.ok:
-                msg = (said + " The drilled holes could not be found, so the job "
-                       "was not moved: drag it closer and press Align.")
+                seen = (f" (found {a.found} of {a.total})" if a is not None else "")
+                msg = (said + f" The drilled holes could not be found{seen}, so "
+                       "the job was not moved: drag it closer and press Align.")
                 self.proof_note.setText(msg)
                 self.proof_note.setVisible(True)
                 return msg
@@ -2220,12 +2221,16 @@ class StencilLaserDialog(QDialog):
             candidates.append((k, self._features(art, (cx - w / 2, cy - h / 2))))
         hi = 8
         contrast = self.auto_contrast.currentData()
+        # Drilled holes over the bed's slats do not all read dark: see
+        # xtool_camera.DRILLED_NEED. Holes cut in a stencil keep 85 %.
+        need = (cam.DRILLED_NEED if self.kind != "stencil"
+                and self.auto_reference_source.currentData() == "holes" else 0.85)
 
         def work(_p):
             rgb = self._photo(hi)
             tried = []
             for k, holes in candidates:
-                a = cam.align(rgb, hi, holes, polarity=contrast)
+                a = cam.align(rgb, hi, holes, polarity=contrast, need=need)
                 tried.append((k, holes, a))
                 if a.ok and k == 0:
                     break
@@ -2237,7 +2242,8 @@ class StencilLaserDialog(QDialog):
             rgb, (k, holes, a), good = res
             self.show_bed(rgb[::hi // _PX_PER_MM, ::hi // _PX_PER_MM].copy())
             if not good:
-                return (f"Could not match the references: at best {a.found} of {a.total}. "
+                return (f"Could not match the references: at best {a.found} of {a.total} "
+                        f"(needs {int(-(-a.need * a.total // 1))}). "
                         "Drag the drawing closer, choose clearer references, or pick matching points.")
             target = self._middle(holes) + (a.dx, a.dy)
             self._turn_to(self.turns + k, self.fine + a.turn, preserve_selection=True)
