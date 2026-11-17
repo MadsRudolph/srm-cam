@@ -1207,6 +1207,46 @@ def proof_in_waste(art, origin, recipe=None, *, margin=PROOF_WASTE_MARGIN,
     return Proof("waste", paths, marks, inside)
 
 
+CALIBRATION_AREA = (40.0, 30.0)     # mm: the page's area with no job loaded
+PROOF_AREA_INSET = 3.0
+
+
+def calibration_art():
+    """The laser page with nothing loaded: an empty 40 x 30 mm area to drag
+    onto the material, where the camera calibration makes its marks."""
+    from shapely.geometry import Polygon, box
+    w, h = CALIBRATION_AREA
+    return LaserArt(kind="traces", apertures=[], outline=box(0, 0, w, h),
+                    note="calibration area", copper=Polygon(), drills=[],
+                    features=[], side="top")
+
+
+def proof_in_area(art, origin, recipe=None, *, inset=PROOF_AREA_INSET,
+                  size=PROOF_WASTE_SIZE, n=3):
+    """Small filled squares inside the outline, ``inset`` from three of its
+    corners: the marks for a calibration with no job, on the material the
+    area was dragged onto."""
+    from shapely.geometry import Polygon, box
+    recipe = recipe or DEFAULT_TRACES_RECIPE
+    _, h = art.size
+    outline = Polygon(to_bed(list(art.outline.exterior.coords), origin, h)).buffer(0)
+    x0, y0, x1, y1 = outline.bounds
+    d = inset + size / 2
+    corners = [(x0 + d, y0 + d), (x1 - d, y1 - d), (x0 + d, y1 - d), (x1 - d, y0 + d)]
+    corners = [corners[k] for k in spread(corners, n)]
+    marks, paths = [], []
+    step = max(recipe.stepover, 0.02)
+    for cx, cy in corners:
+        marks.append(box(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2))
+        y, flip = cy - size / 2, False
+        while y <= cy + size / 2 + 1e-9:
+            a, b = (cx - size / 2, y), (cx + size / 2, y)
+            paths.append([b, a] if flip else [a, b])
+            y, flip = y + step, not flip
+    check_on_bed(paths)
+    return Proof("area", paths, marks)
+
+
 def proof_job(proof, recipe=None, passes=PROOF_PASSES):
     """The GS002 file that makes a proof's marks, and how long it takes."""
     recipe = recipe or DEFAULT_TRACES_RECIPE

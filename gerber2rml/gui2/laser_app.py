@@ -1,6 +1,6 @@
 """The xTool F1 Ultra laser page on its own, without SRM-CAM's milling steps.
 
-    srm-cam-laser                      the last Gerber folder, or ask for one
+    srm-cam-laser                      the last Gerber folder, or the page empty
     srm-cam-laser <gerber-folder>      that board: traces, mask, silkscreen, stencil
     srm-cam-laser <board.dxf>          copper traces from a DXF drawing
     srm-cam-laser --job mask <folder>  open on that job
@@ -96,7 +96,7 @@ def main(argv=None):
 
     from PySide6.QtCore import QSettings
     from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QApplication, QMessageBox
     from gerber2rml import glconfig
     from gerber2rml.gui2 import style, theme
 
@@ -133,10 +133,11 @@ def main(argv=None):
         last = cfg.value("folder", "")
         folder = Path(last) if last and Path(last).is_dir() else None
     if folder is None:
-        picked = QFileDialog.getExistingDirectory(None, "Gerber folder for the laser")
-        if not picked:
-            return 0
-        folder = Path(picked)
+        # Nothing to open: the page on its own, to load a folder or a DXF
+        # there or to calibrate.
+        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+        StencilLaserDialog(None, None).exec()
+        return 0
     try:
         kind, art = first_job(folder, a.job)
     except ValueError as e:
