@@ -148,6 +148,9 @@ class WindowSource(ar.JobSource):
         if getattr(self.w, "_no_cutout", False):
             # The board stays in the sheet: there is no cut-out to run.
             steps = [s for s in steps if s.op != "cutout"]
+        if getattr(self.w, "_traces_on_laser", False):
+            # The copper is etched on the laser: the mill drills and cuts out.
+            steps = [s for s in steps if s.op not in ("traces", "top_traces")]
         keys = [s.key for s in self.w.plan.steps]
         if "flip" not in keys:
             return steps, []
@@ -547,6 +550,25 @@ class AutoRunPage(inspector.Page):
             "the same height map. Once it is cut free it cannot be re-cut "
             "where it lay.")
         stock.add(self.check_chk)
+        self.laser_chk = QCheckBox("Traces on the laser: only drill and "
+                                   "cut out")
+        self.laser_chk.setToolTip(
+            "For a board whose copper is etched on the xTool afterwards. The "
+            "run drills the holes and cuts the board out, and leaves the "
+            "copper alone. The surface is not probed: holes and the cut-out "
+            "go right through, so they do not need it.\n"
+            "With 'Leave the board in the sheet' as well, only the holes are "
+            "drilled, and the sheet round the board is there for the laser's "
+            "proof marks.\n"
+            "A board with copper on both faces is milled as a single-sided "
+            "job: the holes go through, and nothing has to be flipped on the "
+            "mill. Both faces are still on the laser page.")
+        # Off every time the app starts: a run that silently cuts no traces
+        # because of a tick left from last week would be a bad surprise.
+        self._level_before_laser = None
+        self.ctl._traces_on_laser = False
+        self.laser_chk.toggled.connect(self._laser_changed)
+        stock.add(self.laser_chk)
         srow = QWidget()
         h = QHBoxLayout(srow)
         h.setContentsMargins(0, 0, 0, 0)
@@ -932,6 +954,32 @@ class AutoRunPage(inspector.Page):
             self._auto_place = True
             self.place_in_corner()
 
+    def traces_on_laser(self):
+        return bool(getattr(self.ctl, "_traces_on_laser", False))
+
+    def _laser_changed(self, on):
+        """The copper goes to the laser, or the mill cuts it as usual."""
+        ctl = self.ctl
+        ctl._traces_on_laser = bool(on)
+        if on:
+            # Holes and a cut-out go through: no height map to follow.
+            self._level_before_laser = self.level_chk.isChecked()
+            self.level_chk.setChecked(False)
+            if ctl._double:
+                # Nothing to flip for on the mill: the holes go through, and
+                # the laser page has both faces whatever this says.
+                ctl.inspector.setup.double.setChecked(False)
+                ctl.say("info", "Traces on the laser: the board is milled as "
+                                "a single-sided job, with no flip. Both "
+                                "copper faces are still on the laser page.")
+        elif self._level_before_laser is not None:
+            self.level_chk.setChecked(self._level_before_laser)
+            self._level_before_laser = None
+        self.check_chk.setEnabled(not on and not self.no_cutout())
+        if self._thread is None:
+            self._fill_rows()
+            self._fill_start()
+
     def _sync_nocut(self):
         ctl = self.ctl
         self.nocut_chk.setVisible(self.bracket())
@@ -939,7 +987,8 @@ class AutoRunPage(inspector.Page):
         self.nocut_chk.setChecked(bool(getattr(ctl, "_no_cutout", False)))
         self.nocut_chk.blockSignals(False)
         # Nothing to stop before when nothing is cut out.
-        self.check_chk.setEnabled(not self.no_cutout())
+        self.check_chk.setEnabled(not self.no_cutout()
+                                  and not self.traces_on_laser())
 
     def _corner_args(self):
         """What :func:`bracket.corner_place` needs, or None without a board."""
