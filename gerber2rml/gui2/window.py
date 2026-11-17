@@ -2597,10 +2597,18 @@ class MainWindow(QMainWindow):
             # In the board's own frame, grown to where the cutter's EDGE
             # may not come: the tool's radius is in the cut, not the zone.
             g = NOGO_CLEAR_MM + r
-            zone = box(z[0] - dx - g, z[1] - dy - g,
-                       z[2] - dx + g, z[3] - dy + g)
-            where = "zone %d (X %.0f-%.0f, Y %.0f-%.0f)" % (
-                n, z[0], z[2], z[1], z[3])
+            # A box, or one of the cam clamps - a disc, with its own
+            # clearance (engine/nogo.py). Taking a clamp for a box raised
+            # an IndexError here the moment one was marked.
+            from shapely import affinity
+            from gerber2rml.engine.nogo import (is_clamp, zone_bounds,
+                                                zone_shape)
+            zone = affinity.translate(zone_shape(z, g), -dx, -dy)
+            zb = zone_bounds(z)
+            where = ("clamp %d (at X %.0f, Y %.0f)" % (n, z[0], z[1])
+                     if is_clamp(z) else
+                     "zone %d (X %.0f-%.0f, Y %.0f-%.0f)" % (
+                         n, zb[0], zb[2], zb[1], zb[3]))
             edges = [name for name, geom in (
                 ("bottom copper", board.copper),
                 ("top copper", getattr(board, "copper_top", None)))
