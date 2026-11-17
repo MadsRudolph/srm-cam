@@ -106,11 +106,18 @@ def _separators(group, bit):
 
 
 def _sheet_band(stock, r, edge_tol):
-    """Where a ring runs along the sheet's edge - the outline within
-    ``edge_tol`` of it, either side - as a region to take out of the ring."""
+    """Where a ring has nothing to cut - the outline on the sheet's edge
+    (within ``edge_tol`` of it) or past it - as a region to take out of the
+    ring.
+
+    Past the edge there is no copper: a board drawn bigger than its sheet
+    (the synth's brain, 101.6 mm on 100 mm stock) has that edge cut by the
+    sheet already, and cutting it would only take the bit through air and
+    into what the stock lies on."""
     x0, y0, x1, y1 = stock
     sheet = box(x0, y0, x1, y1)
-    return (sheet.buffer(r + edge_tol, join_style="mitre")
+    far = 1e4
+    return (box(x0 - far, y0 - far, x1 + far, y1 + far)
             .difference(sheet.buffer(r - edge_tol, join_style="mitre")))
 
 
@@ -305,7 +312,8 @@ def cut_outline(outline, job, stock=None, edge_tol=SHEET_EDGE_MM):
 
     ``stock`` is the copper sheet as ``(x0, y0, x1, y1)``, when the operator
     has declared one: where an island's edge lies on the sheet's edge, within
-    ``edge_tol`` either side, that part of the ring is left out.
+    ``edge_tol`` either side, or past it, off the copper, that part of the
+    ring is left out.
 
     Windows inside an island (holes in the outline: Edge.Cuts loops drawn
     inside the board) are cut with the tool inside them, before the island's
