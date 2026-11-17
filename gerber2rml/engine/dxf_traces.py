@@ -743,11 +743,13 @@ def read_dxf(path, side="top"):
                     faces=faces)
 
 
-def build_dxf_traces(path, *, side=None, mirror=None, **recipe):
+def build_dxf_traces(path, *, side=None, mirror=None, flip=False, **recipe):
     """A traces :class:`xtool.LaserArt` from a DXF. The drawing is the board
     seen from above, so the top face is as drawn and the bottom is mirrored
     unless ``mirror`` says otherwise. ``side`` None: the bottom when the only
-    copper layer is named for it (KiCad's ``-B_Cu.dxf``), else the top. ``recipe`` passes on to
+    copper layer is named for it (KiCad's ``-B_Cu.dxf``), else the top.
+    ``flip`` turns the drawing top to bottom (mirrored in Y), on top of any
+    left-right ``mirror``: with the page's quarter turns, every way round. ``recipe`` passes on to
     :func:`xtool.traces_art` (offsets, kerf, lines_per_cm, strategy,
     spot_drills)."""
     from gerber2rml.engine import xtool
@@ -765,5 +767,13 @@ def build_dxf_traces(path, *, side=None, mirror=None, **recipe):
     if copper.is_empty:
         raise xtool.TracesError(f"None of the copper in {Path(path).name} is "
                                 f"inside its outline.")
-    return xtool.traces_art(copper, board.outline, board.drills, side=side,
-                            mirror=mirror, notes=board.notes, **recipe)
+    outline, drills = board.outline, board.drills
+    if flip:
+        from shapely.affinity import scale
+        copper = scale(copper, xfact=1, yfact=-1, origin=(0, 0))
+        outline = scale(outline, xfact=1, yfact=-1, origin=(0, 0))
+        drills = [(x, -y, d) for x, y, d in drills]
+    art = xtool.traces_art(copper, outline, drills, side=side, mirror=mirror,
+                           notes=board.notes, **recipe)
+    art.flipped = bool(flip)
+    return art

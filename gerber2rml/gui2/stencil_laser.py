@@ -433,6 +433,8 @@ class StencilLaserDialog(QDialog):
             name = "No job loaded"
         art = as_laser_art(art)
         self._dxf = Path(dxf) if dxf else None    # traces come from this DXF
+        self._dxf_mirror = None             # None: as the copper face has it
+        self._dxf_flip = False
         self._mode = "move"
         self.rework_boxes = []              # (x0, y0, x1, y1), bed mm
         self._rework_items = []
@@ -605,6 +607,16 @@ class StencilLaserDialog(QDialog):
         self.copper_side.currentIndexChanged.connect(self._switch_copper_side)
         self.copper_side_field = widgets.Field("Copper face", self.copper_side)
         s.add(self.copper_side_field)
+        self.dxf_mirror = QCheckBox("Mirror left–right")
+        self.dxf_mirror.setToolTip("A DXF follows the copper face (B.Cu mirrored, "
+                                   "F.Cu as drawn); tick or untick to choose")
+        self.dxf_flip = QCheckBox("Flip top–bottom")
+        self.dxf_flip.setToolTip("Turn the drawing over top to bottom. With the "
+                                 "quarter turns this gives every way round")
+        self.dxf_mirror.toggled.connect(self._dxf_orientation)
+        self.dxf_flip.toggled.connect(self._dxf_orientation)
+        self.dxf_orient = _row(self.dxf_mirror, self.dxf_flip)
+        s.add(self.dxf_orient)
         self._warn_box = QWidget()
         self._warn_layout = QVBoxLayout(self._warn_box)
         self._warn_layout.setContentsMargins(0, 0, 0, 0)
@@ -1036,7 +1048,9 @@ class StencilLaserDialog(QDialog):
     def _trace_art_for(self, side):
         if self._dxf is not None:
             from gerber2rml.engine import dxf_traces
-            return dxf_traces.build_dxf_traces(self._dxf, side=side)
+            mirror = (side == "bottom") if self._dxf_mirror is None else self._dxf_mirror
+            return dxf_traces.build_dxf_traces(self._dxf, side=side, mirror=mirror,
+                                               flip=self._dxf_flip)
         if callable(self._jobs):
             return self._jobs("traces", side=side)
         if self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
@@ -1047,6 +1061,7 @@ class StencilLaserDialog(QDialog):
         side = self.copper_side.currentData()
         if self.kind != "traces" or side == self.base_art.side:
             return
+        self._dxf_mirror = None             # the face's own mirroring again
         try:
             art = self._trace_art_for(side)
         except Exception as e:
@@ -1058,6 +1073,31 @@ class StencilLaserDialog(QDialog):
         self._take_traces_art(art)
         self._say(f"Showing {'F.Cu (top)' if side == 'top' else 'B.Cu (bottom)'}. "
                   "Place that copper face upwards on the laser bed.")
+
+    def _dxf_orientation(self, *_a):
+        """Mirror or flip the DXF: rebuilt the way round the boxes say."""
+        if self._dxf is None or self.kind != "traces":
+            return
+        self._dxf_mirror = self.dxf_mirror.isChecked()
+        self._dxf_flip = self.dxf_flip.isChecked()
+        try:
+            art = self._trace_art_for(self._trace_side or self.base_art.side)
+        except Exception as e:                  # noqa: BLE001 - shown in status bar
+            return self._say(str(e), warn=True)
+        self._take_traces_art(art)
+        self._say(f"{self._dxf.name}: "
+                  + ("mirrored" if self.base_art.mirrored else "not mirrored")
+                  + (", flipped top to bottom" if self.base_art.flipped else "") + ".")
+
+    def _sync_dxf_orientation(self):
+        on = self._dxf is not None and self.kind == "traces"
+        self.dxf_orient.setVisible(on)
+        if on:
+            for box, value in ((self.dxf_mirror, self.base_art.mirrored),
+                               (self.dxf_flip, getattr(self.base_art, "flipped", False))):
+                box.blockSignals(True)
+                box.setChecked(bool(value))
+                box.blockSignals(False)
 
     def _take_traces_art(self, art):
         """A new traces drawing on the page, the recipe as it is."""
@@ -1072,6 +1112,7 @@ class StencilLaserDialog(QDialog):
         self._refresh_traces_art()
         self._sync_warnings()
         self._sync_recipe_widgets()
+        self._sync_dxf_orientation()
 
     def open_gerber(self):
         """A Gerber folder's jobs on the page, as srm-cam-laser opens them."""
@@ -1122,6 +1163,7 @@ class StencilLaserDialog(QDialog):
     def load_dxf_art(self, art, path):
         """Show ``art``, read from the DXF at ``path``, as the traces job."""
         self._dxf = Path(path)
+        self._dxf_mirror, self._dxf_flip = None, False
         self._empty = False
         self._sync_empty()
         self.name_lbl.setText(self._dxf.name)
@@ -1206,6 +1248,7 @@ class StencilLaserDialog(QDialog):
              if self.kind == "traces" else "")
             + f"{n} {self._noun(n)} · {w:.1f} × {h:.1f} mm · "
             f"{'mirrored' if self.art.mirrored else 'not mirrored'}"
+            + (" · flipped" if getattr(self.art, "flipped", False) else "")
             + (f" · {self.art.note}" if self.art.note else "") + turned)
         self._paint()
         self._place_focus_mark()
@@ -2049,6 +2092,8 @@ class StencilLaserDialog(QDialog):
         also puts the job on them."""
         if hasattr(self, "rework_section"):
             self._sync_rework()             # traces only, like the proof
+        if hasattr(self, "dxf_orient"):
+            self._sync_dxf_orientation()
         on = self.kind == "traces"
         holes = len(self.base_art.drills or []) >= 2
         self.proof_btn.setText("Calibrate and lock onto the holes" if holes

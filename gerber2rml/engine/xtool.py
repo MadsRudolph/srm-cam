@@ -181,6 +181,40 @@ _TAIL = ["# END", "# GS002 VECTOR TAIL", "# motion_end", "# GS002 TAIL",
          "G90", "G0 S0", "G0 F180000", "G1 F180000", "M536 U0", "M6 P1", ""]
 
 
+# What the F1 Ultra really takes, measured 2026-11-17 on the lab's machine:
+# the align test board (24 s of cutting, ran 48 s) and the VCO's top copper
+# (7.3 min of cutting, ran 14 min). Rings are drawn in very short segments and
+# the controller will not draw one faster than SEGMENT_MIN_S, whatever the
+# speed; each new path costs JUMP_S besides the jump itself.
+SEGMENT_MIN_S = 71.5e-6
+JUMP_S = 2.33e-3
+JUMP_SPEED = 3000.0         # mm/s: the G0 F180000 the head asks for
+
+
+def _draw_seconds(paths, speed):
+    """How long the laser takes to draw ``paths`` once at ``speed``: each
+    segment as rounded for the file, no faster than SEGMENT_MIN_S, plus the
+    jumps between paths."""
+    import numpy as np
+    total, last, lens = 0.0, None, []
+    for path in paths:
+        a = np.round(np.asarray(path, float), 3)
+        if len(a) < 2:
+            continue
+        d = np.hypot(*np.diff(a, axis=0).T)
+        d = d[d > 0]
+        if not len(d):
+            continue
+        lens.append(d)
+        if last is not None:
+            total += math.dist(last, a[0]) / JUMP_SPEED
+        total += JUMP_S
+        last = a[-1]
+    if lens:
+        total += float(np.maximum(np.concatenate(lens) / speed, SEGMENT_MIN_S).sum())
+    return total
+
+
 def _passes(paths, power, speed, n):
     s, f = round(power * 10), round(speed * 60)
     # Geometry finer than the output's 1 µm grid can collapse onto the same
@@ -248,7 +282,7 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
         n = min(recipe.passes_per_burst,
                 recipe.total_passes - r * recipe.passes_per_burst)
         body += _passes(z, recipe.power, recipe.speed, n)
-        dt = n * sum(_length(p) for p in z) / recipe.speed
+        dt = n * _draw_seconds(z, recipe.speed)
         timeline.append((secs, secs + dt, k, r))
         secs += dt
         if i < len(bursts) - 1 and recipe.rest_s > 0:
@@ -256,7 +290,7 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
             secs += recipe.rest_s
     if outline and recipe.mark_passes:
         body += _passes(outline, recipe.mark_power, recipe.speed, recipe.mark_passes)
-        dt = recipe.mark_passes * sum(_length(p) for p in outline) / recipe.speed
+        dt = recipe.mark_passes * _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.rounds))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
@@ -500,6 +534,7 @@ class LaserArt:
     copper: object = None
     drills: list = None
     side: str = "bottom"
+    flipped: bool = False       # turned top to bottom (a DXF), on top of mirrored
     _ring_cache: dict = field(default=None, repr=False, compare=False)
 
     @property
@@ -619,7 +654,7 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
         ang = base_angle + (90.0 * (k % 2) if recipe.cross_hatch else 0.0)
         if ang not in cached:
             segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
-            dt = sum(math.dist(a, b) for a, b in segs) / recipe.speed
+            dt = _draw_seconds([[a, b] for a, b in segs], recipe.speed)
             lines_k = []
             for a, b in segs:
                 lines_k.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
@@ -631,7 +666,7 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
         secs += dt
     if outline and recipe.mark_outline:
         body += _passes(outline, recipe.mark_power, recipe.speed, 1)
-        dt = sum(_length(p) for p in outline) / recipe.speed
+        dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
@@ -1051,11 +1086,14 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     check_on_bed(all_rings + outline)
     park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
     body, secs, timeline = [], 0.0, []
+    round_s = None
     for rnd in range(recipe.passes):
         order = groups if rnd % 2 == 0 else list(reversed(groups))
         round_rings = [rg for grp in order for rg in grp]
         body += _passes(round_rings, recipe.power, recipe.speed, 1)
-        dt = sum(_length(p) for p in round_rings) / recipe.speed
+        if round_s is None:                 # every round draws the same rings
+            round_s = _draw_seconds(round_rings, recipe.speed)
+        dt = round_s
         timeline.append((secs, secs + dt, 0, rnd))
         secs += dt
         if rnd < recipe.passes - 1 and recipe.rest_s > 0:
@@ -1063,7 +1101,7 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
             secs += recipe.rest_s
     if outline and recipe.mark_outline:
         body += _passes(outline, recipe.mark_power, recipe.speed, 1)
-        dt = sum(_length(p) for p in outline) / recipe.speed
+        dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
@@ -1258,5 +1296,5 @@ def proof_job(proof, recipe=None, passes=PROOF_PASSES):
     passes = max(1, int(passes))
     lines = (_head("fiber", recipe.frequency, recipe.power / 100)
              + _passes(proof.paths, recipe.power, recipe.speed, passes) + _TAIL)
-    secs = passes * sum(_length(p) for p in proof.paths) / recipe.speed
+    secs = passes * _draw_seconds(proof.paths, recipe.speed)
     return "\r\n".join(lines), secs
