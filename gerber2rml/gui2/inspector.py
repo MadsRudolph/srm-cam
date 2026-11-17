@@ -379,6 +379,24 @@ class SetupPage(Page):
         for b in self.rotate.findChildren(QPushButton):
             b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
         place.add(widgets.Field("Turned", self.rotate))
+        # A drag that lands somewhere it should not costs a careful
+        # re-placement; one click (or Ctrl+Z) puts it back.
+        urow = QWidget()
+        uh = QHBoxLayout(urow)
+        uh.setContentsMargins(0, 0, 0, 0)
+        uh.setSpacing(theme.GAP_S)
+        self.undo_place_btn = widgets.button(
+            "Undo", on=ctl.action_undo, enabled=False,
+            tip="Take back the last change on the bed: a move, turn or mirror, "
+                "a rework box, a no-go zone or clamp, a screw or reference "
+                "hole (Ctrl+Z).")
+        self.redo_place_btn = widgets.button(
+            "Redo", on=ctl.action_redo, enabled=False,
+            tip="Do what you just undid again (Ctrl+Shift+Z or Ctrl+Y).")
+        uh.addWidget(self.undo_place_btn)
+        uh.addWidget(self.redo_place_btn)
+        uh.addStretch(1)
+        place.add(urow)
         arow = QWidget()
         # Two by two, not four abreast. With one board only the centring pair
         # shows; a sheet adds the other two, and on one row the four needed

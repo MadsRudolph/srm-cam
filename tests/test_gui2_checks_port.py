@@ -42,8 +42,9 @@ def _on_a_sheet(win):
 
 
 def _view_menu(win):
-    return [a for a in win.menuBar().actions()[1].menu().actions()
-            if a.text()]
+    view = next(a.menu() for a in win.menuBar().actions()
+                if a.text() == "&View")
+    return [a for a in view.actions() if a.text()]
 
 
 # --- narrow copper gaps -------------------------------------------------------

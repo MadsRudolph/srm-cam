@@ -21,6 +21,15 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 
 @pytest.fixture(autouse=True)
+def _background_inline(monkeypatch):
+    """The laser page's sums run where they are asked for, so a test sees the
+    result the moment it makes the edit. test_gui2_background.py turns this
+    off to test the thread pool itself."""
+    from gerber2rml.gui2 import background
+    monkeypatch.setattr(background, "INLINE", True)
+
+
+@pytest.fixture(autouse=True)
 def _no_desktop_urls(monkeypatch):
     """No test opens a browser tab or a file manager.
 

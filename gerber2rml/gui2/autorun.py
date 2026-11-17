@@ -877,7 +877,8 @@ class AutoRunPage(inspector.Page):
     def on_bracket_moved(self, x, y):
         b = br.snap(x, y, self._bracket.corner, bed=self._bed(),
                     tongue=self._bracket.tongue)
-        if b is not None:
+        if b is not None and b != self._bracket:
+            self._remember("bracket")
             self.set_bracket(b)
 
     def _corner_changed(self, *_):
@@ -1773,11 +1774,18 @@ class AutoRunPage(inspector.Page):
         """The no-go zones, ``[(x0, y0, x1, y1)]`` in machine mm."""
         return list(self._nogo)
 
+    def _remember(self, merge=None):
+        """Undo: the bed as it is, before a zone, a box or the bracket moves."""
+        remember = getattr(self.ctl, "remember", None)
+        if remember is not None:
+            remember(merge)
+
     def add_nogo(self, x0, y0, x1, y1):
         from gerber2rml.engine.nogo import normal
         z = normal((x0, y0, x1, y1))
         if z[2] - z[0] < 0.5 or z[3] - z[1] < 0.5:
             return                  # a click, not a drag: no zone of nothing
+        self._remember()
         self._nogo.append(z)
         self._save_nogo()
 
@@ -1794,10 +1802,13 @@ class AutoRunPage(inspector.Page):
         # bracket screw may use: a clamp goes in the outer ring too.
         g = spoilboard.measured_grid()
         holes = [g.centre(i, j) for j in range(g.ny) for i in range(g.nx)]
+        self._remember()
         self._nogo.extend(clamp_at(x, y, stock, holes))
         self._save_nogo()
 
     def _clear_nogo(self):
+        if self._nogo:
+            self._remember()
         self._nogo = []
         self._save_nogo()
 
@@ -1805,6 +1816,7 @@ class AutoRunPage(inspector.Page):
         """Delete one zone. Out of range does nothing: the menu that asked
         may be older than the list."""
         if 0 <= index < len(self._nogo):
+            self._remember()
             del self._nogo[index]
             self._save_nogo()
 
@@ -1844,11 +1856,14 @@ class AutoRunPage(inspector.Page):
             refresh()
 
     def add_box(self, x0, y0, x1, y1):
+        self._remember()
         self._boxes.append((min(x0, x1), min(y0, y1),
                             max(x0, x1), max(y0, y1)))
         self._show_boxes()
 
     def _clear_boxes(self):
+        if self._boxes:
+            self._remember()
         self._boxes = []
         self._show_boxes()
 
