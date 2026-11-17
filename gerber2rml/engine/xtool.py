@@ -301,9 +301,10 @@ class Job:
         return None
 
 
-def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
+def stencil_job(holes, outline, recipe=DEFAULT_RECIPE, *, write=True):
     """One GS002 file: every zone ``recipe.rounds`` times with rests, then the
-    outline marked."""
+    outline marked. ``write=False``: the same Job, seconds and timeline, with
+    no file text - the estimate, without building megabytes of G-code."""
     check_on_bed(holes + outline)
     zs = zones(holes, recipe.zones)
     park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
@@ -313,20 +314,24 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
         z = zs[k]
         n = min(recipe.passes_per_burst,
                 recipe.total_passes - r * recipe.passes_per_burst)
-        body += _passes(z, recipe.power, recipe.speed, n)
+        if write:
+            body += _passes(z, recipe.power, recipe.speed, n)
         dt = n * _draw_seconds(z, recipe.speed)
         timeline.append((secs, secs + dt, k, r))
         secs += dt
         if i < len(bursts) - 1 and recipe.rest_s > 0:
-            body += _rest(park, recipe.rest_s)
+            if write:
+                body += _rest(park, recipe.rest_s)
             secs += recipe.rest_s
     if outline and recipe.mark_passes:
-        body += _passes(outline, recipe.mark_power, recipe.speed, recipe.mark_passes)
+        if write:
+            body += _passes(outline, recipe.mark_power, recipe.speed,
+                            recipe.mark_passes)
         dt = recipe.mark_passes * _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.rounds))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
-    return Job(text="\r\n".join(lines), zones=[len(z) for z in zs],
+    return Job(text="\r\n".join(lines) if write else "", zones=[len(z) for z in zs],
                seconds=secs, passes=recipe.total_passes, zone_paths=zs,
                timeline=timeline)
 
@@ -674,10 +679,12 @@ def hatch(polys, interval, angle_deg=0.0, one_way=True):
     return [(back(a), back(b)) for a, b in segs]
 
 
-def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
+def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0, *,
+             write=True):
     """One GS002 file that fills every shape (shapely Polygons, bed mm) with
     ``recipe.passes`` hatch passes, each at right angles to the last when
-    ``cross_hatch``; then, if asked, the outline marked once."""
+    ``cross_hatch``; then, if asked, the outline marked once. ``write=False``:
+    the seconds and timeline only, no file text."""
     check_on_bed([list(p.exterior.coords) for p in shapes] + outline)
     s_val, feed = round(recipe.power * 10), round(recipe.speed * 60)
     body, secs, timeline = [], 0.0, []
@@ -688,7 +695,7 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
             segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
             dt = _draw_seconds([[a, b] for a, b in segs], recipe.speed)
             lines_k = []
-            for a, b in segs:
+            for a, b in (segs if write else ()):
                 lines_k.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
                 lines_k.append(f"G1X{b[0]:.3f}Y{b[1]:.3f}S{s_val}F{feed}")
             cached[ang] = (lines_k, dt)
@@ -697,12 +704,13 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
         timeline.append((secs, secs + dt, 0, k))
         secs += dt
     if outline and recipe.mark_outline:
-        body += _passes(outline, recipe.mark_power, recipe.speed, 1)
+        if write:
+            body += _passes(outline, recipe.mark_power, recipe.speed, 1)
         dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
-    return Job(text="\r\n".join(lines), zones=[len(shapes)], seconds=secs,
+    return Job(text="\r\n".join(lines) if write else "", zones=[len(shapes)], seconds=secs,
                passes=recipe.passes, zone_paths=[shapes], timeline=timeline)
 
 
@@ -1122,8 +1130,10 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
 
 
 def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
-               boxes=None):
+               boxes=None, *, write=True):
     """One GS002 file to etch PCB copper traces on the F1 Ultra.
+    ``write=False``: the seconds and timeline only, no file text; the window's
+    estimate, which would otherwise build the whole job (tens of MB) per edit.
 
     ``boxes`` (bed mm): a rework. Only the passes inside the boxes are run,
     as the CNC's rework clips its pass, and the outline is not scored again."""
@@ -1159,7 +1169,7 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
             passes=recipe.passes, lines_per_cm=recipe.lines_per_cm,
             cross_hatch=recipe.cross_hatch, one_way=recipe.one_way,
             mark_outline=recipe.mark_outline, mark_power=recipe.mark_power)
-        return fill_job(shapes, outline, fill_r)
+        return fill_job(shapes, outline, fill_r, write=write)
 
     groups, outline = traces_rings(art, origin, recipe, only=only, boxes=boxes)
     all_rings = [rg for grp in groups for rg in grp]
@@ -1172,22 +1182,25 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     for rnd in range(recipe.passes):
         order = groups if rnd % 2 == 0 else list(reversed(groups))
         round_rings = [rg for grp in order for rg in grp]
-        body += _passes(round_rings, recipe.power, recipe.speed, 1)
+        if write:
+            body += _passes(round_rings, recipe.power, recipe.speed, 1)
         if round_s is None:                 # every round draws the same rings
             round_s = _draw_seconds(round_rings, recipe.speed)
         dt = round_s
         timeline.append((secs, secs + dt, 0, rnd))
         secs += dt
         if rnd < recipe.passes - 1 and recipe.rest_s > 0:
-            body += _rest(park, recipe.rest_s)
+            if write:
+                body += _rest(park, recipe.rest_s)
             secs += recipe.rest_s
     if outline and recipe.mark_outline:
-        body += _passes(outline, recipe.mark_power, recipe.speed, 1)
+        if write:
+            body += _passes(outline, recipe.mark_power, recipe.speed, 1)
         dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
-    return Job(text="\r\n".join(lines), zones=[len(all_rings)], seconds=secs,
+    return Job(text="\r\n".join(lines) if write else "", zones=[len(all_rings)], seconds=secs,
                passes=recipe.passes, zone_paths=[all_rings], timeline=timeline)
 
 

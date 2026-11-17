@@ -22,6 +22,13 @@ PROBE (the surface gets measured here), the board edge is OUTLINE.
   it is done. **STOP** always works.
 
 Every laser call runs on a worker thread; the page only shows what comes back.
+So do the sums that took seconds on a big board - the trenches after a recipe
+edit and the run-time estimate (``background.Latest``): the page never waits
+for them, and a run waits for the newest before it starts (``_settle``).
+
+The page is a page of the main window (``embedded=True``, switched with the
+mill's page there) and, for ``srm-cam-laser``, a window of its own. Ctrl+Z
+undoes a move or a turn (``undo.PlacementUndo``).
 """
 import json
 from dataclasses import replace
@@ -38,7 +45,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
                                QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
 from gerber2rml.engine import xtool
-from gerber2rml.gui2 import theme, widgets
+from gerber2rml.gui2 import background, theme, widgets
+from gerber2rml.gui2.undo import PlacementUndo, install as install_undo
 
 _SETTINGS = ("SRM-CAM", "stencil-laser")
 _PX_PER_MM = 8
@@ -128,6 +136,83 @@ def _pen(token, width=1.5, a=1.0):
     p.setCosmetic(True)
     p.setWidthF(width)
     return p
+
+
+_SETTLE_MS = 150        # an edit must rest this long before the sums start
+
+
+def _bed_holes(art, origin, only=None):
+    """The bed paths of ``art``'s holes at ``origin``, and which aperture each
+    is. Reads nothing but its arguments: safe off the GUI thread."""
+    _, h = art.size
+    paths, owner = [], {}
+    for k, poly in enumerate(art.apertures):
+        if only is not None and k not in only:
+            continue
+        for ring in (poly.exterior, *poly.interiors):
+            p = xtool.to_bed(list(ring.coords), origin, h)
+            paths.append(p)
+            owner[id(p)] = k
+    return paths, owner
+
+
+def _bed_shapes(art, origin, pick=None):
+    """``art``'s shapes as shapely Polygons on the bed at ``origin``."""
+    from shapely.geometry import Polygon
+    _, h = art.size
+    out = []
+    for k, poly in enumerate(art.apertures):
+        if pick is not None and k not in pick:
+            continue
+        out.append(Polygon(xtool.to_bed(list(poly.exterior.coords), origin, h),
+                           [xtool.to_bed(list(r.coords), origin, h)
+                            for r in poly.interiors]))
+    return out
+
+
+def _estimator(kind, art, origin, recipe, selected, only):
+    """A function giving the job's run time in seconds, for the thread pool.
+    Everything it needs is passed in; the job file itself is never written."""
+    def traces():
+        return xtool.traces_job(art, (1.0, 1.0), recipe, only=only,
+                                write=False).seconds
+
+    def fill():
+        shapes = _bed_shapes(art, (1.0, 1.0), selected or None)
+        return xtool.fill_job(shapes, [], recipe, write=False).seconds
+
+    def stencil():
+        holes, _ = _bed_holes(art, (1.0, 1.0), selected or None)
+        _, outline = xtool.stencil_paths(art, (1.0, 1.0))
+        return xtool.stencil_job(holes, outline, recipe, write=False).seconds
+
+    def guarded(fn):
+        def run():
+            try:
+                return fn()
+            except ValueError:
+                return None
+        return run
+    if kind == "traces":
+        return guarded(traces)
+    if kind == "stencil":
+        return guarded(stencil)
+    return guarded(fill)
+
+
+class _Same:
+    """Equal only to itself: an undo step remembers *which* trenches its
+    skips were picked on, not what they look like."""
+    __slots__ = ("obj",)
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __eq__(self, other):
+        return isinstance(other, _Same) and other.obj is self.obj
+
+    def __hash__(self):
+        return id(self.obj)
 
 
 class _Worker(QThread):
@@ -233,6 +318,13 @@ class _StencilItem(QGraphicsPathItem):
         if change == QGraphicsItem.ItemPositionHasChanged:
             self._on_move(self.pos())
         return super().itemChange(change, value)
+
+    on_release = None                   # called when a drag ends
+
+    def mouseReleaseEvent(self, e):
+        super().mouseReleaseEvent(e)
+        if self.on_release is not None:
+            self.on_release()
 
 
 class _BedView(QGraphicsView):
@@ -429,8 +521,17 @@ class StencilLaserDialog(QDialog):
     :class:`xtool.LaserArt` (traces, solder mask, silkscreen, or stencil)."""
 
     def __init__(self, art=None, parent=None, laser=None, name="stencil",
-                 jobs=None, dxf=None):
+                 jobs=None, dxf=None, embedded=False):
         super().__init__(parent)
+        # ``embedded``: a page of the main window, not a window of its own -
+        # the main window's switch brings it up and takes it away again.
+        self.embedded = embedded
+        if embedded:
+            self.setWindowFlags(Qt.Widget)
+        else:                               # srm-cam-laser: a window, not a box
+            self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint
+                                | Qt.WindowCloseButtonHint)
+        self._host = parent                 # who builds the jobs; parent() changes
         self._empty = art is None           # nothing loaded: a calibration area
         if art is None:
             art = xtool.calibration_art()
@@ -460,6 +561,9 @@ class StencilLaserDialog(QDialog):
         self.laser = laser or xtool.F1Ultra()
         self._cal = None
         self._worker = None
+        self._sums = background.Latest(self)  # the sums that would freeze the page
+        self.undo = PlacementUndo()         # where the work sat, for Ctrl+Z
+        self._placing = False               # one placement change in progress
         self._syncing = False
         self._syncing_recipe = False
         self.selected = set()
@@ -539,6 +643,13 @@ class StencilLaserDialog(QDialog):
                                     tip="A quarter turn anticlockwise")
         self.rot_r = widgets.button("Turn right", on=lambda: self.rotate(1),
                                     tip="A quarter turn clockwise")
+        self.undo_btn = widgets.button(
+            "Undo", kind="ghost", on=self.undo_place,
+            tip="Take back the last change on the bed: a move or turn, a rework "
+                "box, a skipped trench, an alignment point, the mirror (Ctrl+Z)")
+        self.redo_btn = widgets.button(
+            "Redo", kind="ghost", on=self.redo_place,
+            tip="Do it again (Ctrl+Shift+Z or Ctrl+Y)")
         self.all_btn = widgets.button("All", kind="ghost", on=self.select_all)
         self.none_btn = widgets.button("None", kind="ghost", on=self.select_none)
         fit = widgets.button("Fit", on=self.view.fit, tip="Show the whole bed")
@@ -552,7 +663,8 @@ class StencilLaserDialog(QDialog):
         for w in (brand, widgets.vrule(), self.photo_btn, self.focus_btn,
                   self.align_btn,
                   widgets.vrule(), self.mode, self.all_btn, self.none_btn,
-                  widgets.vrule(), self.rot_l, self.rot_r, fit,
+                  widgets.vrule(), self.rot_l, self.rot_r, self.undo_btn,
+                  self.redo_btn, fit,
                   widgets.vrule(), self.look_switch):
             hh.addWidget(w)
         hh.addStretch(1)
@@ -636,6 +748,7 @@ class StencilLaserDialog(QDialog):
             "(round the board's edge, round a mounting hole) separates nothing. "
             "Pads, vias and traces on any other net always keep theirs.")
         self.skip_auto.setChecked(QSettings(*_SETTINGS).value("skip_auto", True, type=bool))
+        self._skip_auto_on = self.skip_auto.isChecked()
         self.skip_auto.toggled.connect(self._skip_auto_toggled)
         s.add(self.skip_auto)
         self.skip_note = widgets.hint("")
@@ -725,7 +838,7 @@ class StencilLaserDialog(QDialog):
         s.add(self.reference_note)
         self.apply_refs_btn = widgets.button("Apply point alignment", on=self.apply_reference_alignment)
         self.remove_ref_btn = widgets.button("Remove", kind="ghost", on=self._remove_reference)
-        self.clear_refs_btn = widgets.button("Clear", kind="ghost", on=self._clear_references)
+        self.clear_refs_btn = widgets.button("Clear", kind="ghost", on=self._clear_references_clicked)
         s.add(self.apply_refs_btn)
         s.add(_row(self.remove_ref_btn, self.clear_refs_btn, None))
         s = s_manual
@@ -956,6 +1069,12 @@ class StencilLaserDialog(QDialog):
         self._fill_presets(cfg.value(self._key("preset"), next(iter(self.k["presets"]))))
         self._build_item()
         self._busy(False)
+        if embedded:
+            brand.setVisible(False)         # the main window's header says it
+        self.undo.on_change = self._sync_undo_buttons
+        self.undo_act, self.redo_act = install_undo(self, self.undo_place,
+                                                    self.redo_place)
+        self._sync_undo_buttons()
 
     # -- the bed picture -------------------------------------------------
     @staticmethod
@@ -1074,8 +1193,8 @@ class StencilLaserDialog(QDialog):
             return dxf_traces.build_dxf_traces(self._dxf, side=side)
         if callable(self._jobs):
             return self._jobs("traces", side=side)
-        if self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
-            return self.parent()._laser_art_for("traces", side=side)
+        if self._host is not None and hasattr(self._host, "_laser_art_for"):
+            return self._host._laser_art_for("traces", side=side)
         raise ValueError("Load this Gerber folder in the main window to change copper faces.")
 
     def _switch_copper_side(self, *_a):
@@ -1102,6 +1221,7 @@ class StencilLaserDialog(QDialog):
 
     def _orientation(self, *_a):
         """Mirror or flip the job: the boxes say how it should end up."""
+        self._remember_edit()
         src = self._source or self.base_art
         self._extra_mirror = self.mirror_box.isChecked() != bool(src.mirrored)
         self._extra_flip = self.flip_box.isChecked() != bool(getattr(src, "flipped", False))
@@ -1217,8 +1337,8 @@ class StencilLaserDialog(QDialog):
                 new_art = self._jobs(kind)
             elif isinstance(self._jobs, dict) and kind in self._jobs:
                 new_art = self._jobs[kind]
-            elif self.parent() is not None and hasattr(self.parent(), "_laser_art_for"):
-                new_art = self.parent()._laser_art_for(kind)
+            elif self._host is not None and hasattr(self._host, "_laser_art_for"):
+                new_art = self._host._laser_art_for(kind)
             else:
                 raise RuntimeError(f"No {KINDS[kind]['window']} job is loaded: "
                                    f"open a Gerber folder first.")
@@ -1226,6 +1346,25 @@ class StencilLaserDialog(QDialog):
             self.job_switch.set_current(self.kind)
             self._say(str(e), warn=True)
             return
+        self._apply_kind(kind, new_art)
+        self._say(f"Switched to {self.k['window']}.")
+
+    def show_job(self, art, name, jobs=None, dxf=None):
+        """A new job on the page as it stands: the main window's board after
+        it changed, or a DXF. Where the work sits on the bed is kept."""
+        art = as_laser_art(art)
+        self._sums.cancel("rings")
+        self._jobs = jobs
+        self._dxf = Path(dxf) if dxf else None
+        self._extra_mirror = self._extra_flip = False
+        self._trace_side = None
+        self._empty = False
+        self._sync_empty()
+        self.name_lbl.setText(name)
+        self.undo.clear()
+        self._apply_kind(art.kind, art)
+
+    def _apply_kind(self, kind, new_art):
         self.kind = kind
         self.k = KINDS[kind]
         self.base_art = self._orient(new_art)
@@ -1254,7 +1393,6 @@ class StencilLaserDialog(QDialog):
         self._fill_presets(cfg.value(self._key("preset"),
                                      next(iter(self.k["presets"]))))
         self._build_item()
-        self._say(f"Switched to {self.k['window']}.")
 
     def _build_item(self):
         self._find_skips()
@@ -1262,6 +1400,7 @@ class StencilLaserDialog(QDialog):
         if self.item is not None:
             self.scene.removeItem(self.item)
         self.item = _StencilItem(self.art, self._dragged)
+        self.item.on_release = self._drag_done
         self.item.setZValue(5)
         self.scene.addItem(self.item)
         self._syncing = True
@@ -1286,6 +1425,7 @@ class StencilLaserDialog(QDialog):
 
     def _turn_to(self, turns, fine, *, preserve_selection=False):
         """Turn the stencil about its middle, keeping the middle where it is."""
+        self._remember_place()
         cx, cy = self.centre()
         self.turns = turns % 4
         self.fine = fine
@@ -1312,13 +1452,19 @@ class StencilLaserDialog(QDialog):
         return self.x.value() + w / 2, self.y.value() + h / 2
 
     def centre_at(self, p):
+        self._remember_place()
         w, h = self.art.size
-        self.x.setValue(round(p.x() - w / 2, 2))
-        self.y.setValue(round(p.y() - h / 2, 2))
+        self._placing = True
+        try:
+            self.x.setValue(round(p.x() - w / 2, 2))
+            self.y.setValue(round(p.y() - h / 2, 2))
+        finally:
+            self._placing = False
 
     def _dragged(self, pos):
         if self._syncing:
             return
+        self._remember_place("drag")
         self._syncing = True
         self.x.setValue(round(pos.x(), 2))
         self.y.setValue(round(pos.y(), 2))
@@ -1328,6 +1474,7 @@ class StencilLaserDialog(QDialog):
     def _typed(self, *_a):
         if self._syncing or self.item is None:
             return
+        self._remember_place("typed", before=self._item_place())
         self._syncing = True
         self.item.setPos(self.x.value(), self.y.value())
         self._syncing = False
@@ -1336,8 +1483,135 @@ class StencilLaserDialog(QDialog):
     def _nudge(self, dx, dy):
         if self.item is None or not self.item.flags() & QGraphicsItem.ItemIsMovable:
             return
-        self.x.setValue(self.x.value() + dx)
-        self.y.setValue(self.y.value() + dy)
+        self._remember_place("nudge")
+        self._placing = True                # one step, not one per field
+        try:
+            self.x.setValue(self.x.value() + dx)
+            self.y.setValue(self.y.value() + dy)
+        finally:
+            self._placing = False
+
+    # -- undo: where the work sits -------------------------------------------
+    def _place(self):
+        """Where the work sits, as the fields say: X, Y and the turn."""
+        return (round(self.x.value(), 3), round(self.y.value(), 3),
+                self.turns % 4, round(self.fine, 4))
+
+    def _item_place(self):
+        """Where the work sits as drawn: before a typed value moves it."""
+        if self.item is None:
+            return self._place()
+        p = self.item.pos()
+        return (round(p.x(), 3), round(p.y(), 3), self.turns % 4, round(self.fine, 4))
+
+    def _others(self):
+        """Everything else put on the bed by hand: the rework boxes, the
+        skipped trenches (and whether they are found automatically), the
+        alignment points picked, and the mirror and flip."""
+        return (tuple(self.rework_boxes),
+                (frozenset(self.skipped), _Same(self.base_art.apertures)),
+                self._skip_auto_on, tuple(self._reference_pairs),
+                bool(self._extra_mirror), bool(self._extra_flip))
+
+    def _state(self):
+        return (self._place(),) + self._others()
+
+    def _remember_place(self, merge=None, before=None):
+        """Record the page ahead of a change, for Undo. ``before``: where the
+        work sat, when the fields have already moved on. A drag, a typed
+        number or arrow nudges in a row are one step (``merge``)."""
+        if self._placing or self.undo.restoring:
+            return
+        if merge is None:
+            self.undo.break_merge()
+        self.undo.push(((self._place() if before is None else before),)
+                       + self._others(), merge=merge)
+        if merge is None:
+            self.undo.break_merge()
+
+    _remember_edit = _remember_place
+
+    def _drag_done(self):
+        self.undo.break_merge()             # the next drag is a step of its own
+
+    def _restore_state(self, snap):
+        place, boxes, skipped, skip_auto, refs, mirror, flip = snap
+        self.undo.restoring = True
+        try:
+            if (mirror, flip) != (bool(self._extra_mirror), bool(self._extra_flip)):
+                src = self._source or self.base_art
+                for box_, want in ((self.mirror_box, bool(src.mirrored) != mirror),
+                                   (self.flip_box,
+                                    bool(getattr(src, "flipped", False)) != flip)):
+                    box_.blockSignals(True)
+                    box_.setChecked(want)
+                    box_.blockSignals(False)
+                self._orientation()
+            self._restore_place(place)
+            if skip_auto != self._skip_auto_on:
+                self.skip_auto.blockSignals(True)
+                self.skip_auto.setChecked(skip_auto)
+                self.skip_auto.blockSignals(False)
+                self._skip_auto_on = skip_auto
+                QSettings(*_SETTINGS).setValue("skip_auto", bool(skip_auto))
+            skipped, of = skipped
+            if of.obj is self.base_art.apertures:
+                # Only onto the trenches they were picked on: a new ring
+                # count numbers the trenches afresh.
+                self._skip_for = self.base_art.apertures
+                self.skipped = set(skipped)
+            self._sync_skip_note()
+            self.rework_boxes = list(boxes)
+            self._draw_rework()
+            self._reference_pairs = list(refs)
+            self._pending_reference = None
+            self._update_reference_list()
+            self._paint()
+        finally:
+            self.undo.restoring = False
+
+    def _restore_place(self, snap):
+        x, y, turns, fine = snap
+        if (turns, fine) != (self.turns % 4, round(self.fine, 4)):
+            self.turns, self.fine = turns, fine
+            self.art = xtool.rotated(self.base_art, turns, fine)
+            self._syncing = True
+            self.x.setValue(x)
+            self.y.setValue(y)
+            self._syncing = False
+            self._build_item()
+        else:
+            self._placing = True
+            try:
+                self.x.setValue(x)
+                self.y.setValue(y)
+            finally:
+                self._placing = False
+
+    def undo_place(self):
+        """Ctrl+Z: the last change on the bed taken back - a move, a turn, a
+        rework box, a skipped trench, an alignment point, the mirror."""
+        if not self.view.isEnabled():
+            return                          # the laser is running
+        snap = self.undo.undo(self._state())
+        if snap is None:
+            return self._say("Nothing to undo.")
+        self._restore_state(snap)
+        self._say("Undone.")
+
+    def redo_place(self):
+        if not self.view.isEnabled():
+            return
+        snap = self.undo.redo(self._state())
+        if snap is None:
+            return self._say("Nothing to redo.")
+        self._restore_state(snap)
+        self._say("Redone.")
+
+    def _sync_undo_buttons(self):
+        if hasattr(self, "undo_btn"):
+            self.undo_btn.setEnabled(self.undo.can_undo())
+            self.redo_btn.setEnabled(self.undo.can_redo())
 
     def focus_point(self):
         return xtool.snap_to_grid(self._focus_point or self.centre())
@@ -1394,10 +1668,12 @@ class StencilLaserDialog(QDialog):
             for i in range(len(self.rework_boxes) - 1, -1, -1):
                 x0, y0, x1, y1 = self.rework_boxes[i]
                 if x0 <= p.x() <= x1 and y0 <= p.y() <= y1:
+                    self._remember_edit()
                     del self.rework_boxes[i]
                     break
         elif rect.width() >= 0.3 and rect.height() >= 0.3:
             r = rect.normalized()
+            self._remember_edit()
             self.rework_boxes.append((r.left(), r.top(), r.right(), r.bottom()))
         self._draw_rework()
 
@@ -1426,6 +1702,8 @@ class StencilLaserDialog(QDialog):
                                 if n else "Re-etch the boxes")
 
     def clear_rework(self):
+        if self.rework_boxes:
+            self._remember_edit()
         self.rework_boxes = []
         self._draw_rework()
 
@@ -1439,6 +1717,7 @@ class StencilLaserDialog(QDialog):
     def rework(self):
         """The traces again, only inside the rework boxes: the CNC's rework
         on the laser. The recipe's power and speed, Rework passes deep."""
+        self._settle()
         if self.kind != "traces" or not self.rework_boxes:
             return
         r = replace(self._run_recipe(), passes=self.rework_passes.value())
@@ -1489,6 +1768,8 @@ class StencilLaserDialog(QDialog):
         self._sync_skip_note()
 
     def _skip_auto_toggled(self, on):
+        self._remember_edit()                    # still says how it was
+        self._skip_auto_on = bool(on)
         QSettings(*_SETTINGS).setValue("skip_auto", bool(on))
         self._find_skips(force=True)
         self._paint()
@@ -1518,6 +1799,7 @@ class StencilLaserDialog(QDialog):
             hit = {k for k, g in enumerate(self.art.apertures) if g.intersects(b_)}
         if not hit:
             return
+        self._remember_edit()
         if hit <= self.skipped:
             self.skipped -= hit
         else:
@@ -1687,27 +1969,64 @@ class StencilLaserDialog(QDialog):
             return
         if self.kind == "traces":
             self._sync_recipe_widgets()
-            self._refresh_traces_art()
+            self._refresh_traces_art(later=True)
         self._recipe_changed()
 
-    def _refresh_traces_art(self):
+    def _refresh_traces_art(self, later=False):
+        """The trenches again from the copper, for the recipe as it is.
+
+        ``later``: on the thread pool once the edits rest (a ring count, a
+        kerf or a density typed in). The page keeps the old trenches until
+        the new ones are in; a run in the meantime waits for them
+        (``_settle``). Otherwise at once - a new face or mirror needs its own
+        trenches before anything else is drawn."""
         if self.kind != "traces" or self.base_art.copper is None:
             return
         r = self.recipe()
-        apertures = xtool.traces_apertures(
-            self.base_art.copper, self.base_art.outline,
-            self.base_art.drills or (), strategy=r.strategy, offsets=r.offsets,
-            kerf=r.kerf, lines_per_cm=r.lines_per_cm, spot_drills=r.spot_drills)
-        note = ("full rubout" if r.strategy == "rubout"
-                else f"{r.offsets} passes ({r.isolation_mm:.2f} mm gap)")
-        self.base_art = replace(self.base_art, apertures=apertures, kerf=r.kerf,
-                                note=note, _ring_cache=None)
-        if self.auto_reference_source.currentData() == "artwork":
-            self._populate_auto_references()
-        self.art = xtool.rotated(self.base_art, self.turns, self.fine)
-        self.selected.clear()
-        if self.item is not None:
-            self._build_item()
+        b = self.base_art
+        skip_auto = self.skip_auto.isChecked()
+
+        def work():
+            apertures = xtool.traces_apertures(
+                b.copper, b.outline, b.drills or (), strategy=r.strategy,
+                offsets=r.offsets, kerf=r.kerf, lines_per_cm=r.lines_per_cm,
+                spot_drills=r.spot_drills)
+            note = ("full rubout" if r.strategy == "rubout"
+                    else f"{r.offsets} passes ({r.isolation_mm:.2f} mm gap)")
+            new = replace(b, apertures=apertures, kerf=r.kerf, note=note,
+                          _ring_cache=None)
+            return new, (xtool.needless_trenches(new) if skip_auto else set())
+
+        def take(result):
+            new, skips = result
+            if self.kind != "traces" or self.base_art.copper is not b.copper:
+                return                      # the job changed meanwhile
+            self.base_art = new
+            self._skip_for = new.apertures
+            self.skipped = skips
+            self._sync_skip_note()
+            if self.auto_reference_source.currentData() == "artwork":
+                self._populate_auto_references()
+            self.art = xtool.rotated(self.base_art, self.turns, self.fine)
+            self.selected.clear()
+            if self.item is not None:
+                self._build_item()
+            if later:
+                self._say(f"Trenches updated: {new.note}.")
+
+        if later and not background.INLINE:
+            self._say("Updating the trenches…")
+            self._sums.later("rings", _SETTLE_MS, work, done=take,
+                           failed=lambda e: self._say(str(e), warn=True))
+            return
+        self._sums.cancel("rings")
+        take(work())
+
+    def _settle(self):
+        """Wait for any trenches or estimate still being worked out, so a run
+        uses what the page shows."""
+        if self._sums.pending("rings") or self._sums.busy():
+            self._sums.wait()
 
     def _recipe_changed(self, *_a):
         if self._syncing_recipe:
@@ -1748,31 +2067,27 @@ class StencilLaserDialog(QDialog):
         self._estimate()
 
     def _estimate(self):
+        """The run time in the bar. Worked out on the thread pool once the
+        edits stop (it needs the rings, a second or more on a big board), from
+        a snapshot taken now; only the newest answer is shown."""
         if not hasattr(self, "time_read") or self.item is None:
             return
         try:
-            if self.kind == "traces":
-                secs = xtool.traces_job(
-                    self.art, (1.0, 1.0), self._run_recipe(),
-                    only=self._traces_only()).seconds
-                self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
-                return
-            if self.kind != "stencil":
-                from shapely.affinity import translate
-                shapes = [translate(p, -self.x.value() + 1, -self.y.value() + 1)
-                          for p in self._shapes()]
-                secs = xtool.fill_job(shapes, [], self._run_recipe()).seconds
-                self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
-                return
-            holes, _ = self._holes()
-            _, outline = xtool.stencil_paths(self.art, (0, 0))
-            outline = [[(x + 1, y + 1) for x, y in p] for p in outline]
-            holes = [[(x - self.x.value() + 1, y - self.y.value() + 1) for x, y in p]
-                     for p in holes]
-            secs = xtool.stencil_job(holes, outline, self._run_recipe()).seconds
-            self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
+            fn = _estimator(self.kind, self.art, self.origin(), self._run_recipe(),
+                            set(self.selected),
+                            self._traces_only() if self.kind == "traces" else None)
         except ValueError:
+            self._sums.cancel("estimate")
             self.time_read.set("—")
+            return
+        if not background.INLINE:
+            self.time_read.set("…")
+
+        def show(secs):
+            self.time_read.set("—" if secs is None
+                               else f"{int(secs // 60)}:{int(secs % 60):02d}")
+        self._sums.later("estimate", _SETTLE_MS, fn, done=show,
+                       failed=lambda _e: self.time_read.set("—"))
 
     def recipe(self):
         if self.kind == "traces":
@@ -1838,36 +2153,17 @@ class StencilLaserDialog(QDialog):
     # -- what the laser gets ---------------------------------------------
     def _holes(self):
         """The bed paths of the holes to cut, and which aperture each is."""
-        _, h = self.art.size
-        only = self.selected or None
-        paths, owner = [], {}
-        for k, poly in enumerate(self.art.apertures):
-            if only is not None and k not in only:
-                continue
-            for ring in (poly.exterior, *poly.interiors):
-                p = xtool.to_bed(list(ring.coords), self.origin(), h)
-                paths.append(p)
-                owner[id(p)] = k
-        return paths, owner
+        return _bed_holes(self.art, self.origin(), self.selected or None)
 
     def paths(self):
         return xtool.stencil_paths(self.art, self.origin(), only=self.selected or None)
 
     def _shapes(self, art=None, origin=None, only="selected"):
         """The job's shapes as shapely Polygons on the bed (filled jobs)."""
-        from shapely.geometry import Polygon
         art = art or self.art
         origin = origin or self.origin()
         pick = (self.selected or None) if only == "selected" else None
-        _, h = art.size
-        out = []
-        for k, poly in enumerate(art.apertures):
-            if pick is not None and k not in pick:
-                continue
-            out.append(Polygon(xtool.to_bed(list(poly.exterior.coords), origin, h),
-                               [xtool.to_bed(list(r.coords), origin, h)
-                                for r in poly.interiors]))
-        return out
+        return _bed_shapes(art, origin, pick)
 
     def _auto_polys(self, art):
         return (art.apertures if self.auto_reference_source.currentData() == "artwork"
@@ -1957,6 +2253,7 @@ class StencilLaserDialog(QDialog):
                     return self._say("Click closer to a reference centre, or choose Free points.", warn=True)
             self._pending_reference = self._reference_from_bed(xy)
         else:
+            self._remember_edit()
             self._reference_pairs.append((self._pending_reference, xy))
             self._pending_reference = None
         self._update_reference_list()
@@ -1968,6 +2265,11 @@ class StencilLaserDialog(QDialog):
             self.reference_list.addItem(f"{i + 1} · photo X {target[0]:.2f}  Y {target[1]:.2f} mm")
         self._reference_prompt()
         self._draw_references()
+
+    def _clear_references_clicked(self):
+        if self._reference_pairs:
+            self._remember_edit()
+        self._clear_references()
 
     def _clear_references(self):
         self._reference_pairs.clear()
@@ -1983,6 +2285,7 @@ class StencilLaserDialog(QDialog):
     def _remove_reference(self):
         row = self.reference_list.currentRow()
         if row >= 0:
+            self._remember_edit()
             self._reference_pairs.pop(row)
         self._pending_reference = None
         self._update_reference_list()
@@ -2174,6 +2477,7 @@ class StencilLaserDialog(QDialog):
     def learn_offset(self):
         """The stencil is where it was cut: whatever offset the photo shows
         between the overlay and the real holes is the camera's error."""
+        self._settle()
         hi = 8
         if not self._last_cut_paths:
             return self._say("Cut a stencil in this window first. Camera learning uses "
@@ -2263,6 +2567,7 @@ class StencilLaserDialog(QDialog):
         second photo: what changed is where the laser really fires, and the
         holes are in the same pictures. The camera's correction is set from the
         marks and the job is moved onto the holes."""
+        self._settle()
         from gerber2rml.engine import xtool_camera as cam
         if self.kind != "traces":
             return self._say("The camera calibration runs on a traces job.",
@@ -2364,6 +2669,7 @@ class StencilLaserDialog(QDialog):
         """Find the holes already cut and put the stencil back on them. Tries the
         stencil as it is, then the other three quarter turns, in case the board
         went back the other way round."""
+        self._settle()
         from gerber2rml.engine import xtool_camera as cam
         cx, cy = self.centre()
         if len(self._features(self.art, self.origin())) < 2:
@@ -2464,6 +2770,7 @@ class StencilLaserDialog(QDialog):
         self._start(work, "Moving the head and refreshing the photo…", done)
 
     def trace(self):
+        self._settle()
         try:
             _, outline = xtool.stencil_paths(self.art, self.origin())
             text = xtool.trace_job(outline)
@@ -2478,6 +2785,7 @@ class StencilLaserDialog(QDialog):
                     lambda _r: "Traced. Move the stencil if it was off.")
 
     def cut(self):
+        self._settle()
         if self.kind != "stencil":
             return self._fill()
         try:
@@ -2648,6 +2956,14 @@ class StencilLaserDialog(QDialog):
     def _say(self, text, warn=False):
         self.status.setText(text)
         self.status.setStyleSheet(f"color: {theme.CAUTION if warn else theme.TEXT_2};")
+
+    def _worker_running(self):
+        return self._worker is not None and self._worker.isRunning()
+
+    def reject(self):
+        if self.embedded:
+            return          # Escape on a page of the main window closes nothing
+        super().reject()
 
     def closeEvent(self, e):
         if self._worker is not None and self._worker.isRunning():

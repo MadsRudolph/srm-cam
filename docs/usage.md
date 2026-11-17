@@ -576,9 +576,23 @@ and the clipped area is reported. Engine: `engine/silkscreen.py`.
 ## Copper traces, solder mask, and silkscreen on the xTool
 
 The Setup page lets you send any laser job directly to the xTool F1 Ultra (no
-XCS required), and the laser window has a **Traces | Mask | Silk | Stencil**
-switcher at the top of the right panel so you can step through all four jobs
-without losing board placement, focus, or camera alignment:
+XCS required). The laser is a page of the main window, not a window of its own:
+**CNC | Laser** in the header (Ctrl+1 / Ctrl+2) swaps between the
+mill and the laser, and each page stays as you left it. The laser page has a
+**Traces | Mask | Silk | Stencil** switcher at the top of the right panel so you
+can step through all four jobs without losing board placement, focus, or camera
+alignment. It follows the board loaded on the mill's page.
+
+**Undo** (Ctrl+Z, or the Undo button above the bed) puts the job back where it
+was before the last drag, typed position, arrow nudge, right-click centring or
+turn; **Redo** is Ctrl+Shift+Z or Ctrl+Y. A drag is one step, and arrow nudges
+in a row are one step.
+
+The page works out the trenches and the run time in the background, once an
+edit has rested for a moment, so typing a ring count or turning the board never
+freezes the window. The old trenches stay up until the new ones are in, and the
+Estimate shows **…** while it is being worked out. A run started meanwhile waits
+for them, so what is cut is always what is shown.
 
 - **Etch the traces on the xTool…** isolates every net on `B.Cu` (or `F.Cu`
   when `B.Cu` is absent/empty) directly from the Gerber folder. Use **Copper face**
