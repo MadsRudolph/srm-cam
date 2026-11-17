@@ -116,6 +116,38 @@ def rotated(art, quarter_turns, degrees=0.0):
     return out
 
 
+def reoriented(art, mirror=False, flip=False):
+    """The artwork mirrored left to right and/or flipped top to bottom within
+    its own outline, which stays at (0, 0). ``mirrored`` and ``flipped`` say
+    the result's state. For any job: a Gerber's or a DXF's, traces, mask,
+    silkscreen or stencil."""
+    from dataclasses import replace as _replace
+    from shapely.affinity import scale
+    from shapely.geometry import Point
+    if not mirror and not flip:
+        return art
+    x0, y0, x1, y1 = art.outline.bounds
+    c = ((x0 + x1) / 2, (y0 + y1) / 2)
+    fx, fy = (-1 if mirror else 1), (-1 if flip else 1)
+    turn = lambda g: scale(g, xfact=fx, yfact=fy, origin=c)       # noqa: E731
+    out = _replace(art, outline=turn(art.outline),
+                   apertures=[turn(p) for p in art.apertures])
+    if hasattr(art, "_ring_cache"):
+        out = _replace(out, _ring_cache=None)
+    if getattr(art, "features", None):
+        out = _replace(out, features=[turn(p) for p in art.features])
+    if getattr(art, "copper", None) is not None:
+        out = _replace(out, copper=turn(art.copper))
+    if getattr(art, "drills", None):
+        out = _replace(out, drills=[(q.x, q.y, d) for q, d in
+                                    ((turn(Point(x, y)), d) for x, y, d in art.drills)])
+    if mirror and hasattr(art, "mirrored"):
+        out = _replace(out, mirrored=not art.mirrored)
+    if flip and hasattr(art, "flipped"):
+        out = _replace(out, flipped=not art.flipped)
+    return out
+
+
 def snap_to_grid(point, step=10.0, extent=220.0):
     """The calibrated point nearest ``point``: autofocus measures on the
     factory's 10 mm grid."""
@@ -179,6 +211,40 @@ def _head(source, frequency, power_factor):
 
 _TAIL = ["# END", "# GS002 VECTOR TAIL", "# motion_end", "# GS002 TAIL",
          "G90", "G0 S0", "G0 F180000", "G1 F180000", "M536 U0", "M6 P1", ""]
+
+
+# What the F1 Ultra really takes, measured 2026-11-17 on the lab's machine:
+# the align test board (24 s of cutting, ran 48 s) and the VCO's top copper
+# (7.3 min of cutting, ran 14 min). Rings are drawn in very short segments and
+# the controller will not draw one faster than SEGMENT_MIN_S, whatever the
+# speed; each new path costs JUMP_S besides the jump itself.
+SEGMENT_MIN_S = 71.5e-6
+JUMP_S = 2.33e-3
+JUMP_SPEED = 3000.0         # mm/s: the G0 F180000 the head asks for
+
+
+def _draw_seconds(paths, speed):
+    """How long the laser takes to draw ``paths`` once at ``speed``: each
+    segment as rounded for the file, no faster than SEGMENT_MIN_S, plus the
+    jumps between paths."""
+    import numpy as np
+    total, last, lens = 0.0, None, []
+    for path in paths:
+        a = np.round(np.asarray(path, float), 3)
+        if len(a) < 2:
+            continue
+        d = np.hypot(*np.diff(a, axis=0).T)
+        d = d[d > 0]
+        if not len(d):
+            continue
+        lens.append(d)
+        if last is not None:
+            total += math.dist(last, a[0]) / JUMP_SPEED
+        total += JUMP_S
+        last = a[-1]
+    if lens:
+        total += float(np.maximum(np.concatenate(lens) / speed, SEGMENT_MIN_S).sum())
+    return total
 
 
 def _passes(paths, power, speed, n):
@@ -248,7 +314,7 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
         n = min(recipe.passes_per_burst,
                 recipe.total_passes - r * recipe.passes_per_burst)
         body += _passes(z, recipe.power, recipe.speed, n)
-        dt = n * sum(_length(p) for p in z) / recipe.speed
+        dt = n * _draw_seconds(z, recipe.speed)
         timeline.append((secs, secs + dt, k, r))
         secs += dt
         if i < len(bursts) - 1 and recipe.rest_s > 0:
@@ -256,7 +322,7 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
             secs += recipe.rest_s
     if outline and recipe.mark_passes:
         body += _passes(outline, recipe.mark_power, recipe.speed, recipe.mark_passes)
-        dt = recipe.mark_passes * sum(_length(p) for p in outline) / recipe.speed
+        dt = recipe.mark_passes * _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.rounds))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
@@ -500,6 +566,7 @@ class LaserArt:
     copper: object = None
     drills: list = None
     side: str = "bottom"
+    flipped: bool = False       # turned top to bottom (a DXF), on top of mirrored
     _ring_cache: dict = field(default=None, repr=False, compare=False)
 
     @property
@@ -619,7 +686,7 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
         ang = base_angle + (90.0 * (k % 2) if recipe.cross_hatch else 0.0)
         if ang not in cached:
             segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
-            dt = sum(math.dist(a, b) for a, b in segs) / recipe.speed
+            dt = _draw_seconds([[a, b] for a, b in segs], recipe.speed)
             lines_k = []
             for a, b in segs:
                 lines_k.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
@@ -631,7 +698,7 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
         secs += dt
     if outline and recipe.mark_outline:
         body += _passes(outline, recipe.mark_power, recipe.speed, 1)
-        dt = sum(_length(p) for p in outline) / recipe.speed
+        dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
@@ -870,6 +937,56 @@ def traces_art(copper, outline_raw, raw_drills, *, side="bottom", mirror=True,
                     kerf=kerf, copper=copper, drills=drills, side=side)
 
 
+POUR_SHARE = 0.25       # of the board: a copper piece this big is a pour
+
+
+def needless_trenches(art, *, eps=0.02):
+    """Indices of ``art.apertures`` (traces) that isolate nothing: each one
+    borders a single piece of real copper, a pour, and otherwise only bare
+    stock copper. The trench round the pour along the board's edge and the
+    ring round a mounting hole's clearance are such; skipping them only makes
+    the pour bigger. A via or pad on any other net is never among them.
+
+    Taken one by one, merging what each skipped trench joins (stock regions
+    included), so no set of skips can connect two nets."""
+    from shapely.strtree import STRtree
+    from shapely.ops import unary_union
+    from gerber2rml.engine import soldermask
+    if art.copper is None or art.copper.is_empty or not art.apertures:
+        return set()
+    pieces = soldermask._polygons(art.copper)
+    pours = {i for i, p in enumerate(pieces)
+             if p.area >= POUR_SHARE * art.outline.area}
+    if not pours:
+        return set()
+    stock = [g for g in soldermask._polygons(
+        art.outline.difference(art.copper).difference(unary_union(art.apertures)))
+        if g.area > 1e-4]
+    nodes = pieces + stock
+    tree = STRtree(nodes)
+    parent = list(range(len(nodes)))
+    nets = [{i} if i < len(pieces) else set() for i in range(len(nodes))]
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    out = set()
+    for k, ap in enumerate(art.apertures):
+        g = ap.buffer(eps)
+        roots = {find(int(j)) for j in tree.query(g) if nodes[int(j)].intersects(g)}
+        joined = set().union(*(nets[r] for r in roots)) if roots else set()
+        if len(joined) != 1 or not joined <= pours:
+            continue
+        out.add(k)
+        roots = list(roots)
+        for r in roots[1:]:
+            parent[r] = roots[0]
+            nets[roots[0]] |= nets[r]
+    return out
+
+
 def traces_filename(art, name):
     state = "mirrored" if art.mirrored else "not_mirrored"
     return f"{name}_traces_{art.side}_{state}.dxf"
@@ -1051,11 +1168,14 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     check_on_bed(all_rings + outline)
     park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
     body, secs, timeline = [], 0.0, []
+    round_s = None
     for rnd in range(recipe.passes):
         order = groups if rnd % 2 == 0 else list(reversed(groups))
         round_rings = [rg for grp in order for rg in grp]
         body += _passes(round_rings, recipe.power, recipe.speed, 1)
-        dt = sum(_length(p) for p in round_rings) / recipe.speed
+        if round_s is None:                 # every round draws the same rings
+            round_s = _draw_seconds(round_rings, recipe.speed)
+        dt = round_s
         timeline.append((secs, secs + dt, 0, rnd))
         secs += dt
         if rnd < recipe.passes - 1 and recipe.rest_s > 0:
@@ -1063,7 +1183,7 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
             secs += recipe.rest_s
     if outline and recipe.mark_outline:
         body += _passes(outline, recipe.mark_power, recipe.speed, 1)
-        dt = sum(_length(p) for p in outline) / recipe.speed
+        dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
@@ -1161,19 +1281,15 @@ def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
                          "round them, so there is nothing to mark there.")
     keys = list(bands)
     keys = [keys[k] for k in spread([centres[i] for i in keys], n)]
-    discs = unary_union([Point(centres[i]).buffer(radius, quad_segs=16) for i in keys])
-    groups, _ = traces_rings(art, origin, recipe)
-    bx0, by0, bx1, by1 = discs.bounds
-    paths = []
-    for grp in groups:
-        for ring in grp:
-            xs, ys = [q[0] for q in ring], [q[1] for q in ring]
-            if max(xs) < bx0 or min(xs) > bx1 or max(ys) < by0 or min(ys) > by1:
-                continue
-            paths += _clip_ring_to(ring, discs)
+    # Filled, not traced: the isolation rings alone burned thin lines round
+    # each hole that the camera could hardly tell from the copper. Hatched
+    # like the waste squares, the whole band changes.
+    marks = [bands[i] for i in keys]
+    step = max(recipe.stepover, 0.02)
+    paths = [[a, b] for a, b in hatch(marks, step, one_way=False)]
     if not paths:
-        raise ValueError("No isolation passes fall where the marks would go.")
-    return Proof("isolation", paths, [bands[i] for i in keys])
+        raise ValueError("No isolation falls where the marks would go.")
+    return Proof("isolation", paths, marks)
 
 
 def proof_in_waste(art, origin, recipe=None, *, margin=PROOF_WASTE_MARGIN,
@@ -1262,5 +1378,5 @@ def proof_job(proof, recipe=None, passes=PROOF_PASSES):
     passes = max(1, int(passes))
     lines = (_head("fiber", recipe.frequency, recipe.power / 100)
              + _passes(proof.paths, recipe.power, recipe.speed, passes) + _TAIL)
-    secs = passes * sum(_length(p) for p in proof.paths) / recipe.speed
+    secs = passes * _draw_seconds(proof.paths, recipe.speed)
     return "\r\n".join(lines), secs
