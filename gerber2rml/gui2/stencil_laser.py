@@ -110,6 +110,12 @@ def as_laser_art(art):
                           note=f"kerf {art.kerf:g} mm")
 
 
+def _brightness(rgb):
+    """Mean brightness of a photo, from a sparse sample (it is 16 Mpx)."""
+    import numpy as np
+    return float(np.asarray(rgb)[::16, ::16].mean())
+
+
 def _c(token, a=1.0):
     """A theme colour as a QColor, at ``a`` opacity."""
     c = QColor(token)
@@ -1373,12 +1379,13 @@ class StencilLaserDialog(QDialog):
         self.bar.setVisible(True)
         take_photo = self.photo_after.isChecked()
         n = len(self.rework_boxes)
+        before = self._raw_rgb
 
         def work(progress):
             z = self.laser.z()
             self.laser.run(job.text)
             self.laser.wait(job.seconds * 2 + 120, progress=progress)
-            return z, (self._photo() if take_photo else None)
+            return z, (self._photo_after_job(before) if take_photo else None)
 
         def done(res):
             z, rgb = res
@@ -1933,12 +1940,32 @@ class StencilLaserDialog(QDialog):
             self._cal = self.laser.calibration()
         return self._cal
 
-    def _raw_photo(self):
+    PHOTO_TRIES = 6
+    PHOTO_DARK = 0.85           # of the photo before: darker is not lit yet
+
+    def _raw_photo(self, like=None):
+        """The camera's picture. ``like``: a photo of the same bed taken
+        before a job. Straight after a job the light and the exposure take a
+        moment to come back; a photo clearly darker than ``like`` is taken
+        again, a second apart, until it is not."""
+        import time
         from gerber2rml.engine.xtool_camera import decode_jpeg
         self._calibration()
         self.laser.lights(True)
-        self._raw_rgb = decode_jpeg(self.laser.snap())
-        return self._raw_rgb
+        raw = decode_jpeg(self.laser.snap())
+        if like is not None:
+            want = self.PHOTO_DARK * _brightness(like)
+            for _ in range(self.PHOTO_TRIES - 1):
+                if _brightness(raw) >= want:
+                    break
+                time.sleep(1.0)
+                raw = decode_jpeg(self.laser.snap())
+        self._raw_rgb = raw
+        return raw
+
+    def _photo_after_job(self, before):
+        """The bed straightened, after a job: lit like ``before`` was."""
+        return self._photo(_PX_PER_MM, self._raw_photo(like=before))
 
     def _photo(self, px_per_mm=_PX_PER_MM, raw=None, offset=None):
         raw = self._raw_photo() if raw is None else raw
@@ -2106,7 +2133,7 @@ class StencilLaserDialog(QDialog):
             text, secs = xtool.proof_job(plan, recipe, passes)
             self.laser.run(text)
             self.laser.wait(secs * 2 + 60)
-            raw_b = self._raw_photo()
+            raw_b = self._raw_photo(like=raw_a)
             m = cam.locate_change(before, self._photo(hi, raw_b), hi, plan.marks)
             if not m.ok:
                 return plan, raw_b, m, None, old
@@ -2300,6 +2327,7 @@ class StencilLaserDialog(QDialog):
         self._job = job
         self._zone_holes = [{owner[id(p)] for p in z if id(p) in owner}
                             for z in job.zone_paths]
+        before = self._raw_rgb
         self.bar.setRange(0, max(1, int(job.seconds)))
         self.bar.setValue(0)
         self.bar.setVisible(True)
@@ -2311,7 +2339,7 @@ class StencilLaserDialog(QDialog):
             self.laser.wait(job.seconds * 2 + 120, progress=progress)
             if not take_photo:
                 return z, None, None
-            raw = self._raw_photo()
+            raw = self._raw_photo(like=before)
             try:
                 a = self._residual(self._photo(8, raw), 8, holes)
             except Exception:           # noqa: BLE001 - a check, never a failure
@@ -2357,12 +2385,13 @@ class StencilLaserDialog(QDialog):
         self.bar.setValue(0)
         self.bar.setVisible(True)
         take_photo = self.photo_after.isChecked()
+        before = self._raw_rgb
 
         def work(progress):
             z = self.laser.z()
             self.laser.run(job.text)
             self.laser.wait(job.seconds * 2 + 120, progress=progress)
-            return z, (self._photo() if take_photo else None)
+            return z, (self._photo_after_job(before) if take_photo else None)
 
         def done(res):
             z, rgb = res

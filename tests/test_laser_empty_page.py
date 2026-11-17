@@ -74,7 +74,7 @@ def test_the_calibration_runs_on_the_area(page, monkeypatch):
                       marks=plan.marks if raw == "after" else [],
                       shift=(err[0] - o[0], err[1] - o[1]), sheet=stock)
     monkeypatch.setattr(page, "_raw_photo",
-                        lambda: "after" if Laser.fired else "before")
+                        lambda **_k: "after" if Laser.fired else "before")
     monkeypatch.setattr(page, "_photo", photo)
     monkeypatch.setattr(page, "_start", lambda fn, text, done=None:
                         page._say(done(fn(lambda *_a: None))))
@@ -103,3 +103,69 @@ def test_a_dxf_is_opened_from_the_empty_page(page):
     page.load_dxf_art(dxf_traces.build_dxf_traces(p), p)
     assert not page._empty and len(page.base_art.drills) == 12
     assert page.empty_hint.isHidden()
+
+
+# -- the photo after a job: the light and exposure take a moment ------------
+
+def test_a_dark_photo_after_a_job_is_taken_again(page, monkeypatch):
+    import numpy as np
+    shots = iter([20, 40, 150, 160])            # mean brightness, dark first
+    snaps = []
+
+    class Laser:
+        def lights(self, on):
+            pass
+
+        def snap(self):
+            v = next(shots)
+            snaps.append(v)
+            return v
+
+    page.laser = Laser()
+    monkeypatch.setattr(page, "_calibration", lambda: None)
+    import gerber2rml.engine.xtool_camera as cam
+    monkeypatch.setattr(cam, "decode_jpeg",
+                        lambda v: np.full((64, 64, 3), v, dtype=np.uint8))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    before = np.full((64, 64, 3), 160, dtype=np.uint8)
+    raw = page._raw_photo(like=before)
+    assert snaps == [20, 40, 150]               # 150 is lit like before
+    assert raw.mean() == 150
+    page._raw_rgb = None                        # nothing to redraw on close
+
+
+def test_a_photo_with_nothing_to_match_is_taken_once(page, monkeypatch):
+    import numpy as np
+    snaps = []
+
+    class Laser:
+        def lights(self, on):
+            pass
+
+        def snap(self):
+            snaps.append(1)
+            return 5
+
+    page.laser = Laser()
+    monkeypatch.setattr(page, "_calibration", lambda: None)
+    import gerber2rml.engine.xtool_camera as cam
+    monkeypatch.setattr(cam, "decode_jpeg",
+                        lambda v: np.full((8, 8, 3), v, dtype=np.uint8))
+    page._raw_photo()
+    assert snaps == [1]
+    page._raw_rgb = None
+
+
+def test_the_light_settles_after_a_job_before_the_photo(monkeypatch):
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    laser = xtool.F1Ultra("127.0.0.1", 1, timeout=1)
+    monkeypatch.setattr(laser, "_json", lambda *a, **k: None)
+    monkeypatch.setattr(laser, "_raw", lambda *a, **k: b"")
+    laser.lights(True)
+    assert slept == [laser.LIGHT_SETTLE_S]      # first time on
+    laser.lights(True)
+    assert slept == [laser.LIGHT_SETTLE_S]      # already on: no wait
+    laser._lit = False                          # as wait() leaves it after a job
+    laser.lights(True)
+    assert slept == [laser.LIGHT_SETTLE_S] * 2

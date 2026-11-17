@@ -332,7 +332,7 @@ def test_proof_corrects_the_camera_and_puts_the_job_on_the_holes(
             return _scene((size, size), px_per_mm, dark=real_holes, marks=marks,
                           shift=(err[0] - o[0], err[1] - o[1]), sheet=stock)
         monkeypatch.setattr(d, "_raw_photo",
-                            lambda: "after" if Laser.fired else "before")
+                            lambda **_k: "after" if Laser.fired else "before")
         monkeypatch.setattr(d, "_photo", photo)
         monkeypatch.setattr(d, "_start", lambda fn, text, done=None:
                             d._say(done(fn(lambda *_a: None))))
@@ -363,7 +363,7 @@ def test_proof_that_leaves_no_mark_moves_nothing(qt_app, monkeypatch):
         d.y.setValue(60)
         d.proof_where.setCurrentIndex(d.proof_where.findData("isolation"))
         blank = _scene((1760, 1760), 8)
-        monkeypatch.setattr(d, "_raw_photo", lambda: "raw")
+        monkeypatch.setattr(d, "_raw_photo", lambda **_k: "raw")
         monkeypatch.setattr(d, "_photo", lambda px=sl._PX_PER_MM, raw=None, offset=None:
                             blank[::8 // px, ::8 // px])
         monkeypatch.setattr(d, "_start", lambda fn, text, done=None:
@@ -425,7 +425,7 @@ def test_on_a_blank_the_calibration_corrects_the_camera_and_moves_nothing(
             return _scene((size, size), px_per_mm, dark=[], marks=marks,
                           shift=(err[0] - o[0], err[1] - o[1]), sheet=stock)
         monkeypatch.setattr(d, "_raw_photo",
-                            lambda: "after" if Laser.fired else "before")
+                            lambda **_k: "after" if Laser.fired else "before")
         monkeypatch.setattr(d, "_photo", photo)
         monkeypatch.setattr(d, "_start", lambda fn, text, done=None:
                             d._say(done(fn(lambda *_a: None))))
