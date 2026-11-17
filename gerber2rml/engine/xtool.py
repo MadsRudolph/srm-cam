@@ -287,6 +287,7 @@ class F1Ultra:
 
     def __init__(self, host=HOST, port=HTTP_PORT, timeout=10):
         self.host, self.port, self.timeout = host, port, timeout
+        self._lit = False           # the fill light on, as far as we know
 
     def _req(self, method, path, body=None, ctype="application/json", timeout=None):
         if isinstance(body, (dict, list)):
@@ -355,6 +356,7 @@ class F1Ultra:
             if m not in ("P_IDLE", "P_WORK_DONE"):
                 started = True
             elif started or time.time() - t0 > 5:
+                self._lit = False   # the machine dims its light for a job
                 return m
             if progress:
                 progress(time.time() - t0)
@@ -367,6 +369,7 @@ class F1Ultra:
     # -- camera, lights, autofocus (engine/xtool_camera.py does the maths) --
     CAMERA_PORT = 8329
     FILL_LIGHT = 136            # the machine's own default brightness
+    LIGHT_SETTLE_S = 1.5        # the light up and the exposure caught up
 
     def _raw(self, port, path, *, method="GET", body=None, timeout=40):
         c = http.client.HTTPConnection(self.host, port, timeout=timeout)
@@ -407,6 +410,11 @@ class F1Ultra:
                    {"action": "on" if on else "off", "index": 0})
         self._raw(self.CAMERA_PORT, "/camera/exposure?stream=0", method="POST",
                   body={"value": 0 if on else 10})
+        # Straight after a job the light comes back on and the camera's
+        # exposure follows it: a photo taken at once is dark.
+        if on and not getattr(self, "_lit", False):
+            time.sleep(self.LIGHT_SETTLE_S)
+        self._lit = on
 
     def snap(self):
         """The camera's full-size JPEG."""
