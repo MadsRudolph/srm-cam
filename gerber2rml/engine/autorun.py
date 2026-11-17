@@ -348,6 +348,7 @@ class AutoRun:
         # passes, milled out of the sheet on paper, are seen to join no nets
         # (engine/bracket.py). Off, a job that reaches there is refused.
         self.leave_under = bool(leave_under)
+        self._tabbed = set()                  # cut-outs that got tabs
         # [(x0, y0, x1, y1)] machine mm: what holds the stock down - clamps,
         # screws, anything standing above the copper that the operator drew a
         # box round. The bracket is known by its drawing; these are known only
@@ -1035,7 +1036,25 @@ class AutoRun:
     def _leave_out(self, key, paths):
         """An isolation pass with what is under the bracket taken out and
         the bit led round. ``(paths, uncut_mm)``; any other job, or with
-        ``leave_under`` off, is returned as it is."""
+        ``leave_under`` off, is returned as it is.
+
+        A cut-out that would run into the bracket's bars - the side cuts of
+        a board that spans its stock run edge to edge, and one edge is
+        against a bar - stops short of them instead, leaving tabs that are
+        broken free by hand. ``uncut_mm`` is 0 for it: nothing is proved."""
+        if "cutout" in key and self.arms:
+            from gerber2rml.engine.bracket import tabs
+            paths, n = tabs(paths, [(arm, self.bit / 2.0 + 0.1)
+                                    for arm in self.arms],
+                            self._stock_rect())
+            if n and key not in self._tabbed:
+                self._tabbed.add(key)
+                self.ev.note("The cut-out stops just short of the "
+                             "bracket's bar in %d place%s, so it does not cut "
+                             "the bar: the board stays held there by a thin "
+                             "tab (about 0.15 mm). Break or cut it free "
+                             "afterwards." % (n, "" if n == 1 else "s"))
+            return paths, 0.0
         if not self.leave_under or "traces" not in key:
             return paths, 0.0
         from gerber2rml.engine.bracket import avoid

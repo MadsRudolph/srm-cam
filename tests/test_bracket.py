@@ -94,3 +94,45 @@ def test_a_machine_that_only_ever_had_the_old_default_gets_the_new_one():
     # A position someone chose stays theirs.
     workspace.set_setting("autorun/bracket", "3,12,back-left")
     assert autorun.saved_bracket() == br.Bracket(3, 12, "back-left")
+
+
+# -- the plain bracket: the same L without the probe tongue -------------------
+
+def test_plain_bracket_has_no_keepout_and_no_tongue():
+    from gerber2rml.engine import bracket as br
+    probe = br.Bracket(19, 12, "back-right")
+    plain = br.Bracket(19, 12, "back-right", tongue=False)
+    assert plain.keepout() is None
+    assert probe.keepout() is not None
+    assert len(plain.outline()) == len(probe.outline()) - 4
+    # Same holes, same corner, same bars: only the tongue differs.
+    assert plain.inside_corner() == probe.inside_corner()
+    assert plain.arms() == probe.arms()
+    assert plain.screws() == probe.screws()
+
+
+def test_plain_bracket_round_trips_through_its_setting():
+    from gerber2rml.engine import bracket as br
+    plain = br.Bracket(3, 4, "front-left", tongue=False)
+    assert br.to_text(plain) == "3,4,front-left,plain"
+    assert br.from_text(br.to_text(plain)) == plain
+    # What older versions saved is the probe bracket.
+    assert br.from_text("19,12,back-right") == br.DEFAULT
+    assert br.to_text(br.DEFAULT) == "19,12,back-right"
+    assert br.from_text("1,2,back-right,nonsense") is None
+
+
+def test_snap_keeps_the_kind():
+    from gerber2rml.engine import bracket as br
+    x, y = br.DEFAULT.inside_corner()
+    assert br.snap(x, y, tongue=False) == br.Bracket(19, 12, "back-right",
+                                                     tongue=False)
+
+
+def test_corner_place_hugs_the_corner_without_the_tongue():
+    from gerber2rml.engine import bracket as br
+    stock = (100.0, 50.0, 100.0, 60.0)
+    extent = (0.0, 0.0, 40.0, 30.0)
+    plain = br.Bracket(19, 12, "back-right", tongue=False)
+    nx, ny = br.corner_place("back-right", stock, extent, plain.keepout())
+    assert (nx, ny) == (100 + 100 - 3 - 40, 50 + 60 - 3 - 30)
