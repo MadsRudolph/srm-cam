@@ -737,6 +737,50 @@ def traces_apertures(copper, outline, drills=(), *, strategy="concentric",
             if p.area >= soldermask._SLIVER_MM2]
 
 
+OUTLINE_STROKE_TOL = 0.05       # mm: a stroke this near the outline is the outline
+OUTLINE_STROKE_SHARE = 0.5      # of the outline's length, before it is believed
+
+
+def copper_without_outline(layer, outline):
+    """A copper Gerber's geometry with the board outline taken out of it.
+
+    KiCad's plot option "Plot Edge.Cuts on all layers" draws the outline into
+    every copper file as a thin line. Read as copper, it gets isolated like a
+    track: the laser runs all the way round the board for nothing. Lines and
+    arcs that lie on the outline are left out, but only when together they
+    cover most of it - a stray stroke that happens to touch the edge is
+    copper. Returns ``(geometry, mm of outline left out)``."""
+    from gerbonara.graphic_objects import Arc, Line
+    from gerbonara.utils import MM
+    from shapely.geometry import LineString, Point
+    from gerber2rml.engine import soldermask
+    edge = outline.boundary
+    keep, dropped, length = [], [], 0.0
+    for obj in layer.objects:
+        on = False
+        if isinstance(obj, (Line, Arc)):
+            o = obj.converted(MM)
+            a, b = (o.x1, o.y1), (o.x2, o.y2)
+            if (Point(a).distance(edge) <= OUTLINE_STROKE_TOL
+                    and Point(b).distance(edge) <= OUTLINE_STROKE_TOL):
+                pts = [a, b]
+                if isinstance(obj, Arc):
+                    try:
+                        pts = [(q.x1, q.y1) for q in o.approximate(0.05, MM)] + [b]
+                    except Exception:           # noqa: BLE001 - then by its ends
+                        pts = [a, b]
+                on = all(Point(q).distance(edge) <= OUTLINE_STROKE_TOL for q in pts)
+                if on and math.dist(a, b) > 1e-9:
+                    length += LineString(pts).length
+        (dropped if on else keep).append(obj)
+    if not dropped or length < OUTLINE_STROKE_SHARE * edge.length:
+        return soldermask._layer_to_shapely(layer), 0.0
+
+    class _Kept:
+        objects = keep
+    return soldermask._layer_to_shapely(_Kept), length
+
+
 def build_laser_traces(folder, *, side="bottom", mirror=True,
                        offsets=DEFAULT_TRACE_OFFSETS, kerf=DEFAULT_TRACE_KERF,
                        lines_per_cm=DEFAULT_TRACE_DENSITY,
@@ -765,10 +809,16 @@ def build_laser_traces(folder, *, side="bottom", mirror=True,
     outline_raw = soldermask._read_outline(edge)
     if outline_raw.is_empty:
         raise TracesError(f"{edge.name} has no outline in it.")
-    copper = soldermask._layer_to_shapely(GerberFile.open(str(path)))
+    copper, in_copper = copper_without_outline(GerberFile.open(str(path)),
+                                               outline_raw)
     if copper.is_empty:
         raise TracesError(f"{path.name} is empty: {_COPPER_NAME[side]} has no "
                           f"copper on it.")
+    notes = []
+    if in_copper:
+        notes.append(f"{path.name} has the board outline drawn in it (KiCad: "
+                     f"Edge.Cuts plotted on all layers). It is left out, so "
+                     f"the laser does not go round the board's edge.")
     try:
         raw_drills = select_drill_holes(folder, outline_raw)
     except Exception:
@@ -795,7 +845,7 @@ def build_laser_traces(folder, *, side="bottom", mirror=True,
         iso_mm = kerf + max(0, offsets - 1) * (10.0 / lines_per_cm)
         note = f"{offsets} passes ({iso_mm:.2f} mm gap)"
     return LaserArt(kind="traces", apertures=apertures, outline=outline,
-                    mirrored=mirror, note=note, notes=[], features=features,
+                    mirrored=mirror, note=note, notes=notes, features=features,
                     kerf=kerf, copper=copper, drills=drills, side=side)
 
 
@@ -814,6 +864,9 @@ def write_traces_dxf(art, out_dir, name):
                                    soldermask.LAYER_TRACES),
         encoding="ascii")
     return path
+
+
+EDGE_RING_MM = 0.02     # an isolation pass this near the board's edge is on it
 
 
 def _clip_ring_to(coords, clip):
@@ -864,15 +917,31 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
                    if 0 <= k < len(art.apertures)]
             if sel:
                 clip = unary_union(sel).buffer(recipe.stepover * 1.5)
+        # Where copper reaches the board's edge, the grown shape is cut off
+        # by the outline and its ring would follow the edge. There is nothing
+        # past the edge to isolate from, so that part is not drawn.
+        from shapely.geometry import LineString
+        inside = art.outline.buffer(-EDGE_RING_MM)
+        edge = art.outline.boundary
+
+        def kept(coords):
+            parts = _clip_ring_to(coords, clip)
+            out = []
+            for part in parts:
+                if LineString(part).distance(edge) > EDGE_RING_MM:
+                    out.append(part)            # nowhere near the edge
+                else:
+                    out += _clip_ring_to(part, inside)
+            return out
         groups = []
         for i in range(recipe.offsets):
             d_i = recipe.kerf / 2 + i * recipe.stepover
             grown = cu.buffer(d_i).intersection(art.outline)
             rings = []
             for poly in soldermask._polygons(grown):
-                rings += _clip_ring_to(list(poly.exterior.coords), clip)
+                rings += kept(list(poly.exterior.coords))
                 for intr in poly.interiors:
-                    rings += _clip_ring_to(list(intr.coords), clip)
+                    rings += kept(list(intr.coords))
             if rings:
                 groups.append(_nearest_order(rings))
         cache[key] = groups
@@ -929,3 +998,140 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
     return Job(text="\r\n".join(lines), zones=[len(all_rings)], seconds=secs,
                passes=recipe.passes, zone_paths=[all_rings], timeline=timeline)
+
+
+# ---------------------------------------------------------------------------
+# Proof: a few faint marks next to the drilled holes, before the real job
+# ---------------------------------------------------------------------------
+
+PROOF_RADIUS = 2.5      # mm round a hole: how much of its isolation is marked
+PROOF_PASSES = 3
+PROOF_WASTE_MARGIN = 3.0
+PROOF_WASTE_SIZE = 1.5
+
+
+@dataclass
+class Proof:
+    """Marks for the laser to make so a photo can show where it really fires.
+    ``paths`` are what it draws and ``marks`` the areas that should change in
+    the photo, both on the bed. ``where`` is "isolation" (copper the job
+    removes anyway) or "waste" (the sheet beside the board). ``inside`` are
+    points on the board matching the waste marks, for judging the sheet."""
+    where: str
+    paths: list
+    marks: list
+    inside: list = None
+
+    @property
+    def spots(self):
+        return [(m.centroid.x, m.centroid.y) for m in self.marks]
+
+
+def spread(points, n=3):
+    """Up to ``n`` indices into ``points`` that lie far apart: the two
+    farthest, then whichever is farthest from those already picked."""
+    pts = [tuple(p[:2]) for p in points]
+    if len(pts) <= n:
+        return list(range(len(pts)))
+    best = max(((math.dist(a, b), i, j) for i, a in enumerate(pts)
+                for j, b in enumerate(pts) if i < j))
+    picked = [best[1], best[2]]
+    while len(picked) < n:
+        k = max((i for i in range(len(pts)) if i not in picked),
+                key=lambda i: min(math.dist(pts[i], pts[j]) for j in picked))
+        picked.append(k)
+    return picked
+
+
+def _drills_on_bed(art, origin):
+    _, h = art.size
+    return [to_bed([(x, y)], origin, h)[0] for x, y, _d in (art.drills or [])]
+
+
+def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
+    """Marks on copper the traces job removes anyway: the isolation rings
+    within ``radius`` of up to ``n`` drilled holes that lie far apart."""
+    from shapely.geometry import Point, Polygon
+    from shapely.ops import unary_union
+    recipe = recipe or DEFAULT_TRACES_RECIPE
+    centres = _drills_on_bed(art, origin)
+    if len(centres) < 2:
+        raise ValueError("A proof needs at least two drilled holes on the board.")
+    _, h = art.size
+    cleared = unary_union([
+        Polygon(to_bed(list(p.exterior.coords), origin, h),
+                [to_bed(list(r.coords), origin, h) for r in p.interiors])
+        for p in art.apertures]).buffer(0)
+    bands = {}
+    for i, c in enumerate(centres):
+        band = cleared.intersection(Point(c).buffer(radius, quad_segs=16))
+        if not band.is_empty and band.area > 0.05:
+            bands[i] = band
+    if len(bands) < 2:
+        raise ValueError("Fewer than two drilled holes have isolation round "
+                         "them, so there is nothing to mark there.")
+    keys = list(bands)
+    keys = [keys[k] for k in spread([centres[i] for i in keys], n)]
+    discs = unary_union([Point(centres[i]).buffer(radius, quad_segs=16) for i in keys])
+    groups, _ = traces_rings(art, origin, recipe)
+    bx0, by0, bx1, by1 = discs.bounds
+    paths = []
+    for grp in groups:
+        for ring in grp:
+            xs, ys = [q[0] for q in ring], [q[1] for q in ring]
+            if max(xs) < bx0 or min(xs) > bx1 or max(ys) < by0 or min(ys) > by1:
+                continue
+            paths += _clip_ring_to(ring, discs)
+    if not paths:
+        raise ValueError("No isolation passes fall next to the drilled holes.")
+    return Proof("isolation", paths, [bands[i] for i in keys])
+
+
+def proof_in_waste(art, origin, recipe=None, *, margin=PROOF_WASTE_MARGIN,
+                   size=PROOF_WASTE_SIZE, n=3):
+    """Small filled squares in the sheet beside the board, ``margin`` outside
+    its outline, next to up to ``n`` drilled holes that lie far apart (or the
+    outline's corners on a board without holes)."""
+    from shapely.geometry import Point, Polygon, box
+    recipe = recipe or DEFAULT_TRACES_RECIPE
+    _, h = art.size
+    outline = Polygon(to_bed(list(art.outline.exterior.coords), origin, h)).buffer(0)
+    near = _drills_on_bed(art, origin)
+    if len(near) < 2:
+        x0, y0, x1, y1 = outline.bounds
+        near = [(x0, y0), (x1, y1), (x0, y1), (x1, y0)]
+    near = [near[k] for k in spread(near, n)]
+    lane = outline.buffer(margin + size / 2).exterior
+    edge = outline.exterior
+    marks, inside, paths = [], [], []
+    step = max(recipe.stepover, 0.02)
+    for c in near:
+        q = lane.interpolate(lane.project(Point(c)))
+        if any(q.distance(m.centroid) < 3 * size for m in marks):
+            continue
+        sq = box(q.x - size / 2, q.y - size / 2, q.x + size / 2, q.y + size / 2)
+        e = edge.interpolate(edge.project(q))
+        d = math.dist((q.x, q.y), (e.x, e.y)) or 1.0
+        back = margin + size / 2            # as far inside the edge as outside
+        inside.append((e.x + (e.x - q.x) / d * back, e.y + (e.y - q.y) / d * back))
+        marks.append(sq)
+        y, flip = q.y - size / 2, False
+        while y <= q.y + size / 2 + 1e-9:
+            a, b = (q.x - size / 2, y), (q.x + size / 2, y)
+            paths.append([b, a] if flip else [a, b])
+            y, flip = y + step, not flip
+    if len(marks) < 2:
+        raise ValueError("There is no room for two proof marks beside the board.")
+    check_on_bed(paths)
+    return Proof("waste", paths, marks, inside)
+
+
+def proof_job(proof, recipe=None, passes=PROOF_PASSES):
+    """The GS002 file that makes a proof's marks, and how long it takes."""
+    recipe = recipe or DEFAULT_TRACES_RECIPE
+    check_on_bed(proof.paths)
+    passes = max(1, int(passes))
+    lines = (_head("fiber", recipe.frequency, recipe.power / 100)
+             + _passes(proof.paths, recipe.power, recipe.speed, passes) + _TAIL)
+    secs = passes * sum(_length(p) for p in proof.paths) / recipe.speed
+    return "\r\n".join(lines), secs
