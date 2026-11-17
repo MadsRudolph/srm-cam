@@ -1,0 +1,15 @@
+%TF.FileFunction,Profile,NP*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Laser proof test board outline, 40 x 30 mm*
+%MOMM*%
+%LPD*%
+G01*
+%ADD10C,0.100*%
+D10*
+X0Y0D02*
+X40000000Y0D01*
+X40000000Y30000000D01*
+X0Y30000000D01*
+X0Y0D01*
+M02*
