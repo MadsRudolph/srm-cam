@@ -1111,15 +1111,33 @@ def _drills_on_bed(art, origin):
     return [to_bed([(x, y)], origin, h)[0] for x, y, _d in (art.drills or [])]
 
 
+def _isolation_anchors(art, origin, recipe, step=2.0):
+    """Points along the first isolation ring every ``step`` mm, on the bed:
+    where marks can go on a board with no holes yet."""
+    groups, _ = traces_rings(art, origin, recipe)
+    out = []
+    for ring in (groups[0] if groups else []):
+        run = 0.0
+        for a, b in zip(ring, ring[1:]):
+            run += math.dist(a, b)
+            if run >= step:
+                out.append(b)
+                run = 0.0
+    return out
+
+
 def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
     """Marks on copper the traces job removes anyway: the isolation rings
-    within ``radius`` of up to ``n`` drilled holes that lie far apart."""
+    within ``radius`` of up to ``n`` drilled holes that lie far apart, or on
+    a blank with no holes, of points far apart along the isolation."""
     from shapely.geometry import Point, Polygon
     from shapely.ops import unary_union
     recipe = recipe or DEFAULT_TRACES_RECIPE
     centres = _drills_on_bed(art, origin)
     if len(centres) < 2:
-        raise ValueError("A proof needs at least two drilled holes on the board.")
+        centres = _isolation_anchors(art, origin, recipe)
+    if len(centres) < 2:
+        raise ValueError("There is no isolation on this job to mark.")
     _, h = art.size
     cleared = unary_union([
         Polygon(to_bed(list(p.exterior.coords), origin, h),
@@ -1131,8 +1149,8 @@ def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
         if not band.is_empty and band.area > 0.05:
             bands[i] = band
     if len(bands) < 2:
-        raise ValueError("Fewer than two drilled holes have isolation round "
-                         "them, so there is nothing to mark there.")
+        raise ValueError("Fewer than two places on the job have isolation "
+                         "round them, so there is nothing to mark there.")
     keys = list(bands)
     keys = [keys[k] for k in spread([centres[i] for i in keys], n)]
     discs = unary_union([Point(centres[i]).buffer(radius, quad_segs=16) for i in keys])
@@ -1146,7 +1164,7 @@ def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
                 continue
             paths += _clip_ring_to(ring, discs)
     if not paths:
-        raise ValueError("No isolation passes fall next to the drilled holes.")
+        raise ValueError("No isolation passes fall where the marks would go.")
     return Proof("isolation", paths, [bands[i] for i in keys])
 
 

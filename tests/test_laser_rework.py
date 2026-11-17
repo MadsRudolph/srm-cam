@@ -126,3 +126,25 @@ def test_rework_is_only_for_traces(page):
     page.kind = "mask"
     page._sync_rework()
     assert page.rework_section.isHidden()
+
+
+# -- the camera calibration on a blank (no drilled holes) -------------------
+
+def test_marks_go_on_the_isolation_of_a_blank():
+    art = _art()                                    # no drills
+    plan = xtool.proof_on_isolation(art, ORIGIN)
+    assert plan.where == "isolation" and len(plan.marks) >= 2
+    # Far apart: one round each pad, 30 mm from each other.
+    xs = sorted(m.centroid.x for m in plan.marks)
+    assert xs[-1] - xs[0] > 20
+
+
+def test_waste_marks_go_by_the_corners_of_a_blank():
+    plan = xtool.proof_in_waste(_art(), ORIGIN)
+    assert plan.where == "waste" and len(plan.marks) >= 2
+
+
+def test_the_calibration_is_offered_on_a_blank(page):
+    assert not page.proof_btn.isHidden()
+    assert page.proof_btn.text() == "Calibrate the camera"
+    assert "blank" in page.proof_hint.text()

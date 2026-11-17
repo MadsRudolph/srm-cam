@@ -376,5 +376,65 @@ def test_proof_that_leaves_no_mark_moves_nothing(qt_app, monkeypatch):
         d.close()
 
 
-def test_proof_is_offered_only_for_traces_with_drilled_holes(dialog):
-    assert dialog.proof_btn.isHidden()      # the fixture's board has no drills
+def test_the_camera_calibration_is_offered_on_every_traces_job(dialog):
+    # The fixture's board has no drills: a blank. The calibration is still
+    # there; it only corrects the camera.
+    assert not dialog.proof_btn.isHidden()
+    assert dialog.proof_btn.text() == "Calibrate the camera"
+
+
+@pytest.mark.parametrize("where,sheet", [("isolation", "board"), ("auto", "sheet")])
+def test_on_a_blank_the_calibration_corrects_the_camera_and_moves_nothing(
+        qt_app, monkeypatch, where, sheet):
+    """No drilled holes yet: the marks still correct the camera; the job
+    stays where it was put."""
+    from dataclasses import replace
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "proof-blank"))
+    err = (0.5, -0.7)
+
+    class Laser:
+        fired = None
+
+        def run(self, text):
+            Laser.fired = text
+
+        def wait(self, *_a, **_k):
+            pass
+
+    blank = replace(_board(), drills=[], features=[])
+    d = sl.StencilLaserDialog(blank, laser=Laser())
+    try:
+        d._set_offset((0.0, 0.0))
+        d.x.setValue(50)
+        d.y.setValue(60)
+        assert d.proof_btn.text() == "Calibrate the camera"
+        d.proof_where.setCurrentIndex(d.proof_where.findData(where))
+        stock = box(50, 60, 110, 100) if sheet == "board" else box(20, 30, 140, 130)
+        plans, _ = d._proof_plans()
+        by = {p.where: p for p in plans}
+
+        def photo(px_per_mm=sl._PX_PER_MM, raw=None, offset=None):
+            raw = d._raw_photo() if raw is None else raw
+            o = d.cam_offset if offset is None else offset
+            marks = []
+            if raw == "after":
+                first = "G0X%.3fY%.3f" % by["waste"].paths[0][0] if "waste" in by else None
+                used = "waste" if first and first in Laser.fired else "isolation"
+                marks = by[used].marks
+            size = int(220 * px_per_mm)
+            return _scene((size, size), px_per_mm, dark=[], marks=marks,
+                          shift=(err[0] - o[0], err[1] - o[1]), sheet=stock)
+        monkeypatch.setattr(d, "_raw_photo",
+                            lambda: "after" if Laser.fired else "before")
+        monkeypatch.setattr(d, "_photo", photo)
+        monkeypatch.setattr(d, "_start", lambda fn, text, done=None:
+                            d._say(done(fn(lambda *_a: None))))
+        x0, y0 = d.x.value(), d.y.value()
+        d.proof()
+        assert d._last_proof is not None, d.status.text()
+        assert d.cam_offset == pytest.approx(err, abs=0.08)
+        assert (d.x.value(), d.y.value()) == (x0, y0)
+        assert "stays where it is" in d.status.text()
+    finally:
+        d._set_offset((0.0, 0.0))
+        d.close()
