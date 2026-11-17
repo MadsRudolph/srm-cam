@@ -323,3 +323,145 @@ def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0, polarity="
             found += 1
     return Alignment(dx=dx_mm, dy=dy_mm, turn=float(deg), found=found,
                      total=len(holes), score=float(s))
+
+
+# ---------------------------------------------------------------------------
+# Proof: where the laser's own marks show up, from a photo before and after
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ChangeFit:
+    dx: float           # mm from where the marks were drawn to where they show
+    dy: float
+    found: int          # marks that show where the fit puts them
+    total: int
+    score: float        # 0..1, how much of the marks' area changed
+    level: float        # grey levels the marks changed the photo by
+
+    @property
+    def ok(self):
+        need = 1 if self.total == 1 else max(2, int(np.ceil(0.6 * self.total)))
+        return self.total >= 1 and self.found >= need and self.score > 0.25
+
+
+def _geoms(shape):
+    return list(getattr(shape, "geoms", [shape]))
+
+
+def _raster_polys(polys, origin, shape, px_per_mm):
+    """Shapely polygons (bed mm), holes kept open, as a float image."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPolygonF
+    h, w = shape
+    img = QImage(w, h, QImage.Format_Grayscale8)
+    img.fill(0)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(QColor(255, 255, 255)))
+    ox, oy = origin
+    for shape_ in polys:
+        for poly in _geoms(shape_):
+            if poly.is_empty or not hasattr(poly, "exterior"):
+                continue
+            path = QPainterPath()
+            path.setFillRule(Qt.OddEvenFill)
+            for ring in (poly.exterior, *poly.interiors):
+                path.addPolygon(QPolygonF([QPointF((x - ox) * px_per_mm,
+                                                   (y - oy) * px_per_mm)
+                                           for x, y in ring.coords]))
+                path.closeSubpath()
+            p.drawPath(path)
+    p.end()
+    a = np.frombuffer(img.constBits(), np.uint8).reshape(h, img.bytesPerLine())[:, :w]
+    return a.astype(np.float32) / 255.0
+
+
+def _best_shift(D, T, lim):
+    """The shift of template ``T`` over map ``D`` (same shape) with the most
+    overlap, within ``lim`` pixels each way: (overlap per template area, dx,
+    dy), to a fraction of a pixel."""
+    area = T.sum()
+    if area <= 0:
+        return -1.0, 0.0, 0.0
+    corr = np.fft.irfft2(np.fft.rfft2(D) * np.conj(np.fft.rfft2(T)), s=D.shape)
+    win = np.zeros_like(corr, bool)
+    win[:lim + 1, :lim + 1] = win[:lim + 1, -lim:] = True
+    win[-lim:, :lim + 1] = win[-lim:, -lim:] = True
+    corr = np.where(win, corr, -np.inf)
+    k = np.unravel_index(np.argmax(corr), corr.shape)
+    n0, n1 = D.shape
+    dy = k[0] if k[0] <= lim else k[0] - n0
+    dx = k[1] if k[1] <= lim else k[1] - n1
+
+    def vertex(m, c, q):
+        d = m - 2 * c + q
+        return 0.0 if not np.isfinite(d) or d >= 0 else 0.5 * (m - q) / d
+    c = corr[k]
+    fy = vertex(corr[(k[0] - 1) % n0, k[1]], c, corr[(k[0] + 1) % n0, k[1]])
+    fx = vertex(corr[k[0], (k[1] - 1) % n1], c, corr[k[0], (k[1] + 1) % n1])
+    return float(c / area), dx + fx, dy + fy
+
+
+def locate_change(before, after, px_per_mm, marks, *, search_mm=3.0, min_level=8.0):
+    """Where marks the laser has just made show up, from two straightened
+    photos of the same bed: one before, one after. ``marks`` are shapely
+    shapes in bed mm, where they were drawn.
+
+    Only what changed between the photos counts, so it does not matter whether
+    a mark reads dark or bright, nor what the board looks like around it."""
+    marks = [m for m in marks if m is not None and not m.is_empty]
+    if not marks:
+        raise CameraError("There are no proof marks to look for.")
+    if before.shape != after.shape:
+        raise CameraError("The two photos are not the same size.")
+    b = np.array([m.bounds for m in marks], float)
+    x0, y0 = b[:, 0].min() - search_mm - 3, b[:, 1].min() - search_mm - 3
+    x1, y1 = b[:, 2].max() + search_mm + 3, b[:, 3].max() + search_mm + 3
+    H, W = before.shape[:2]
+    c0, r0 = max(int(x0 * px_per_mm), 0), max(int(y0 * px_per_mm), 0)
+    c1, r1 = min(int(x1 * px_per_mm), W), min(int(y1 * px_per_mm), H)
+    if c1 - c0 < 8 or r1 - r0 < 8:
+        raise CameraError("The proof marks are off the photo.")
+    g = np.abs(after[r0:r1, c0:c1].astype(np.float32)
+               - before[r0:r1, c0:c1].astype(np.float32)).mean(axis=2)
+    g = _box_blur(g, 1)
+    g = np.clip(g - np.median(g), 0, None)      # a change in the light is not a mark
+    origin = (c0 / px_per_mm, r0 / px_per_mm)
+    T = _raster_polys(marks, origin, g.shape, px_per_mm)
+    n = int(max(4, round(T.sum())))
+    level = float(np.sort(g, axis=None)[-n:].mean())
+    if level < min_level:
+        return ChangeFit(0.0, 0.0, 0, len(marks), 0.0, level)
+    D = np.clip(g / level, 0, 1)
+    s, dx, dy = _best_shift(D, T, int(search_mm * px_per_mm))
+    dx_mm, dy_mm = dx / px_per_mm, dy / px_per_mm
+    from shapely.affinity import translate
+    found = 0
+    for m in marks:
+        t = _raster_polys([translate(m, dx_mm, dy_mm)], origin, g.shape, px_per_mm)
+        a = t.sum()
+        if a > 0 and (D * t).sum() / a > 0.25:
+            found += 1
+    return ChangeFit(dx_mm, dy_mm, found, len(marks), s, level)
+
+
+def sheet_continues(rgb, px_per_mm, spots, inside, *, tolerance=28.0):
+    """Whether the material under each of ``spots`` (bed mm points outside the
+    board) looks like the board itself at the matching ``inside`` points: the
+    board is still in a bigger sheet, so there is waste to mark."""
+    if not spots or len(spots) != len(inside):
+        return False
+    H, W = rgb.shape[:2]
+    r = max(2, int(0.6 * px_per_mm))
+
+    def patch(p):
+        c, row = int(round(p[0] * px_per_mm)), int(round(p[1] * px_per_mm))
+        if not (r <= c < W - r and r <= row < H - r):
+            return None
+        return rgb[row - r:row + r + 1, c - r:c + r + 1].reshape(-1, 3).astype(np.float32).mean(axis=0)
+    for a, b in zip(spots, inside):
+        pa, pb = patch(a), patch(b)
+        if pa is None or pb is None or float(np.abs(pa - pb).max()) > tolerance:
+            return False
+    return True

@@ -802,6 +802,34 @@ the laser job. Picked photo references follow the corrected coordinates.
 On the lab's machine, learning from the curtain-drive stencil (114 holes) took
 the photo from −0.51, −0.88 mm off down to 0.07 mm.
 
+**Proof on the drilled holes (traces).** For a board that was drilled first,
+**Alignment › Proof on the drilled holes** ties the laser to the holes without
+relying on a stored camera correction:
+
+1. Drag the drawing roughly onto the board (within about 3 mm) and press it.
+2. It takes a photo, makes a few faint marks, and takes a second photo. Only
+   what changed between the two counts, so the marks are found whatever the
+   board looks like.
+3. The marks set the camera correction; the holes, seen through the corrected
+   camera, give how far the job is off the board. The job is moved (and turned
+   up to 1.5°) onto them. Nothing moves if the marks do not show.
+
+**Where the marks go** (*Proof options › Marks*): in the waste beside the board
+when the sheet carries on past the outline, as small 1.5 mm squares 3 mm outside
+it; otherwise on the isolation within 2.5 mm of three drilled holes that lie far
+apart, which the job removes anyway. *Automatic* judges the waste from the
+photo. **Mark passes** (default 3) is how many passes the marks get.
+
+On a double-sided board, run the proof on each face after the flip. Written
+2026-11-17 and tested on synthetic photos only: the mark passes needed for the
+camera to see a mark on copper, and the waste check, are not yet tried at the
+machine.
+
+**The side panel** shows the job, the proof, focus and camera readouts and the
+recipe. Position in numbers, proof options, matching points by hand, the
+automatic references, the height by hand, the camera correction by hand and the
+recipe's numbers are each under a fold that remembers whether it was open.
+
 **Pick matching points (any board).** The **Alignment** section works without
 mounting holes or a drill file:
 

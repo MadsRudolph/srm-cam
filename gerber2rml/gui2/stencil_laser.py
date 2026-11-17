@@ -378,6 +378,13 @@ def _row(*items, gap=None):
     return w
 
 
+class _Into:
+    """A layout that takes rows the way a Section does."""
+
+    def __init__(self, layout):
+        self.add = layout.addWidget
+
+
 class _Legend(QFrame):
     """The stage's key, in its corner, as the main stage has one."""
 
@@ -437,6 +444,7 @@ class StencilLaserDialog(QDialog):
         self._pending_reference = None
         self._reference_markers = []
         self._last_cut_paths = None
+        self._last_proof = None
         self._art_warnings = []
         self.setWindowTitle(f"xTool F1 Ultra — {self.k['window']}")
         self.resize(1400, 900)
@@ -567,13 +575,42 @@ class StencilLaserDialog(QDialog):
         self.y = _spin(float(cfg.value("y", 60.0)), -50, _FIELD, 0.1, 3, suffix=" mm")
         self.x.valueChanged.connect(self._typed)
         self.y.valueChanged.connect(self._typed)
-        s.add(widgets.Field("X", self.x))
-        s.add(widgets.Field("Y", self.y, help="The outline's top-left corner, in "
-                                              "the laser's mm. Drag it, use the "
-                                              "arrow keys, or right-click the bed."))
+        place = widgets.Disclosure("Position in numbers", key="laser-position")
+        place.body.addWidget(widgets.Field("X", self.x))
+        place.body.addWidget(widgets.Field(
+            "Y", self.y, help="The outline's top-left corner, in the laser's mm. "
+                              "Drag it, use the arrow keys, or right-click the bed."))
+        s.add(place)
         pv.addWidget(s)
 
         s = widgets.Section("Alignment")
+        self.proof_hint = widgets.hint(
+            "Proof: the laser makes a few faint marks, photographs them and the "
+            "drilled holes together, and moves the job onto the holes. Drag the "
+            "drawing roughly onto the board first.")
+        s.add(self.proof_hint)
+        self.proof_btn = widgets.button(
+            "Proof on the drilled holes", on=self.proof,
+            tip="Marks the waste beside the board if there is any, otherwise the "
+                "isolation the job removes anyway")
+        s.add(self.proof_btn)
+        self.proof_note = widgets.hint("")
+        self.proof_note.setVisible(False)
+        s.add(self.proof_note)
+        self.proof_more = widgets.Disclosure("Proof options", key="laser-proof")
+        self.proof_where = QComboBox()
+        self.proof_where.addItem("Automatic: waste if there is any", "auto")
+        self.proof_where.addItem("On the isolation the job removes", "isolation")
+        self.proof_where.addItem("In the waste beside the board", "waste")
+        self.proof_more.body.addWidget(widgets.Field("Marks", self.proof_where))
+        self.proof_passes = _ispin(xtool.PROOF_PASSES, 1, 20)
+        self.proof_more.body.addWidget(widgets.Field(
+            "Mark passes", self.proof_passes,
+            help="Enough for the camera to see the mark, far fewer than the job."))
+        s.add(self.proof_more)
+        manual = widgets.Disclosure("Match points by hand", key="laser-manual-points")
+        s.add(manual)
+        s_manual, s = s, _Into(manual.body)     # the next rows go under the fold
         s.add(widgets.hint("Pick the same holes, pad centres, corners or marks in the "
                            "drawing and photo. Use 2 distant points; 3 or more let "
                            "the fit check your picks. No mounting holes needed."))
@@ -596,6 +633,7 @@ class StencilLaserDialog(QDialog):
         self.clear_refs_btn = widgets.button("Clear", kind="ghost", on=self._clear_references)
         s.add(self.apply_refs_btn)
         s.add(_row(self.remove_ref_btn, self.clear_refs_btn, None))
+        s = s_manual
         auto = widgets.Disclosure("Automatic alignment references", key="alignment-references")
         auto.body.addWidget(widgets.hint("Tick only holes or shapes that already exist "
                                         "on the material. These picks do not change what gets etched."))
@@ -628,13 +666,16 @@ class StencilLaserDialog(QDialog):
                                        "stencil's middle, on the factory's 10 mm "
                                        "grid. Right-click the bed to measure "
                                        "somewhere else.")
-        s.add(self.focus_note)
+        focus_more = widgets.Disclosure("Set the height by hand", key="laser-focus")
+        focus_more.body.addWidget(self.focus_note)
         self.thickness = _spin(float(cfg.value("thickness", 4.1)), 0, 137, 0.1,
                                suffix=" mm")
         self.set_focus_btn = widgets.button("Set", on=self.set_thickness,
                                             tip="Move the head to this thickness + 8 mm, "
                                                 "as XCS does")
-        s.add(_row((widgets.Field("By hand", self.thickness), 1), self.set_focus_btn))
+        focus_more.body.addWidget(
+            _row((widgets.Field("By hand", self.thickness), 1), self.set_focus_btn))
+        s.add(focus_more)
         pv.addWidget(s)
 
         s = widgets.Section("Camera")
@@ -645,17 +686,19 @@ class StencilLaserDialog(QDialog):
         self.offset_y = _spin(self.cam_offset[1], -10, 10, 0.01, 3, suffix=" mm")
         self.offset_x.valueChanged.connect(self._edit_offset)
         self.offset_y.valueChanged.connect(self._edit_offset)
-        s.add(widgets.Field("Correction X", self.offset_x))
-        s.add(widgets.Field("Correction Y", self.offset_y))
-        s.add(widgets.hint(
-            "The photo is moved by this much so it lands on what the fiber really "
-            "cuts. Right after a cut, with the stencil still where it was cut, "
-            "press Learn: it finds the holes in a photo and measures the "
-            "difference."))
         self.learn_btn = widgets.button("Learn from this cut", on=self.learn_offset)
         self.reset_off_btn = widgets.button("Reset", kind="ghost",
                                             on=self.reset_offset)
-        s.add(_row(self.learn_btn, self.reset_off_btn, None))
+        s.add(self.learn_btn)
+        cam_more = widgets.Disclosure("Correct by hand", key="laser-camera")
+        cam_more.body.addWidget(widgets.Field("Correction X", self.offset_x))
+        cam_more.body.addWidget(widgets.Field("Correction Y", self.offset_y))
+        cam_more.body.addWidget(widgets.hint(
+            "The photo is moved by this much so it lands on what the fiber really "
+            "cuts. A proof on the drilled holes measures it; so does Learn, right "
+            "after a stencil cut with the stencil still where it was cut."))
+        cam_more.body.addWidget(_row(self.reset_off_btn, None))
+        s.add(cam_more)
         # Learning needs holes the laser itself cut; the offset is shared, so a
         # stencil job teaches it for the mask and silkscreen too.
         self.learn_btn.setVisible(self.kind == "stencil")
@@ -739,10 +782,10 @@ class StencilLaserDialog(QDialog):
         self.del_btn = widgets.button("Delete preset", kind="ghost",
                                       on=self.delete_preset)
         self.recipe_more.body.addWidget(_row(None, self.save_btn, self.del_btn))
-        s.add(self.recipe_more)
         self.calibrate_btn = widgets.button("Calibrate copper vectors…", on=self.open_copper_calibration)
         self.calibrate_btn.setVisible(self.kind == "traces")
-        s.add(self.calibrate_btn)
+        self.recipe_more.body.addWidget(self.calibrate_btn)
+        s.add(self.recipe_more)
         pv.addWidget(s)
         pv.addStretch(1)
 
@@ -1450,6 +1493,7 @@ class StencilLaserDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             self.auto_reference_list.addItem(item)
+        self._sync_proof()
 
     def _check_auto_references(self, checked):
         for i in range(self.auto_reference_list.count()):
@@ -1667,9 +1711,10 @@ class StencilLaserDialog(QDialog):
         self._raw_rgb = decode_jpeg(self.laser.snap())
         return self._raw_rgb
 
-    def _photo(self, px_per_mm=_PX_PER_MM, raw=None):
+    def _photo(self, px_per_mm=_PX_PER_MM, raw=None, offset=None):
         raw = self._raw_photo() if raw is None else raw
-        return self._calibration().rectify(raw, px_per_mm, self.cam_offset)
+        return self._calibration().rectify(
+            raw, px_per_mm, self.cam_offset if offset is None else offset)
 
     # -- the camera's offset -------------------------------------------------
     def _show_offset(self):
@@ -1742,6 +1787,126 @@ class StencilLaserDialog(QDialog):
             return (f"Learned from {a.found} holes: the photo was {a.dx:+.2f}, "
                     f"{a.dy:+.2f} mm off. Photos now land on the cut.")
         self._start(work, "Learning the camera's offset from the cut…", done)
+
+    def _sync_proof(self):
+        """A proof needs drilled holes to tie the laser to: traces only."""
+        on = self.kind == "traces" and len(self.base_art.drills or []) >= 2
+        for w in (self.proof_hint, self.proof_btn, self.proof_more):
+            w.setVisible(on)
+        if not on:
+            self.proof_note.setVisible(False)
+
+    def _hole_paths(self, art=None, origin=None):
+        """Every drilled hole as a bed path, wherever the job is now."""
+        art = art or self.art
+        _, h = art.size
+        return [xtool.to_bed(list(p.exterior.coords), origin or self.origin(), h)
+                for p in (art.features or [])]
+
+    def _proof_plans(self):
+        """The marks to try, best first, for the choice under Proof options."""
+        want = self.proof_where.currentData()
+        recipe, plans, errors = self.recipe(), [], []
+        for where, build in (("waste", xtool.proof_in_waste),
+                             ("isolation", xtool.proof_on_isolation)):
+            if want not in ("auto", where):
+                continue
+            try:
+                plans.append(build(self.art, self.origin(), recipe))
+            except ValueError as e:
+                errors.append(str(e))
+        if not plans:
+            raise ValueError(errors[0] if errors else "Nothing to mark.")
+        return plans, want == "auto"
+
+    def proof(self):
+        """Tie the laser to the drilled holes. A photo, a few faint marks, a
+        second photo: what changed is where the laser really fires, and the
+        holes are in the same pictures. The camera's correction is set from the
+        marks and the job is moved onto the holes."""
+        from gerber2rml.engine import xtool_camera as cam
+        if self.kind != "traces" or len(self.art.drills or []) < 2:
+            return self._say("A proof needs a traces job with at least two "
+                             "drilled holes.", warn=True)
+        try:
+            plans, auto = self._proof_plans()
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        recipe, passes = self.recipe(), self.proof_passes.value()
+        holes = self._hole_paths()
+        old = self.cam_offset
+        hi = 8
+        self._remember()
+
+        def work(_p):
+            raw_a = self._raw_photo()
+            before = self._photo(hi, raw_a)
+            plan = plans[-1]
+            if plans[0].where == "waste" and (
+                    not auto or cam.sheet_continues(before, hi, plans[0].spots,
+                                                    plans[0].inside)):
+                plan = plans[0]
+            text, secs = xtool.proof_job(plan, recipe, passes)
+            self.laser.run(text)
+            self.laser.wait(secs * 2 + 60)
+            raw_b = self._raw_photo()
+            m = cam.locate_change(before, self._photo(hi, raw_b), hi, plan.marks)
+            if not m.ok:
+                return plan, raw_b, m, None, old
+            new = (old[0] + m.dx, old[1] + m.dy)
+            # The holes, in the photo from before the marks, seen through the
+            # corrected camera: what is left is the job being off the board.
+            try:
+                a = cam.align(self._photo(hi, raw_a, new), hi, holes,
+                              search_mm=4.0, max_turn=1.5)
+            except cam.CameraError:
+                a = None
+            return plan, raw_b, m, a, new
+
+        def done(res):
+            plan, raw_b, m, a, new = res
+            where = ("the waste beside the board" if plan.where == "waste"
+                     else "the isolation")
+            self._last_proof = None
+            if not m.ok:
+                self.show_bed(self._photo(_PX_PER_MM, raw_b))
+                msg = (f"The proof marks in {where} did not show in the photo "
+                       f"({m.found} of {m.total}). Nothing was moved. Raise Mark "
+                       f"passes under Proof options"
+                       + (", or mark the isolation instead." if plan.where == "waste"
+                          else "."))
+                self.proof_note.setText(msg)
+                self.proof_note.setVisible(True)
+                return msg
+            self._set_offset(new)
+            self.show_bed(self._photo(_PX_PER_MM, raw_b))
+            cam_mm = (m.dx ** 2 + m.dy ** 2) ** 0.5
+            said = (f"Proof on {m.found} marks in {where}: the camera was "
+                    f"{cam_mm:.2f} mm off and is corrected.")
+            if a is None or not a.ok:
+                msg = (said + " The drilled holes could not be found, so the job "
+                       "was not moved: drag it closer and press Align.")
+                self.proof_note.setText(msg)
+                self.proof_note.setVisible(True)
+                return msg
+            target = self._middle(holes) + (a.dx, a.dy)
+            self._turn_to(self.turns, self.fine + a.turn, preserve_selection=True)
+            dx, dy = target - self._middle(self._hole_paths())
+            self.x.setValue(round(self.x.value() + dx, 3))
+            self.y.setValue(round(self.y.value() + dy, 3))
+            self._clear_references()
+            self._remember()
+            off = (a.dx ** 2 + a.dy ** 2) ** 0.5
+            self._last_proof = {"where": plan.where, "camera": (m.dx, m.dy),
+                                "job": (a.dx, a.dy), "turn": a.turn,
+                                "holes": (a.found, a.total)}
+            msg = (said + f" The job was {off:.2f} mm off the holes"
+                   + (f" and {a.turn:+.1f}° round" if abs(a.turn) > 0.05 else "")
+                   + f"; it now sits on {a.found} of {a.total}. Ready to cut.")
+            self.proof_note.setText(msg)
+            self.proof_note.setVisible(True)
+            return msg
+        self._start(work, "Proof: photo, marks, photo…", done)
 
     def align(self):
         """Find the holes already cut and put the stencil back on them. Tries the
@@ -2006,7 +2171,8 @@ class StencilLaserDialog(QDialog):
                   self.pick_refs_btn, self.apply_refs_btn, self.remove_ref_btn,
                   self.clear_refs_btn, self.reference_snap, self.auto_reference_source,
                   self.auto_reference_list, self.auto_all_btn, self.auto_none_btn, self.auto_contrast,
-                  self.offset_x, self.offset_y, self.calibrate_btn):
+                  self.offset_x, self.offset_y, self.calibrate_btn,
+                  self.proof_btn, self.proof_where, self.proof_passes):
             b.setEnabled(not on)
         if self.item is not None:
             self.item.setFlag(QGraphicsItem.ItemIsMovable,
