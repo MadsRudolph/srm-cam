@@ -359,3 +359,51 @@ def test_a_bottom_copper_dxf_opens_mirrored(tmp_path):
     assert art.side == "bottom" and art.mirrored
     # The pad at x 2..6 lands at 40 - 6 .. 40 - 2 once mirrored.
     assert art.copper.bounds == pytest.approx((34, 2, 38, 6))
+
+
+# -- mirror and flip a DXF ---------------------------------------------------
+
+def _hole(art, near):
+    return min(art.drills, key=lambda d: math.dist(d[:2], near))[:2]
+
+
+def test_flip_turns_the_drawing_top_to_bottom(tmp_path):
+    p = write(tmp_path, proof_board_entities())
+    as_drawn = dxf_traces.build_dxf_traces(p, side="top")
+    flipped = dxf_traces.build_dxf_traces(p, side="top", flip=True)
+    assert flipped.flipped and not flipped.mirrored
+    # the lopsided hole at (30, 26) on a 30 mm tall board lands at y = 4
+    assert any(math.dist((x, y), (30, 26)) < 1e-6 for x, y, _ in as_drawn.drills)
+    assert any(math.dist((x, y), (30, 4)) < 1e-6 for x, y, _ in flipped.drills)
+    assert flipped.copper.area == pytest.approx(as_drawn.copper.area)
+
+
+def test_mirror_can_be_chosen_whatever_the_face(tmp_path):
+    p = write(tmp_path, proof_board_entities())
+    top_mirrored = dxf_traces.build_dxf_traces(p, side="top", mirror=True)
+    assert top_mirrored.mirrored and top_mirrored.side == "top"
+    assert any(math.dist((x, y), (10, 26)) < 1e-6 for x, y, _ in top_mirrored.drills)
+    both = dxf_traces.build_dxf_traces(p, side="top", mirror=True, flip=True)
+    assert any(math.dist((x, y), (10, 4)) < 1e-6 for x, y, _ in both.drills)
+
+
+def test_the_page_mirrors_and_flips_a_dxf(page, tmp_path):
+    p = write(tmp_path, proof_board_entities(), name="proof.dxf")
+    page.load_dxf_art(dxf_traces.build_dxf_traces(p), p)
+    assert not page.dxf_orient.isHidden()
+    assert not page.dxf_mirror.isChecked() and not page.dxf_flip.isChecked()
+    page.dxf_flip.setChecked(True)
+    assert page.base_art.flipped and not page.base_art.mirrored
+    assert len(page.base_art.drills) == 12 and page.art.apertures
+    page.dxf_mirror.setChecked(True)
+    assert page.base_art.mirrored and page.base_art.flipped
+    assert "flipped" in page.size_lbl.text()
+    # a new copper face starts from its own mirroring; the flip is kept
+    page.copper_side.setCurrentIndex(page.copper_side.findData("bottom"))
+    assert page.base_art.mirrored and page.dxf_mirror.isChecked()
+    page.dxf_mirror.setChecked(False)
+    assert not page.base_art.mirrored and page.base_art.side == "bottom"
+
+
+def test_the_boxes_are_only_there_for_a_dxf(page):
+    assert page.dxf_orient.isHidden()          # a Gerber-style job: none

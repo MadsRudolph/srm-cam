@@ -148,3 +148,34 @@ def test_the_calibration_is_offered_on_a_blank(page):
     assert not page.proof_btn.isHidden()
     assert page.proof_btn.text() == "Calibrate the camera"
     assert "blank" in page.proof_hint.text()
+
+
+# -- how long a job takes: measured on the machine --------------------------
+
+def test_long_segments_go_at_the_speed_short_ones_no_faster_than_the_controller():
+    long_line = [[(0.0, 0.0), (100.0, 0.0)]]
+    assert xtool._draw_seconds(long_line, 1000.0) == pytest.approx(
+        0.1 + xtool.JUMP_S)
+    # 1000 segments of 0.01 mm: 10 mm, but each takes the controller's minimum
+    tiny = [[(i * 0.01, 0.0) for i in range(1001)]]
+    assert xtool._draw_seconds(tiny, 1000.0) == pytest.approx(
+        1000 * xtool.SEGMENT_MIN_S + xtool.JUMP_S)
+
+
+def test_every_path_costs_a_jump():
+    one = xtool._draw_seconds([[(0, 0), (10, 0)]], 1000.0)
+    two = xtool._draw_seconds([[(0, 0), (10, 0)], [(10, 0), (20, 0)]], 1000.0)
+    assert two - 2 * one == pytest.approx(0.0, abs=1e-9)     # no distance between
+    far = xtool._draw_seconds([[(0, 0), (10, 0)], [(40, 0), (50, 0)]], 1000.0)
+    assert far - two == pytest.approx(30 / xtool.JUMP_SPEED)
+
+
+def test_the_align_test_board_is_estimated_as_it_ran():
+    """examples/laser_align_test with the proven FR4 recipe ran 48 s at the
+    machine; the old estimate (cutting length over speed) said 24 s."""
+    from pathlib import Path
+    from gerber2rml.gui2.laser_app import job_builder
+    board = Path(__file__).resolve().parent.parent / "examples" / "laser_align_test"
+    art = job_builder(board)("traces", side="top")
+    job = xtool.traces_job(art, (60.0, 60.0), xtool.FR4_TRACES_RECIPE)
+    assert job.seconds == pytest.approx(48, abs=4)

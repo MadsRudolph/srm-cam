@@ -249,7 +249,9 @@ def test_isolation_proof_marks_only_copper_the_job_removes():
         assert cleared.contains(line)
         assert min(line.distance(Point(c)) for c in centres) < xtool.PROOF_RADIUS
     text, secs = xtool.proof_job(proof, passes=3)
-    assert "G22" in text and secs < 5
+    # Seconds, not minutes. Filled marks and the measured time per jump and
+    # per segment (see xtool.SEGMENT_MIN_S) put it at about 7 s.
+    assert "G22" in text and secs < 15
 
 
 @pytest.mark.parametrize("grow", [0.0, 0.1, 0.2, 0.3])
