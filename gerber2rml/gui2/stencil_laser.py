@@ -190,14 +190,16 @@ class _StencilItem(QGraphicsPathItem):
         s.addRect(self.path().boundingRect())
         return s
 
-    def paint_holes(self, selected, active=None, look="filled"):
+    def paint_holes(self, selected, active=None, look="filled", skipped=()):
         """``look``: "filled" (the stencil as it will be), "outlines" (thin
         lines only, so the photo shows through every hole), "hidden"."""
         self.setVisible(look != "hidden")
         self.setBrush(QBrush(_c(theme.INK, 0.62 if look == "filled" else 0.0)))
         if look == "outlines":
             for hole in self.holes:
-                if active is not None and hole.index in active:
+                if hole.index in skipped:
+                    edge, w = _c(theme.CAUTION, 0.55), 1.0
+                elif active is not None and hole.index in active:
                     edge, w = _c(theme.TOOL), 2.0
                 elif hole.index in selected:
                     edge, w = _c(theme.PATH_FAR), 2.0
@@ -211,7 +213,9 @@ class _StencilItem(QGraphicsPathItem):
             return
         dim = bool(selected) or active is not None
         for hole in self.holes:
-            if active is not None and hole.index in active:
+            if hole.index in skipped:
+                fill, edge = _c(theme.GHOST, 0.25), _c(theme.CAUTION, 0.7)
+            elif active is not None and hole.index in active:
                 fill, edge = _c(theme.TOOL), _c(theme.TOOL)
             elif hole.index in selected:
                 fill, edge = _c(theme.PATH_FAR, 0.85), _c(theme.PATH_FAR)
@@ -433,12 +437,20 @@ class StencilLaserDialog(QDialog):
             name = "No job loaded"
         art = as_laser_art(art)
         self._dxf = Path(dxf) if dxf else None    # traces come from this DXF
+        # The job as it came (a Gerber's face, a DXF), and the mirror and
+        # flip chosen on the page on top of it.
+        self._extra_mirror = False
+        self._extra_flip = False
+        self._source = None
         self._mode = "move"
+        self.skipped = set()                # trenches left out of the etch
+        self._skip_for = None               # the apertures they were found on
         self.rework_boxes = []              # (x0, y0, x1, y1), bed mm
         self._rework_items = []
         self.kind = art.kind
         self.k = KINDS[self.kind]
         self._jobs = jobs
+        self._source = art
         self.base_art = art
         self._trace_side = art.side if art.kind == "traces" else None
         self.turns = 0
@@ -509,7 +521,9 @@ class StencilLaserDialog(QDialog):
                                  "adds. The run then does only those."),
             ("rework", "Rework", "Traces: drag boxes over spots that did not "
                                  "cut through; click a box to remove it. "
-                                 "Re-etch runs only inside the boxes.")], "move")
+                                 "Re-etch runs only inside the boxes."),
+            ("skip", "Skip", "Traces: click a trench, or drag a box, to leave it "
+                             "out of the etch; click again to put it back")], "move")
         self.mode.changed.connect(self._set_mode)
         self.photo_btn = widgets.button("Photo", on=self.take_photo,
                                         tip="Take a picture of the bed")
@@ -605,6 +619,27 @@ class StencilLaserDialog(QDialog):
         self.copper_side.currentIndexChanged.connect(self._switch_copper_side)
         self.copper_side_field = widgets.Field("Copper face", self.copper_side)
         s.add(self.copper_side_field)
+        self.mirror_box = QCheckBox("Mirror left–right")
+        self.mirror_box.setToolTip("As the job comes it follows its face (B.Cu "
+                                   "mirrored, F.Cu as drawn); tick or untick to choose")
+        self.flip_box = QCheckBox("Flip top–bottom")
+        self.flip_box.setToolTip("Turn the drawing over top to bottom. With the "
+                                 "quarter turns this gives every way round")
+        self.mirror_box.toggled.connect(self._orientation)
+        self.flip_box.toggled.connect(self._orientation)
+        self.orient_row = _row(self.mirror_box, self.flip_box)
+        s.add(self.orient_row)
+        self.skip_auto = QCheckBox("Skip trenches that isolate nothing "
+                                   "(board edge, mounting holes)")
+        self.skip_auto.setToolTip(
+            "A trench with the pour on one side and only bare copper on the other "
+            "(round the board's edge, round a mounting hole) separates nothing. "
+            "Pads, vias and traces on any other net always keep theirs.")
+        self.skip_auto.setChecked(QSettings(*_SETTINGS).value("skip_auto", True, type=bool))
+        self.skip_auto.toggled.connect(self._skip_auto_toggled)
+        s.add(self.skip_auto)
+        self.skip_note = widgets.hint("")
+        s.add(self.skip_note)
         self._warn_box = QWidget()
         self._warn_layout = QVBoxLayout(self._warn_box)
         self._warn_layout.setContentsMargins(0, 0, 0, 0)
@@ -1047,6 +1082,7 @@ class StencilLaserDialog(QDialog):
         side = self.copper_side.currentData()
         if self.kind != "traces" or side == self.base_art.side:
             return
+        self._extra_mirror = False          # the face's own mirroring again
         try:
             art = self._trace_art_for(side)
         except Exception as e:
@@ -1059,9 +1095,40 @@ class StencilLaserDialog(QDialog):
         self._say(f"Showing {'F.Cu (top)' if side == 'top' else 'B.Cu (bottom)'}. "
                   "Place that copper face upwards on the laser bed.")
 
+    def _orient(self, art):
+        """``art`` as it came, with the page's mirror and flip on top."""
+        self._source = as_laser_art(art)
+        return xtool.reoriented(self._source, self._extra_mirror, self._extra_flip)
+
+    def _orientation(self, *_a):
+        """Mirror or flip the job: the boxes say how it should end up."""
+        src = self._source or self.base_art
+        self._extra_mirror = self.mirror_box.isChecked() != bool(src.mirrored)
+        self._extra_flip = self.flip_box.isChecked() != bool(getattr(src, "flipped", False))
+        self.base_art = self._orient(src)
+        self._clear_references()
+        self._populate_auto_references()
+        self.selected.clear()
+        if self.kind == "traces":
+            self._refresh_traces_art()          # the isolation from the new copper
+        self.art = xtool.rotated(self.base_art, self.turns, self.fine)
+        if self.item is not None:
+            self._build_item()
+        self._sync_orientation()
+        self._say(("Mirrored" if self.base_art.mirrored else "Not mirrored")
+                  + (", flipped top to bottom." if getattr(self.base_art, "flipped", False)
+                     else "."))
+
+    def _sync_orientation(self):
+        for box, value in ((self.mirror_box, self.base_art.mirrored),
+                           (self.flip_box, getattr(self.base_art, "flipped", False))):
+            box.blockSignals(True)
+            box.setChecked(bool(value))
+            box.blockSignals(False)
+
     def _take_traces_art(self, art):
         """A new traces drawing on the page, the recipe as it is."""
-        self.base_art = as_laser_art(art)
+        self.base_art = self._orient(art)
         self._trace_side = self.base_art.side
         self.copper_side.blockSignals(True)
         self.copper_side.setCurrentIndex(self.copper_side.findData(self._trace_side))
@@ -1072,6 +1139,7 @@ class StencilLaserDialog(QDialog):
         self._refresh_traces_art()
         self._sync_warnings()
         self._sync_recipe_widgets()
+        self._sync_orientation()
 
     def open_gerber(self):
         """A Gerber folder's jobs on the page, as srm-cam-laser opens them."""
@@ -1122,6 +1190,7 @@ class StencilLaserDialog(QDialog):
     def load_dxf_art(self, art, path):
         """Show ``art``, read from the DXF at ``path``, as the traces job."""
         self._dxf = Path(path)
+        self._extra_mirror = self._extra_flip = False
         self._empty = False
         self._sync_empty()
         self.name_lbl.setText(self._dxf.name)
@@ -1159,7 +1228,7 @@ class StencilLaserDialog(QDialog):
             return
         self.kind = kind
         self.k = KINDS[kind]
-        self.base_art = as_laser_art(new_art)
+        self.base_art = self._orient(new_art)
         self._clear_references()
         self.auto_reference_source.setCurrentIndex(1 if kind == "stencil" else 0)
         self._populate_auto_references()
@@ -1188,6 +1257,7 @@ class StencilLaserDialog(QDialog):
         self._say(f"Switched to {self.k['window']}.")
 
     def _build_item(self):
+        self._find_skips()
         keep = self.origin()
         if self.item is not None:
             self.scene.removeItem(self.item)
@@ -1206,6 +1276,7 @@ class StencilLaserDialog(QDialog):
              if self.kind == "traces" else "")
             + f"{n} {self._noun(n)} · {w:.1f} × {h:.1f} mm · "
             f"{'mirrored' if self.art.mirrored else 'not mirrored'}"
+            + (" · flipped" if getattr(self.art, "flipped", False) else "")
             + (f" · {self.art.note}" if self.art.note else "") + turned)
         self._paint()
         self._place_focus_mark()
@@ -1301,15 +1372,20 @@ class StencilLaserDialog(QDialog):
     # -- selection ---------------------------------------------------------
     def _set_mode(self, mode):
         """Move, Select, or Rework (boxes on the bed for a second pass)."""
-        if mode == "rework" and self.kind != "traces":
+        if mode in ("rework", "skip") and self.kind != "traces":
             self.mode.set_current(self._mode)
-            return self._say("Rework is for copper traces: switch to Traces.",
+            return self._say(f"{mode.title()} is for copper traces: switch to Traces.",
                              warn=True)
         self._mode = mode
         self._select_mode(mode != "move")
         if mode == "rework":
             self._say("Rework: drag a box over each spot that did not cut "
                       "through. Click a box to remove it.")
+        elif mode == "skip":
+            self._say("Skip: click a trench, or drag a box, to leave it out of the "
+                      "etch; click it again to put it back. Only leave out what "
+                      "isolates nothing: a skipped trench joins the copper on its "
+                      "two sides.")
 
     def _rework_boxed(self, rect):
         """A box dragged in Rework mode is added; a click inside one drops it."""
@@ -1356,7 +1432,7 @@ class StencilLaserDialog(QDialog):
     def _sync_rework(self):
         on = self.kind == "traces"
         self.rework_section.setVisible(on)
-        if not on and self._mode == "rework":
+        if not on and self._mode in ("rework", "skip"):
             self.mode.set_current("move")
             self._set_mode("move")
 
@@ -1397,6 +1473,78 @@ class StencilLaserDialog(QDialog):
         self._start(work, f"Rework: {n} box{'' if n == 1 else 'es'}, "
                           f"{job.passes} passes…", done)
 
+    def _skipped_now(self):
+        return self.skipped if self.kind == "traces" else set()
+
+    def _find_skips(self, force=False):
+        """The automatic skips, once per set of trenches (the recipe, the face,
+        mirroring or a new job all make new ones)."""
+        if self.kind != "traces":
+            return
+        if not force and self._skip_for is self.base_art.apertures:
+            return
+        self._skip_for = self.base_art.apertures
+        self.skipped = (xtool.needless_trenches(self.base_art)
+                        if self.skip_auto.isChecked() else set())
+        self._sync_skip_note()
+
+    def _skip_auto_toggled(self, on):
+        QSettings(*_SETTINGS).setValue("skip_auto", bool(on))
+        self._find_skips(force=True)
+        self._paint()
+
+    SKIP_REACH_MM = 0.6     # a click this near a trench picks it
+
+    def _skip_boxed(self, rect):
+        """Skip mode: a click toggles the trench nearest it; a box skips the
+        trenches it touches, or puts them back if all were skipped."""
+        from shapely.geometry import Point, box
+        if self.item is None or not self.art.apertures:
+            return
+        ox, oy = self.origin()
+        _, h = self.art.size
+
+        def art_xy(x, y):                       # bed (Y down) to the artwork frame
+            return x - ox, h - (y - oy)
+        if rect.width() == 0 and rect.height() == 0:
+            q = Point(*art_xy(rect.x(), rect.y()))
+            d, k = min((g.distance(q), k) for k, g in enumerate(self.art.apertures))
+            if d > self.SKIP_REACH_MM:
+                return
+            hit = {k}
+        else:
+            (x0, y0), (x1, y1) = art_xy(rect.left(), rect.top()), art_xy(rect.right(), rect.bottom())
+            b_ = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+            hit = {k for k, g in enumerate(self.art.apertures) if g.intersects(b_)}
+        if not hit:
+            return
+        if hit <= self.skipped:
+            self.skipped -= hit
+        else:
+            self.skipped |= hit
+        self._sync_skip_note()
+        self._paint()
+
+    def _sync_skip_note(self):
+        on = self.kind == "traces" and not self._empty
+        self.skip_auto.setVisible(on)
+        n = len(self.skipped)
+        self.skip_note.setVisible(on and n > 0)
+        self.skip_note.setText(f"{n} trench{'' if n == 1 else 'es'} left out of the "
+                               f"etch. Skip mode, above the bed, to change which.")
+
+    def _traces_only(self):
+        """Which trenches the etch runs: the selection (or all) less the skipped;
+        None for all of them."""
+        n = len(self.art.apertures)
+        base = set(self.selected) or set(range(n))
+        keep = base - self._skipped_now()
+        if not self.selected and len(keep) == n:
+            return None
+        if not keep:
+            raise ValueError("Every trench is skipped: nothing to etch.")
+        return keep
+
     def _select_mode(self, on):
         self.view.set_select_mode(on)
         if self.item is not None:
@@ -1407,6 +1555,8 @@ class StencilLaserDialog(QDialog):
     def _boxed(self, rect, add):
         if self._mode == "rework":
             return self._rework_boxed(rect)
+        if self._mode == "skip":
+            return self._skip_boxed(rect)
         if self.item is None:
             return
         if not add:
@@ -1451,7 +1601,9 @@ class StencilLaserDialog(QDialog):
     def _paint(self, active=None, *, estimate=True):
         if self.item is None:
             return
-        self.item.paint_holes(self.selected, active, "outlines" if self.view.pick_reference else self.look)
+        self.item.paint_holes(self.selected, active,
+                              "outlines" if self.view.pick_reference else self.look,
+                              self._skipped_now())
         if self.view.pick_reference:
             self.item.setVisible(self._pending_reference is None)
         n, total = len(self.selected), len(self.art.apertures)
@@ -1602,7 +1754,7 @@ class StencilLaserDialog(QDialog):
             if self.kind == "traces":
                 secs = xtool.traces_job(
                     self.art, (1.0, 1.0), self._run_recipe(),
-                    only=self.selected or None).seconds
+                    only=self._traces_only()).seconds
                 self.time_read.set(f"{int(secs // 60)}:{int(secs % 60):02d}")
                 return
             if self.kind != "stencil":
@@ -2049,6 +2201,10 @@ class StencilLaserDialog(QDialog):
         also puts the job on them."""
         if hasattr(self, "rework_section"):
             self._sync_rework()             # traces only, like the proof
+        if hasattr(self, "orient_row"):
+            self._sync_orientation()
+        if hasattr(self, "skip_note"):
+            self._sync_skip_note()
         on = self.kind == "traces"
         holes = len(self.base_art.drills or []) >= 2
         self.proof_btn.setText("Calibrate and lock onto the holes" if holes
@@ -2376,9 +2532,9 @@ class StencilLaserDialog(QDialog):
                              "DXF first.", warn=True)
         try:
             if self.kind == "traces":
+                only = self._traces_only()
                 job = xtool.traces_job(
-                    self.art, self.origin(), self._run_recipe(),
-                    only=self.selected or None)
+                    self.art, self.origin(), self._run_recipe(), only=only)
             else:
                 _, outline = xtool.stencil_paths(self.art, self.origin())
                 job = xtool.fill_job(self._shapes(), outline, self._run_recipe())
@@ -2387,6 +2543,8 @@ class StencilLaserDialog(QDialog):
         self._remember()
         self._job = job
         picked = self.selected or set(range(len(self.art.apertures)))
+        if self.kind == "traces":
+            picked = set(picked) - self._skipped_now()
         self._zone_holes = [picked]
         self.bar.setRange(0, max(1, int(job.seconds)))
         self.bar.setValue(0)
@@ -2445,7 +2603,7 @@ class StencilLaserDialog(QDialog):
 
     def _paint_active(self, active):
         if self.item is not None:
-            self.item.paint_holes(self.selected, active, self.look)
+            self.item.paint_holes(self.selected, active, self.look, self._skipped_now())
 
     def _start(self, fn, text, done=None):
         self._say(text)
