@@ -1,5 +1,6 @@
 """Drilling: Excellon holes -> peck-drill toolpaths."""
 import math
+from functools import lru_cache
 from gerber2rml.toolpath import Move
 
 
@@ -21,6 +22,65 @@ def format_diameter(d: float) -> str:
     if s.endswith("."):
         s += "0"
     return s
+
+
+ORDER_TIME_BUDGET = 1.0  # s: the 2-opt pass stops improving after this long
+
+
+def order_holes(holes, start=(0.0, 0.0), budget=ORDER_TIME_BUDGET):
+    """The holes in a short drilling order: nearest neighbour from ``start``,
+    then 2-opt until no swap helps (or ``budget`` seconds pass).
+
+    Excellon files list holes by tool and footprint, not by position, so in
+    file order the bit criss-crosses the board: 3-4x the travel on the synth
+    boards. Only the order changes; the holes themselves are returned as given.
+    """
+    holes = list(holes)
+    if len(holes) < 3:
+        return holes
+    return list(_order_cached(tuple(map(tuple, holes)), tuple(start), budget))
+
+
+@lru_cache(maxsize=32)
+def _order_cached(holes, start, budget):
+    import time
+    rest = list(holes)
+    route = [start]
+    p = start
+    while rest:                                   # nearest neighbour
+        i = min(range(len(rest)),
+                key=lambda k: (rest[k][0] - p[0]) ** 2 + (rest[k][1] - p[1]) ** 2)
+        p = rest.pop(i)
+        route.append(p)
+
+    def d(a, b):
+        return math.hypot(a[0] - b[0], a[1] - b[1])
+
+    # 2-opt on an open route with a fixed start: reverse route[i+1..j] when
+    # that shortens it. The end is free (no edge after the last hole).
+    n = len(route)
+    stop = time.monotonic() + budget
+    improved = True
+    while improved and time.monotonic() < stop:
+        improved = False
+        for i in range(n - 2):
+            a, b = route[i], route[i + 1]
+            ab = d(a, b)
+            for j in range(i + 2, n):
+                c = route[j]
+                if j + 1 < n:
+                    e = route[j + 1]
+                    gain = ab + d(c, e) - d(a, c) - d(b, e)
+                else:
+                    gain = ab - d(a, c)
+                if gain > 1e-9:
+                    route[i + 1:j + 1] = route[i + 1:j + 1][::-1]
+                    b = route[i + 1]
+                    ab = d(a, b)
+                    improved = True
+            if time.monotonic() >= stop:
+                break
+    return tuple(route[1:])
 
 
 PECK_REENTRY = 0.2  # mm: rapid back to this clearance above the previous peck
@@ -45,7 +105,7 @@ def drill_holes(holes, job):
     """
     pecks = max(1, math.ceil(job.total_depth / job.cut_depth))
     paths = []
-    for (x, y, _dia) in holes:
+    for (x, y, _dia) in order_holes(holes):
         tp = [Move(x, y, job.travel_z, rapid=True)]      # rapid over the hole
         prev = 0.0                                       # last depth reached (+ve mm)
         for k in range(1, pecks + 1):
@@ -63,16 +123,23 @@ def drill_holes(holes, job):
     return paths
 
 
+INTERP_MAX_STEP = 0.6  # mm: deepest step of a circled hole. A plain hole may
+                       # be one plunge, but a circle side-cuts its full step
+                       # depth, which a 0.8 mm bit should not do 1.8 mm deep.
+
+
 def _interpolate_hole(x, y, hole_d, job, segments: int = 48):
     """Mill a hole that is larger than the bit by circular interpolation: peck
     down and trace a full circle at each depth. The path radius is
-    ``(hole_d - bit)/2`` so the cutter edge reaches the hole wall."""
+    ``(hole_d - bit)/2`` so the cutter edge reaches the hole wall. Each step is
+    at most ``INTERP_MAX_STEP`` deep, whatever the plain holes' peck."""
     r = (hole_d - job.bit_diameter) / 2.0
-    pecks = max(1, math.ceil(job.total_depth / job.cut_depth))
+    step = min(job.cut_depth, INTERP_MAX_STEP)
+    pecks = max(1, math.ceil(job.total_depth / step))
     sx = x + r
     tp = [Move(sx, y, job.travel_z, rapid=True)]
     for k in range(1, pecks + 1):
-        depth = job.total_depth if k == pecks else k * job.cut_depth
+        depth = job.total_depth if k == pecks else k * step
         tp.append(Move(sx, y, -depth))                       # plunge at circle start
         for i in range(1, segments + 1):
             ang = 2 * math.pi * i / segments
@@ -87,7 +154,7 @@ def drill_single_bit(holes, job, tol: float = 1e-3):
     Holes smaller than the bit cannot be made smaller, so they are plunged at the
     bit size (oversized) — the GUI/run plan flags this."""
     paths = []
-    for (x, y, d) in holes:
+    for (x, y, d) in order_holes(holes):
         if d > job.bit_diameter + tol:
             paths.append(_interpolate_hole(x, y, d, job))
         else:

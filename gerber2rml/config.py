@@ -80,25 +80,32 @@ class DrillJob:
                                  #          single bit. Set False to opt into one file
                                  #          per hole diameter, each plunged with a
                                  #          matching bit (multi-bit / bit-change run).
-    cut_depth: float = 0.6       # mm per peck
-    total_depth: float = 1.8     # mm (through 1.6 mm board)
+    cut_depth: float = 2.5       # mm per peck. Deeper than the board, so a plain
+                                 # hole is ONE plunge: the drill ladder card
+                                 # (2026-11-17) drilled 0.8 mm holes clean in
+                                 # one plunge at up to 15 mm/s. Circled (larger) holes
+                                 # still step down at most INTERP_MAX_STEP.
+    total_depth: float = 2.0     # mm: 1.8 left the holes not quite through a
+                                 # 1.6 mm board (drill ladder 2, 2026-11-17)
     peck_retract: float = 0.5    # mm above the surface to lift BETWEEN pecks of one
                                  # hole (chip clearing). The full travel_z retract
                                  # only happens when leaving the hole for the next.
     xy_feed: float = 4.0
-    plunge_feed: float = 1.0
+    plunge_feed: float = 15.0    # mm/s: one plunge clean at 15 on ladder 2
     travel_z: float = 2.0
 
 
 @dataclass
 class CutoutJob:
     bit_diameter: float = 0.8    # mm (1/32")
-    cut_depth: float = 0.6       # mm per pass
-    total_depth: float = 1.8
+    cut_depth: float = 1.0       # mm per pass: two passes. Cut-out ladder
+                                 # (2026-11-17): 2 passes clean up to 12 mm/s;
+                                 # 1 pass made the SRM-20 skip steps at 8 mm/s.
+    total_depth: float = 2.0     # through a 1.6 mm board with room to spare
     tabs: int = 4
     tab_width: float = 1.5       # mm
-    xy_feed: float = 4.0
-    plunge_feed: float = 1.0
+    xy_feed: float = 10.0        # mm/s: margin under the 12 that was tested
+    plunge_feed: float = 5.0
     travel_z: float = 2.0
 
 

@@ -70,4 +70,4 @@ def test_board_thickness_default():
 
 
 def test_drill_total_depth():
-    assert DrillJob().total_depth == 1.8
+    assert DrillJob().total_depth == 2.0
