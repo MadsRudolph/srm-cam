@@ -2509,7 +2509,25 @@ class MainWindow(QMainWindow):
             if out_b: edges.append(f"{out_b:.2f} mm off the front edge")
             if out_t: edges.append(f"{out_t:.2f} mm off the back edge")
             from gerber2rml.engine.cutout import SHEET_EDGE_MM
-            if self._stock_set and worst <= SHEET_EDGE_MM:
+            from gerber2rml.engine.autorun import spans_stock
+            across, along = spans_stock(x1 - x0, y1 - y0, sw, sh)
+            # Bigger than the sheet one way and on it the other: the sheet's
+            # edges are the board's edges that way, and Run it puts the
+            # strip that hangs off where it loses no copper (run._flush).
+            spanning = (self._stock_set and not self._double
+                        and not self._no_cutout
+                        and ((across and not (out_b or out_t))
+                             or (along and not (out_l or out_r))))
+            if spanning and worst > SHEET_EDGE_MM:
+                out.append(diag.Check(
+                    "warn", "The board is bigger than the copper",
+                    "the work hangs " + " and ".join(edges) + " of the "
+                    "sheet. The sheet's edges are the board's edges that "
+                    "way: the cut-out leaves them out, and the board comes "
+                    "out short by what hangs off. Run it puts that strip on "
+                    "the side where it cuts no copper in two, and refuses "
+                    "if there is none."))
+            elif self._stock_set and worst <= SHEET_EDGE_MM:
                 # A hair over: the sheet's edge IS the board's edge there,
                 # and the cut-out leaves that side out.
                 out.append(diag.Check(

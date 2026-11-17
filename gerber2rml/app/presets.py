@@ -27,11 +27,11 @@ BUILTIN_PRESETS = {
     "SRM-20 0.8 mm flat (no 1/64\" bit): coarse traces + 0.8/1.0 drill + cutout": {
         "trace":  {"bit_diameter": 0.8, "cut_depth": 0.15, "offsets": 1,
                    "stepover": 0.5, "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
-        "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.9,
-                   "xy_feed": 4.0, "plunge_feed": 1.0, "travel_z": 2.0},
-        "cutout": {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.9,
-                   "tabs": 4, "tab_width": 1.5, "xy_feed": 4.0,
-                   "plunge_feed": 1.0, "travel_z": 2.0},
+        "drill":  {"bit_diameter": 0.8, "cut_depth": 2.5, "total_depth": 2.0,
+                   "xy_feed": 4.0, "plunge_feed": 15.0, "travel_z": 2.0},
+        "cutout": {"bit_diameter": 0.8, "cut_depth": 1.0, "total_depth": 2.0,
+                   "tabs": 4, "tab_width": 1.5, "xy_feed": 10.0,
+                   "plunge_feed": 5.0, "travel_z": 2.0},
     },
     # The fine profile: one 0.8 mm ball mill for the whole job. At 0.08 mm deep it
     # cuts a channel about 0.44 mm wide at the copper top, so the traces are told
@@ -41,7 +41,7 @@ BUILTIN_PRESETS = {
         "trace":  {"bit_diameter": 0.44, "cut_depth": 0.08, "offsets": 1,
                    "stepover": 0.5, "xy_feed": 3.0, "plunge_feed": 0.5,
                    "travel_z": 2.0, "cut_pinches": True},
-        "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.9,
+        "drill":  {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 2.0,
                    "xy_feed": 3.0, "plunge_feed": 0.5, "travel_z": 2.0},
         "cutout": {"bit_diameter": 0.8, "cut_depth": 0.6, "total_depth": 1.9,
                    "tabs": 4, "tab_width": 1.5, "xy_feed": 3.0,
