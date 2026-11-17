@@ -2249,8 +2249,9 @@ class StencilLaserDialog(QDialog):
             turned = (90 * k + a.turn + 180) % 360 - 180
             self._clear_references()
             what = "references"
-            return (f"Aligned on {a.found} of {a.total} {what}: moved {moved:.1f} mm, "
-                    f"turned {turned:+.1f}°. Check with Show where before cutting.")
+            return (f"Aligned on {a.found} of {a.total} {what}: moved {moved:.2f} mm "
+                    f"(X {a.dx:+.2f}, Y {a.dy:+.2f}), turned {turned:+.1f}°. Check "
+                    f"with Show where before cutting.")
         self._start(work, "Aligning: photo, then looking for the chosen references…", done)
 
     def _focused(self, z, how):
