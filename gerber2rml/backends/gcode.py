@@ -67,16 +67,20 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
            rapid_feed: float = DEFAULT_RAPID, rpm: int = DEFAULT_RPM,
            travel_z: float = 2.0, spinup_s: float = DEFAULT_SPINUP_S,
            xy_feeds: list[float] | None = None, spindle: bool = True,
-           header: list[str] | None = None) -> str:
+           header: list[str] | None = None,
+           plunge_feeds: list[float] | None = None) -> str:
     """``spindle=False`` emits the program with the spindle left OFF (no ``M3``,
     no spin-up dwell) — for the dry-run outline, which is watched from close
     up and must never have a turning bit in it.
 
     ``xy_feeds``, when given, carries one XY feed (mm/s) per toolpath —
     used by the feed-ladder test card to cut otherwise-identical blocks at
-    stepped speeds. Modal F handling keeps the output minimal either way."""
+    stepped speeds. ``plunge_feeds`` does the same for the plunge feed (the
+    drill ladder card). Modal F handling keeps the output minimal either way."""
     if xy_feeds is not None and len(xy_feeds) != len(toolpaths):
         raise ValueError("xy_feeds must have one feed per toolpath")
+    if plunge_feeds is not None and len(plunge_feeds) != len(toolpaths):
+        raise ValueError("plunge_feeds must have one feed per toolpath")
     xy_fpm = xy_feed * 60.0          # mm/s -> mm/min for G94
     plunge_fpm = plunge_feed * 60.0
 
@@ -118,6 +122,8 @@ def render(toolpaths: list[list[Move]], xy_feed: float, plunge_feed: float,
     for ti, tp in enumerate(toolpaths):
         if xy_feeds is not None:
             xy_fpm = xy_feeds[ti] * 60.0
+        if plunge_feeds is not None:
+            plunge_fpm = plunge_feeds[ti] * 60.0
         for m in tp:
             if m.rapid:
                 # Up first, then across, then down. The first rapid of a job

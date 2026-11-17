@@ -19,7 +19,7 @@ def test_ball_mill_preset_holds_the_measured_settings():
     assert ball["trace"]["cut_depth"] == 0.08
     assert ball["trace"]["cut_pinches"] is True
     assert ball["drill"]["bit_diameter"] == 0.8     # real holes and outline
-    assert ball["drill"]["total_depth"] == 1.9
+    assert ball["drill"]["total_depth"] == 2.0
     assert ball["cutout"]["total_depth"] == 1.9
     assert ball["cutout"]["tabs"] == 4
 
@@ -39,8 +39,8 @@ def test_srm20_preset_depths_and_feeds():
     p = BUILTIN_PRESETS[name]
     assert p["trace"]["bit_diameter"] == 0.8   # one 0.8 mm bit for everything
     assert p["trace"]["xy_feed"] == 4.0
-    assert p["drill"]["total_depth"] == 1.9    # 1.6 mm board + 0.3 mm through
-    assert p["cutout"]["total_depth"] == 1.9
+    assert p["drill"]["total_depth"] == 2.0    # 1.9 left holes not quite through
+    assert p["cutout"]["total_depth"] == 2.0
 
 
 def test_apply_preset_sets_jobs():

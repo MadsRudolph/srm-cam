@@ -1,0 +1,20 @@
+Cut-out ladder - XY feed x passes to full depth
+Scrap must cover X 101.6..144.4  Y 98.0..122.8 (machine mm); zero Z on the scrap.
+Every slot is 2 mm deep. Cut order: front row first, left to right (gentlest first).
+
+row  XY mm/s  passes  mm/pass  slot from X,Y
+  1        4       3     0.67  104.00, 100.43
+  1        4       2     1.00  118.00, 100.43
+  1        4       1     2.00  132.00, 100.43
+  2        6       3     0.67  104.00, 105.43
+  2        6       2     1.00  118.00, 105.43
+  2        6       1     2.00  132.00, 105.43
+  3        8       3     0.67  104.00, 110.43
+  3        8       2     1.00  118.00, 110.43
+  3        8       1     2.00  132.00, 110.43
+  4       10       3     0.67  104.00, 115.43
+  4       10       2     1.00  118.00, 115.43
+  4       10       1     2.00  132.00, 115.43
+  5       12       3     0.67  104.00, 120.43
+  5       12       2     1.00  118.00, 120.43
+  5       12       1     2.00  132.00, 120.43
