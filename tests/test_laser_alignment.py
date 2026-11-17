@@ -195,3 +195,186 @@ def test_bright_reference_alignment(qt_app):
     result = cam.align(rgb, 4, holes, search_mm=5, max_turn=1, polarity="bright")
     assert result.ok
     assert (result.dx, result.dy) == pytest.approx((2, 3), abs=0.3)
+
+
+# -- proof: the laser's own marks, seen next to the drilled holes ------------
+
+def _scene(shape, ppm, dark=(), marks=(), shift=(0.0, 0.0), sheet=None):
+    """A grey sheet (or only ``sheet``, on a dark bed) with dark discs and
+    scuffed marks, everything seen ``shift`` mm from where it is."""
+    from shapely.affinity import translate
+    img = np.full(shape + (3,), 185.0, np.float32)
+    if sheet is not None:
+        m = cam._raster_polys([translate(sheet, *shift)], (0, 0), shape, ppm)
+        img = 40 + (img - 40) * m[..., None]
+    for polys, level in ((dark, 25.0), (marks, 120.0)):
+        if polys:
+            m = cam._raster_polys([translate(q, *shift) for q in polys], (0, 0), shape, ppm)
+            img = img * (1 - m[..., None]) + level * m[..., None]
+    return img.astype(np.uint8)
+
+
+def _board():
+    copper = box(4, 4, 56, 36)
+    drills = [(8.0, 8.0, 0.9), (52.0, 9.0, 0.9), (30.0, 32.0, 0.9), (20.0, 20.0, 0.9)]
+    pads = [Point(x, y).buffer(1.2) for x, y, _ in drills]
+    from shapely.ops import unary_union
+    cu = unary_union(pads + [box(8, 7.7, 52, 8.3)])
+    outline = box(0, 0, 60, 40)
+    return xtool.LaserArt(
+        kind="traces", outline=outline, copper=cu, drills=drills,
+        apertures=xtool.traces_apertures(cu, outline, drills),
+        features=[Point(x, y).buffer(d / 2) for x, y, d in drills])
+
+
+def test_spread_picks_far_apart_points():
+    pts = [(0, 0), (1, 0), (50, 0), (25, 40), (26, 40)]
+    assert set(xtool.spread(pts, 3)) in ({0, 2, 3}, {0, 2, 4}, {1, 2, 3}, {1, 2, 4})
+    assert xtool.spread(pts[:2], 3) == [0, 1]
+
+
+def test_isolation_proof_marks_only_copper_the_job_removes():
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    art, origin = _board(), (50.0, 60.0)
+    proof = xtool.proof_on_isolation(art, origin)
+    assert proof.where == "isolation" and len(proof.marks) == 3
+    _, h = art.size
+    cleared = unary_union([type(p)(xtool.to_bed(list(p.exterior.coords), origin, h),
+                                   [xtool.to_bed(list(r.coords), origin, h) for r in p.interiors])
+                           for p in art.apertures]).buffer(0.01)
+    centres = [xtool.to_bed([(x, y)], origin, h)[0] for x, y, _ in art.drills]
+    for path in proof.paths:
+        line = LineString(path)
+        assert cleared.contains(line)
+        assert min(line.distance(Point(c)) for c in centres) < xtool.PROOF_RADIUS
+    text, secs = xtool.proof_job(proof, passes=3)
+    assert "G22" in text and secs < 5
+
+
+def test_waste_proof_sits_outside_the_outline_and_on_the_bed():
+    art, origin = _board(), (50.0, 60.0)
+    proof = xtool.proof_in_waste(art, origin)
+    board = box(50, 60, 110, 100)
+    assert len(proof.marks) >= 2 and len(proof.inside) == len(proof.marks)
+    for m, p in zip(proof.marks, proof.inside):
+        assert m.distance(board) > 2 and board.contains(Point(p))
+    with pytest.raises(ValueError, match="off the laser"):
+        xtool.proof_in_waste(art, (1.0, 60.0))
+
+
+def test_change_between_photos_is_found_whatever_the_board_looks_like():
+    art, origin, ppm, shape = _board(), (50.0, 60.0), 8, (1200, 1200)
+    proof = xtool.proof_on_isolation(art, origin)
+    holes = [Point(q).buffer(0.45) for q in xtool._drills_on_bed(art, origin)]
+    before = _scene(shape, ppm, dark=holes)
+    from shapely.affinity import translate
+    after = _scene(shape, ppm, dark=holes,
+                   marks=[translate(m, 0.6, -0.9) for m in proof.marks])
+    fit = cam.locate_change(before, after, ppm, proof.marks)
+    assert fit.ok and fit.found == 3
+    assert (fit.dx, fit.dy) == pytest.approx((0.6, -0.9), abs=0.06)
+    nothing = cam.locate_change(before, before, ppm, proof.marks)
+    assert not nothing.ok and nothing.found == 0
+
+
+def test_sheet_continues_only_where_there_is_material():
+    art, origin, ppm, shape = _board(), (50.0, 60.0), 8, (1200, 1200)
+    proof = xtool.proof_in_waste(art, origin)
+    whole = _scene(shape, ppm)
+    only_board = _scene(shape, ppm, sheet=box(50, 60, 110, 100))
+    assert cam.sheet_continues(whole, ppm, proof.spots, proof.inside)
+    assert not cam.sheet_continues(only_board, ppm, proof.spots, proof.inside)
+
+
+@pytest.mark.parametrize("where,sheet", [("isolation", "board"), ("auto", "board"),
+                                         ("auto", "sheet"), ("waste", "sheet")])
+def test_proof_corrects_the_camera_and_puts_the_job_on_the_holes(
+        qt_app, monkeypatch, where, sheet):
+    from shapely.affinity import translate
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "proof"))
+    ppm_hi, err, off_board = 8, (0.5, -0.7), (0.8, 0.4)
+
+    class Laser:
+        fired = None
+
+        def run(self, text):
+            Laser.fired = text
+
+        def wait(self, *_a, **_k):
+            pass
+
+    d = sl.StencilLaserDialog(_board(), laser=Laser())
+    try:
+        d._set_offset((0.0, 0.0))
+        d.x.setValue(50)
+        d.y.setValue(60)
+        d.proof_where.setCurrentIndex(d.proof_where.findData(where))
+        # The board really lies ``off_board`` from the drawing; the camera shows
+        # everything ``err`` from where the laser would hit it.
+        real_holes = [translate(Point(q).buffer(0.45), *off_board)
+                      for q in xtool._drills_on_bed(d.art, d.origin())]
+        stock = (translate(box(50, 60, 110, 100), *off_board) if sheet == "board"
+                 else box(20, 30, 140, 130))
+        plans, _ = d._proof_plans()
+        by = {p.where: p for p in plans}
+
+        def photo(px_per_mm=sl._PX_PER_MM, raw=None, offset=None):
+            raw = d._raw_photo() if raw is None else raw
+            o = d.cam_offset if offset is None else offset
+            marks = []
+            if raw == "after":
+                first = "G0X%.3fY%.3f" % by["waste"].paths[0][0] if "waste" in by else None
+                used = "waste" if first and first in Laser.fired else "isolation"
+                marks = by[used].marks
+                d._used = used
+            size = int(220 * px_per_mm)
+            return _scene((size, size), px_per_mm, dark=real_holes, marks=marks,
+                          shift=(err[0] - o[0], err[1] - o[1]), sheet=stock)
+        monkeypatch.setattr(d, "_raw_photo",
+                            lambda: "after" if Laser.fired else "before")
+        monkeypatch.setattr(d, "_photo", photo)
+        monkeypatch.setattr(d, "_start", lambda fn, text, done=None:
+                            d._say(done(fn(lambda *_a: None))))
+        x0, y0 = d.x.value(), d.y.value()
+        d.proof()
+        assert d._last_proof is not None, d.status.text()
+        assert d._used == ("waste" if sheet == "sheet" else "isolation")
+        assert d._last_proof["where"] == d._used
+        assert d.cam_offset == pytest.approx(err, abs=0.08)
+        assert (d.x.value() - x0, d.y.value() - y0) == pytest.approx(off_board, abs=0.1)
+        assert "Ready to cut" in d.status.text()
+    finally:
+        d._set_offset((0.0, 0.0))
+        d.close()
+
+
+def test_proof_that_leaves_no_mark_moves_nothing(qt_app, monkeypatch):
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "proof"))
+
+    class Laser:
+        def run(self, text): pass
+        def wait(self, *_a, **_k): pass
+
+    d = sl.StencilLaserDialog(_board(), laser=Laser())
+    try:
+        d._set_offset((0.0, 0.0))
+        d.x.setValue(50)
+        d.y.setValue(60)
+        d.proof_where.setCurrentIndex(d.proof_where.findData("isolation"))
+        blank = _scene((1760, 1760), 8)
+        monkeypatch.setattr(d, "_raw_photo", lambda: "raw")
+        monkeypatch.setattr(d, "_photo", lambda px=sl._PX_PER_MM, raw=None, offset=None:
+                            blank[::8 // px, ::8 // px])
+        monkeypatch.setattr(d, "_start", lambda fn, text, done=None:
+                            d._say(done(fn(lambda *_a: None))))
+        d.proof()
+        assert d._last_proof is None
+        assert d.cam_offset == (0.0, 0.0) and (d.x.value(), d.y.value()) == (50, 60)
+        assert "did not show" in d.status.text()
+    finally:
+        d.close()
+
+
+def test_proof_is_offered_only_for_traces_with_drilled_holes(dialog):
+    assert dialog.proof_btn.isHidden()      # the fixture's board has no drills
