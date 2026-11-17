@@ -22,16 +22,39 @@ A board that does not fit is normally discovered at the machine, with the layout
 already finished. This puts the answer on screen while there is still time to
 act on it.
 
-- **Tools → External Plugins → Set SRM-20 design rules** — the mill
-  separates nets by driving its cutter between them, so nothing may sit
-  closer to another net than the cutter is wide. This raises the clearance
-  of the board, every net class and every zone to the cutter's width (0.8 mm
-  unless SRM-CAM says otherwise), refills the zones, and lists what changed.
-  The drill cannot make a hole smaller than itself either, so via holes -
-  the board's minimum drill, the net classes', and vias already placed - are
-  raised to the drill, with new vias 1.8 mm across.
-  It never lowers a clearance and does not move tracks: run DRC afterwards.
-  *Send to SRM-CAM* runs the same check first and offers to set the rules.
+- **Set design rules for SRM-CAM** (toolbar button, and Tools → External
+  Plugins) — opens a small window: pick how the board is made, and it fills in
+  the rules that method has been cut with. Every number can be changed before
+  **Apply**; the board's present values stand beside them.
+
+  | Method | Track | Clearance | Board minimum | Pour gap / thermal / pour width |
+  |---|---|---|---|---|
+  | Mill: 0.8 mm flat endmill | 1.0 | 0.85 | 0.8 | 0.85 / 0.85 / 0.5 |
+  | Mill: 0.8 mm ball mill (0.44 mm channel) | 0.5 | 0.5 | 0.44 | 0.5 / 0.5 / 0.5 |
+  | Fiber laser copper, holes and outline on the mill | 0.3 | 0.25 | 0.2 | 0.25 / 0.25 / 0.25 |
+
+  All in mm; copper to the board edge 0.5 for each. The laser clears about
+  0.22 mm round every copper edge (six isolation rings on the laser page), so
+  a pour 0.25 mm off gives a trench no wider than the gap; at 0.5 mm the
+  trench came out twice as wide. Every method drills on the mill, so the
+  smallest hole is SRM-CAM's drill (0.8 mm unless it says otherwise) and vias
+  get 0.5 mm of copper round the hole.
+
+  Apply sets the net classes (track width on Default; a wider class such as
+  Power keeps its tracks), the board's minimum clearance, drill and edge
+  clearance, every pour and the defaults for new pours, raises any via hole
+  under the drill, and refills the pours. Tracks are not moved: run DRC
+  afterwards. Use it before the first track; it is safe on a routed board too.
+
+  Custom rules (Board Setup → Design Rules → Custom Rules) win over all of
+  this. The window reads the board's `.kicad_dru` and names any rule that
+  allows a gap the method cannot make, or that holds the pour further off
+  than the method wants. It does not edit that file.
+
+  The method is remembered per board in `srm-cam/method.json` beside it, and
+  *Send to SRM-CAM* checks the board against that method before plotting. A
+  board with no method yet is checked against the mill bit SRM-CAM has
+  selected, and the warning offers the window.
 
 ## Install
 

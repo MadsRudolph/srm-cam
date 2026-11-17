@@ -21,7 +21,7 @@ the SRM-20. Same code as Windows and Linux; the macOS patch lives on the
 | `gerber2rml/gui2/kicadsetup.py`, `engine/kicadplugin.py` | the plugin learns where SRM-CAM is (`launch.json`) |
 | `gerber2rml/gui2/updatecheck.py` | Check for updates rebuilds a Mac copy from its checkout |
 | `gerber2rml/loader.py`, `engine/drc.py`, `engine/pinch.py`, `engine/traces.py` | true pad shapes, net names, gaps the cutter's own width |
-| `kicad-plugin/` | **Send to SRM-CAM** and **Set SRM-20 design rules** (plugin 1.4.0) |
+| `kicad-plugin/` | **Send to SRM-CAM** and **Set design rules for SRM-CAM** (plugin 1.5.0) |
 | `packaging/` | `build-macos.sh` (app, DMG, signing, notarising), `update-macos.sh`, entitlements |
 
 Linux stays without the link, as upstream decided.

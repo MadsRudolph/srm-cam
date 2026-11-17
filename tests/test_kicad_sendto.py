@@ -276,10 +276,15 @@ def test_the_plugin_is_told_which_cutter_srm_cam_isolates_with(qt_app):
     w.close()
 
 
-def test_the_rules_action_is_registered_and_never_a_toolbar_button():
+def test_the_rules_action_is_registered_and_asks_before_it_changes_anything():
+    # A toolbar button now: it opens the design-rules window, and only Apply
+    # there changes the board, so a stray click costs nothing.
     src = (kicadplugin.bundled_source()
            / "action_send_to_srmcam.py").read_text("utf-8")
     assert "class SRM20RulesAction" in src
-    assert "self.show_toolbar_button = False" in src
+    run = src[src.index("class SRM20RulesAction"):]
+    run = run[run.index("def Run"):run.index("class SendToSRMCAMAction")]
+    assert "choose_rules(board, info)" in run
+    assert "rules_dialog.ask(" in src
     init = (kicadplugin.bundled_source() / "__init__.py").read_text("utf-8")
     assert "SRM20RulesAction().register()" in init
