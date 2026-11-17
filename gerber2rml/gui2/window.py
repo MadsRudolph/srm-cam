@@ -4860,9 +4860,10 @@ class MainWindow(QMainWindow):
         """Open the xTool F1 Ultra dialog on the first available laser job."""
         st = self.state
         if st.board is None:
-            if self.plan is not None and self.plan.by_key("laser") is not None:
-                self.select_step("laser")
-            self.say("warn", "Load a Gerber folder first.")
+            # Nothing loaded: the page opens on its own, to load a Gerber
+            # folder or a DXF there or to calibrate.
+            from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+            StencilLaserDialog(None, self).exec()
             return
         m = self._laser_board()
         last_err = None
@@ -4875,6 +4876,25 @@ class MainWindow(QMainWindow):
                     stencil.StencilError, ValueError) as e:
                 last_err = str(e)
         self.say("warn", last_err or "No laser-ready Gerber layers in this folder.")
+
+    def action_traces_laser_dxf(self):
+        """Copper traces on the xTool from a DXF drawing, no Gerber folder."""
+        from gerber2rml.engine import dxf_traces
+        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
+        picked, _ = QFileDialog.getOpenFileName(
+            self, "Copper traces DXF", workspace.remembered_dir("dxf", ""),
+            "DXF drawings (*.dxf);;All files (*)")
+        if not picked:
+            return
+        path = Path(picked)
+        workspace.remember_dir("dxf", str(path.parent))
+        try:
+            art = dxf_traces.build_dxf_traces(path)
+        except xtool.TracesError as e:
+            self.say("warn", str(e))
+            return
+        jobs = self._laser_art_for if self.state.board is not None else None
+        StencilLaserDialog(art, self, name=path.name, jobs=jobs, dxf=path).exec()
 
     def action_traces_laser(self):
         """The copper traces on the xTool: FlatCAM-style concentric isolation."""
