@@ -589,6 +589,22 @@ without losing board placement, focus, or camera alignment:
   ink off the pads.
 - **Mark it on the xTool…** fills the silkscreen artwork.
 
+**The board's edge is never lasered as a trace.** Two things used to put it in
+the job, and both are taken out when the traces are read:
+- **The outline plotted into the copper file.** KiCad's plot option *Plot
+  Edge.Cuts on all layers* draws the outline into every copper Gerber as a thin
+  line, and read as copper it was isolated all the way round. Lines and arcs that
+  lie on the outline are left out when together they cover at least half of it,
+  and the page says so. A single stroke that only touches the edge is kept. Best
+  fixed in KiCad too: untick that option when plotting.
+- **Copper that reaches the edge.** A pour or track running to the outline was
+  isolated along the edge as well, where there is nothing to isolate it from.
+  That part of every pass is no longer drawn.
+
+The traces DXF still has the outline on its own layer, for placing the job in
+XCS. Set that layer to not output there. *Score the board outline afterwards* is
+off in every traces preset.
+
 ### Native vector isolation and material calibration
 
 XCS turns a Vector Engrave fill into full-board scanlines that cut across narrow

@@ -737,6 +737,50 @@ def traces_apertures(copper, outline, drills=(), *, strategy="concentric",
             if p.area >= soldermask._SLIVER_MM2]
 
 
+OUTLINE_STROKE_TOL = 0.05       # mm: a stroke this near the outline is the outline
+OUTLINE_STROKE_SHARE = 0.5      # of the outline's length, before it is believed
+
+
+def copper_without_outline(layer, outline):
+    """A copper Gerber's geometry with the board outline taken out of it.
+
+    KiCad's plot option "Plot Edge.Cuts on all layers" draws the outline into
+    every copper file as a thin line. Read as copper, it gets isolated like a
+    track: the laser runs all the way round the board for nothing. Lines and
+    arcs that lie on the outline are left out, but only when together they
+    cover most of it - a stray stroke that happens to touch the edge is
+    copper. Returns ``(geometry, mm of outline left out)``."""
+    from gerbonara.graphic_objects import Arc, Line
+    from gerbonara.utils import MM
+    from shapely.geometry import LineString, Point
+    from gerber2rml.engine import soldermask
+    edge = outline.boundary
+    keep, dropped, length = [], [], 0.0
+    for obj in layer.objects:
+        on = False
+        if isinstance(obj, (Line, Arc)):
+            o = obj.converted(MM)
+            a, b = (o.x1, o.y1), (o.x2, o.y2)
+            if (Point(a).distance(edge) <= OUTLINE_STROKE_TOL
+                    and Point(b).distance(edge) <= OUTLINE_STROKE_TOL):
+                pts = [a, b]
+                if isinstance(obj, Arc):
+                    try:
+                        pts = [(q.x1, q.y1) for q in o.approximate(0.05, MM)] + [b]
+                    except Exception:           # noqa: BLE001 - then by its ends
+                        pts = [a, b]
+                on = all(Point(q).distance(edge) <= OUTLINE_STROKE_TOL for q in pts)
+                if on and math.dist(a, b) > 1e-9:
+                    length += LineString(pts).length
+        (dropped if on else keep).append(obj)
+    if not dropped or length < OUTLINE_STROKE_SHARE * edge.length:
+        return soldermask._layer_to_shapely(layer), 0.0
+
+    class _Kept:
+        objects = keep
+    return soldermask._layer_to_shapely(_Kept), length
+
+
 def build_laser_traces(folder, *, side="bottom", mirror=True,
                        offsets=DEFAULT_TRACE_OFFSETS, kerf=DEFAULT_TRACE_KERF,
                        lines_per_cm=DEFAULT_TRACE_DENSITY,
@@ -765,10 +809,16 @@ def build_laser_traces(folder, *, side="bottom", mirror=True,
     outline_raw = soldermask._read_outline(edge)
     if outline_raw.is_empty:
         raise TracesError(f"{edge.name} has no outline in it.")
-    copper = soldermask._layer_to_shapely(GerberFile.open(str(path)))
+    copper, in_copper = copper_without_outline(GerberFile.open(str(path)),
+                                               outline_raw)
     if copper.is_empty:
         raise TracesError(f"{path.name} is empty: {_COPPER_NAME[side]} has no "
                           f"copper on it.")
+    notes = []
+    if in_copper:
+        notes.append(f"{path.name} has the board outline drawn in it (KiCad: "
+                     f"Edge.Cuts plotted on all layers). It is left out, so "
+                     f"the laser does not go round the board's edge.")
     try:
         raw_drills = select_drill_holes(folder, outline_raw)
     except Exception:
@@ -795,7 +845,7 @@ def build_laser_traces(folder, *, side="bottom", mirror=True,
         iso_mm = kerf + max(0, offsets - 1) * (10.0 / lines_per_cm)
         note = f"{offsets} passes ({iso_mm:.2f} mm gap)"
     return LaserArt(kind="traces", apertures=apertures, outline=outline,
-                    mirrored=mirror, note=note, notes=[], features=features,
+                    mirrored=mirror, note=note, notes=notes, features=features,
                     kerf=kerf, copper=copper, drills=drills, side=side)
 
 
@@ -814,6 +864,9 @@ def write_traces_dxf(art, out_dir, name):
                                    soldermask.LAYER_TRACES),
         encoding="ascii")
     return path
+
+
+EDGE_RING_MM = 0.02     # an isolation pass this near the board's edge is on it
 
 
 def _clip_ring_to(coords, clip):
@@ -864,15 +917,31 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None):
                    if 0 <= k < len(art.apertures)]
             if sel:
                 clip = unary_union(sel).buffer(recipe.stepover * 1.5)
+        # Where copper reaches the board's edge, the grown shape is cut off
+        # by the outline and its ring would follow the edge. There is nothing
+        # past the edge to isolate from, so that part is not drawn.
+        from shapely.geometry import LineString
+        inside = art.outline.buffer(-EDGE_RING_MM)
+        edge = art.outline.boundary
+
+        def kept(coords):
+            parts = _clip_ring_to(coords, clip)
+            out = []
+            for part in parts:
+                if LineString(part).distance(edge) > EDGE_RING_MM:
+                    out.append(part)            # nowhere near the edge
+                else:
+                    out += _clip_ring_to(part, inside)
+            return out
         groups = []
         for i in range(recipe.offsets):
             d_i = recipe.kerf / 2 + i * recipe.stepover
             grown = cu.buffer(d_i).intersection(art.outline)
             rings = []
             for poly in soldermask._polygons(grown):
-                rings += _clip_ring_to(list(poly.exterior.coords), clip)
+                rings += kept(list(poly.exterior.coords))
                 for intr in poly.interiors:
-                    rings += _clip_ring_to(list(intr.coords), clip)
+                    rings += kept(list(intr.coords))
             if rings:
                 groups.append(_nearest_order(rings))
         cache[key] = groups
