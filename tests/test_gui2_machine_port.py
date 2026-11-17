@@ -262,41 +262,25 @@ def test_the_bar_stays_one_row_with_stop_last_and_whole(bar, qt_app):
     assert bar.stop_btn.minimumWidth() >= 112
 
 
-def test_probe_z_and_zero_z_are_two_buttons_that_say_what_each_changes(bar):
+def test_probe_z_is_the_only_touch_and_there_is_no_spindle_button(bar):
     assert bar.probe_btn.text() == "Probe Z"
-    assert bar.zero_btn.text() == "Zero Z"
-    probe, zero = bar.probe_btn.toolTip().lower(), bar.zero_btn.toolTip().lower()
-    # the app-side capture says the machine is untouched...
+    probe = bar.probe_btn.toolTip().lower()
     assert "changes nothing on the machine" in probe
-    assert "origin is untouched" in probe
-    # ...and the firmware write says which origin it moves, and only Z
-    assert "firmware" in zero and "origin" in zero and "vpanel" in zero
-    assert "xy origin is never moved" in zero
-
-
-def test_probe_z_touches_off_and_zero_z_writes_the_origin(bar):
+    assert "drops fast" in probe
+    assert not hasattr(bar, "zero_btn")
+    assert not hasattr(bar, "spindle_btn")
     bar.probe_btn.click()
     assert bar.link.calls == ["touch"]
-    bar.zero_btn.click()
-    assert bar.link.calls == ["touch", "zero_z"]
 
 
 def test_both_touches_are_refused_while_the_bit_is_on_the_copper(bar):
     bar._on_position(10.0, 10.0, -1.0, True)
     bar.probe_btn.click()
-    bar.zero_btn.click()
     assert bar.link.calls == []
-    assert all("touching" in t.lower() for _l, t in bar.said[-2:])
+    assert "touching" in bar.said[-1][1].lower()
     assert bar.dro_z._label.text() == "Touch"
     bar._on_position(10.0, 10.0, 0.0, False)
     assert bar.dro_z._label.text() == "Z"
-
-
-def test_zero_z_says_so_on_a_firmware_that_cannot_write_the_origin(bar):
-    bar.link = _Link(features=())
-    bar.zero_btn.click()
-    assert bar.link.calls == []
-    assert "reflash" in bar.said[-1][1].lower()
 
 
 def test_the_touch_results_are_reported_in_the_operators_terms(bar):
@@ -556,7 +540,7 @@ def test_the_chips_do_not_widen_the_window(win, qt_app):
 def test_nothing_new_offers_to_zero_the_xy_origin(bar):
     texts = [b.text().lower() for b in bar.findChildren(QPushButton)]
     assert not [t for t in texts if "zero" in t and "xy" in t]
-    assert "zero z" in texts
+    assert "probe z" in texts
 
 
 def test_a_position_poll_in_flight_does_not_read_as_a_busy_machine():

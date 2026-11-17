@@ -4273,9 +4273,10 @@ class MainWindow(QMainWindow):
         if not self.link.is_connected():
             self.say("warn", "Connect to the machine first.")
             return
-        from gerber2rml.engine import spi_probe
-        self.link.submit("view", lambda ser: spi_probe.jump_to_view(ser))
-        self.say("info", "Moving the head forward — keep clear of the bed.")
+        # The bar's View button: where the automatic run shows the board.
+        self.link.go_to_view()
+        self.say("info", "Moving to the view position - keep clear of the "
+                         "bed.")
 
     # -------------------------------------------------------------- export
     def action_export(self):
