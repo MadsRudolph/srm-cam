@@ -463,6 +463,29 @@ class MachineLink(QObject):
         self.clear_abort()
         self.submit("jog_xy", op)
 
+    def go_to_view(self):
+        """The head to where the automatic run shows the board: Z all the
+        way up, then machine X, Y = ``autorun.VIEW_MM``. The same place, so
+        the board is seen as it is after the traces. Not VPanel's View
+        (``Y``), which goes somewhere else and acked without moving right
+        after a job (2026-11-03)."""
+        from gerber2rml.engine.autorun import VIEW_MM
+
+        def op(ser):
+            # Up first: N caps Z at machine Z 0, the top of its travel.
+            up = spi_probe.timed_move(ser, dz_um=100000,
+                                      should_abort=self.should_abort)
+            if not up or self.should_abort():
+                self.last_move_error = "did not lift"
+                return None
+            ok = spi_probe.jog_to(ser, int(round(VIEW_MM[0] * 1000)),
+                                  int(round(VIEW_MM[1] * 1000)), timeout=60.0)
+            self.last_move_error = None if ok else "no reply"
+            return ok
+        self.last_jog_t = time.time()
+        self.clear_abort()
+        self.submit("view", op)
+
     def has_feature(self, name):
         """Whether the connected firmware advertised ``name`` (``"zeroz"``,
         ``"retouch"``, ...). False when nothing is connected."""
@@ -806,11 +829,18 @@ class MachineBar(QWidget):
         self.z_up, self.z_down = self.pad.z_up, self.pad.z_down
         lh.addWidget(self.pad)
 
-        # Two touches, two different things changed. Probe Z tells the APP
-        # where the copper is; Zero Z tells the MACHINE. They were one
-        # button here for a while, and the tooltip could not say which of
-        # the two it was doing — which matters, because only one of them
-        # moves the origin VPanel shows.
+        self.view_btn = widgets.button(
+            "View", on=self._view,
+            tip="Lift the bit to the top and bring the board out to look at "
+                "it: the same view position the automatic run stops at "
+                "after the traces (machine X 0, Y 150).")
+        lh.addWidget(self.view_btn)
+
+        # One touch: Probe Z finds the copper and tells the APP where it
+        # is. Zero Z, which also wrote the machine's Z origin, is gone
+        # (2026-11-17): the automatic run takes its own touches and never
+        # uses that origin, and two buttons that both touch off were one
+        # too many. The spindle button went the same day: runs start it.
         self.probe_btn = widgets.button(
             "Probe Z", on=self._probe_z,
             tip="Lower the bit from here until the probe wire says it has "
@@ -823,27 +853,6 @@ class MachineBar(QWidget):
                 "its way down. After changing to a longer bit, jog down to "
                 "just above the copper first: the last height no longer holds.")
         lh.addWidget(self.probe_btn)
-        self.zero_btn = widgets.button(
-            "Zero Z", on=self._zero_z,
-            tip="Touch off as Probe Z does, then have the FIRMWARE write the "
-                "work origin's Z at the copper surface and lift 2 mm.\n\n"
-                "This changes the origin VPanel displays — the same as "
-                "pressing its Z0 button at the surface. Check VPanel's G54 Z "
-                "once before trusting it for a job.\n"
-                "Only Z. The XY origin is never moved — the fixture, the "
-                "dowel registration and every re-run depend on it staying "
-                "where it is.")
-        lh.addWidget(self.zero_btn)
-
-        self.spindle_btn = widgets.button(
-            "Spindle", on=self._toggle_spindle,
-            tip="Start and stop the tool.\n\n"
-                "The speed is not settable over this link — the machine "
-                "ignores the value and runs at whatever VPanel's slider says. "
-                "Set the speed there.")
-        self.spindle_btn.setCheckable(True)
-        lh.addWidget(self.spindle_btn)
-
         self.pause_btn = widgets.button(
             "Pause", on=self._toggle_pause,
             tip="Hold the machine where it is, spindle still turning, and "
@@ -975,23 +984,10 @@ class MachineBar(QWidget):
         self.message.emit("info", "Probing down to the copper… The machine's "
                                   "origin is not changed by this.")
 
-    def _zero_z(self):
-        if self._touch_refused():
-            return
-        if self.link.firmware and not self.link.has_feature("zeroz"):
-            self.message.emit(
-                "warn", "This firmware cannot write the origin (it needs v2 "
-                        "or later — reflash hardware/srm20_spi_probe). Probe "
-                        "Z still works, and VPanel's Z0 button sets the "
-                        "origin.")
-            return
-        self.link.zero_z()
-        self.message.emit("info", "Touching off and writing Z zero to the "
-                                  "machine…")
-
-    def _toggle_spindle(self):
-        want = self.spindle_btn.isChecked()
-        self.link.set_spindle(want)
+    def _view(self):
+        self.link.go_to_view()
+        self.message.emit("info", "Moving to the view position - keep clear "
+                                  "of the bed.")
 
     def _toggle_jog(self):
         self.jog_mode_changed.emit(self.jog_btn.isChecked())
@@ -1020,7 +1016,6 @@ class MachineBar(QWidget):
             pad.keys_btn.setChecked(False)
         if self.link.can_stop_something():
             self.link.stop_now()
-            self.spindle_btn.setChecked(False)
             self.message.emit("warn", "STOP sent: move dropped, spindle off. "
                                       "Raise the bit with Page Up before the "
                                       "next move.")
@@ -1125,12 +1120,11 @@ class MachineBar(QWidget):
                 self.chip.set(f"Spindle on · {rpm} rpm", "warn")
             else:
                 self.chip.set("Linked", "live")
-        self.spindle_btn.setChecked(bool(st.get("spindle")))
 
     def _on_done(self, name, result):
         """The two touches report here. The link has already recorded the
         surface height on a good contact; this is the sentence for it."""
-        if name in ("jog_xy", "jog_by", "jog_z"):
+        if name in ("jog_xy", "jog_by", "jog_z", "view"):
             # A STOP ends a move on purpose; that is not a failure to report.
             if not result and not self.link.should_abort():
                 self._say_move_failed()

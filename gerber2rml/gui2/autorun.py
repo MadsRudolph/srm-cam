@@ -413,6 +413,19 @@ class AutoRunPage(inspector.Page):
         self.corner_box.setToolTip(
             "Which corner of the stock the bracket holds.")
         h.addWidget(self.corner_box)
+        # Which bracket is screwed down: the printed one with the probe
+        # tongue over the stock, or a plain L with nothing over it.
+        self.kind_box = QComboBox()
+        self.kind_box.addItem("Probe bracket (tongue)", True)
+        self.kind_box.addItem("Plain bracket", False)
+        self.kind_box.setCurrentIndex(0 if self._bracket.tongue else 1)
+        self.kind_box.setToolTip(
+            "Probe bracket: the printed one, whose tongue carries the probe "
+            "wire over the stock - the bit stays out from under it. "
+            "Plain bracket: a straight L with no tongue, so the whole stock "
+            "can be cut right up to the corner. Clip the probe wire to the "
+            "copper yourself.")
+        h.addWidget(self.kind_box)
         self.datum_btn = widgets.button(
             "Find it with the bit",
             tip="Jog the bit over the bracket's inside corner (where the "
@@ -642,6 +655,7 @@ class AutoRunPage(inspector.Page):
         for sp in (self.w_spin, self.h_spin):
             sp.valueChanged.connect(self._sync_outline)
         self.corner_box.currentIndexChanged.connect(self._corner_changed)
+        self.kind_box.currentIndexChanged.connect(self._kind_changed)
         self.where.currentIndexChanged.connect(self._sync_outline)
 
         run = widgets.Section("Run")
@@ -839,6 +853,10 @@ class AutoRunPage(inspector.Page):
         from gerber2rml.gui2 import workspace
         self._bracket = b
         workspace.set_setting("autorun/bracket", br.to_text(b))
+        if self.kind_box.currentData() != b.tongue:
+            self.kind_box.blockSignals(True)
+            self.kind_box.setCurrentIndex(0 if b.tongue else 1)
+            self.kind_box.blockSignals(False)
         if self.corner_box.currentData() != b.corner:
             self.corner_box.blockSignals(True)
             self.corner_box.setCurrentIndex(CORNERS.index(b.corner))
@@ -850,14 +868,15 @@ class AutoRunPage(inspector.Page):
         bed = self._bed()
 
         def snap(x, y):
-            b = br.snap(x, y, corner, bed=bed)
+            b = br.snap(x, y, corner, bed=bed, tongue=self._bracket.tongue)
             if b is None:
                 return None
             return b.outline(), b.screw_points(), b.inside_corner()
         return snap
 
     def on_bracket_moved(self, x, y):
-        b = br.snap(x, y, self._bracket.corner, bed=self._bed())
+        b = br.snap(x, y, self._bracket.corner, bed=self._bed(),
+                    tongue=self._bracket.tongue)
         if b is not None:
             self.set_bracket(b)
 
@@ -868,7 +887,22 @@ class AutoRunPage(inspector.Page):
         if c == self._bracket.corner:
             return
         x, y = self._bracket.inside_corner()
-        self.set_bracket(br.snap(x, y, c, bed=self._bed()) or self._bracket)
+        self.set_bracket(br.snap(x, y, c, bed=self._bed(),
+                                 tongue=self._bracket.tongue)
+                         or self._bracket)
+
+    def _kind_changed(self, *_):
+        """The other bracket in the same holes: with or without the tongue.
+        The board goes back into the corner, which the tongue no longer
+        (or now) pushes it away from."""
+        import dataclasses
+        tongue = bool(self.kind_box.currentData())
+        if tongue == self._bracket.tongue:
+            return
+        self.set_bracket(dataclasses.replace(self._bracket, tongue=tongue))
+        if (self._auto_place and self.ctl.state.board is not None
+                and self._on_this_page()):
+            self.place_in_corner()
 
     def _draw_bracket(self, on):
         stage = getattr(self.ctl, "stage", None)
@@ -893,7 +927,8 @@ class AutoRunPage(inspector.Page):
                                  "the bracket corner first.")
             return
         from gerber2rml.gui2 import dialogs
-        b = br.snap(pos[0], pos[1], self._bracket.corner, bed=self._bed())
+        b = br.snap(pos[0], pos[1], self._bracket.corner, bed=self._bed(),
+                    tongue=self._bracket.tongue)
         if b is None:
             self.ctl.say("warn", "The bracket cannot be screwed down with "
                                  "its corner there.")
