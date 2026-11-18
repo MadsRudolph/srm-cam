@@ -19,10 +19,10 @@
     var PX = narrow ? 24 : 660, PY = narrow ? DY + DH + 16 : 56, QW = narrow ? 472 : 196, QH = narrow ? 170 : 330;
     var svg = A.stage(host, W, H, "Two pads closer than the 0.8 mm bit, cut or left shorted");
     if (narrow) {
-      A.text(svg, 24, 34, "Interface › Pro, then", { size: 16, font: "mono", fill: C.copperHi });
+      A.text(svg, 24, 34, "In Pro:", { size: 16, font: "mono", fill: C.copperHi });
       A.text(svg, 24, 58, "Isolation traces › Cutting parameters", { size: 16, font: "mono", fill: C.copperHi });
     } else {
-      A.text(svg, 24, 34, "Interface › Pro, then Isolation traces › Cutting parameters", { size: 16, font: "mono", fill: C.copperHi });
+      A.text(svg, 24, 34, "In Pro: Isolation traces › Cutting parameters", { size: 16, font: "mono", fill: C.copperHi });
     }
     A.text(svg, 24, H - 18, "Top view, to scale · copper where nothing is cut", { size: 15, fill: C.text3 });
 

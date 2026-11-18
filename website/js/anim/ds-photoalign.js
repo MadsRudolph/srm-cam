@@ -1,5 +1,5 @@
 /* The phone photo on the bed (gui2/window.py action_phone_photo / action_load_photo,
-   gui2/photo.py, engine/photofit.py). View › Take one with a phone… shows a QR code;
+   gui2/photo.py, engine/photofit.py). Photo ▾ › Take one with a phone… shows a QR code;
    the photo arrives, is cropped to the copper, and you click four anchor holes in the
    order the design map asks. The four clicks fit a homography that pins the photo
    onto those holes' positions on the bed, straightening a lean as well as a turn; the
@@ -79,7 +79,7 @@
       while (gl.firstChild) gl.removeChild(gl.firstChild);
       while (gb.firstChild) gb.removeChild(gb.firstChild);
       if (stage === 0) {
-        lt.textContent = "VIEW › TAKE ONE WITH A PHONE…";
+        lt.textContent = "PHOTO ▾ › TAKE ONE WITH A PHONE…";
         var q = narrow ? 150 : 170, qx = PCX - q / 2, qy = PCY - q / 2 - 20;
         A.el(gl, "rect", { x: qx, y: qy, width: q, height: q, fill: "#f3f4f6", rx: 4 });
         // a QR-ish pattern, deterministic
@@ -121,7 +121,7 @@
     }
 
     function say() {
-      if (stage === 0) { st.className = "anim-status"; st.textContent = "View › Take one with a phone… shows a QR code. The photo arrives in the app, cropped to the copper."; }
+      if (stage === 0) { st.className = "anim-status"; st.textContent = "Photo ▾ › Take one with a phone… shows a QR code. The photo arrives in the app, cropped to the copper."; }
       else if (stage === 1) { st.className = "anim-status"; st.textContent = "Click the anchor holes in the order the design map asks: " + clicks + " of 4. Scroll to zoom; undo the last click if you miss."; }
       else if (stage === 2) { st.className = "anim-status ok"; st.textContent = "Laid on the bed: worst anchor 0.18 mm (over about 0.5 means a click was off). The photo is pinned to the board's own holes."; }
       else { st.className = "anim-status caution"; st.textContent = "The real board and the design now share a frame, so a spot the mill did not cut through shows where it really is: here copper still bridges two traces. Box it on Rework, and only that box is cut again."; }

@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SRM-CAM — SRM-CAM guide</title>
-<meta name="description" content="Desktop CAM for the Roland SRM-20: KiCad Gerbers in, ready-to-run G-code out, with bed levelling, panels and double-sided registration.">
+<meta name="description" content="Desktop CAM for the Roland SRM-20 and the xTool fiber laser: KiCad Gerbers in, boards out, with bed levelling, panels and double-sided registration.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/site.css?v=20260930a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
-<script defer src="js/anim/ix-pipeline.js?v=20260930b"></script>
+<script defer src="js/anim/ix-pipeline.js?v=20261118a"></script>
 </head>
 <body>
 <div class="layout">
@@ -93,7 +93,7 @@
 
 <h2>How it works</h2>
 <ol class="steps">
-  <li><span class="st">Load your board</span>Open the Gerber folder from KiCad.</li>
+  <li><span class="st">Load your board</span>Open the Gerber folder from KiCad, or press <span class="ui">Send to SRM-CAM</span> in KiCad. The chip at the top left says how it is made: flat mill, ball mill or laser.</li>
   <li><span class="st">Copper in the corner</span>Slide the sheet into the bracket and hold it down.</li>
   <li><span class="st">Press Start</span>It finds the copper, levels, drills and cuts the traces by itself.</li>
   <li><span class="st">Check it</span>The board comes forward so you can look, and recut anything shallow.</li>
@@ -110,6 +110,7 @@
 <tr><td>Fix something that went wrong</td><td><a href="troubleshooting.html">Troubleshooting</a></td></tr>
 <tr><td>Set up a mill: Arduino, bracket, clamps</td><td><a href="hardware.html">Hardware &amp; firmware</a></td></tr>
 <tr><td>Do it all by hand, or use several boards on a sheet</td><td><a href="milling-a-board.html">Pro pages</a>, in the menu</td></tr>
+<tr><td>A laser board: holes and outline on the mill, copper on the laser</td><td><a href="automatic.html#laser">A laser board</a></td></tr>
 <tr><td>Fine-pitch SMD parts: the ball mill, and a paste stencil on the xTool</td><td><a href="smd.html">SMD: fine traces &amp; stencil</a></td></tr>
 <tr><td>Put solder mask on a milled board</td><td><a href="solder-mask.html">Solder mask</a></td></tr>
 </table></div>

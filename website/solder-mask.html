@@ -82,7 +82,7 @@
 <p class="lead">Cover the copper side in UV-curing ink, cure it under the <strong>big UV lamp in the student lab</strong>, the lab where the boards are cut and drilled, and let the xTool fiber laser open the pads again. Single-sided boards, after the normal cut-out. SRM-CAM makes the laser's file from the same Gerber folder the mill's files came from.</p>
 
 <div class="note"><span class="t">How far this has been proven</span>
-<p>Mads has this working with Mechanic solder mask on FR-4. It is still new on milled boards, so treat the numbers here as a starting point. <strong>Run the whole thing on a scrap milled board first.</strong> Silkscreen text over the mask is not part of this yet.</p></div>
+<p>Mads has this working with Mechanic solder mask on FR-4. It is still new on milled boards, so treat the numbers here as a starting point. <strong>Run the whole thing on a scrap milled board first.</strong> Silkscreen over the mask is not part of this page yet, though SRM-CAM's laser page has a <span class="ui">Silkscreen</span> row for it.</p></div>
 
 <div class="pill-flow">
   <span class="pf">Mill, file</span><span class="arr">→</span>
@@ -113,6 +113,7 @@
 <h2 id="mill">1 · Mill it as normal</h2>
 <p>Mill through the cut-out as usual: <a href="automatic.html">Mill a board</a>. Then file the tab stubs flat, especially at the corner that will go into the bracket: a stub there holds the whole board off the corner and everything lands that far out.</p>
 <p>Rectangular boards suit this best, because the bracket relies on a square corner.</p>
+<p>A <a href="automatic.html#laser">laser board</a> goes the other way round: it stays in the sheet on its tabs, and the mask goes on after the copper is etched, lined up on the same drilled holes. Break the tabs at the end.</p>
 
 <h2 id="clean">2 · Clean it</h2>
 <ol class="steps">
@@ -147,19 +148,20 @@
 <h2 id="files">6 · Make the laser file in SRM-CAM</h2>
 <p>SRM-CAM writes the file from the Gerber folder you loaded. You do not have to go back to KiCad's DXF plot.</p>
 <ol class="steps">
-  <li><span class="st">Plot B.Mask too</span>In KiCad, <span class="menu-path">File › Fabrication Outputs › Gerbers</span>: tick <strong>B.Mask</strong> with B.Cu and Edge.Cuts, into the same folder. Without it SRM-CAM says so, and the milling files still come out.</li>
-  <li><span class="st">Tick the box</span><span class="menu-path">Your board › Solder mask › Also make the laser file (DXF)</span> in Novice, the same place under <span class="menu-path">Set up the job</span> in Pro. It is off until you tick it.</li>
-  <li><span class="st">Get the file</span>In Novice, <span class="ui">Start</span> writes it into the run's folder (<span class="ui">The job files</span> on the Run it page). In Pro, <span class="ui">Export the job</span> writes it beside the <code>.nc</code> files. <span class="ui">Write the laser file now…</span> writes it whenever you like, in both.</li>
+  <li><span class="st">Plot B.Mask too</span>In KiCad, <span class="menu-path">File › Fabrication Outputs › Gerbers</span>: tick <strong>B.Mask</strong> with B.Cu and Edge.Cuts, into the same folder (<span class="ui">Send to SRM-CAM</span> does this for you). The rail then has a <span class="ui">Solder mask</span> row, under <em>On the laser</em>.</li>
+  <li><span class="st">Get the file</span>There is nothing to tick: the export writes it beside the mill's files. That is <span class="ui">Export the files for VPanel…</span> in Pro and <span class="ui">Save the files for the lab PC…</span> in Novice, both at the foot of the rail.</li>
 </ol>
+<div class="tip"><span class="t">Or let SRM-CAM drive the laser</span>
+<p>The <span class="ui">Solder mask</span> row opens SRM-CAM's own laser page on the mask, lined up on the board's drilled holes, instead of xTool's software and the bracket. That way is newer. The steps below, in xTool's own software, are the ones proven on milled boards.</p></div>
 <figure class="fig mid" style="max-width:440px">
-  <img src="img/gui2_solder_mask.png" alt="The Solder mask section of SRM-CAM's setup page: the tick box, the shrink, and the button that writes the file" loading="lazy">
-  <figcaption>The tick box, on the first page of the job.</figcaption>
+  <img src="img/gui2_solder_mask.png" alt="The Solder mask section of SRM-CAM's setup page in an earlier version, with the shrink setting" loading="lazy">
+  <figcaption>The mask settings, in an earlier version of the app.</figcaption>
 </figure>
 <p>You get <code>&lt;name&gt;_mask_mirrored.dxf</code>: one file in millimetres at 1:1, with the pad openings as closed shapes on a layer called <code>MASK_OPENINGS</code>, and the outline on a layer called <code>OUTLINE</code>.</p>
 <ul>
   <li><strong>Mirrored once, already.</strong> KiCad plots B layers seen from the top, and the board lies copper side up on the laser, just as it did on the mill. So the file is mirrored, openings and outline together, the way SRM-CAM mirrors the copper. <strong>Do not flip it in the xTool software.</strong></li>
-  <li><strong>Smaller than the pads.</strong> Each opening is 0.10&nbsp;mm smaller per side (<span class="ui">Shrink by</span>), because the mill and the laser are lined up by hand: a 0.9&nbsp;×&nbsp;1.5&nbsp;mm pad gets a 0.7&nbsp;×&nbsp;1.3&nbsp;mm opening. A small error then leaves ink on the pad's edge and not bare copper beside it.</li>
-  <li><strong>It says what it could not do.</strong> A pad too small to survive the shrink stays under the ink, and SRM-CAM tells you which one, on the setup page and on the run sheet.</li>
+  <li><strong>Smaller than the pads.</strong> Each opening is 0.10&nbsp;mm smaller per side, because the mill and the laser are lined up by hand: a 0.9&nbsp;×&nbsp;1.5&nbsp;mm pad gets a 0.7&nbsp;×&nbsp;1.3&nbsp;mm opening. A small error then leaves ink on the pad's edge and not bare copper beside it.</li>
+  <li><strong>It says what it could not do.</strong> A pad too small to survive the shrink stays under the ink, and SRM-CAM tells you which one.</li>
 </ul>
 <figure class="anim" data-anim="sm-files">
   <figcaption><span class="k">What it does to the Gerber</span>Watch the ringed pad cross the board. The whole drawing flips about its middle, and then each opening shrinks.</figcaption>

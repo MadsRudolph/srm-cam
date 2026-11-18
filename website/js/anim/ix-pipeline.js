@@ -1,7 +1,7 @@
 /* How the pieces fit: KiCad's Gerbers go into SRM-CAM, which checks them, plans the
    run and writes one .nc file per step plus the run sheet; VPanel plays those files
    on the SRM-20. Beside that, the optional Arduino probe link lets SRM-CAM read the
-   position, jog, probe the bed and zero Z (it does not play the files). A file token
+   position, jog, probe the bed and find the copper (it does not play the files). A file token
    travels the main line; tap a stop to read what happens there and follow the link
    to its page. */
 (function () {
@@ -14,7 +14,7 @@
     ["SRM-CAM", "checks · plan", "milling-a-board.html#setup",
       "Open the folder: the board lands on the bed, the checks mark every short, and the rail becomes the run plan."],
     [".nc files", "+ run sheet", "reference.html",
-      "Export the job writes one file per step: dry run, drill, isolation traces, cut-out, and the run sheet with the order."],
+      "Export the files for VPanel writes one file per step: drill, isolation traces, cut-out, and the run sheet with the order."],
     ["VPanel", "Cut › Add › Output", "milling-a-board.html#cut",
       "Roland's VPanel plays the files on the machine. It lists them alphabetically: move the cut-out to the bottom."],
     ["SRM-20", "the board", "milling-a-board.html#finish",
@@ -55,7 +55,7 @@
     } else {
       var ly = y0 + ch + 60;
       link = A.el(s, "path", { d: "M" + c1[0] + " " + (y0 + ch) + " V" + ly + " H" + c4[0] + " V" + (y0 + ch), fill: "none", stroke: C.live, "stroke-width": 2.5, "stroke-dasharray": "7 6" });
-      A.text(s, (c1[0] + c4[0]) / 2, ly + 26, "optional probe link (Arduino): position, jog, probe the bed, zero Z", { size: 15, anchor: "middle", fill: C.live });
+      A.text(s, (c1[0] + c4[0]) / 2, ly + 26, "optional probe link (Arduino): position, jog, probe the bed, find the copper", { size: 15, anchor: "middle", fill: C.live });
     }
     var token = A.el(s, "g", {});
     A.el(token, "rect", { x: -16, y: -11, width: 32, height: 22, rx: 3, fill: C.copperHi });
