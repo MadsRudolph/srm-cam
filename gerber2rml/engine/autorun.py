@@ -320,7 +320,8 @@ class AutoRun:
                  should_abort=None, should_pause=None, dry_run=False,
                  runner_opts=None, level=True, surface_hint=None,
                  datum=None, check_cut=True, start_at=None, keepout=None,
-                 arms=None, leave_under=False, nogo=None, level_margin=2.0):
+                 arms=None, leave_under=False, nogo=None, level_margin=2.0,
+                 only=None):
         self.ser, self.printer = ser, printer
         self.src, self.ev = source, events
         self.click, self.size = click_mm, stock_mm
@@ -364,6 +365,11 @@ class AutoRun:
         # Skip every job before this one (finishing a board that stopped).
         self.start_at = start_at
         self._skipping = start_at is not None
+        # Run these jobs and no others (one step, sent from its own page).
+        # The stock is still found and the surface probed first: no origin
+        # is set anywhere, so that is what puts the step where the rest of
+        # the board is. No check before a cut-out, and no flip.
+        self.only = set(only) if only else None
         self.pose = self.pose_top = None
         self.rotation = None
         self.fit = None
@@ -457,6 +463,8 @@ class AutoRun:
             self._clear_of_keepout(mid - x1, y0, mid - x0, y1,
                                    " once the board is flipped")
         bottom, top = self.src.bottom_steps(), self.src.top_steps()
+        if self.only is not None:
+            return self._only(bottom, top)
         from_fiducials = self.start_at == START_AT_FIDUCIALS and top
         at_check = self.start_at == START_AT_CHECK
         if from_fiducials:
@@ -499,6 +507,38 @@ class AutoRun:
         hmap = self._level("level_top", "top", None)
         self._jobs(top, None, hmap)
         return True
+
+    def _only(self, bottom, top):
+        """The rest of the sequence when only some jobs are to run: the
+        face they are on, found and probed, and those jobs. A top-side job
+        means the board is already turned over."""
+        keys_b = {k for k, _l in bottom}
+        keys_t = {k for k, _l in top}
+        if not self.only & (keys_b | keys_t):
+            raise RunFailed("there is no step %s to run"
+                            % ", ".join(sorted(self.only)))
+        if self.only & keys_b:
+            hmap = self._level("level", "bottom", self.rotation)
+            self._run_only(bottom, self.rotation, hmap)
+        else:
+            for key, _l in bottom:
+                self._step(key, "skipped")
+        if self.only & keys_t:
+            self._find_stock("stock_top", again=True)
+            self._fiducials()
+            hmap = self._level("level_top", "top", None)
+            self._run_only(top, None, hmap)
+        else:
+            for key, _l in top:
+                self._step(key, "skipped")
+        return True
+
+    def _run_only(self, steps, t, hmap):
+        for key, label in steps:
+            if key in self.only:
+                self._job(key, label, t, hmap)
+            else:
+                self._step(key, "skipped")
 
     def _jobs(self, steps, t, hmap):
         """Run ``steps`` in order; before a cut-out, let the traces be

@@ -294,6 +294,25 @@ class Chip(QFrame):
         self.label.setStyleSheet(f"color: {ink}; background: transparent;")
 
 
+class ClickChip(Chip):
+    """A chip that is also the control for what it says: the method of the
+    board, or the tier. A click opens its menu, if it has one."""
+
+    clicked = Signal()
+
+    def __init__(self, text="", state="idle", parent=None):
+        super().__init__(text, state, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.menu = None
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return super().mousePressEvent(e)
+        if self.menu is not None:
+            self.menu.popup(self.mapToGlobal(self.rect().bottomLeft()))
+        self.clicked.emit()
+
+
 class Banner(QFrame):
     """A finding that does not expire.
 

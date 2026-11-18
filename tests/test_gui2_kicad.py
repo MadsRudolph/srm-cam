@@ -47,7 +47,7 @@ def _root_with(tmp_path, monkeypatch, versions):
 
 
 def test_the_kicad_menu_offers_the_setup(win):
-    assert win.kicad_act.text() == "Set up the build-area plugin…"
+    assert win.kicad_act.text() == "Add the SRM-CAM buttons to KiCad…"
 
 
 def test_setup_installs_into_every_kicad_version_found(win, shown, tmp_path, monkeypatch):

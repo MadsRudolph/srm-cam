@@ -13,10 +13,10 @@
 <script defer src="js/anim/core.js?v=20260930b"></script>
 <script defer src="js/anim/ts-finder.js?v=20260930b"></script>
 <script defer src="js/anim/zlimit.js?v=20260930b"></script>
-<script defer src="js/anim/joblist.js?v=20260930b"></script>
+<script defer src="js/anim/joblist.js?v=20261118a"></script>
 <script defer src="js/anim/ts-coords.js?v=20260930b"></script>
 <script defer src="js/anim/bow.js?v=20260930b"></script>
-<script defer src="js/anim/gaps.js?v=20261102a"></script>
+<script defer src="js/anim/gaps.js?v=20261118a"></script>
 <script defer src="js/anim/continuity.js?v=20260930b"></script>
 <style>
 /* troubleshooting: the finder and the symptom entries (this page only) */
@@ -113,15 +113,15 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <details class="ts-item" id="z-limit" data-cat="top" data-q="z travel limit stops stopping aborts interrupted drill cutout −55 -55 −50 -50 machine coordinates bit short collet stick out" open>
 <summary>The drill and the cut-out keep stopping, and the job takes far longer</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span>The bit sits too high in the collet, so the head has to go very low to reach the copper. The mill's Z ends at <strong>−55&nbsp;mm in machine coordinates</strong>; the through-cuts of the drill and the cut-out go 1.7&nbsp;mm below the surface and keep hitting that end.</p>
-<p><span class="k">Fix</span>With the bit on the copper, machine Z must stay <strong>above −50</strong>. Check it by switching VPanel's coordinates from G54 to Machine, or read the Z in SRM-CAM's bottom bar, which always shows machine Z. Too low: loosen the collet and refit the bit so it sticks out further, then zero Z again (back on G54).</p>
+<p><span class="k">Cause</span>The bit sits too high in the collet, so the head has to go very low to reach the copper. The mill's Z ends at <strong>−55&nbsp;mm in machine coordinates</strong>; the through-cuts of the drill and the cut-out go 2&nbsp;mm below the surface and keep hitting that end.</p>
+<p><span class="k">Fix</span>With the bit on the copper, machine Z must stay <strong>above −50</strong>. Check it by switching VPanel's coordinates from G54 to Machine, or read the Z in SRM-CAM's bottom bar, which always shows machine Z. Too low: loosen the collet and refit the bit so it sticks out further. By hand in VPanel, zero Z again afterwards (back on G54).</p>
 <figure class="anim" data-anim="zlimit"><figcaption><span class="k">Try it</span>Drag how far the bit sticks out, and switch VPanel between G54 and Machine.</figcaption></figure>
 </div></details>
 <details class="ts-item" id="cutout-first" data-cat="top" data-q="cutout cut-out first order vpanel list alphabetical board came loose freed early moved" open>
 <summary>The cut-out ran first, and the board came loose before the traces</summary>
 <div class="ts-body">
 <p><span class="k">Cause</span>VPanel lists the files <strong>alphabetically</strong>, so <code>_cutout.nc</code> lands above <code>_drill.nc</code> and <code>_traces.nc</code>, and VPanel runs the list from the top. Everything after the cut-out is machined on a board held by four 1.5&nbsp;mm tabs.</p>
-<p><span class="k">Fix</span>After <span class="menu-path">Cut › Add</span>, look at the list before <span class="ui">Output</span>: move the cut-out to the bottom with the arrows. The list must start with the drill or the traces (the lab prefers the drill first), never the cut-out. The dry run, if you add it, goes at the very top.</p>
+<p><span class="k">Fix</span>After <span class="menu-path">Cut › Add</span>, look at the list before <span class="ui">Output</span>: move the cut-out to the bottom with the arrows. The list must start with the drill or the traces (the lab prefers the drill first), never the cut-out.</p>
 <figure class="anim" data-anim="joblist"><figcaption><span class="k">Try it</span>Add the files and fix the order, or press Show me.</figcaption></figure>
 </div></details>
 <details class="ts-item" id="wrong-system" data-cat="top" data-q="coordinate system g54 machine user origin zero z set origin cuts air too deep ignores my origin nc" open>
@@ -138,11 +138,11 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <p><span class="k">Fix</span><a href="bed-leveling.html">Level the bed</a>: jog to the first marked point, set the final Z zero there, then <span class="ui">Probe over the link</span>; the finished probe switches on <span class="ui">Warp the exported cut to this surface</span>. Spots missed on a board already cut: <a href="photo-and-rework.html">rework</a> them.</p>
 <figure class="anim" data-anim="bow"><figcaption><span class="k">Try it</span>Drag the bow, and switch between a flat and a levelled cut.</figcaption></figure>
 </div></details>
-<details class="ts-item" id="narrow" data-cat="top" data-q="nets closer than the bit shorted ✕ x marks spots will be shorted clearance narrow gap pads" open>
+<details class="ts-item" id="narrow" data-cat="top" data-q="nets closer than the bit shorted ✕ x marks spots will be shorted clearance narrow gap pads method laser ball mill flat" open>
 <summary>✕ marks on the traces: the checks say the spots will be shorted</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span>Two nets sit closer than the 0.8&nbsp;mm bit. The cutter physically cannot pass between them, so the gap stays copper whatever the depth.</p>
-<p><span class="k">Fix</span>Best: more clearance in KiCad (<span class="menu-path">Board Setup › Net Classes</span>, at least 0.8&nbsp;mm) or a narrower bit. If the design can't change: <span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>, which trims both pads.</p>
+<p><span class="k">Cause</span>Two nets sit closer than the method can cut: 0.8&nbsp;mm for the flat mill, 0.44&nbsp;mm for the ball mill. The cutter physically cannot pass between them, so the gap stays copper whatever the depth.</p>
+<p><span class="k">Fix</span>First check the chip at the top left: a board drawn for the laser should say <strong>Laser</strong>, and is then checked against the laser's 0.20&nbsp;mm instead (see <a href="automatic.html#method">How it is made</a>). For a milled board: more clearance in KiCad (<span class="ui">Set design rules for SRM-CAM</span>, or <span class="menu-path">Board Setup › Net Classes</span>, at least 0.8&nbsp;mm), or the ball mill. If the design can't change: in Pro, <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>, which trims both pads.</p>
 <figure class="anim" data-anim="gaps"><figcaption><span class="k">Try it</span>Drag the gap, and tick the box.</figcaption></figure>
 </div></details>
 <details class="ts-item" id="strands" data-cat="top" data-q="copper strand hair sliver bridge continuity multimeter short beep clean board looks fine" open>
@@ -154,8 +154,8 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 </div></details>
 
 <h2 data-cat-title="machine" data-short="At the machine">At the machine</h2>
-<details class="ts-item" id="automatic" data-cat="machine" data-q="automatic run it all shallow traces right side one side not through levelling springing tape press recut">
-<summary>Automatic: traces shallow in one area, even with levelling</summary>
+<details class="ts-item" id="automatic" data-cat="machine" data-q="automatic run mill it shallow traces right side one side not through levelling springing tape press recut">
+<summary>The run: traces shallow in one area, even with levelling</summary>
 <div class="ts-body">
 <p><span class="k">Cause</span>The sheet springs under the bit. The light probe touch measures it floating; the cutter pushes it down.</p>
 <p><span class="k">Fix</span>Press on the copper there. If it gives, tape it down under the board area. Then recut in boxes at <a href="automatic.html#check">the check</a>, or use <a href="automatic.html#startat">Start at</a>.</p>
@@ -214,11 +214,11 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <p><span class="k">Cause</span>VPanel's command set does not match the file (<code>.nc</code> needs NC Code, <code>.rml</code> needs RML-1), or a coordinate is outside the machine's travel.</p>
 <p><span class="k">Fix</span>Set the command set in VPanel's <span class="ui">Setup</span> dialog. For travel, the <em>Off the bed</em> check names the cause; move the job fully onto the bed.</p>
 </div></details>
-<details class="ts-item" id="dry-run-off" data-cat="machine" data-q="dry run airpass leaves the copper off the sheet wrong place corner">
-<summary>The dry run leaves the copper</summary>
+<details class="ts-item" id="off-copper" data-cat="machine" data-q="job off the copper off the sheet wrong place corner click to jog bare spoilboard">
+<summary>The job is not over the copper</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span>The job is not where the copper is: the sheet's corner on the stage is wrong, or the board was placed off the sheet.</p>
-<p><span class="k">Fix</span>Stop it: nothing has been cut. Find the copper's corner with the probe and press <span class="menu-path">Set up the job › The copper › Set the corner from the tool</span>, then place the board on the sheet (<span class="ui">Centre it on the copper</span>) and export again. Never move the XY origin in VPanel instead.</p>
+<p><span class="k">Cause</span>The sheet's corner on the stage is wrong, or the board was placed off the sheet. <span class="ui">Click to jog</span> to the board's corners shows it before anything is cut.</p>
+<p><span class="k">Fix</span>Find the copper's corner with the probe and press <span class="menu-path">Set up the job › The copper › Set the corner from the tool</span>, then place the board on the sheet (<span class="ui">Centre</span> on the bed's toolbar) and export again. Never move the XY origin in VPanel instead. In Pro, the run can find the copper itself: <a href="automatic.html#pro">the stock anywhere</a>.</p>
 </div></details>
 <details class="ts-item" id="bit-change" data-cat="machine" data-q="wrong depth after bit change re-zero flip">
 <summary>Wrong depth after a bit change</summary>
@@ -296,11 +296,11 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <p><span class="k">Cause</span>Its edge is on the sheet's edge, so there is nothing to cut there.</p>
 <p><span class="k">Fix</span>If that is wrong, set the sheet's real size and corner on <span class="menu-path">Set up the job › The copper</span>.</p>
 </div></details>
-<details class="ts-item" id="panel-fit" data-cat="panels" data-q="does not fit reachable copper sheet">
-<summary>The panel does not fit the reachable copper</summary>
+<details class="ts-item" id="panel-fit" data-cat="panels" data-q="does not fit reachable copper sheet bigger sheet take a board off lay them side by side rows">
+<summary>The panel does not fit the reachable copper / “do not fit on the sheet”</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span>The sheet ends before the travel does, or the boards plus a gap are wider than the sheet.</p>
-<p><span class="k">Fix</span>Move the sheet, butt the boards, or cut them one after the other.</p>
+<p><span class="k">Cause</span>The sheet ends before the travel does, or the boards plus their gaps need more copper than the sheet has. <span class="ui">Lay them side by side</span> already starts a new row when a board would run past the sheet; this message means the rows don't fit either.</p>
+<p><span class="k">Fix</span>Move the sheet, butt the boards, use a bigger sheet, or take a board off and cut it another time.</p>
 </div></details>
 
 <h2 data-cat-title="ds" data-short="Double-sided">Double-sided</h2>
@@ -323,6 +323,18 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <div class="ts-body">
 <p><span class="k">Cause</span>The Gerber folder moved, or the file is from the first interface with something this one cannot read. It says what.</p>
 <p><span class="k">Fix</span>Check the job before you cut; point it at the folder again.</p>
+</div></details>
+<details class="ts-item" id="method-wrong" data-cat="app" data-q="method chip wrong flat mill ball mill laser guessed how it is made">
+<summary>The chip at the top left says the wrong method</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>KiCad's <span class="ui">Set design rules for SRM-CAM</span> was not used, so SRM-CAM guessed from the narrowest gap between two nets.</p>
+<p><span class="k">Fix</span>Click the chip and pick the right one. It changes the checks, the tool profile and the rows on the rail. See <a href="automatic.html#method">How it is made</a>.</p>
+</div></details>
+<details class="ts-item" id="laser-rows" data-cat="app" data-q="no solder mask silkscreen stencil row laser rail missing layers">
+<summary>No Solder mask, Silkscreen or Paste stencil row on the rail</summary>
+<div class="ts-body">
+<p><span class="k">Cause</span>The Gerber folder has no mask, silkscreen or paste layer. A row only appears for a layer the folder has.</p>
+<p><span class="k">Fix</span>Plot those layers into the same folder in KiCad, or use <span class="ui">Send to SRM-CAM</span>, which plots them all. Then open the folder again.</p>
 </div></details>
 <details class="ts-item" id="find-files" data-cat="app" data-q="can't find exports setups folder documents">
 <summary>Can't find the exports or setups</summary>

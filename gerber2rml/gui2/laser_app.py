@@ -1,14 +1,16 @@
-"""The xTool F1 Ultra laser page on its own, without SRM-CAM's milling steps.
+"""``srm-cam-laser``: SRM-CAM opened on the laser.
 
-    srm-cam-laser                      the last Gerber folder, or the page empty
-    srm-cam-laser <gerber-folder>      that board: traces, mask, silkscreen, stencil
+    srm-cam-laser                      the window, on the laser page
+    srm-cam-laser <gerber-folder>      that board, on its laser jobs
     srm-cam-laser <board.dxf>          copper traces from a DXF drawing
     srm-cam-laser --job mask <folder>  open on that job
     srm-cam-laser --calibrate          the copper calibration window
 
-It builds the jobs the way the main window does for a single-sided board: the
-bottom face mirrored like the milled copper, and the top face as plotted when
-the bottom has nothing on it.
+The laser used to be a window of its own here, with its own defaults - the
+same board opened another face, mirrored differently, from the main window.
+Now it is the main window, on the laser page beside the rail: one board, one
+set of defaults. ``job_builder`` and ``first_job`` stay for the laser page's
+own Open, used when the page runs on its own.
 """
 import argparse
 import sys
@@ -96,7 +98,7 @@ def main(argv=None):
 
     from PySide6.QtCore import QSettings
     from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtWidgets import QApplication
     from gerber2rml import glconfig
     from gerber2rml.gui2 import style, theme
 
@@ -116,39 +118,17 @@ def main(argv=None):
         CopperCalibrationDialog().exec()
         return 0
 
+    from gerber2rml.gui2 import app as main_app
     if a.folder is not None and a.folder.suffix.lower() == ".dxf":
-        from gerber2rml.engine import dxf_traces, xtool
-        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-        try:
-            art = dxf_traces.build_dxf_traces(a.folder)
-        except xtool.TracesError as e:
-            QMessageBox.warning(None, "SRM-CAM laser", str(e))
-            return 1
-        StencilLaserDialog(art, None, name=a.folder.name, dxf=a.folder).exec()
-        return 0
-
-    cfg = QSettings(*_SETTINGS)
+        return main_app.main(sys.argv[:1], start_dxf=a.folder)
     folder = a.folder
     if folder is None:
-        last = cfg.value("folder", "")
+        last = QSettings(*_SETTINGS).value("folder", "")
         folder = Path(last) if last and Path(last).is_dir() else None
-    if folder is None:
-        # Nothing to open: the page on its own, to load a folder or a DXF
-        # there or to calibrate.
-        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-        StencilLaserDialog(None, None).exec()
-        return 0
-    try:
-        kind, art = first_job(folder, a.job)
-    except ValueError as e:
-        QMessageBox.warning(None, "SRM-CAM laser", str(e))
-        return 1
-    cfg.setValue("folder", str(folder))
-
-    from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-    d = StencilLaserDialog(art, None, name=folder.name, jobs=job_builder(folder))
-    d.exec()
-    return 0
+    argv = sys.argv[:1] + ([str(folder)] if folder is not None else [])
+    if folder is not None:
+        QSettings(*_SETTINGS).setValue("folder", str(folder))
+    return main_app.main(argv, start_on=a.job or "traces")
 
 
 if __name__ == "__main__":

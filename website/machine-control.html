@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Machine control — SRM-CAM guide</title>
-<meta name="description" content="SRM-CAM's machine bar: connect, the machine-Z readout, jogging, Probe Z versus Zero Z, the spindle, Pause versus STOP, and the Machine menu.">
+<meta name="description" content="SRM-CAM's machine bar: connect, the machine-Z readout, jogging, Probe Z, the View position, Pause versus STOP, and the Machine menu.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/site.css?v=20260930a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
-<script defer src="js/anim/mc-bar.js?v=20260930b"></script>
+<script defer src="js/anim/mc-bar.js?v=20261118a"></script>
 <script defer src="js/anim/mc-stop.js?v=20260930b"></script>
 <script defer src="js/anim/zlimit.js?v=20260930b"></script>
 </head>
@@ -73,7 +73,7 @@
 
 <div class="hero">
   <h1>Machine control</h1>
-  <p class="lead">With the Arduino fitted, the bar along the bottom of SRM-CAM reads the machine's position, jogs X, Y and Z, probes and zeroes it, runs the spindle, pauses, and stops. VPanel still plays the files and sets the spindle speed. The drawings are live: try the bar.</p>
+  <p class="lead">With the Arduino fitted, the bar along the bottom of SRM-CAM reads the machine's position, jogs X, Y and Z, finds the copper, pauses, and stops. Runs from SRM-CAM start and stop the spindle themselves; VPanel's slider sets its speed. The drawings are live: try the bar.</p>
   <div class="badge-row">
     <span class="badge copper">Windows only</span>
     <span class="badge">Firmware v5</span>
@@ -86,18 +86,17 @@
 
 <h2 id="bar">The machine bar</h2>
 <figure class="anim" data-anim="mc-bar">
-  <figcaption><span class="k">Try it</span>Connect, jog down, then compare Probe Z with Zero Z: only Zero Z changes VPanel's origin. Open the lid and try the spindle; press STOP (or <kbd>Esc</kbd>).</figcaption>
+  <figcaption><span class="k">Try it</span>Connect, jog down, then Probe Z: it tells SRM-CAM where the copper is and leaves VPanel's origin alone. Open the lid; press STOP (or <kbd>Esc</kbd>).</figcaption>
 </figure>
 <div class="tbl-wrap"><table>
 <tr><th>Control</th><th>Does</th></tr>
 <tr><td>X Y Z readout</td><td>The machine's position, about three times a second, in <strong>machine coordinates</strong>. Z turns red and says <em>Touch</em> while the probe reads contact. SRM-CAM has no G54 switch: VPanel shows G54.</td></tr>
 <tr><td>Jog pad</td><td>Move X, Y and Z by the step: see <a href="#jog">Jogging</a>.</td></tr>
-<tr><td><span class="ui">Probe Z</span></td><td>Lower the bit from here until it touches, and stop on the copper. Tells <strong>SRM-CAM</strong> where the surface is (for the Z-reach check and the level page). VPanel's origin is untouched.</td></tr>
-<tr><td><span class="ui">Zero Z</span></td><td>Touch off the same way, then the firmware writes the <strong>machine's G54 Z origin</strong> at the copper and lifts 2&nbsp;mm, like VPanel's Z under Set Origin Point. Only Z: X and Y are never moved. Check VPanel's G54 Z once before a job.</td></tr>
-<tr><td><span class="ui">Spindle</span></td><td>Start or stop the tool, at whatever speed VPanel's slider says: the machine ignores a speed sent over the link. Refused with the lid open.</td></tr>
+<tr><td><span class="ui">View</span></td><td>Lift the bit to the top and bring the board out to look at it: the same view position the run stops at after the traces.</td></tr>
+<tr><td><span class="ui">Probe Z</span></td><td>Lower the bit from here until it touches, and stop on the copper. Tells <strong>SRM-CAM</strong> where the surface is (for the Z-reach check and the level page). VPanel's origin is untouched. The run takes its own touches, so it doesn't need this. For files played by hand, set the Z origin in VPanel: see <a href="milling-a-board.html#zero">Milling a board</a>.</td></tr>
 <tr><td><span class="ui">Pause</span></td><td>Hold the machine where it is, spindle still turning; <span class="ui">Resume</span> carries on. VPanel's Pause, from SRM-CAM.</td></tr>
 <tr><td><span class="ui">Click to jog</span></td><td>Click the bed and the head lifts about 5&nbsp;mm and travels there, snapping to the hole under the cursor. In the <span class="ui">Bed — as cut</span> frame only.</td></tr>
-<tr><td>Run readout</td><td>While a run is being followed: how far it has got and the time left. <span class="menu-path">Machine › Track this step's run</span>, or leave <span class="menu-path">Machine › Start tracking when the bit moves</span> on.</td></tr>
+<tr><td>Run readout</td><td>While a run is being followed: how far it has got and the time left. It starts by itself when the bit starts moving, also for a file played from VPanel.</td></tr>
 <tr><td><span class="ui">STOP</span></td><td>Drop the move in flight and stop the spindle. <kbd>Esc</kbd> does the same from anywhere, dialogs included. The bit stays where it is: raise it with <kbd>Page Up</kbd>.</td></tr>
 </table></div>
 
@@ -135,33 +134,29 @@
 <tr><td><span class="ui">Rescan the serial ports</span></td><td>After plugging the Arduino in.</td></tr>
 <tr><td><span class="ui">Connect / disconnect</span> (<kbd>Ctrl</kbd>+<kbd>L</kbd>)</td><td>The same as the bar's Connect.</td></tr>
 <tr><td><span class="ui">Move the head to the View position</span></td><td>Head forward and out of the way, to reach the bed or change the bit.</td></tr>
-<tr><td><span class="ui">Track this step's run</span> / <span class="ui">Start tracking when the bit moves</span></td><td>Follow a run from the bit's position; the second starts it by itself once the bit has been moving for a moment (a jog from SRM-CAM does not count).</td></tr>
 <tr><td><span class="ui">Align the overlay to the bit</span> / <span class="ui">Clear the overlay trim</span></td><td>When the drawn bit lands beside the hole it is really in: click the design point the bit is physically at. Only the picture, click-to-jog and tracking are corrected; the files are untouched.</td></tr>
 <tr><td><span class="ui">Export the hold-down screw file…</span></td><td>See <a href="holding-the-copper.html">Holding the copper</a>.</td></tr>
 <tr><td><span class="ui">Export the bed fixture (pin holes)…</span></td><td>The dowel-pin holes in the spoilboard.</td></tr>
 <tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command and report PASS / FAIL / UNKNOWN. Read-only by default; motion and spindle tests are armed separately. STOP reaches a running test.</td></tr>
-<tr><td><span class="ui">Automatic mode (run it all)</span></td><td>Pro: adds <a href="automatic.html">Mill a board</a> to the plan. It is always on in Novice.</td></tr>
-<tr><td><span class="ui">Stream this step over the link (experimental)…</span></td><td>Send the selected step's moves one by one instead of through VPanel. Starts as a dry run. The speed units are not calibrated: for real jobs, export and play the files from VPanel.</td></tr>
 </table></div>
 
-<p>Novice's menu has only the serial ports, connect and the View position; the rest is in Pro.</p>
+<p>Novice's menu has only the serial ports, connect and the View position; the rest is in Pro. The run itself is not in a menu: it is the run row on the rail, <a href="automatic.html">Mill a board</a>, in both tiers.</p>
 
 <h2 id="limits">What the link does not give you</h2>
 <div class="danger"><span class="t">Spindle speed is a VPanel setting</span>
-<p>The machine ignores the rpm sent over the link: 500, 1000, 2000 and 3000 all settle on whatever VPanel's slider says. Set it there before any wet run.</p></div>
+<p>The machine ignores an rpm sent over the link: 500, 1000, 2000 and 3000 all settle on whatever VPanel's slider says. Set it there before a run.</p></div>
 <ul>
-  <li><strong>Feed rate is not calibrated</strong> for streamed moves.</li>
   <li><strong>Only the lid bit of the status word is proven</strong> on this machine. The bit Roland labels "paused" does not mean paused here, so none of the others is shown as a machine state.</li>
-  <li><strong>No X or Y zero.</strong> There is a control that zeroes Z and none that zeroes XY, on purpose: the screw fixture, dowel registration and every re-run depend on the XY origin staying put. Automatic mode leaves G54 alone too, and checks it before cutting.</li>
+  <li><strong>No origin is set from SRM-CAM.</strong> Nothing on the bar zeroes X, Y or Z, on purpose: the screw fixture, dowel registration and every re-run depend on the XY origin staying put. The run leaves G54 alone too, and checks it before cutting.</li>
 </ul>
 
 <h2 id="spindle">The spindle's rules</h2>
 <ul>
+  <li>There is no spindle button: a run starts and stops the spindle itself.</li>
   <li>It will not start with the lid open.</li>
-  <li>The button follows the machine: a spindle started from VPanel shows as on here.</li>
+  <li>The chip on the bar follows the machine: a spindle started from VPanel shows as <em>Spindle on</em> here.</li>
   <li>Disconnecting never stops a spindle SRM-CAM did not start.</li>
-  <li>A spindle SRM-CAM started stops by itself if the app goes quiet for ten seconds (the firmware's deadman; the bar's polling keeps it fed).</li>
-  <li>A dry run never spins the tool.</li>
+  <li>A spindle started over the link stops by itself if the app goes quiet for ten seconds (the firmware's deadman; the bar's polling keeps it fed).</li>
 </ul>
 
 <div class="page-nav">

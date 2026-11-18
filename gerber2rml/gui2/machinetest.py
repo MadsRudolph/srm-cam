@@ -838,6 +838,19 @@ class MachineTestDialog(QDialog):
         QApplication.clipboard().setText(report_text(self._results, self._port))
         self.log_lbl.setText("Report copied to the clipboard.")
 
+    # -- closing -----------------------------------------------------------
+    # Close, Escape and the window's X all end here. The worker holds the
+    # port; the main window reconnects to it as soon as exec() returns, so
+    # the worker must have let go first. Close and Escape go through
+    # reject() -> done() and never raise a closeEvent, so done() is the one
+    # place that stops it; closeEvent stays for a close that is not modal.
+    def _stop_worker(self):
+        self._worker.stop()         # idempotent: aborts, ends the loop, waits
+
+    def done(self, r):
+        self._stop_worker()
+        super().done(r)
+
     def closeEvent(self, e):
-        self._worker.stop()
+        self._stop_worker()
         super().closeEvent(e)

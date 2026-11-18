@@ -5,7 +5,7 @@
   "use strict";
   var A = window.SRMAnim, C = A.C;
   var NAME = "feedback_circuit_2";
-  var KIND = { airpass: "dry run", cutout: "cut-out", drill: "drill", traces: "traces" };
+  var KIND = { cutout: "cut-out", drill: "drill", traces: "traces" };
 
   A.define("joblist", function (host) {
     // a phone gets a narrower dialog without the preview, so the file names stay readable
@@ -47,7 +47,6 @@
     var files = [], sel = -1;
     var row = A.controls(host);
     var bAdd = A.button(row, "Add", add, "", "Add the three exported files");
-    var bDry = A.button(row, "Add the dry run", addDry, "", "Add " + NAME + "_airpass.nc");
     var bUp = A.button(row, "↑", function () { move(-1); }, "key", "Move the selected file up");
     var bDown = A.button(row, "↓", function () { move(1); }, "key", "Move the selected file down");
     var bDel = A.button(row, "Delete", del, "", "Remove the selected file");
@@ -75,7 +74,7 @@
         });
       });
       if (!narrow && sel >= 0 && files[sel]) {
-        var p = { airpass: ["%", "O0001", "(dry run)", "(spindle off,", " 5 mm up)"], cutout: ["%", "O0001", "(cut-out)", "(frees the", " board)"],
+        var p = { cutout: ["%", "O0001", "(cut-out)", "(frees the", " board)"],
           drill: ["%", "O0001", "(drill)", "(bit 0.8 mm)"], traces: ["%", "O0001", "(isolation)", "(bit 0.8 mm)"] }[files[sel]];
         p.forEach(function (l, k) { A.text(prevText, 650, 118 + k * 20, l, { size: 15, fill: DARK, font: "mono" }); });
       }
@@ -84,7 +83,6 @@
       bDel.disabled = sel < 0;
       bOut.disabled = !files.length;
       bAdd.disabled = files.indexOf("drill") >= 0;
-      bDry.disabled = files.indexOf("airpass") >= 0;
     }
 
     function add() {
@@ -92,12 +90,6 @@
       files.sort(function (a, b) { return a < b ? -1 : 1; });   // VPanel lists them alphabetically
       sel = -1; draw();
       say("The files landed alphabetically, and VPanel runs the list from the top: the cut-out would go first.", "warn");
-    }
-    function addDry() {
-      if (files.indexOf("airpass") < 0) files.push("airpass");
-      files.sort(function (a, b) { return a < b ? -1 : 1; });
-      sel = files.indexOf("airpass"); draw();
-      say("The dry run traces the outline with the spindle off, 5 mm up. It belongs at the top.");
     }
     function move(d) {
       var j = sel + d;
@@ -111,12 +103,11 @@
       say("Removed the " + KIND[f] + " file.");
     }
     function output() {
-      var run = files.filter(function (f) { return f !== "airpass"; });
+      var run = files.slice();
       var mark = function (ok) {
         A.el(badge, "rect", { x: OX, y: 278, width: bw, height: 30, rx: 2, fill: "none", stroke: ok ? "#1b8a4c" : "#d93030", "stroke-width": 3 });
       };
       if (!files.length) return;
-      if (files.indexOf("airpass") > 0) { mark(false); say("Refused: the dry run goes first, before anything cuts.", "bad"); return; }
       if (run[0] === "cutout") { mark(false); say("Refused: never start with the cut-out. It frees the boards, and the rest would cut a loose board.", "bad"); return; }
       if (run.indexOf("cutout") >= 0 && run.indexOf("cutout") !== run.length - 1) { mark(false); say("Refused: the cut-out must be last. It frees the boards.", "bad"); return; }
       if (run.length < 3) { mark(false); say("Something is missing: the job needs the drill, the traces and the cut-out.", "warn"); return; }

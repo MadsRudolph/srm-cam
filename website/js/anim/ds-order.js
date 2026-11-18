@@ -14,7 +14,6 @@
     var trace = bit === "vbit" ? VBIT : FLAT, fid = reg === "fiducial";
     var s = [];
     s.push({ hand: true, title: "Fit the " + FLAT + ", set the Z origin", detail: "Z on the copper, in G54. Never re-zero XY." });
-    s.push({ n: 0, title: "Dry run", file: "airpass", tool: null, detail: "Spindle off, bit 5 mm up, tracing the outline" });
     s.push({ n: 1, title: fid ? "Fiducial holes" : "Dowel holes", file: "align", tool: FLAT,
       detail: fid ? "4 reference holes, through the stock only" : "3.1 and 1.9 mm rods, 5 mm into the bed", warn: !fid });
     s.push({ n: 2, title: "Drill the board", file: "bottom_drill", tool: FLAT, detail: "One bit, through the board" });

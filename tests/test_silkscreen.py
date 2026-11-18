@@ -239,15 +239,17 @@ def win(qt_app, monkeypatch):
     w.close()
 
 
-def test_off_by_default_and_the_export_is_what_it_was(win, tmp_path):
-    assert not win.inspector.setup.silkscreen.isChecked()
+def test_a_board_with_silk_has_its_row_and_its_file(win, tmp_path):
+    """No tick to find: a board with a silkscreen layer has a Silkscreen row
+    on the rail, and the export writes its file."""
+    assert win.plan.by_key("laser_silk") is not None
     win.export_to(tmp_path)
-    assert not list(tmp_path.glob("*.dxf"))
-    assert "silkscreen" not in win.sheet.text()
+    assert (tmp_path / "buck_silk_top_not_mirrored.dxf").exists()
+    assert "silkscreen" in win.sheet.text()
 
 
 def test_ticked_the_export_writes_it_beside_the_machine_files(win, tmp_path):
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_silkscreen(True)
     written = win.export_to(tmp_path)
     assert written and all(Path(p).exists() for p in written)
     path = tmp_path / "buck_silk_top_not_mirrored.dxf"
@@ -258,8 +260,8 @@ def test_ticked_the_export_writes_it_beside_the_machine_files(win, tmp_path):
 
 
 def test_both_laser_files_together(win, tmp_path):
-    win.inspector.setup.solder_mask.setChecked(True)
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_solder_mask(True)
+    win.action_silkscreen(True)
     win.export_to(tmp_path)
     assert {p.name for p in tmp_path.glob("*.dxf")} == {
         "buck_mask_mirrored.dxf", "buck_silk_top_not_mirrored.dxf"}
@@ -270,9 +272,9 @@ def test_both_laser_files_together(win, tmp_path):
 def test_the_machine_files_do_not_change_with_it(win, tmp_path):
     a, b = tmp_path / "off", tmp_path / "on"
     win.export_to(a)
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_silkscreen(True)
     win.export_to(b)
-    names = {p.name for p in b.iterdir()} - {"buck_silk_top_not_mirrored.dxf"}
+    names = {p.name for p in b.iterdir()}
     assert names == {p.name for p in a.iterdir()}
     for n in names:
         if n.endswith(".nc"):
@@ -280,7 +282,7 @@ def test_the_machine_files_do_not_change_with_it(win, tmp_path):
 
 
 def test_mirror_off_does_not_change_the_silkscreen(win, tmp_path):
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_silkscreen(True)
     win.inspector.setup.mirror.setChecked(False)
     paths, _notes = win.write_silk_to(tmp_path)
     assert [p.name for p in paths] == ["buck_silk_top_not_mirrored.dxf"]
@@ -299,15 +301,14 @@ def test_a_folder_with_no_silk_says_so_and_the_machine_files_still_come(
     try:
         w.load_folder(str(src))
         setup = w.inspector.setup
-        setup.silkscreen.setChecked(True)
+        setup.ctl.action_silkscreen(True)
         level, text = w.silk_status()
         assert level == "warn" and "F.Silkscreen" in text
-        assert "F.Silkscreen" in setup.silk_note.text()
         out = tmp_path / "out"
         written = w.export_to(out)
         assert written and any(p.suffix == ".nc" for p in map(Path, written))
-        assert not list(out.glob("*.dxf"))
-        assert "No F.Silkscreen" in w.sheet.text()
+        assert not list(out.glob("*silk*.dxf"))
+        assert w.plan.by_key("laser_silk") is None     # no row without it
     finally:
         w.close()
 
@@ -318,12 +319,7 @@ def test_novice_has_the_box_too(qt_app, monkeypatch):
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        setup = w.inspector.setup
-        setup.sync()
-        assert not setup.silk_section.isHidden()
-        assert setup.silk_write_btn.isHidden()
-        setup.silkscreen.setChecked(True)
-        assert not setup.silk_write_btn.isHidden()
+        assert "laser_silk" in [s.key for s in w.novice_rail()]
     finally:
         w.close()
 
@@ -331,7 +327,7 @@ def test_novice_has_the_box_too(qt_app, monkeypatch):
 def test_a_panel_gets_one_file_per_board_and_one_for_a_repeat(win, tmp_path):
     win.add_folder(str(BUCK))
     win.add_folder(str(BOOST))
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_silkscreen(True)
     paths, _notes = win.write_silk_to(tmp_path)
     assert [p.name for p in paths] == ["buck_silk_top_not_mirrored.dxf",
                                        "boost_v2_silk_top_not_mirrored.dxf"]
@@ -339,10 +335,10 @@ def test_a_panel_gets_one_file_per_board_and_one_for_a_repeat(win, tmp_path):
 
 def test_the_write_it_now_button_asks_where_and_writes(win, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_silkscreen(True)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory",
                         lambda *a, **k: str(tmp_path))
-    win.inspector.setup.silk_write_btn.click()
+    win.action_write_silk()
     assert (tmp_path / "buck_silk_top_not_mirrored.dxf").exists()
     assert not list(tmp_path.glob("*.nc"))
 
@@ -350,13 +346,13 @@ def test_the_write_it_now_button_asks_where_and_writes(win, tmp_path, monkeypatc
 def test_the_setup_file_keeps_it(win, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     setup = win.inspector.setup
-    setup.silkscreen.setChecked(True)
+    setup.ctl.action_silkscreen(True)
     path = tmp_path / "job.srmcam"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         lambda *a, **k: (str(path), ""))
     monkeypatch.setattr(QFileDialog, "getOpenFileName",
                         lambda *a, **k: (str(path), ""))
     win.action_save_setup()
-    setup.silkscreen.setChecked(False)
+    setup.ctl.action_silkscreen(False)
     win.action_load_setup()
-    assert setup.silkscreen.isChecked()
+    assert setup.ctl._silkscreen

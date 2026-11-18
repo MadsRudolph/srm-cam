@@ -2303,8 +2303,7 @@ def test_each_nc_file_says_what_it_is(tmp_path):
     cut = (tmp_path / f"{stem}_cutout.nc").read_text()
     assert "CUT-OUT" in cut and "RUN THIS LAST" in cut
     assert "bit" in cut and "tabs" in cut
-    air = (tmp_path / f"{stem}_airpass.nc").read_text()
-    assert "DRY RUN" in air and "cannot cut" in air
+    assert not (tmp_path / f"{stem}_airpass.nc").exists()      # no dry run
     tr = (tmp_path / f"{stem}_traces.nc").read_text()
     assert "ISOLATION TRACES" in tr
     assert cut.split("G90 G17")[0] != tr.split("G90 G17")[0]

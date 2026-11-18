@@ -25,14 +25,12 @@ def win(qt_app, monkeypatch, tmp_path):
     w = MainWindow()
     w.resize(1400, 900)
     w.load_folder(str(FIXT))
-    w.action_autorun(True)
     # These runs find the stock by its edges; the bracket has its own test.
     w.autorun_page.where.setCurrentIndex(
         w.autorun_page.where.findData("click"))
     # Straight through; the check before the cut-out has its own test.
     w.autorun_page.check_chk.setChecked(False)
     yield w
-    w.action_autorun(False)                   # opt-in: leave it as found
     w.link.disconnect_from("test")
     if w.link._thread is not None:            # end its worker thread
         w.link._q.put(None)
@@ -163,6 +161,7 @@ def test_a_flip_that_lands_under_the_tongue_stops_before_anything_is_cut(
     sm.machine(speedup=1e6, corner=(31790, 8430), angle_deg=0.0,
                size=(160000, 120000))
     win.inspector.setup.double.setChecked(True)
+    keep = (win.state.place_x, win.state.place_y)
     win.link.connect_to("SIM")
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
@@ -172,6 +171,9 @@ def test_a_flip_that_lands_under_the_tongue_stops_before_anything_is_cut(
     page.w_spin.setValue(160)
     page.h_spin.setValue(120)
     page.level_chk.setChecked(False)
+    # Put where the operator put it - as a drag would - not in the corner.
+    win.action_place(*keep)
+    page.board_dragged()
     done = []
     page.finished.connect(lambda ok, msg: done.append((ok, msg)))
     page.start()
@@ -218,19 +220,14 @@ def test_the_click_is_armed_shown_and_taken_back(win, qt_app):
     win.set_stage_mode("jog")                 # another control takes the stage
     assert not page.pick_btn.isChecked()
 
-def test_automatic_mode_is_off_until_chosen_and_adds_only_its_step(qt_app):
+def test_the_run_is_on_the_rail_in_pro_too(qt_app):
+    """No tick to find: Pro runs the same smart run as Novice, and the
+    simulated mill is there to try it on."""
     from gerber2rml.gui2 import machine
     w = MainWindow()
     w.load_folder(str(FIXT))
-    assert not w.autorun_act.isChecked()
-    before = [s.key for s in w.plan.steps]
-    assert "autorun" not in before and not machine.SHOW_SIM
-    w.action_autorun(True)
-    after = [s.key for s in w.plan.steps]
-    assert [k for k in after if k != "autorun"] == before
+    assert "autorun" in [s.key for s in w.plan.steps]
     assert machine.SHOW_SIM
-    w.action_autorun(False)
-    assert [s.key for s in w.plan.steps] == before and not machine.SHOW_SIM
     w.close()
 
 def test_in_the_bracket_any_size_of_stock_needs_one_touch(win, qt_app):
@@ -364,7 +361,7 @@ def test_the_run_waits_before_the_cut_out_and_can_cut_the_traces_again(
 
 def test_ticked_a_run_leaves_the_laser_file_in_its_folder(win, qt_app):
     """Novice has no export, so Start is where the solder mask file gets made."""
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     win.link.connect_to("SIM")
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
@@ -382,7 +379,7 @@ def test_ticked_a_run_leaves_the_laser_file_in_its_folder(win, qt_app):
 
 def test_ticked_a_run_leaves_the_silkscreen_file_in_its_folder(win, qt_app):
     """Like the solder mask: Start writes it, for Novice, which has no export."""
-    win.inspector.setup.silkscreen.setChecked(True)
+    win.action_silkscreen(True)
     win.link.connect_to("SIM")
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
@@ -878,7 +875,8 @@ def test_left_in_the_sheet_a_double_sided_board_is_flipped_and_finished(
     page.nocut_chk.setChecked(False)
 
 
-def test_traces_on_the_laser_drills_and_cuts_out_only(win, qt_app):
+def test_a_laser_board_is_drilled_and_cut_out_only(win, qt_app):
+    from gerber2rml.engine import method as fab
     win.link.connect_to("SIM")
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
@@ -886,10 +884,9 @@ def test_traces_on_the_laser_drills_and_cuts_out_only(win, qt_app):
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.on_stock_click(110.0, 80.0)
-    assert not page.laser_chk.isChecked()              # never left on
     assert any("traces" in k for k, _t in page._plan_rows())
     page.level_chk.setChecked(True)
-    page.laser_chk.setChecked(True)
+    win.action_method(fab.LASER)
     keys = [k for k, _t in page._plan_rows()]
     assert not any("traces" in k for k in keys)
     assert any("drill" in k for k in keys) and any("cutout" in k for k in keys)
@@ -903,23 +900,88 @@ def test_traces_on_the_laser_drills_and_cuts_out_only(win, qt_app):
     assert done[0][0], done[0][1]
     sent = sorted(p.name for p in page.run_dir.glob("*.nc"))
     assert len(sent) == 2 and not any("trace" in n for n in sent), sent
-    page.laser_chk.setChecked(False)                   # as it was found
+    win.action_method(fab.FLAT)                        # as it was found
     assert page.level_chk.isChecked() and not win._traces_on_laser
     assert any("traces" in k for k, _t in page._plan_rows())
 
 
-def test_traces_on_the_laser_needs_no_flip_on_a_double_sided_board(win, qt_app):
+def test_a_laser_board_needs_no_flip_on_the_mill(win, qt_app):
+    from gerber2rml.engine import method as fab
     win.inspector.setup.double.setChecked(True)
     assert win._double
     win.select_step("autorun")
     page = win.autorun_page
-    said = []
-    win.say = lambda level, text: said.append((level, text))
-    page.laser_chk.setChecked(True)
+    win.action_method(fab.LASER)
     assert not win._double and not win.inspector.setup.double.isChecked()
-    assert said and "single-sided" in said[-1][1]
     keys = [k for k, _t in page._plan_rows()]
     assert "flip" not in keys and not any("traces" in k for k in keys)
     # Both faces are still there for the laser.
     assert win._laser_art_for("traces", side="top").side == "top"
-    page.laser_chk.setChecked(False)
+    win.action_method(fab.FLAT)
+    assert win._double
+
+
+# -- Pro: one step at a time, each sent from its own page ----------------------
+def _first_mill_step(w):
+    return next(s for s in w.plan.steps if s.kind == "run")
+
+
+def test_pro_sends_one_step_to_the_mill_from_its_page(win, qt_app):
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    page = win.autorun_page
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.on_stock_click(110.0, 80.0)
+    step = next(s for s in win.plan.steps if s.op == "traces")
+    win.select_step(step.key)
+    sp = win.inspector.step
+    assert win.inspector.stack.currentWidget() is sp
+    assert sp.run_section.isVisibleTo(sp) and sp.run_btn.isEnabled()
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    sp.run_btn.click()
+    assert not sp.run_btn.isEnabled()              # running: not twice
+    assert _wait(qt_app, lambda: bool(done), 120), "the step never finished"
+    assert done[0][0], done[0][1]
+    assert step.title in done[0][1]
+    assert sm.machine().lines, "nothing was cut"
+    # Only that step's program went to the mill.
+    sent = sorted(p.name for p in page.run_dir.glob("*.nc"))
+    assert len(sent) == 1, sent
+    assert win.traveller.is_done(step.key)
+    assert sp.run_btn.isEnabled()                  # ready for the next one
+
+
+def test_novice_has_no_step_to_run_on_its_own(win, qt_app, monkeypatch):
+    from gerber2rml.gui2 import tier
+    step = _first_mill_step(win)
+    win.select_step(step.key)
+    assert win.inspector.step.run_section.isVisibleTo(win.inspector.step)
+    monkeypatch.setattr(tier, "is_full", lambda: False)   # the suite pins Pro
+    win.inspector.step.set_step(step, win.plan)
+    assert not win.inspector.step.run_section.isVisibleTo(win.inspector.step)
+
+
+def test_the_steps_are_folded_away_under_the_run_in_pro(win, qt_app):
+    """The run is what the rail is for: the steps are there, shut."""
+    from gerber2rml.gui2 import workspace
+    workspace.set_setting("rail/steps_open", "false")
+    win.refresh_plan()
+    win.show()
+    qt_app.processEvents()
+    trav = win.traveller
+    step = _first_mill_step(win)
+    assert trav.is_folded("steps")
+    assert not trav._rows[step.key].isVisible()
+    assert trav._rows["autorun"].isVisible()
+    # Picking a step opens it - and that is not remembered as a choice.
+    win.select_step(step.key)
+    qt_app.processEvents()
+    assert not trav.is_folded("steps") and trav._rows[step.key].isVisible()
+    assert workspace.setting("rail/steps_open", "false") == "false"
+    # A click on the heading is.
+    trav._folds["steps"][0].set_open(False, clicked=True)
+    trav._folds["steps"][0].set_open(True, clicked=True)
+    assert workspace.setting("rail/steps_open") == "true"
+    workspace.set_setting("rail/steps_open", "false")

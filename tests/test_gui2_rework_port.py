@@ -268,16 +268,13 @@ def test_the_photo_sliders_drive_the_stage(loaded, tmp_path):
 
 
 def test_the_slider_widget_sits_at_the_end_of_the_photo_group(win):
-    view = [m for m in win.menuBar().findChildren(type(win.menuBar().actions()[0].menu()))
-            if m.title() == "&View"][0]
-    acts = view.actions()
+    # The photo has its own button on the bed's toolbar.
+    acts = win.photo_menu.actions()
     texts = [a.text() for a in acts]
     i = texts.index("Take the photo off")
     assert texts[i + 1] == "Choose which holes anchor the photo…"
     assert acts[i + 2] is win.photo_controls_act
-    # The photo group ends with the sliders; whatever follows (the measure
-    # tool and the file simulator, added later) starts after a separator.
-    assert i + 2 == len(acts) - 1 or acts[i + 3].isSeparator()
+    assert i + 2 == len(acts) - 1                     # the sliders end it
 
 
 # --- hand-picked anchor holes -----------------------------------------------------

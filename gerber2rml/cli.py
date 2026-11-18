@@ -12,7 +12,7 @@ from gerber2rml.naming import clean_name
 
 def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
                mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None,
-               rotate=0, lead_in=True, stock=None):
+               rotate=0, lead_in=True, stock=None, traces=True):
     """Load the board in ``gerber_dir`` and write its files: see :func:`write_jobs`.
 
     ``mirror`` flips the design for bottom-up milling. ``rotate`` (degrees,
@@ -25,12 +25,12 @@ def build_jobs(gerber_dir, out_dir, name, trace=None, drill=None, cutout=None,
     return write_jobs(board, out_dir, name, trace=trace, drill=drill,
                       cutout=cutout, mirror=mirror, machine=machine,
                       offset=offset, level=level, rotate=rotate, lead_in=lead_in,
-                      stock=stock)
+                      stock=stock, traces=traces)
 
 
 def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
                mirror=True, machine=DEFAULT_MACHINE, offset=(0.0, 0.0), level=None,
-               rotate=0, lead_in=True, panel=None, stock=None):
+               rotate=0, lead_in=True, panel=None, stock=None, traces=True):
     """Write every job file for ``board`` into ``out_dir``, and the run plan
     beside them. Returns the paths written, in the order they are meant to be
     run.
@@ -54,7 +54,10 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
 
     ``stock`` is the copper sheet as ``(x0, y0, x1, y1)`` in the same frame as
     the (placed) toolpaths, when the operator declared one: the cut-out
-    leaves out any edge that lies on the sheet's edge."""
+    leaves out any edge that lies on the sheet's edge.
+
+    ``traces`` False leaves the isolation traces out: a board whose copper is
+    etched on the laser is only drilled and cut out on the mill."""
     name = clean_name(name)
     from gerber2rml.engine.leadin import apply_lead_in
     _leadin = apply_lead_in if lead_in else (lambda p: p)
@@ -83,31 +86,15 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
         est[fname] = estimate_toolpaths_seconds(placed, job.xy_feed, job.plunge_feed)
         written.append(p)
 
-    # Dry-run outline, written first because it is meant to be run first. It
-    # traces where the board will be with the spindle off and the bit held
-    # clear, so a misplaced piece of copper costs twenty seconds of watching
-    # instead of a board. Deliberately NOT levelled: it is in the air, and it
-    # is the one file that must stay identical whatever the surface does.
-    from gerber2rml.engine.airpass import air_path, DEFAULT_FEED
-    air = offset_paths(air_path(board.outline), *offset)
-    if air:
-        ap_name = f"{name}_airpass{ext}"
-        (out_dir / ap_name).write_text(backend.render(
-            air, xy_feed=DEFAULT_FEED, plunge_feed=DEFAULT_FEED, spindle=False,
-            header=[f"{name} - step 0 of 4: DRY RUN",
-                    "spindle OFF, bit held 5 mm up - this file cannot cut",
-                    "watch it trace the outline, then run the "
-                    + ("drill" if drill_first(trace, drill) else "traces") + " file"]))
-        est[ap_name] = estimate_toolpaths_seconds(air, DEFAULT_FEED, DEFAULT_FEED)
-        written.append(out_dir / ap_name)
-
     first = drill_first(trace, drill)
     t_no, d_no = (2, 1) if first else (1, 2)
 
     def _traces():
+        if not traces:
+            return
         _write(f"{name}_traces{ext}",
                _leadin(isolate(board.copper, trace, outline=board.outline)), trace,
-               header=[f"{name} - step {t_no} of 4: ISOLATION TRACES",
+               header=[f"{name} - step {t_no} of 3: ISOLATION TRACES",
                        f"bit {trace.bit_diameter} mm, {trace.offsets} "
                        f"offset{'' if trace.offsets == 1 else 's'}, "
                        f"{trace.cut_depth} mm per pass, feed {trace.xy_feed} mm/s",
@@ -118,7 +105,7 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
     def _drills():
         for fname, paths in drill_files:
             _write(fname, paths, drill,           # drills stay vertical (no lead-in)
-                   header=[f"{name} - step {d_no} of 4: DRILL",
+                   header=[f"{name} - step {d_no} of 3: DRILL",
                            f"bit {drill.bit_diameter} mm, through {drill.total_depth} mm",
                            "re-zero Z after the bit change; do NOT move the XY origin"])
 
@@ -133,7 +120,7 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
                  stock[2] - offset[0], stock[3] - offset[1])
     _write(f"{name}_cutout{ext}",
            _leadin(cut_outline(board.outline, cutout, stock=sheet)), cutout,
-           header=[f"{name} - step 3 of 4: CUT-OUT - RUN THIS LAST",
+           header=[f"{name} - step 3 of 3: CUT-OUT - RUN THIS LAST",
                    f"bit {cutout.bit_diameter} mm, through {cutout.total_depth} mm, "
                    f"{cutout.tabs} tabs x {cutout.tab_width} mm",
                    "frees the board from the waste - everything else must be done"])
@@ -153,16 +140,14 @@ def write_jobs(board, out_dir, name, *, trace=None, drill=None, cutout=None,
         f"Send each file via VPanel: Cut -> Add -> Output. Zero Z on the copper "
         f"first, with VPanel on G54; X and Y stay at the machine origin.\n"
         f"VPanel lists the files alphabetically: move the cutout to the bottom.\n"
-        f"Order: 0) airpass  "
+        f"Order: "
         + ("1) drill  2) traces" if first else "1) traces  2) drill")
         + f"  3) cutout. Re-set Z-zero after each bit change; keep XY origin.\n"
-        f"0. airpass — {name}_airpass{ext}: DRY RUN, spindle stays off and the "
-        f"bit is held 5 mm up. Watch it trace where the board will be cut. If "
-        f"it leaves the copper, stop and re-place the stock — nothing has been "
-        f"cut yet. Run this before every job.\n"
         + "".join(sorted([
             f"{t_no}. traces  — bit {trace.bit_diameter} mm, {trace.offsets} offsets, "
-            f"cut {trace.cut_depth} mm/pass, feed {trace.xy_feed} mm/s\n",
+            f"cut {trace.cut_depth} mm/pass, feed {trace.xy_feed} mm/s\n"
+            if traces else
+            f"{t_no}. traces  — none: the copper is etched on the laser\n",
             drill_step]))
         + f"3. cutout  — bit {cutout.bit_diameter} mm, {cutout.tabs} tabs x "
         f"{cutout.tab_width} mm, total {cutout.total_depth} mm\n"

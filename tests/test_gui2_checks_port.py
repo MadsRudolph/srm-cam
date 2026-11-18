@@ -42,8 +42,7 @@ def _on_a_sheet(win):
 
 
 def _view_menu(win):
-    return [a for a in win.menuBar().actions()[1].menu().actions()
-            if a.text()]
+    return [a for a in win.view_menu.actions() if a.text()]
 
 
 # --- narrow copper gaps -------------------------------------------------------
@@ -355,14 +354,14 @@ def test_centring_on_a_sheet_nobody_measured_is_refused(loaded, monkeypatch):
     assert said[-1][0] == "warn" and "The copper" in said[-1][1]
 
 
-def test_both_centrings_sit_together_in_the_view_menu(win):
+def test_one_centre_on_the_toolbar_and_the_keyboard(win):
     texts = [a.text() for a in _view_menu(win)]
-    i = texts.index("Centre the job on the bed")
-    assert texts[i + 1] == "Centre the job on the copper"
+    assert "Centre the job" in texts
+    assert not any("Centre the job on" in t for t in texts)
     acts = {a.text(): a for a in win.findChildren(QAction)}
-    assert acts["Centre the job on the copper"].shortcut().toString()
-    setup = win.inspector.setup
-    assert setup.centre_copper_btn.text() == "Centre it on the copper"
+    assert acts["Centre the job"].shortcut().toString() == "Ctrl+B"
+    assert win.centre_btn.text() == "Centre"
+    assert not hasattr(win.inspector.setup, "centre_copper_btn")
 
 
 # --- a picture and a summary beside the job --------------------------------------------

@@ -22,7 +22,7 @@ try:
     from action_send_to_srmcam import SendToSRMCAMAction, SRM20RulesAction
     SendToSRMCAMAction().register()
     SRM20RulesAction().register()
-except Exception:      # the same rule for the second button
+except Exception:      # the same rule for the other two buttons
     import traceback
     sys.stderr.write("Send to SRM-CAM failed to register:\n")
     traceback.print_exc()

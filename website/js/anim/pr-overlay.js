@@ -1,4 +1,4 @@
-/* View › Lay a photo of the board on the bed… Click the anchor holes in the photo in
+/* Photo ▾ › Lay a photo of the board on the bed… Click the anchor holes in the photo in
    the order the design map beside it asks for (undo the last click if you miss); the
    app fits a homography from the four and warps the photo into machine millimetres
    (engine/photofit.py). Then View's two sliders, Photo and Fade the design, set how

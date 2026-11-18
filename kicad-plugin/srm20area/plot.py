@@ -20,7 +20,8 @@ from srm20area import sendto
 LAYERS = [(pcbnew.F_Cu, "F_Cu"), (pcbnew.B_Cu, "B_Cu"),
           (pcbnew.Edge_Cuts, "Edge_Cuts"),
           (pcbnew.F_Mask, "F_Mask"), (pcbnew.B_Mask, "B_Mask"),
-          (pcbnew.F_SilkS, "F_Silkscreen"), (pcbnew.B_SilkS, "B_Silkscreen")]
+          (pcbnew.F_SilkS, "F_Silkscreen"), (pcbnew.B_SilkS, "B_Silkscreen"),
+          (pcbnew.F_Paste, "F_Paste"), (pcbnew.B_Paste, "B_Paste")]
 
 
 def _no_drill_marks():

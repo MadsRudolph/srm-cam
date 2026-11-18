@@ -11,7 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/site.css?v=20260930a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
-<script defer src="js/anim/pn-sheet.js?v=20260930b"></script>
+<script defer src="js/anim/pn-sheet.js?v=20261118a"></script>
 <script defer src="js/anim/pn-gap.js?v=20260930b"></script>
 <script defer src="js/anim/pn-edge.js?v=20260930b"></script>
 </head>
@@ -78,7 +78,7 @@
 <p>This page is for <strong>Pro</strong>: <span class="ui">Add another board…</span> is not in Novice.</p></div>
 
 <figure class="anim" data-anim="pn-sheet">
-  <figcaption><span class="k">Try it</span>Three boards fit side by side on the 150 × 100&nbsp;mm sheet. Add a fourth and it runs off the copper; butt them together and all four fit, because touching boards share one cut instead of 4&nbsp;mm of waste.</figcaption>
+  <figcaption><span class="k">Try it</span>Three boards fit side by side on the 150 × 100&nbsp;mm sheet. Add a fourth and it runs off the copper. <em>Lay them side by side</em> starts a second row for it; <em>Butt them together</em> fits all four in one row, because touching boards share one cut instead of 4&nbsp;mm of waste.</figcaption>
 </figure>
 
 <h2 id="add">Add and place</h2>
@@ -90,7 +90,7 @@
   <li><span class="st">Move</span>
     Drag it, or nudge it with the arrow keys: 0.1&nbsp;mm a press, <kbd>Shift</kbd> for 1&nbsp;mm, <kbd>Ctrl</kbd> for 0.01&nbsp;mm.</li>
   <li><span class="st">Arrange</span>
-    <span class="menu-path">Set up the job › Where it sits on the bed</span>: <span class="ui">Lay them side by side</span> lines them up left to right, 4&nbsp;mm apart; <span class="ui">Butt them together</span> lines them up touching. The first board stays where it is. <span class="ui">Centre it on the copper</span> then moves the whole panel onto the middle of the sheet (see <a href="holding-the-copper.html#where">where the copper is</a>).</li>
+    <span class="menu-path">Set up the job › Where it sits on the bed</span>: <span class="ui">Lay them side by side</span> lines them up left to right, 4&nbsp;mm apart, and starts a new row when the next board would run past the copper sheet; if they still don't fit, it says so. <span class="ui">Butt them together</span> lines them up touching. The first board stays where it is. <span class="ui">Centre</span>, on the bed's toolbar, then moves the whole panel onto the middle of the sheet (see <a href="holding-the-copper.html#where">where the copper is</a>); <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes it back.</li>
   <li><span class="st">Take off</span>
     <span class="menu-path">Set up the job › The board › Take this board off</span> removes the picked one.</li>
 </ol>
@@ -118,7 +118,8 @@
 <ul>
   <li><strong>File names</strong> join every board's name: <code>buck+buck_2_traces.nc</code>, unless you type a <span class="ui">Job name</span> under <span class="menu-path">Set up the job › The board</span>.</li>
   <li><strong>VPanel still lists them alphabetically</strong>, so the cut-out lands first. Move it to the bottom, drill first if you can: see <a href="milling-a-board.html#cut">Cut in VPanel</a>.</li>
-  <li>The <strong>dry run</strong> traces every outline. Isolation sees all the copper at once, so two boards placed close enough to short each other show up in the checks like any other short.</li>
+  <li><strong>Isolation sees all the copper at once</strong>, so two boards placed close enough to short each other show up in the checks like any other short.</li>
+  <li><strong>On the laser</strong>, the whole sheet is one job: every board's copper, mask or silkscreen in one run. See <a href="automatic.html#laser">A laser board</a>.</li>
   <li>The probe grid, the screws and the checks see the whole sheet's worth. Setups save every board with its own placement and rotation.</li>
 </ul>
 <figure class="fig">

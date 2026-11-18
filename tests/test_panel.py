@@ -16,7 +16,6 @@ from shapely.geometry import MultiPolygon, box
 from gerber2rml.app import panel
 from gerber2rml.app.state import ProjectState
 from gerber2rml.config import CutoutJob
-from gerber2rml.engine import airpass
 from gerber2rml.engine.cutout import cut_outline
 from gerber2rml.gui2 import runplan
 
@@ -74,18 +73,6 @@ def test_a_single_board_cut_out_is_what_it_was():
     job = CutoutJob(tabs=4, tab_width=1.5, cut_depth=0.6, total_depth=1.2)
     paths = cut_outline(box(0, 0, 20, 20), job)
     assert len(paths) == 4 * 2               # four segments, two passes
-
-
-def test_the_dry_run_traces_every_board():
-    two = MultiPolygon([box(30, 0, 50, 10), box(0, 0, 20, 10)])
-    paths = airpass.air_path(two, height=5.0)
-    assert len(paths) == 2
-    assert {m.z for tp in paths for m in tp} == {5.0}
-    for tp in paths:
-        assert (round(tp[0].x, 6), round(tp[0].y, 6)) == \
-            (round(tp[-1].x, 6), round(tp[-1].y, 6))
-    left, right = paths
-    assert max(m.x for m in left) <= 20 and min(m.x for m in right) >= 30
 
 
 # -------------------------------------------------------------- composition

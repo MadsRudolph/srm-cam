@@ -19,6 +19,8 @@ board's minimum, the net classes', and the vias already placed - are raised
 to the drill, and a via left with too little copper round the bigger hole
 is made bigger. Footprint pads are left as their footprints have them.
 """
+import os
+
 import pcbnew
 
 DEFAULT_CUTTER_MM = 0.8   # the lab's flat endmill, when SRM-CAM has not said
@@ -74,7 +76,7 @@ def _set_via_width(via, width):
         via.SetWidth(width)
 
 
-def _holes_too_small(board, drill_mm):
+def holes_too_small(board, drill_mm):
     """What asks for a hole the drill cannot make, as lines to show."""
     drill = pcbnew.FromMM(drill_mm)
     mm = pcbnew.ToMM
@@ -101,7 +103,7 @@ def too_tight(board, cutter_mm=DEFAULT_CUTTER_MM, drill_mm=None):
     want = pcbnew.FromMM(wanted_clearance(cutter_mm))
     least = want
     mm = pcbnew.ToMM
-    found = [] if drill_mm is None else _holes_too_small(board, drill_mm)
+    found = [] if drill_mm is None else holes_too_small(board, drill_mm)
     ds = board.GetDesignSettings()
     if ds.m_MinClearance < least:
         found.append("Board minimum clearance: %.2f mm" % mm(ds.m_MinClearance))
@@ -183,3 +185,128 @@ def apply(board, cutter_mm=DEFAULT_CUTTER_MM, drill_mm=None):
     if zones:
         pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     return changed
+
+
+# ------------------------------------------------- rules per fabrication method
+# The window (rules_dialog.py) picks a method and its numbers (methods.py);
+# these read the board into the shape methods.plan() takes, and carry the plan
+# out. Unlike apply() above, a method sets clearances down as well as up: it is
+# chosen before layout, and a laser board wants a narrow pour gap.
+
+def _mm_or_none(has, get):
+    try:
+        return round(pcbnew.ToMM(get()), 4) if has() else None
+    except Exception:                               # noqa: BLE001 - older API
+        return None
+
+
+def fill_zones(board):
+    return [z for z in board.Zones() if not z.GetIsRuleArea()]
+
+
+def read_current(board):
+    """The board's rules, in mm, as methods.plan() takes them."""
+    mm = pcbnew.ToMM
+    ds = board.GetDesignSettings()
+    cur = {"board": {"floor": round(mm(ds.m_MinClearance), 4),
+                     "edge": round(mm(ds.m_CopperEdgeClearance), 4),
+                     "drill": round(mm(ds.m_MinThroughDrill), 4)},
+           "classes": {}, "zones": []}
+    for name, nc in _netclasses(board):
+        cur["classes"][name] = {
+            "clearance": _mm_or_none(nc.HasClearance, nc.GetClearance),
+            "track": _mm_or_none(nc.HasTrackWidth, nc.GetTrackWidth),
+            "via_drill": _mm_or_none(nc.HasViaDrill, nc.GetViaDrill),
+            "via_dia": _mm_or_none(nc.HasViaDiameter, nc.GetViaDiameter)}
+    for z in fill_zones(board):
+        c = _zone_clearance(z)
+        cur["zones"].append({
+            "name": z.GetNetname() or z.GetZoneName() or "?",
+            "clearance": None if c is None else round(mm(c), 4),
+            "thermal_gap": round(mm(z.GetThermalReliefGap()), 4),
+            "pour_min": round(mm(z.GetMinThickness()), 4)})
+    try:
+        zd = ds.GetDefaultZoneSettings()
+        cur["zone_defaults"] = {"clearance": round(mm(zd.m_ZoneClearance), 4),
+                                "thermal_gap": round(mm(zd.m_ThermalReliefGap), 4),
+                                "pour_min": round(mm(zd.m_ZoneMinThickness), 4)}
+    except Exception:                               # noqa: BLE001 - older API
+        pass
+    return cur
+
+
+def _raise_vias(board, drill_mm):
+    """Vias already placed: holes up to the drill, with copper round them."""
+    drill = pcbnew.FromMM(drill_mm)
+    ring, ring_min = pcbnew.FromMM(RING_MM), pcbnew.FromMM(RING_MIN_MM)
+    holes = grown = 0
+    for via in _vias(board):
+        if via.GetDrill() < drill:
+            via.SetDrill(drill)
+            holes += 1
+        if _via_width(via) < via.GetDrill() + 2 * ring_min:
+            _set_via_width(via, via.GetDrill() + 2 * ring)
+            grown += 1
+    out = []
+    if holes:
+        out.append("%d via hole(s) -> %.2f mm" % (holes, drill_mm))
+    if grown:
+        out.append("%d via(s) made bigger, to keep a ring of copper round "
+                   "the hole" % grown)
+    return out
+
+
+def apply_plan(board, ops, drill_mm):
+    """Carry out methods.plan(): set every rule it lists, raise the vias
+    already placed to the drill, and refill the zones. Tracks stay where they
+    are. Returns the lines of what changed."""
+    from srm20area import methods
+    nm = pcbnew.FromMM
+    ds = board.GetDesignSettings()
+    classes = dict(_netclasses(board))
+    zones = fill_zones(board)
+    zd = None
+    for target, key, _old, new in ops:
+        v = nm(new)
+        if target == "board":
+            if key == "floor":
+                ds.m_MinClearance = v
+            elif key == "edge":
+                ds.m_CopperEdgeClearance = v
+            elif key == "drill":
+                ds.m_MinThroughDrill = v
+        elif target == "zone_defaults":
+            if zd is None:
+                zd = ds.GetDefaultZoneSettings()
+            if key == "clearance":
+                zd.m_ZoneClearance = v
+            elif key == "thermal_gap":
+                zd.m_ThermalReliefGap = v
+            elif key == "pour_min":
+                zd.m_ZoneMinThickness = v
+        elif target[0] == "class":
+            nc = classes[target[1]]
+            {"clearance": nc.SetClearance, "track": nc.SetTrackWidth,
+             "via_drill": nc.SetViaDrill, "via_dia": nc.SetViaDiameter}[key](v)
+        else:
+            z = zones[target[1]]
+            {"clearance": z.SetLocalClearance,
+             "thermal_gap": z.SetThermalReliefGap,
+             "pour_min": z.SetMinThickness}[key](v)
+    if zd is not None:
+        ds.SetDefaultZoneSettings(zd)
+    names = [z.GetNetname() or z.GetZoneName() or "?" for z in zones]
+    changed = [methods.describe(op, names) for op in ops]
+    changed += _raise_vias(board, drill_mm)
+    if zones:
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+    return changed
+
+
+def rules_file(board):
+    """The project's custom rules file (.kicad_dru), or None."""
+    name = board.GetFileName()
+    if not name:
+        return None
+    path = os.path.splitext(name)[0] + ".kicad_dru"
+    return path if os.path.isfile(path) else None

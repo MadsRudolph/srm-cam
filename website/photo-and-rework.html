@@ -75,7 +75,7 @@
 <p class="lead">Did every channel cut through? Find the spots that didn't, box them, and re-cut only there, deeper, in one program. The board stays on the machine, and the XY origin is never touched. The drawings are live: press the buttons, and drag on the board.</p>
 
 <div class="note"><span class="t">Novice or Pro?</span>
-<p>This page is the <strong>Rework step, in Pro</strong>, for a board that is already off the machine. During a run, <a href="automatic.html#check">the check before the cut-out</a> recuts in boxes without any of this.</p></div>
+<p>This page is the <strong>Fix spots row, in Pro</strong>, for a board that is already off the machine. During a run, <a href="automatic.html#check">the check before the cut-out</a> recuts in boxes without any of this. On a laser board, <span class="ui">Fix spots</span> opens the laser's rework boxes instead: the copper is fixed where it was made.</p></div>
 
 <div class="pill-flow">
   <span class="pf">Find the spots</span><span class="arr">→</span>
@@ -94,20 +94,20 @@
 <p>A board that has been cut differs from its design: it sits a degree off square, a pad tore, a strand stayed. A photo warped into machine coordinates puts the two in one frame, so a box drawn on the photo lands where the damage actually is, not where the Gerbers say it should be.</p>
 <ol class="steps">
   <li><span class="st">Take the photo</span>
-    Straight down, evenly lit, sharp. <span class="menu-path">View › Take one with a phone…</span> shows a QR code: scan it, take the photo on the phone, and it arrives in the app. By default it goes through a small hosted relay, so it works on any network (eduroam and mobile data included); set the dialog's <span class="ui">Relay</span> field to <code>lan</code> to send it direct instead, if the phone and the PC can reach each other (client-isolating wifi forbids that). The shot is cropped to the copper for you.</li>
+    Straight down, evenly lit, sharp. <span class="ui">Photo ▾</span>, on the bed's toolbar, then <span class="ui">Take one with a phone…</span> shows a QR code: scan it, take the photo on the phone, and it arrives in the app. By default it goes through a small hosted relay, so it works on any network (eduroam and mobile data included); set the dialog's <span class="ui">Relay</span> field to <code>lan</code> to send it direct instead, if the phone and the PC can reach each other (client-isolating wifi forbids that). The shot is cropped to the copper for you.</li>
   <li><span class="st">Lay it on the bed</span>
-    <span class="menu-path">View › Lay a photo of the board on the bed…</span> Click the anchor holes in the photo in the order the design map beside it asks for. Scroll to zoom, drag to pan, and undo the last click if you miss. The note says how well the fit lands. Four holes fit a homography, which straightens a photo that leans as well as one that's turned.</li>
+    <span class="menu-path">Photo ▾ › Lay a photo of the board on the bed…</span> Click the anchor holes in the photo in the order the design map beside it asks for. Scroll to zoom, drag to pan, and undo the last click if you miss. The note says how well the fit lands. Four holes fit a homography, which straightens a photo that leans as well as one that's turned.</li>
   <li><span class="st">Choose the anchors, if you need to</span>
-    By default the app picks four well-spread holes near the corners. On a single-sided board the corner holes can be tiny or hard to tell apart in a photo: <span class="menu-path">View › Choose which holes anchor the photo…</span> lets you pick your own.</li>
+    By default the app picks four well-spread holes near the corners. On a single-sided board the corner holes can be tiny or hard to tell apart in a photo: <span class="menu-path">Photo ▾ › Choose which holes anchor the photo…</span> lets you pick your own.</li>
   <li><span class="st">Look</span>
-    The photo is drawn under the work. Two sliders in the <span class="menu-path">View</span> menu set <span class="ui">Photo</span> (how strongly it shows) and <span class="ui">Fade the design</span> (how far the copper and toolpaths fade over it): checking a placement and finding a torn pad want them set differently. <span class="menu-path">View › Take the photo off</span> when you're done.</li>
+    The photo is drawn under the work. Two sliders in the <span class="ui">Photo ▾</span> menu set <span class="ui">Photo</span> (how strongly it shows) and <span class="ui">Fade the design</span> (how far the copper and toolpaths fade over it): checking a placement and finding a torn pad want them set differently. <span class="menu-path">Photo ▾ › Take the photo off</span> when you're done.</li>
 </ol>
 <figure class="anim" data-anim="pr-overlay">
   <figcaption><span class="k">Anchor the photo</span>Click the holes in the order the map asks for; once it is fitted, the photo and the design share one frame, and the damage shows where it really is. Schematic: this photo is only turned, a real one also leans.</figcaption>
 </figure>
 
-<h2 id="rework">Rework</h2>
-<p>Select <span class="menu-path">Rework</span> on the rail (under <em>When you need it</em>).</p>
+<h2 id="rework">Fix spots</h2>
+<p>Select <span class="menu-path">Fix spots</span> on the rail (under <em>When you need it</em>).</p>
 <ol class="steps">
   <li><span class="st">What to repeat</span>
     <span class="ui">Repeat from</span>: <span class="ui">Isolation traces</span> or <span class="ui">Board cut-out</span> (on a double-sided job, <span class="ui">Bottom traces</span> or <span class="ui">Top traces</span>). The re-cut is that pass as it was cut, clipped to your boxes, so it follows the same route. Set <span class="ui">Depth for the next box</span> (0.25&nbsp;mm to start) deeper than the pass that missed.</li>

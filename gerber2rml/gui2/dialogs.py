@@ -216,60 +216,6 @@ def confirm_irreversible(parent, headline, body, confirm_label):
     return out["go"]
 
 
-STREAM_WARNING = """\
-Streaming sends the job to the machine move by move over the Arduino link, \
-instead of writing a file for VPanel. It is EXPERIMENTAL and it is not the way \
-this lab runs jobs.
-
-What is not calibrated: the speed units. The feed you set in millimetres per \
-second is sent as a number this machine's remote-move command interprets in \
-units nobody here has measured, so the job may run faster or slower than the \
-file would. Nothing about the geometry changes — only how fast the head gets \
-there.
-
-What is enforced: the run aborts if the lid opens, STOP drops the move in \
-flight, and Pause holds mid-move. The spindle is started and stopped by the \
-run itself.
-
-What is still yours: the spindle SPEED, which this link cannot set. Set it on \
-VPanel's slider before you start.
-
-Do the dry run first. Every time, on every new job."""
-
-
-def stream_dialog(parent, *, move_count, dry_run_default=True):
-    """The safety copy for the experimental path, in full.
-
-    Nobody who reads this dialog can be surprised by what happens next. That is
-    the entire specification for it.
-    """
-    d = Sheet(parent, "Stream this job over the link", level="warn", width=580)
-    d.say(f"{move_count:,} moves.", colour=theme.TEXT)
-    lb = QLabel(STREAM_WARNING)
-    lb.setFont(theme.font("small"))
-    lb.setWordWrap(True)
-    lb.setStyleSheet(f"color: {theme.TEXT_2};")
-    d.add(lb)
-    dry = QCheckBox("Dry run — spindle off, bit held clear of the copper")
-    dry.setChecked(dry_run_default)
-    dry.setToolTip(
-        "A dry run cannot cut: the spindle never starts and every Z is lifted "
-        "clear of the surface. It is a mechanical guarantee, not a setting the "
-        "job could override.")
-    d.add(dry)
-    out = {"go": False, "dry": dry_run_default}
-
-    def go():
-        out["go"] = True
-        out["dry"] = dry.isChecked()
-        d.accept()
-
-    d.act("Cancel", on=d.reject, default=True)
-    d.act("Start", kind="danger", on=go)
-    d.exec()
-    return out
-
-
 def about_tier(parent):
     """What the full tier adds, and what the essential one deliberately keeps.
 
