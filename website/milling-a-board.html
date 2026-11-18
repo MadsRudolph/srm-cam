@@ -20,9 +20,9 @@
 <script defer src="js/anim/butt.js?v=20260930a"></script>
 <script defer src="js/anim/bow.js?v=20260930a"></script>
 <script defer src="js/anim/probe.js?v=20260930a"></script>
-<script defer src="js/anim/gaps.js?v=20261102a"></script>
-<script defer src="js/anim/joblist.js?v=20260930a"></script>
-<script defer src="js/anim/cutting.js?v=20260930a"></script>
+<script defer src="js/anim/gaps.js?v=20261118a"></script>
+<script defer src="js/anim/joblist.js?v=20261118a"></script>
+<script defer src="js/anim/cutting.js?v=20261118a"></script>
 <script defer src="js/anim/continuity.js?v=20260930a"></script>
 </head>
 <body>
@@ -85,7 +85,7 @@
 <p class="lead">A single-sided board on the Roland SRM-20, start to finish, in the order the job happens at the mill: from KiCad to a board that is ready to solder. The drawings are live: press the buttons and drag the sliders.</p>
 
 <div class="note"><span class="t">Novice or Pro?</span>
-<p>This is the <strong>by-hand way, in Pro</strong>: you export the files and run them from VPanel. It is also the way to learn what the machine is doing. For the normal job, in Novice, see <a href="automatic.html">Mill a board</a>.</p></div>
+<p>This is the <strong>by-hand way, in Pro</strong>: you export the files and run them from VPanel. It is also the way to learn what the machine is doing. For the normal job, in Novice or Pro, see <a href="automatic.html">Mill a board</a>.</p></div>
 
 <figure class="fig video-guide">
   <div style="position:relative;aspect-ratio:16/9;background:#000">
@@ -113,7 +113,7 @@
 <h2 id="export">1 · Export from KiCad</h2>
 <ol class="steps">
   <li><span class="st">Stay inside the build area</span>
-    SRM-CAM's KiCad plugin draws the SRM-20's travel on the canvas: the whole build area, and the biggest board it recommends. Keep your board inside both. Install it from SRM-CAM: <span class="menu-path">KiCad › Set up the build-area plugin…</span></li>
+    SRM-CAM's KiCad plugin draws the SRM-20's travel on the canvas: the whole build area, and the biggest board it recommends. Keep your board inside both. Install it from SRM-CAM: <span class="menu-path">Help › Add the SRM-CAM buttons to KiCad…</span></li>
   <li><span class="st">Clearance at least the bit</span>
     <span class="menu-path">Board Setup › Net Classes</span>: clearance at least 0.8&nbsp;mm, the width of the bit. Closer than that, two nets cannot be separated (<a href="#check">see the check</a>). For finer boards, use the <a href="automatic.html#small">ball mill profile</a>.</li>
   <li><span class="st">Plot the Gerbers</span>
@@ -124,7 +124,7 @@
 
 <h2 id="setup">2 · Set up the job in SRM-CAM</h2>
 <h3>Load the Gerber folder</h3>
-<p><span class="menu-path">File › Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) and pick the folder you plotted. The board lands on the bed, and the rail on the left becomes the plan: dry run, traces, drill and cut-out. The red banner is the worst thing the checks found; <a href="#check">more on that below</a>.</p>
+<p><span class="menu-path">File › Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) and pick the folder you plotted. The board lands on the bed, and the rail on the left becomes the plan. Under <em>One step at a time</em>: fit the bit and set the Z origin, drill, traces and cut-out. The red banner is the worst thing the checks found; <a href="#check">more on that below</a>.</p>
 
 <h3>Tell it about the copper</h3>
 <figure class="fig mid">
@@ -192,18 +192,17 @@
 <h2 id="check">4 · Check and export</h2>
 <h3>Check every step</h3>
 <p>Before exporting, select <span class="ui">Isolation traces</span> on the rail: SRM-CAM marks every problem on the stage. Red marks are spots where two nets sit closer than the 0.8&nbsp;mm bit can pass. They stay shorted, whatever the depth. The proper fix is more clearance in KiCad.</p>
-<p>If you can't change the design: <span class="menu-path">Interface › Pro</span>, then <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>. The cutter goes through anyway, trimming a little off the pads.</p>
+<p>If you can't change the design: <span class="menu-path">Isolation traces › Cutting parameters</span> and tick <span class="ui">Cut gaps too narrow for the bit</span>. The cutter goes through anyway, trimming a little off the pads.</p>
 <figure class="anim" data-anim="gaps">
   <figcaption><span class="k">Narrow gaps</span>A gap narrower than the bit is left uncut and stays shorted, unless the cutter is sent down the middle, trimming both pads. A 0.45&nbsp;mm gap costs 0.175&nbsp;mm off each side.</figcaption>
 </figure>
 
 <h3>Export the job</h3>
-<p><span class="ui">Export the job</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) and pick a folder: SRM-CAM writes every file in the plan, and the run sheet shows each step with its bit, depth and time. The one rule stands: zero Z once, and never re-zero X and Y. A worn bit? Fit a fresh one, check the Z travel again, and zero Z again.</p>
+<p><span class="ui">Export the files for VPanel…</span> at the foot of the rail (or <kbd>Ctrl</kbd>+<kbd>E</kbd>) and pick a folder: SRM-CAM writes every file in the plan, and the run sheet shows each step with its bit, depth and time. The one rule stands: zero Z once, and never re-zero X and Y. A worn bit? Fit a fresh one, check the Z travel again, and zero Z again.</p>
 
 <h2 id="cut">5 · Cut in VPanel</h2>
 <h3>Run order</h3>
 <ol class="steps">
-  <li><span class="st">Dry run</span>Spindle off, bit 5&nbsp;mm up, tracing the outline, so you can see the job is on the copper.</li>
   <li><span class="st">Drill and traces</span>Either order works, but <strong>we prefer the drill first</strong>.</li>
   <li><span class="st">Cut-out, always last</span>It frees the boards.</li>
 </ol>
@@ -217,7 +216,7 @@
 <h3>Watch it cut</h3>
 <p>With the link connected, SRM-CAM draws where the head actually is, so you can follow the job on screen. The traces take about eighteen minutes for two boards. Keep the cover closed while the spindle runs.</p>
 <figure class="anim" data-anim="cutting">
-  <figcaption><span class="k">The run</span>Dry run, drill, isolation traces, and the cut-out last, leaving four tabs. Schematic, not to scale.</figcaption>
+  <figcaption><span class="k">The run</span>Drill, isolation traces, and the cut-out last, leaving four tabs. Schematic, not to scale.</figcaption>
 </figure>
 
 <h2 id="finish">Finish the board</h2>

@@ -1,26 +1,28 @@
 /* The SRM-CAM window, drawn as its four regions that never move: the rail, the
-   stage, the inspector and the machine bar (plus the header's frame switch).
+   stage, the inspector and the machine bar (plus the header: the method chip, the
+   CNC / Laser switch and the tier chip).
    Tap a region to read what it is for; tap a step on the rail and the stage
    draws that step's toolpath, as the app does. A tour highlights each region in
    turn until the reader takes over. The step names and order are the app's
-   (gui2/runplan.py) for the lab's one-bit profile. */
+   (gui2/runplan.py) for the lab's one-bit profile, as Pro shows them: the run,
+   then the same run one step at a time. */
 (function () {
   "use strict";
   var A = window.SRMAnim, C = A.C, SELECT = "#243040";
 
   var REGIONS = {
-    rail: ["The rail", "The run plan: the same order, and the same files, the export writes. Numbered steps are files you send; the rows between them (fit the bit, set the Z origin) are things you do by hand. Click any step, any time. The worst finding stays on the red banner; Export the job is at the bottom."],
-    stage: ["The stage", "The bed in machine coordinates: the copper sheet, the board, and the toolpath of the selected step. Drag the board, or nudge it with the arrow keys (0.1 mm; Shift 1 mm, Ctrl 0.01 mm). Scroll to zoom, right-drag to pan."],
-    inspector: ["The inspector", "The selected step: the setup page, the checks, or a step's file, time and (in Pro) its cutting parameters."],
-    bar: ["The machine bar", "Always there: Connect, the position readout, Z jog, Probe Z and Zero Z, Spindle, Click to jog, and STOP. Esc stops the machine from anywhere, even with a dialog open."],
-    head: ["The header", "Bed — as cut is the only frame the machine understands. Design X-ray shows the board as KiCad drew it, for checking that the two faces of a double-sided board register."]
+    rail: ["The rail", "The plan, for the mill and the laser: the run (On the mill), each step on its own (One step at a time, Pro only), the laser's rows (On the laser) and When you need it. Rows that run on a machine carry a MILL or LASER tag. Click any row, any time. The worst finding stays on the red banner; the files button is at the foot."],
+    stage: ["The stage", "The bed in machine coordinates: the copper sheet, the board, and the toolpath of the selected step. Its toolbar turns, mirrors and centres the board (Ctrl+Z undoes), holds the photo, and switches Bed — as cut and Design X-ray. Drag the board, or nudge it with the arrow keys (0.1 mm; Shift 1 mm, Ctrl 0.01 mm). Scroll to zoom, right-drag to pan."],
+    inspector: ["The inspector", "The selected row: Your board, the checks, the run, or a step's file, time and (in Pro) its cutting parameters."],
+    bar: ["The machine bar", "Always there: Connect, the position readout, Z jog, View, Probe Z, Pause, Click to jog, and STOP. Esc stops the machine from anywhere, even with a dialog open."],
+    head: ["The header", "The chip on the left says how the board is made (Flat mill, Ball mill or Laser); click it to choose another. CNC / Laser switches between the mill's page and the laser's. The chip on the right switches Novice and Pro."]
   };
   // [short label, ordinal or null, key, inspector title]
   var STEPS = [
     ["Set up the job", null, "setup", "Set up the job"],
     ["Check before cutting", null, "checks", "Check before cutting"],
-    ["· Fit the bit, zero Z", null, "origin", "By hand: fit the bit, set the Z origin"],
-    ["Dry run", 0, "airpass", "0 · Dry run"],
+    ["Mill it", null, "autorun", "Mill it, start to finish"],
+    ["· Fit the bit, set Z", null, "origin", "By hand: fit the bit, set the Z origin"],
     ["Drill", 1, "drill", "1 · Drill"],
     ["Isolation traces", 2, "traces", "2 · Isolation traces"],
     ["Cut the board out", 3, "cutout", "3 · Cut the board out"],
@@ -58,11 +60,16 @@
     // header
     var hg = region("head", L.x0, L.hy, L.x1 - L.x0, L.hh);
     A.text(hg, L.x0 + 14, L.hy + 29, "SRM·CAM", { size: 18, weight: 700, font: "label" });
-    var segX = L.x0 + (narrow ? 118 : 140);
-    A.el(hg, "rect", { x: segX, y: L.hy + 10, width: narrow ? 120 : 130, height: 24, rx: 3, fill: SELECT, stroke: "#3d5069" });
-    A.text(hg, segX + (narrow ? 60 : 65), L.hy + 27, "Bed — as cut", { size: 14, anchor: "middle", weight: 600 });
-    A.el(hg, "rect", { x: segX + (narrow ? 124 : 134), y: L.hy + 10, width: narrow ? 120 : 130, height: 24, rx: 3, fill: C.panelHi, stroke: C.ruleStrong });
-    A.text(hg, segX + (narrow ? 184 : 199), L.hy + 27, "Design X-ray", { size: 14, anchor: "middle", fill: C.text2 });
+    var chipX = L.x0 + (narrow ? 108 : 124);
+    A.el(hg, "rect", { x: chipX, y: L.hy + 10, width: 92, height: 24, rx: 12, fill: C.panelHi, stroke: C.copperHi });
+    A.text(hg, chipX + 46, L.hy + 27, "Flat mill", { size: 14, anchor: "middle", weight: 600 });
+    var segX = chipX + 104;
+    A.el(hg, "rect", { x: segX, y: L.hy + 10, width: 60, height: 24, rx: 3, fill: SELECT, stroke: "#3d5069" });
+    A.text(hg, segX + 30, L.hy + 27, "CNC", { size: 14, anchor: "middle", weight: 600 });
+    A.el(hg, "rect", { x: segX + 64, y: L.hy + 10, width: 60, height: 24, rx: 3, fill: C.panelHi, stroke: C.ruleStrong });
+    A.text(hg, segX + 94, L.hy + 27, "Laser", { size: 14, anchor: "middle", fill: C.text2 });
+    A.el(hg, "rect", { x: L.x1 - 84, y: L.hy + 10, width: 72, height: 24, rx: 12, fill: C.panelHi, stroke: C.ruleStrong });
+    A.text(hg, L.x1 - 48, L.hy + 27, "Pro", { size: 14, anchor: "middle", weight: 600 });
 
     // rail
     var rg = region("rail", L.x0, L.ry, L.rw, (narrow ? stageY + stageH : L.by) - L.ry);
@@ -78,12 +85,16 @@
       if (st[1] !== null) A.text(row, L.x0 + 12, y + rowH / 2 + 7, String(st[1]), { size: 20, weight: 700, fill: C.text3, font: "label" });
       A.text(row, L.x0 + (st[1] !== null ? 36 : (st[2] === "origin" ? 30 : 14)), y + rowH / 2 + 5, st[0],
         { size: st[2] === "origin" ? fs - 2 : fs, fill: st[2] === "origin" ? C.text2 : C.text });
+      if (st[2] === "autorun") {
+        A.el(row, "rect", { x: L.x0 + L.rw - 58, y: y + rowH / 2 - 10, width: 46, height: 18, rx: 3, fill: "none", stroke: C.copperHi });
+        A.text(row, L.x0 + L.rw - 35, y + rowH / 2 + 4, "MILL", { size: 12, anchor: "middle", weight: 700, fill: C.copperHi });
+      }
       row.addEventListener("click", function (e) { e.stopPropagation(); take(); select(i); });
       row.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); take(); select(i); } });
       rows.push(bg);
     });
     A.el(rg, "rect", { x: L.x0 + 8, y: railBottom - 40, width: L.rw - 16, height: 30, rx: 3, fill: C.primary || C.text });
-    A.text(rg, L.x0 + L.rw / 2, railBottom - 20, "Export the job", { size: 15, anchor: "middle", fill: C.ink, weight: 600 });
+    A.text(rg, L.x0 + L.rw / 2, railBottom - 20, "Export the files for VPanel…", { size: 14, anchor: "middle", fill: C.ink, weight: 600 });
     // bring step rows above the region rect
     rows.forEach(function (r) { s.appendChild(r.parentNode); });
 
@@ -119,8 +130,12 @@
       if (key === "cutout") {
         A.el(art, "rect", { x: bx - 5, y: by - 5, width: bw + 10, height: bh + 10, rx: 13, fill: "none", stroke: C.live, "stroke-width": 3, "stroke-dasharray": (bw / 2 - 8) + " 16" });
       }
-      if (key === "airpass") {
-        A.el(art, "rect", { x: bx - 5, y: by - 5, width: bw + 10, height: bh + 10, rx: 13, fill: "none", stroke: C.text2, "stroke-width": 2, "stroke-dasharray": "6 6" });
+      if (key === "autorun") {
+        TRACKS.forEach(function (t) {
+          A.el(art, "polyline", { points: t.map(function (p) { return P(p).join(","); }).join(" "), fill: "none", stroke: C.live, "stroke-width": 16, "stroke-linejoin": "round", opacity: 0.18 });
+        });
+        PADS.forEach(function (p) { var q = P(p); A.el(art, "circle", { cx: q[0], cy: q[1], r: 5, fill: C.live }); });
+        A.el(art, "rect", { x: bx - 5, y: by - 5, width: bw + 10, height: bh + 10, rx: 13, fill: "none", stroke: C.live, "stroke-width": 3, "stroke-dasharray": (bw / 2 - 8) + " 16" });
       }
       if (key === "level") {
         [0.1, 0.5, 0.9].forEach(function (u) { [0.12, 0.5, 0.88].forEach(function (v) { var q = P([u, v]); A.el(art, "circle", { cx: q[0], cy: q[1], r: 6, fill: C.ok }); }); });
@@ -145,7 +160,7 @@
     // machine bar
     var mg = region("bar", L.x0, L.by, L.x1 - L.x0, L.bh);
     var bx0 = L.x0 + 12;
-    [["Connect", 74], ["X 60.52", 70], ["Y 24.42", 70], ["Z −38.00", 78], ["Probe Z", 66], ["Zero Z", 58]].forEach(function (b, i) {
+    [["Connect", 74], ["X 60.52", 70], ["Y 24.42", 70], ["Z −38.00", 78], ["View", 50], ["Probe Z", 66]].forEach(function (b, i) {
       if (narrow && i > 3) return;
       A.el(mg, "rect", { x: bx0, y: L.by + 12, width: b[1], height: 26, rx: 3, fill: i ? C.panelHi : C.raised, stroke: C.ruleStrong });
       A.text(mg, bx0 + b[1] / 2, L.by + 30, b[0], { size: 13, anchor: "middle", font: i && i < 4 ? "mono" : "sans", fill: C.text });
@@ -175,8 +190,8 @@
         st.innerHTML = "<strong>" + STEPS[i][0].replace("· ", "") + ".</strong> " + ({
           setup: "The board, the tool profile, the copper and where the job sits on the bed.",
           checks: "Every finding, marked on the stage too: here a spot where two nets are closer than the bit.",
-          origin: "A hand step, not a file: fit the bit and set the Z origin on the copper, in G54. X and Y stay at the machine origin.",
-          airpass: "Step 0, the dry run: spindle off, bit 5 mm up, tracing the outline so you can see the job is on the copper.",
+          autorun: "The run, on the mill: it finds the stock, levels, drills, cuts the traces and stops for your check before the cut-out. The same in Novice and Pro.",
+          origin: "Pro, one step at a time: a hand step, not a file. Fit the bit and set the Z origin on the copper, in G54. X and Y stay at the machine origin.",
           drill: "Step 1 on a one-bit job: every hole, with the same 0.8 mm bit; the bigger ones milled as circles.",
           traces: "Step 2: a channel around every copper feature, so the nets stop touching.",
           cutout: "Step 3, always last: the outline with four tabs. It frees the board.",
@@ -193,7 +208,7 @@
       if (!touring) return;
       var k = Math.floor(t / 3.2) % order.length;
       if (order[k] !== cur) pick(order[k]);
-      var si = 3 + Math.floor(t / 1.6) % 4;          // walk the numbered steps
+      var si = [2, 4, 5, 6][Math.floor(t / 1.6) % 4];   // the run, then the numbered steps
       if (si !== sel) select(si);
     }, 0);
     A.button(row, "Tour again", function () { touring = true; }, "", "Replay the tour of the regions");

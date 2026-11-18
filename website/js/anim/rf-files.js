@@ -27,19 +27,8 @@
   ];
 
   var GCODE = {
-    airpass: HEAD.concat([
-      ["( board - step 0 of 4: DRY RUN )", "Which step this is. In VPanel's list the file name is otherwise the only clue."],
-      ["( spindle OFF, bit held 5 mm up - this file cannot cut )", "The dry run never starts the spindle."],
-      ["( watch it trace the outline, then run the drill file )", "Names the next file. The drill, because one 0.8 mm bit does the holes and the traces on this job."]
-    ]).concat(PRE).concat([
-      ["( DRY RUN - spindle stays OFF, nothing is cut )", "And no M3 anywhere in this file."],
-      ["G0 Z5.", "Rapid to 5 mm above the copper zero."],
-      ["G0 X106. Y106.", "Rapid to the first corner of the outline."],
-      ["G1 X2. Y106. Z5. F900.", "Trace the outline, still 5 mm up. F is in mm/min: 900 is 15 mm/s, slow enough to watch."],
-      ["G1 X2. Y2. Z5.", "The next side: F carries on until it changes."]
-    ]),
     drill: HEAD.concat([
-      ["( board - step 1 of 4: DRILL )", "Step 1: on a one-bit job the lab drills first."],
+      ["( board - step 1 of 3: DRILL )", "Step 1: on a one-bit job the lab drills first."],
       ["( bit 0.8 mm, through 1.7 mm )", "The bit, and the depth: through the 1.6 mm board into the spoilboard."],
       ["( re-zero Z after the bit change; do NOT move the XY origin )", "The rule, in every file."],
       ["( spindle 7000 rpm - set this in VPanel cut settings )", "The speed the feeds were chosen for."]
@@ -52,7 +41,7 @@
       ["G0 Z-0.4", "…and straight back down to just above the last depth, for the next peck."]
     ]),
     traces: HEAD.concat([
-      ["( board - step 2 of 4: ISOLATION TRACES )", "Step 2, after the drill."],
+      ["( board - step 2 of 3: ISOLATION TRACES )", "Step 2, after the drill."],
       ["( bit 0.8 mm, 1 offset, 0.15 mm per pass, feed 4.0 mm/s )", "One channel around every copper feature, 0.15 mm deep."],
       ["( re-zero Z after any bit change; do NOT move the XY origin )", "The rule again."],
       ["( spindle 7000 rpm - set this in VPanel cut settings )", "The speed the feeds were chosen for."]
@@ -65,7 +54,7 @@
       ["G1 X2.4 Y105.847 Z0.113", "The lead-in: the bit ramps into the cut while it moves, instead of plunging straight down, which is kinder to a 0.8 mm bit. With a height map applied, every Z in this file follows the surface."]
     ]),
     cutout: HEAD.concat([
-      ["( board - step 3 of 4: CUT-OUT - RUN THIS LAST )", "The one that frees the board. Everything else must be done first."],
+      ["( board - step 3 of 3: CUT-OUT - RUN THIS LAST )", "The one that frees the board. Everything else must be done first."],
       ["( bit 0.8 mm, through 1.7 mm, 4 tabs x 1.5 mm )", "Through the board, leaving four 1.5 mm tabs to hold it."],
       ["( frees the board from the waste - everything else must be done )", "Said twice, on purpose."],
       ["( spindle 7000 rpm - set this in VPanel cut settings )", "The speed the feeds were chosen for."]
@@ -82,7 +71,7 @@
       ["SRM-20 run plan: board  [Roland SRM-20 (G-code)]", "The run sheet as text, written beside the programs. It is not sent to the machine."],
       ["Send each file via VPanel: Cut -> Add -> Output. Zero Z on the copper first, with VPanel on G54; X and Y stay at the machine origin.", "How the files are meant to be run."],
       ["VPanel lists the files alphabetically: move the cutout to the bottom.", "The trap: VPanel sorts the files by name, and cutout comes before drill and traces."],
-      ["Order: 0) airpass  1) drill  2) traces  3) cutout. Re-set Z-zero after each bit change; keep XY origin.", "The order. With a different bit for the traces (a V-bit), the traces come first instead, to save bit changes."],
+      ["Order: 1) drill  2) traces  3) cutout. Re-set Z-zero after each bit change; keep XY origin.", "The order. With a different bit for the traces (a V-bit), the traces come first instead, to save bit changes."],
       ["1. drill  — board_drill.nc: one 0.8 mm bit, plunge holes that fit + interpolate larger ones, total 1.7 mm", "Holes that fit the bit are plunged; larger ones are milled as circles."],
       ["2. traces  — bit 0.8 mm, 1 offsets, cut 0.15 mm/pass, feed 4.0 mm/s", ""],
       ["3. cutout  — bit 0.8 mm, 4 tabs x 1.5 mm, total 1.7 mm", ""],
@@ -91,12 +80,6 @@
   };
 
   var RML = {
-    airpass: [
-      ["^IN;!MC0;", "Initialise, and spindle OFF (!MC0). RML has no comments, so nothing in the file says it is the dry run: only its name does."],
-      ["VS15.0;!VZ15.0;", "Speeds, in mm/s here (not mm/min): VS for moves in XY, !VZ for moves in Z."],
-      ["Z10600,10600,500;", "A move to X, Y, Z in RML units of 0.01 mm: X 106.00, Y 106.00, Z 5.00 mm above the copper."],
-      ["Z200,10600,500;", "The outline, 5 mm up."]
-    ],
     drill: [
       ["^IN;!MC1;", "Initialise, spindle ON."],
       ["VS15.0;!VZ15.0;", "Fast moves between holes."],
@@ -125,7 +108,6 @@
   };
 
   var FILES = [
-    ["airpass", "board_airpass", "0 · Dry run"],
     ["drill", "board_drill", "1 · Drill"],
     ["traces", "board_traces", "2 · Isolation traces"],
     ["cutout", "board_cutout", "3 · Cut-out, last"],
@@ -183,7 +165,7 @@
       });
       if (order === "vpanel") {
         st.className = "anim-status bad";
-        st.textContent = "VPanel sorts by name: airpass, cutout, drill, traces. The cut-out lands above the drill, so move it to the bottom before Output.";
+        st.textContent = "VPanel sorts by name: cutout, drill, traces. The cut-out lands above the drill, so move it to the bottom before Output.";
       } else {
         st.className = "anim-status";
         st.textContent = fmt === "gcode"

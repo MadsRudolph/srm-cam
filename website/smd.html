@@ -72,7 +72,7 @@
 
 <div class="pill-flow">
   <span class="pf">KiCad rules</span><span class="arr">→</span>
-  <span class="pf">Ball mill profile</span><span class="arr">→</span>
+  <span class="pf">Ball mill method</span><span class="arr">→</span>
   <span class="pf">Mill</span><span class="arr">→</span>
   <span class="pf">Stencil on the xTool</span><span class="arr">→</span>
   <span class="pf">Paste and parts</span>
@@ -87,20 +87,21 @@
 <tr><td>Bare laminate at the bottom</td><td>0.29&nbsp;mm (0.21–0.36)</td></tr>
 <tr><td>Finest gap that metered open</td><td>0.20&nbsp;mm, the finest on the test board</td></tr>
 <tr><td>Finest trace that kept continuity</td><td>0.15&nbsp;mm, the finest on the test board</td></tr>
-<tr><td>Holes and cut-out with the same bit</td><td>Run once, 1.9&nbsp;mm deep</td></tr>
+<tr><td>Holes and cut-out with the same bit</td><td>Run once, about 2&nbsp;mm deep</td></tr>
 </table></div>
 <p>Measured from microscope photos, about ±0.03&nbsp;mm. Full record: <a href="https://github.com/MadsRudolph/srm-cam/blob/main/docs/bit-capabilities.md">bit-capabilities.md</a>.</p>
 
 <h3 id="profile">Use it</h3>
 <ol class="steps">
   <li><span class="st">Fit the ball mill</span>One bit does the whole job: traces, holes and cut-out. An automatic run has no bit change.</li>
-  <li><span class="st">Pick the profile</span><span class="menu-path">Your board › The tool › Profile</span>: <strong>SRM-20 0.8 mm ball mill</strong>. It sets the traces to 0.44&nbsp;mm at 0.08&nbsp;mm deep in one pass, 0.8&nbsp;mm holes, and the outline at 1.9&nbsp;mm with 4 tabs.</li>
+  <li><span class="st">Set the method</span>The chip at the top left (or <span class="ui">How it is made</span> on <span class="ui">Your board</span>): <strong>Ball mill (0.44 mm channel)</strong>. A board set up in KiCad for the ball mill opens like that by itself. It picks the profile <strong>SRM-20 0.8 mm ball mill</strong>, which sets the traces to 0.44&nbsp;mm at 0.08&nbsp;mm deep in one pass, 0.8&nbsp;mm holes, and the outline at 1.9&nbsp;mm with 4 tabs.</li>
   <li><span class="st">Mill as usual</span><a href="automatic.html">Mill a board</a>. Bed levelling matters more here: at 0.08&nbsp;mm deep, a surface 0.1&nbsp;mm off is the difference between cutting and not.</li>
 </ol>
 <p>The profile also has <span class="ui">Cut gaps too narrow for the bit</span> on: a gap under 0.44&nbsp;mm gets one cut down its middle, which trims the pads on either side instead of leaving them joined.</p>
 
 <h3 id="kicad">Design rules in KiCad</h3>
-<p>Draw the board so no two nets are closer than the cut: <strong>0.44&nbsp;mm clearance</strong>. The SRM-CAM KiCad plugin sets this for you. <span class="menu-path">Tools › External Plugins › Set SRM-20 design rules</span> sets the clearance in the board's rules, every net class and every zone, then refills the zones. It uses the cutter selected in SRM-CAM, so pick the ball mill profile there first. <span class="menu-path">Send to SRM-CAM</span> checks the same rules before it sends the board.</p>
+<p>Draw the board so no two nets are closer than the cut: <strong>0.44&nbsp;mm clearance</strong>. The SRM-CAM KiCad buttons set this for you. <span class="menu-path">Tools › External Plugins › Set design rules for SRM-CAM</span>: choose the ball mill, and it sets the clearance in the board's rules, every net class and every zone, then refills the zones. It also remembers the choice, so SRM-CAM opens the board as a ball-mill board. <span class="ui">Send to SRM-CAM</span> checks the board against those rules before it sends it.</p>
+<p>Gaps finer than 0.44&nbsp;mm? Choose the fiber laser instead: the mill drills and cuts out, and the laser etches the copper. See <a href="automatic.html#laser">A laser board</a>.</p>
 
 <h3 id="parts">Which parts</h3>
 <p>Pitch, not the bit, sets the limit. A cut down the gap between two pads leaves each pad at most <em>pitch − 0.44&nbsp;mm</em> wide.</p>
@@ -127,16 +128,16 @@
 <h3 id="stencil-make">Make it</h3>
 <ol class="steps">
   <li><span class="st">Plot the paste layer</span>In KiCad's Gerber plot, tick <strong>B.Paste</strong> for a board milled on the bottom, both pastes for double-sided. A board with its parts on top and no B.Paste uses F.Paste.</li>
-  <li><span class="st">Open the stencil section</span><span class="menu-path">Your board › Solder paste stencil</span>. Each hole is drawn smaller by half the <span class="ui">Kerf</span> (0.08&nbsp;mm, measured on the lab's laser), so it comes out pad-sized, and mirrored like the copper.</li>
+  <li><span class="st">Pick Paste stencil on the rail</span>Under <em>On the laser</em>, with a <strong>LASER</strong> tag. It opens the laser page beside the rail. Each hole is drawn smaller by half the laser's kerf (0.08&nbsp;mm, measured on the lab's laser), so it comes out pad-sized, and mirrored like the copper.</li>
   <li><span class="st">Read the warnings</span>A hole too small for paste to leave it cleanly (area ratio under 0.66) is kept, and named.</li>
-  <li><span class="st">Cut it on the xTool…</span>Opens the laser page. <span class="ui">Write the stencil file now…</span> gives a DXF instead, for XCS.</li>
+  <li><span class="st">For XCS instead</span>The export writes the stencil as a DXF too, with the other files.</li>
 </ol>
 
 <h3 id="laser-page">On the laser page</h3>
 <ol class="steps">
   <li><span class="st">Photo</span>Takes the laser's camera picture, straightened into the laser's millimetres, with the stencil drawn on it.</li>
   <li><span class="st">Place it</span>In <span class="ui">Move</span>, drag the stencil onto the foil. Arrow keys nudge it (Shift ×10, Ctrl ×100), <span class="ui">Turn left</span> and <span class="ui">Turn right</span> turn it a quarter, right-click <span class="ui">Centre the stencil here</span>.</li>
-  <li><span class="st">Autofocus</span>Measures the foil under the pink cross, which follows the stencil's middle; right-click <span class="ui">Autofocus here</span> to measure elsewhere. The head goes to the thickness + 8&nbsp;mm.</li>
+  <li><span class="st">Autofocus</span>Measures the foil under the pink cross, which follows the stencil's middle; right-click <span class="ui">Autofocus here</span> to measure elsewhere. The head goes to the thickness + 8&nbsp;mm. New, and still being finished: <span class="ui">Measure focus</span> measures the height with the blue dot at a grid of points over the job (the corners, the edges and the middle). If the work is not within the depth of focus everywhere, the run is split into bands, each cut with the head refocused for it.</li>
   <li><span class="st">Recipe</span><strong>0.1 mm 304 stainless</strong>. <span class="ui">Adjust the numbers</span> shows them.</li>
   <li><span class="st">Cut</span>The zone being cut lights up, with the time left. <span class="ui">STOP</span> always works. With <span class="ui">Photo when done</span>, the result is on screen when it finishes.</li>
   <li><span class="st">Re-cut what did not go through</span>Switch the holes to <span class="ui">Outlines</span> so the photo shows through them. In <span class="ui">Select</span>, click or box the holes that need more, and <span class="ui">Cut</span> again: only those, and the outline is not marked again.</li>
@@ -157,8 +158,8 @@
 <div class="warn"><span class="t">Fumes</span>
 <p>Keep the enclosure closed, and vent it outdoors.</p></div>
 
-<h2 id="mask">The mask and silkscreen too</h2>
-<p>The same laser page opens the solder mask openings (<span class="ui">Open the mask on the xTool…</span>) and marks the silkscreen (<span class="ui">Mark it on the xTool…</span>), filled with cross-hatched lines. Aligning a mask uses the board's drilled holes. Inking and curing are on <a href="solder-mask.html">Solder mask</a>.</p>
+<h2 id="mask">The copper, mask and silkscreen too</h2>
+<p>The rail's other laser rows open the same page on their job: <span class="ui">Etch the traces</span> on a laser board, <span class="ui">Solder mask</span> (the openings over the pads) and <span class="ui">Silkscreen</span> (filled with cross-hatched lines). Each is lined up on the board's drilled holes. The order for a whole laser board is on <a href="automatic.html#laser">Mill a board</a>; inking and curing the mask are on <a href="solder-mask.html">Solder mask</a>.</p>
 
 <div class="page-nav">
   <a href="automatic.html"><span class="lbl">Previous</span><span class="ttl">← Mill a board</span></a>

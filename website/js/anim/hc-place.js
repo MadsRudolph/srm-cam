@@ -2,9 +2,9 @@
    copper is a placeholder at the machine origin, and its "on the copper" check is
    about a rectangle nobody measured. Set the corner from the tool reads the head's
    X and Y (gui2/window.py action_stock_corner_here: a pure read, nothing moves, the
-   work origin is untouched). Centre it on the copper then centres the job on the
-   part of the sheet the spindle can reach (gui2/window.py _centring_target); it is
-   refused until the sheet is set. Centre it on the bed centres it on the travel.
+   work origin is untouched). Centre, on the bed's toolbar, then centres the job on
+   the part of the sheet the spindle can reach (gui2/window.py _centring_target);
+   until the sheet is set it centres on the bed's travel instead.
    Numbers: the SRM-20 travel 203.2 x 152.4 mm (backends SRM20_BED), the 150 x 100 mm
    sheet from the recording, its corner found at X 60.52, Y 24.42. */
 (function () {
@@ -82,7 +82,7 @@
       appT2.textContent = appOn ? (s.set ? "…the sheet you measured." : "…a sheet nobody measured.") : "Move the job, or centre it.";
       realT.textContent = realOn ? "It lands on the copper" : "It would cut bare spoilboard";
       A.set(realT, { fill: realOn ? C.ok : C.danger });
-      realT2.textContent = realOn ? "Run the dry run to be sure." : (appOn ? "The check was wrong:" : "");
+      realT2.textContent = realOn ? "Check it with Click to jog." : (appOn ? "The check was wrong:" : "");
       realT3.textContent = !realOn && appOn ? "the corner isn't set." : "";
       reachT.textContent = s.set ? "Part of the copper is out of reach:" : "";
       reachT2.textContent = s.set ? (RX + SW - BX).toFixed(1) + " mm past the X travel." : "";
@@ -118,22 +118,18 @@
         });
       });
     }, "primary");
-    var centreC = A.button(row, "Centre it on the copper", function () {
+    var centreC = A.button(row, "Centre", function () {
       if (!s.set) {
-        st.textContent = "Refused: say where the copper is first (its size, and its corner), then centre on it.";
-        st.className = "anim-status bad";
+        tween({ jx: (BX - JW) / 2, jy: (BY - JH) / 2 }, 0.9, function () {
+          st.textContent = "The copper isn't set, so Centre used the bed: the middle of the machine's travel. That is only right when the copper is centred there too. Ctrl+Z puts it back.";
+          st.className = "anim-status caution";
+        });
         return;
       }
       var x0 = RX, x1 = Math.min(BX, RX + SW), y0 = RY, y1 = RY + SH;
       tween({ jx: x0 + (x1 - x0 - JW) / 2, jy: y0 + (y1 - y0 - JH) / 2 }, 0.9, function () {
         st.textContent = "Centred on the reachable part of the copper, with the margin shared on all sides.";
         st.className = "anim-status ok";
-      });
-    });
-    A.button(row, "Centre it on the bed", function () {
-      tween({ jx: (BX - JW) / 2, jy: (BY - JH) / 2 }, 0.9, function () {
-        st.textContent = "Centred on the machine's travel. That is only right when the copper is centred there too.";
-        st.className = "anim-status caution";
       });
     });
     A.button(row, "Reset", function () {
