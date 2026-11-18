@@ -23,15 +23,18 @@ import sys
 LAUNCH_FILE = "launch.json"
 OUT_DIRNAME = "srm-cam"
 
-# Every layer SRM-CAM reads: copper both sides, the outline, and the mask and
-# silkscreen layers its laser export can use.
+# Every layer SRM-CAM reads: copper both sides, the outline, the mask and
+# silkscreen layers its laser export can use, and the paste layers its
+# stencil job cuts.
 LAYERS = ["F.Cu", "B.Cu", "Edge.Cuts", "F.Mask", "B.Mask",
-          "F.Silkscreen", "B.Silkscreen"]
+          "F.Silkscreen", "B.Silkscreen", "F.Paste", "B.Paste"]
 
 # What a previous send left in the output folder. Cleared first, so a layer
 # or drill file the board no longer has cannot linger and be read again.
-_PLOTTED = (".gtl", ".gbl", ".gm1", ".gts", ".gbs", ".gto", ".gbo", ".gbr",
-            ".drl", ".gbrjob")
+# Only plot files: method.json (the board's method, methods.py) lives in the
+# same folder and is kept.
+_PLOTTED = (".gtl", ".gbl", ".gm1", ".gts", ".gbs", ".gto", ".gbo", ".gtp",
+            ".gbp", ".gbr", ".drl", ".gbrjob")
 
 
 class SendError(RuntimeError):
