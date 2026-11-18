@@ -82,7 +82,11 @@ def test_the_embedded_page_fits_a_laptop_beside_the_rail(qt_app, sl):
         d.show()
         QCoreApplication.processEvents()
         assert d.width() <= w
-        assert not d.header.one_row and not d.foot.one_row     # two rows each
+        # One row or two, as the fonts allow: whatever each bar holds fits.
+        # (The Windows runner's window is a quarter wider, and the foot's
+        # readouts are not: there it stays one row, and that is fine.)
+        for bar_ in (d.header, d.foot):
+            assert bar_.minimumSizeHint().width() <= bar_.width()
         bar = d.inspector.horizontalScrollBar()
         assert not bar.isVisible()
         panel = d.inspector.widget()

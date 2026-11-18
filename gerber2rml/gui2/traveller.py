@@ -363,7 +363,7 @@ class Traveller(QWidget):
         # The run on the rail sends the job to the mill; the files are for
         # VPanel on another PC, and for looking at.
         self.export_btn = widgets.button(
-            "Export the files for VPanel…", on=self.export_requested.emit,
+            "Export for VPanel…", on=self.export_requested.emit,
             tip="Write every file in this plan, plus the printed run plan, "
                 "into a folder you choose - to run from VPanel, or to look "
                 "at. Mill it on the rail sends them to the mill itself.")
@@ -537,13 +537,23 @@ class Traveller(QWidget):
         """Novice runs the job itself, so no plan to total; the files are
         still there to save, to run from the lab's own PC."""
         self.total_row.setVisible(not on)
-        self.export_btn.setText("Save the files for the lab PC…" if on
-                                else "Export the files for VPanel…")
+        # Short labels: the rail is 288 px inside, and the Windows test
+        # runner drew the longer ones near twice as wide as Linux.
+        self.export_btn.setText("Save the files…" if on
+                                else "Export for VPanel…")
+        self._export_tip = (
+            "Write the job's files into a folder you choose, to run from "
+            "VPanel on the lab PC. Mill it on the rail runs it from here."
+            if on else
+            "Write every file in this plan, plus the printed run plan, "
+            "into a folder you choose - to run from VPanel, or to look at. "
+            "Mill it on the rail sends them to the mill itself.")
+        self.export_btn.setToolTip(self._export_tip)
 
     def set_export_enabled(self, on, reason=""):
         self.export_btn.setEnabled(on)
-        if reason:
-            self.export_btn.setToolTip(reason)
+        self.export_btn.setToolTip(
+            reason or getattr(self, "_export_tip", self.export_btn.toolTip()))
 
     def show_finding(self, *a, **kw):
         self.banner.show_finding(*a, **kw)

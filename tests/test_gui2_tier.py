@@ -161,7 +161,10 @@ def test_novice_saves_files_only_for_the_lab_pc(qt_app, monkeypatch):
     w = _window(monkeypatch, "novice")
     try:
         assert not w.traveller.export_btn.isHidden()
-        assert "lab PC" in w.traveller.export_btn.text()
+        # Short on the button - the rail is narrow on Windows - and the lab
+        # PC said in its tip.
+        assert w.traveller.export_btn.text() == "Save the files…"
+        assert "lab PC" in w.traveller.export_btn.toolTip()
         assert w.traveller.total_row.isHidden()
         for a in (w.export_act, w.export_folder_act, w.screw_act,
                   w.mtest_act):
