@@ -1175,6 +1175,7 @@ class StencilLaserDialog(QDialog):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(panel)
         scroll.setFixedWidth(_INSPECTOR_W)
+        self._inspector_w = _INSPECTOR_W
         # Text wraps to the panel's width; it only ever scrolls up and down.
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -1283,6 +1284,7 @@ class StencilLaserDialog(QDialog):
         self._sync_recipe_widgets()
         self._sync_empty()
         self._sync_proof()
+        self._fit_inspector()
 
     # -- the bed picture -------------------------------------------------
     @staticmethod
@@ -1411,6 +1413,7 @@ class StencilLaserDialog(QDialog):
         super().showEvent(e)
         self.refresh_from_host()
         self._place_legend()
+        self._fit_inspector()           # measured as it is shown, not built
         self.view.setFocus()            # the arrow keys move the stencil at once
 
     def _place_legend(self):
@@ -1433,6 +1436,22 @@ class StencilLaserDialog(QDialog):
             self._warn_layout.addWidget(n)
             self._art_warnings.append(n)
         self._warn_box.setVisible(bool(self._art_warnings))
+
+    def _fit_inspector(self):
+        """The side panel as wide as what it holds needs, and never less
+        than its usual width. At 120 dpi (and in Windows' own faces) the
+        words are wider and the panel's buttons and fields with them; at a
+        fixed 380 px they were cut off at its edge."""
+        scroll = getattr(self, "inspector", None)
+        if scroll is None or scroll.widget() is None:
+            return
+        need = max(_INSPECTOR_W,
+                   scroll.widget().minimumSizeHint().width()
+                   + scroll.verticalScrollBar().sizeHint().width()
+                   + 2 * scroll.frameWidth() + 2)
+        if need != self._inspector_w:
+            self._inspector_w = need
+            scroll.setFixedWidth(need)
 
     def _sync_recipe_widgets(self):
         is_stencil = self.kind == "stencil"
@@ -1458,6 +1477,7 @@ class StencilLaserDialog(QDialog):
         self.mark.setText("Mark the board outline afterwards"
                           if is_stencil else
                           "Score the board outline afterwards, faintly")
+        self._fit_inspector()
 
     def _trace_art_for(self, side):
         if self._dxf is not None:
