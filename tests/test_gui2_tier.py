@@ -103,16 +103,17 @@ def test_the_two_tiers_export_identical_bytes(qt_app, monkeypatch, tmp_path):
     names_b = sorted(p.name for p in b.iterdir())
     assert names_a == names_b, (names_a, names_b)
     for name in names_a:
-        # The run plan names its own folder; everything else must match byte
-        # for byte.
-        if name.endswith("_runplan.txt"):
+        # The run plan names its own folder, and the preview is a picture of
+        # the screen, which shows each tier's own controls; every file that
+        # cuts or etches must match byte for byte.
+        if name.endswith(("_runplan.txt", "_preview.png")):
             continue
         assert (a / name).read_bytes() == (b / name).read_bytes(), name
 
 
 def test_the_plan_is_the_same_in_both_tiers(qt_app, monkeypatch):
-    """Novice shows three rows, but the run needs the whole plan. The only
-    difference is that its Run it all step is always there."""
+    """Novice shows its few rows, but the run needs the whole plan, and
+    it is the same plan in Pro."""
     w1 = _window(monkeypatch, "novice")
     try:
         essential = [(s.key, s.ordinal, s.file) for s in w1.plan]
@@ -120,9 +121,7 @@ def test_the_plan_is_the_same_in_both_tiers(qt_app, monkeypatch):
         w1.close()
     w2 = _window(monkeypatch, "pro")
     try:
-        w2.action_autorun(True)
         full = [(s.key, s.ordinal, s.file) for s in w2.plan]
-        w2.action_autorun(False)
     finally:
         w2.close()
     assert essential == full
@@ -131,12 +130,16 @@ def test_the_plan_is_the_same_in_both_tiers(qt_app, monkeypatch):
 def test_novice_is_three_rows_built_around_the_run(qt_app, monkeypatch):
     w = _window(monkeypatch, "novice")
     try:
-        assert list(w.traveller._rows) == ["setup", "checks", "autorun"]
-        assert w.traveller._rows["autorun"].step.title == "Run it"
-        # Its Next button is the way on from the board page.
+        rows = list(w.traveller._rows)
+        assert rows[:3] == ["setup", "checks", "autorun"]
+        assert all(k.startswith("laser_") for k in rows[3:])
+        assert w.traveller._rows["autorun"].step.title == "Mill it"
+        # Its Next buttons go through the checks to the run.
         w.select_step("setup")
         assert not w.inspector.setup.next_btn.isHidden()
         w.inspector.setup.next_btn.click()
+        assert w.traveller.current() == "checks"
+        w.inspector.checks.next_btn.click()
         assert w.inspector.stack.currentWidget() is w.autorun_page
         assert w.traveller.current() == "autorun"
     finally:
@@ -147,20 +150,21 @@ def test_pro_has_the_whole_plan_and_no_novice_button(qt_app, monkeypatch):
     w = _window(monkeypatch, "pro")
     try:
         assert list(w.traveller._rows) == [s.key for s in w.plan]
-        assert "autorun" not in w.traveller._rows      # chosen, in Pro
+        assert "autorun" in w.traveller._rows          # the same run
         assert w.inspector.setup.next_btn.isHidden()
-        assert w.autorun_act.isVisible() and w.export_act.isVisible()
+        assert w.export_act.isVisible()
     finally:
         w.close()
 
 
-def test_novice_has_nothing_to_export(qt_app, monkeypatch):
+def test_novice_saves_files_only_for_the_lab_pc(qt_app, monkeypatch):
     w = _window(monkeypatch, "novice")
     try:
-        assert w.traveller.export_btn.isHidden()
+        assert not w.traveller.export_btn.isHidden()
+        assert "lab PC" in w.traveller.export_btn.text()
         assert w.traveller.total_row.isHidden()
         for a in (w.export_act, w.export_folder_act, w.screw_act,
-                  w.autorun_act, w.mtest_act):
+                  w.mtest_act):
             assert not a.isVisible(), a.text()
         assert not w.export_act.isEnabled()            # nor by Ctrl+E
         assert w.inspector.setup.add_board_btn.isHidden()
@@ -183,8 +187,8 @@ def test_novice_setup_asks_only_what_the_run_cannot_find_out(qt_app,
         page.double.setChecked(True)                   # one tick
         assert w._double and page.ds_more.isHidden()
         assert w.plan.by_key("flip") is not None
-        # Three rows still, and the run still has both sides to do.
-        assert list(w.traveller._rows) == ["setup", "checks", "autorun"]
+        # Its rows still, and the run still has both sides to do.
+        assert list(w.traveller._rows)[:3] == ["setup", "checks", "autorun"]
     finally:
         w.close()
 
@@ -195,7 +199,7 @@ def test_novice_run_page_is_the_bracket_and_a_real_run(qt_app, monkeypatch):
         w.select_step("autorun")
         page = w.autorun_page
         assert page.bracket() and page.where.isHidden()
-        assert page.dry_chk.isHidden() and not page.dry_chk.isChecked()
+        assert not hasattr(page, "dry_chk")            # no dry run at all
         assert not page.level_chk.isHidden()
         assert not page.check_chk.isHidden()
         assert not page.offline_box.isHidden()         # offline: says so
@@ -317,22 +321,6 @@ def test_novice_runs_a_double_sided_board_end_to_end(qt_app, monkeypatch,
     w = _window(monkeypatch, "novice")
     try:
         _novice_run(qt_app, w, True)
-    finally:
-        w.close()
-
-
-def test_essential_puts_away_the_experimental_stream(qt_app, monkeypatch):
-    """Streaming is gated on uncalibrated speed units and is not the way this
-    lab runs jobs, so it is not on the beginner's happy path."""
-    w = _window(monkeypatch, "novice")
-    try:
-        assert not w.stream_act.isVisible()
-    finally:
-        w.close()
-    w = _window(monkeypatch, "pro")
-    try:
-        assert w.stream_act.isVisible()
-        assert "experimental" in w.stream_act.text().lower()
     finally:
         w.close()
 

@@ -672,6 +672,9 @@ class FlipFitPage(inspector.Page):
                 "Nothing has been changed. Check the folder still holds this "
                 "job's files.")
             return
+        if hasattr(self.ctl, "record_files"):
+            self.ctl.record_files([path], "The finishing drill, on the "
+                                          "measured flip")
         self.ctl.say("ok", "Wrote %s — %.2f mm from this face, on the fit."
                      % (path.name, depth))
 
@@ -798,5 +801,9 @@ class FlipFitPage(inspector.Page):
                 "program.")
             return
         workspace.remember_dir("out", str(path))
+        if hasattr(self.ctl, "record_files"):
+            self.ctl.record_files([p for p in (path, cut) if p],
+                                  "The top side, re-written on the measured "
+                                  "flip - send these, not the earlier ones")
         self.ctl.say("ok", f"{path.name} rewritten, warped to the flip you "
                            f"measured. Send that file, not the earlier one.")

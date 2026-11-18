@@ -496,8 +496,12 @@ class BoardFitPage(inspector.Page):
                 "Nothing has been changed. Check the folder is writable.")
             return []
         workspace.remember_dir("out", str(written[0]))
+        if hasattr(self.ctl, "record_files"):
+            self.ctl.record_files(written, "The drill, fitted to the board "
+                                           "made elsewhere")
         self.ctl.say("ok", "Wrote %s - the holes moved onto the board you "
-                           "measured. Zero Z with the drill bit and send it."
+                           "measured. Set the Z origin on the copper with the drill bit, "
+                           "then send it."
                      % ", ".join(p.name for p in written))
         return written
 

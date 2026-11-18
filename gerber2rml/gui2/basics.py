@@ -44,10 +44,8 @@ LESSONS = [
      "on from the same place. Escape is STOP from anywhere in the app."),
     ("Where the files go",
      "Export writes one program per step and the run sheet that says the "
-     "order. In VPanel: Cut, Add, pick the file, Output. The dry run comes "
-     "first: spindle off, bit held up, tracing where the board is about to "
-     "be machined. It is twenty seconds and the cheapest way to find the "
-     "stock in the wrong place."),
+     "order. In VPanel: Cut, Add, pick the file, Output. Or press Start and "
+     "the app sends them to the mill itself, in order."),
 ]
 
 

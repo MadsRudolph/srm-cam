@@ -17,6 +17,7 @@ is "how high it lifts between cuts"; ``offsets`` is "isolation passes". Where a
 term is genuinely domain jargon it is used — consistently — and explained the
 first time it appears.
 """
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -140,6 +141,27 @@ class SetupPage(Page):
                 "from KiCad."))
         rh.addStretch(1)
         src.add(row)
+        # How it is made: the header chip's choice, here too, with what it
+        # means. Always the operator's to change.
+        from gerber2rml.engine import method as fab
+        self.method = QComboBox()
+        for mid in fab.IDS:
+            self.method.addItem(fab.name(mid), mid)
+        self.method.setToolTip(
+            "Decides the checks, the tool and the jobs on the rail. Read from "
+            "KiCad's Set design rules for SRM-CAM when the board has been "
+            "sent from there, otherwise guessed from the narrowest gap between "
+            "two nets. Change it whenever you like.")
+        self.method.currentIndexChanged.connect(
+            lambda _i: ctl.action_method(self.method.currentData()))
+        src.add(widgets.Field("How it is made", self.method))
+        self.method_note = widgets.hint("")
+        src.add(self.method_note)
+        self.laser_faces = widgets.hint(
+            "Copper on both faces: the mill drills straight through, and the "
+            "laser etches each face lined up on the same holes.")
+        self.laser_faces.setVisible(False)
+        src.add(self.laser_faces)
         # One sheet of copper can carry several boards, cut in one run. The
         # list only appears once there are two; the button that starts a
         # panel is always there, because that is how anyone finds out it can.
@@ -170,6 +192,8 @@ class SetupPage(Page):
             tip="Take the picked board off the sheet. The others stay put.")
         bh.addWidget(self.remove_board_btn)
         bh.addStretch(1)
+        for b in (self.add_board_btn, self.remove_board_btn):
+            b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
         src.add(brow)
         self.name = QLineEdit(st.name)
         self.name.setToolTip("What the exported files are called. Taken from "
@@ -189,7 +213,10 @@ class SetupPage(Page):
         ph = QHBoxLayout(prow)
         ph.setContentsMargins(0, 0, 0, 0)
         ph.setSpacing(theme.GAP_S)
-        ph.addWidget(widgets.button("Apply profile", on=ctl.action_apply_preset))
+        # A profile applies when it is picked: an Apply button was a step
+        # people did not know they had to take.
+        self.preset.currentIndexChanged.connect(
+            lambda _i: ctl.action_apply_preset())
         self.save_preset_btn = widgets.button("Save as…", on=ctl.action_save_preset)
         ph.addWidget(self.save_preset_btn)
         ph.addStretch(1)
@@ -219,7 +246,8 @@ class SetupPage(Page):
             "the bit breaks through cleanly and takes a controlled bite out of "
             "the spoilboard rather than an uncontrolled one.")
         self.auto_depth.toggled.connect(self._on_auto_depth)
-        self.overshoot = num(0.30, 0.0, 1.0, 0.05, 2, self._on_auto_depth,
+        # 0.4: 1.6 mm board + 0.4 is the 2.0 mm the lab's profiles cut.
+        self.overshoot = num(0.40, 0.0, 1.0, 0.05, 2, self._on_auto_depth,
                              suffix=" mm")
         arow = QWidget()
         ah = QHBoxLayout(arow)
@@ -273,7 +301,9 @@ class SetupPage(Page):
             "Outline the sheet on the stage. Worth leaving on whenever the "
             "copper is not on the fixture, because it is the only thing that "
             "shows the job actually falls on metal.")
-        self.show_stock.toggled.connect(self._on_stock)
+        # Only the picture: showing the placeholder sheet does not make it
+        # the real one.
+        self.show_stock.toggled.connect(ctl.action_show_stock)
         stock.add(self.show_stock)
         self.screwed = QCheckBox("Held down with M4 screws")
         self.screwed.setToolTip(
@@ -379,61 +409,26 @@ class SetupPage(Page):
         for b in self.rotate.findChildren(QPushButton):
             b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
         place.add(widgets.Field("Turned", self.rotate))
-        # A drag that lands somewhere it should not costs a careful
-        # re-placement; one click (or Ctrl+Z) puts it back.
-        urow = QWidget()
-        uh = QHBoxLayout(urow)
-        uh.setContentsMargins(0, 0, 0, 0)
-        uh.setSpacing(theme.GAP_S)
-        self.undo_place_btn = widgets.button(
-            "Undo", on=ctl.action_undo, enabled=False,
-            tip="Take back the last change on the bed: a move, turn or mirror, "
-                "a rework box, a no-go zone or clamp, a screw or reference "
-                "hole (Ctrl+Z).")
-        self.redo_place_btn = widgets.button(
-            "Redo", on=ctl.action_redo, enabled=False,
-            tip="Do what you just undid again (Ctrl+Shift+Z or Ctrl+Y).")
-        uh.addWidget(self.undo_place_btn)
-        uh.addWidget(self.redo_place_btn)
-        uh.addStretch(1)
-        place.add(urow)
+        # Turning, mirroring, centring and undo are on the bed's own toolbar,
+        # once; here are the numbers, and the panel's arranging.
         arow = QWidget()
-        # Two by two, not four abreast. With one board only the centring pair
-        # shows; a sheet adds the other two, and on one row the four needed
-        # 529 px - the reason this page broke on a two-board job and not on
-        # one.
         ah2 = QGridLayout(arow)
         ah2.setContentsMargins(0, 0, 0, 0)
         ah2.setHorizontalSpacing(theme.GAP_S)
         ah2.setVerticalSpacing(theme.GAP_S)
-        self.autoplace_btn = widgets.button(
-            "Centre it on the bed", kind="primary",
-            on=lambda: ctl.action_autoplace("bed"),
-            tip="Drops the whole job into the middle of the machine's travel, "
-                "with whatever room is left shared equally on all four sides.\n\n"
-                "On a double-sided board the registration pins are counted "
-                "too — they sit outside the board, and a placement that puts "
-                "the board on the bed but a dowel off it cannot be run.")
-        ah2.addWidget(self.autoplace_btn, 0, 0)
-        self.centre_copper_btn = widgets.button(
-            "Centre it on the copper",
-            on=lambda: ctl.action_autoplace("copper"),
-            tip="Drops the job into the middle of the copper sheet set above "
-                "— not the bed. The two differ whenever the sheet is smaller "
-                "than the travel or clamped off to one side, and it is the "
-                "metal the job has to land on.")
-        ah2.addWidget(self.centre_copper_btn, 0, 1)
         self.arrange_btn = widgets.button(
             "Lay them side by side", on=lambda: ctl.action_arrange(),
             tip="Line the boards up left to right with a strip of waste "
                 "between each pair, the first one staying where it is.")
-        ah2.addWidget(self.arrange_btn, 1, 0)
+        ah2.addWidget(self.arrange_btn, 0, 0)
         self.butt_btn = widgets.button(
             "Butt them together", on=lambda: ctl.action_arrange(0.0),
             tip="Line the boards up touching. One cut runs between each pair "
                 "and separates them, so the panel needs no waste between the "
                 "boards - each loses half a cutter width along that edge.")
-        ah2.addWidget(self.butt_btn, 1, 1)
+        ah2.addWidget(self.butt_btn, 1, 0)
+        for b in (self.arrange_btn, self.butt_btn):
+            b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
         place.add(arow)
         self.place_hint = widgets.hint(
             "Or drag the board on the bed. Measured from the machine origin "
@@ -650,138 +645,10 @@ class SetupPage(Page):
         self.ds_more = self._gather(self.ds_section, 1)
         self.add(self.ds_section)
 
-        # -- laser traces ------------------------------------------------
-        from gerber2rml.engine.xtool import DEFAULT_TRACE_OFFSETS
-        self.laser_traces_section = widgets.Section("Laser traces")
-        self.laser_traces = QCheckBox("Also make the laser traces file (DXF)")
-        self.laser_traces.setToolTip(
-            "For boards whose copper is etched on the xTool fiber laser instead "
-            "of milled. Writes the concentric isolation paths and outline from "
-            "this Gerber folder.")
-        self.laser_traces.toggled.connect(ctl.action_laser_traces)
-        self.laser_traces_section.add(self.laser_traces)
-        self.laser_offsets = num(DEFAULT_TRACE_OFFSETS, 1, 50, 1, 0,
-                                 self._on_laser_offsets, suffix=" passes")
-        self.laser_offsets_field = widgets.Field(
-            "Isolation passes", self.laser_offsets,
-            help="Concentric laser rings around every trace and pad (6 passes "
-                 "is about 0.22 mm). More passes widen the isolation gap.")
-        self.laser_traces_section.add(self.laser_offsets_field)
-        self.laser_traces_note = widgets.hint("")
-        self.laser_traces_section.add(self.laser_traces_note)
-        self.laser_traces_write_btn = widgets.button(
-            "Write the traces file now…", on=ctl.action_write_laser_traces,
-            tip="Writes the isolation DXF straight away.")
-        self.laser_traces_section.add(self.laser_traces_write_btn)
-        self.laser_traces_run_btn = widgets.button(
-            "Etch the traces on the xTool…", on=ctl.action_traces_laser,
-            tip="With the F1 Ultra plugged into this PC by USB: photo, autofocus, "
-                "align, and etch the traces using FlatCAM-style concentric passes.")
-        self.laser_traces_section.add(self.laser_traces_run_btn)
-        self.add(self.laser_traces_section)
-
-        # -- solder mask -------------------------------------------------
-        # Both tiers: Novice has no export, but its board gets ink just the
-        # same. The file is for the laser, so nothing the mill runs depends
-        # on this, and it stays off until asked for.
-        from gerber2rml.engine.soldermask import DEFAULT_SHRINK, MAX_SHRINK
-        self.mask_section = widgets.Section("Solder mask")
-        self.solder_mask = QCheckBox("Also make the laser file (DXF)")
-        self.solder_mask.setToolTip(
-            "For a board that gets solder mask after milling. Writes the pad "
-            "openings and the outline from this Gerber folder, mirrored like "
-            "the copper, for the fiber laser. It needs the B.Mask layer in "
-            "the folder.")
-        self.solder_mask.toggled.connect(ctl.action_solder_mask)
-        self.mask_section.add(self.solder_mask)
-        self.mask_shrink = num(DEFAULT_SHRINK, 0.0, MAX_SHRINK, 0.05, 2,
-                               self._on_mask_shrink, suffix=" mm")
-        self.mask_shrink_field = widgets.Field(
-            "Shrink by", self.mask_shrink,
-            help="Each opening, per side, so a small registration error "
-                 "between the mill and the laser leaves ink on the pad's edge "
-                 "and not bare copper beside it.")
-        self.mask_section.add(self.mask_shrink_field)
-        self.mask_note = widgets.hint("")
-        self.mask_section.add(self.mask_note)
-        self.mask_write_btn = widgets.button(
-            "Write the laser file now…", on=ctl.action_write_mask,
-            tip="Writes the file straight away, without exporting the job or "
-                "starting a run. Those write it as well while this is ticked.")
-        self.mask_section.add(self.mask_write_btn)
-        self.mask_laser_btn = widgets.button(
-            "Open the mask on the xTool…", on=ctl.action_mask_laser,
-            tip="With the F1 Ultra plugged into this PC by USB: photo, autofocus, "
-                "align on the drilled holes, and the openings filled with the "
-                "RemoveSolderMask recipe.")
-        self.mask_section.add(self.mask_laser_btn)
-        self.add(self.mask_section)
-
-        # -- silkscreen --------------------------------------------------
-        # The solder mask's sibling: the same Gerber folder, a file for the
-        # laser, nothing the mill depends on. No shrink: a line of silk a
-        # little off costs nothing electrical.
-        self.silk_section = widgets.Section("Silkscreen")
-        self.silkscreen = QCheckBox("Also make the laser file (DXF)")
-        self.silkscreen.setToolTip(
-            "Writes the F.Silkscreen artwork and the outline from this Gerber "
-            "folder for the fiber laser, as KiCad drew it: the component side "
-            "lies face up on the laser, so it is not mirrored. It needs the "
-            "F.Silkscreen layer in the folder.")
-        self.silkscreen.toggled.connect(ctl.action_silkscreen)
-        self.silk_section.add(self.silkscreen)
-        self.silk_note = widgets.hint("")
-        self.silk_section.add(self.silk_note)
-        self.silk_write_btn = widgets.button(
-            "Write the silkscreen file now…", on=ctl.action_write_silk,
-            tip="Writes the file straight away, without exporting the job or "
-                "starting a run. Those write it as well while this is ticked.")
-        self.silk_section.add(self.silk_write_btn)
-        self.silk_laser_btn = widgets.button(
-            "Mark it on the xTool…", on=ctl.action_silk_laser,
-            tip="With the F1 Ultra plugged into this PC by USB: photo, autofocus, "
-                "align on the drilled holes, and the artwork filled.")
-        self.silk_section.add(self.silk_laser_btn)
-        self.add(self.silk_section)
-
-        # -- solder paste stencil ----------------------------------------
-        # The same Gerber folder again, for the same laser: holes in steel
-        # foil over every paste pad. Off until asked for.
-        from gerber2rml.engine.stencil import DEFAULT_KERF, MAX_KERF
-        self.stencil_section = widgets.Section("Solder paste stencil")
-        self.stencil = QCheckBox("Also make the stencil file (DXF)")
-        self.stencil.setToolTip(
-            "Writes a hole for every paste pad (B.Paste) and the outline, for "
-            "the fiber laser to cut from 0.1 mm stainless foil. It needs the "
-            "B.Paste layer in the folder.")
-        self.stencil.toggled.connect(ctl.action_stencil)
-        self.stencil_section.add(self.stencil)
-        self.stencil_kerf = num(DEFAULT_KERF, 0.0, MAX_KERF, 0.01, 2,
-                                self._on_stencil_kerf, suffix=" mm")
-        self.stencil_kerf_field = widgets.Field(
-            "Kerf", self.stencil_kerf,
-            help="How much steel the beam takes around its path. Each hole is "
-                 "drawn half this smaller per side, so it comes out pad-sized. "
-                 "0.08 mm was measured on the lab's F1 Ultra.")
-        self.stencil_section.add(self.stencil_kerf_field)
-        self.stencil_note = widgets.hint("")
-        self.stencil_section.add(self.stencil_note)
-        self.stencil_write_btn = widgets.button(
-            "Write the stencil file now…", on=ctl.action_write_stencil,
-            tip="The DXF, for XCS: place it on the foil on the camera image.")
-        self.stencil_section.add(self.stencil_write_btn)
-        self.stencil_cut_btn = widgets.button(
-            "Cut it on the xTool…", on=ctl.action_cut_stencil,
-            tip="With the F1 Ultra plugged into this PC by USB: cuts the "
-                "stencil with the heat spread over zones and rests, which XCS "
-                "cannot do.")
-        self.stencil_section.add(self.stencil_cut_btn)
-        self.add(self.stencil_section)
-
         # Novice's way on: the Setup page is the first of its three steps.
         self.next_btn = widgets.button(
-            "Next: Run it →", kind="primary",
-            on=lambda: ctl.select_step("autorun"))
+            "Next: Check it →", kind="primary",
+            on=lambda: ctl.select_step("checks"))
         self.add(self.next_btn)
 
         self.finish()
@@ -849,15 +716,6 @@ class SetupPage(Page):
     def _on_machine(self, text):
         self.ctl.action_machine(text)
 
-    def _on_laser_offsets(self, v):
-        self.ctl.action_laser_offsets(int(v))
-
-    def _on_mask_shrink(self, v):
-        self.ctl.action_mask_shrink(v)
-
-    def _on_stencil_kerf(self, v):
-        self.ctl.action_stencil_kerf(v)
-
     def _on_mirror(self, on):
         self.ctl.action_mirror(on)
 
@@ -869,7 +727,8 @@ class SetupPage(Page):
         # is in the tooltip.
         if st.gerber_dir:
             parts = Path(st.gerber_dir).parts
-            self.folder.setText("…\\" + "\\".join(parts[-2:])
+            sep = os.sep
+            self.folder.setText("…" + sep + sep.join(parts[-2:])
                                 if len(parts) > 2 else str(st.gerber_dir))
             self.folder.setToolTip(str(st.gerber_dir))
         else:
@@ -1053,15 +912,7 @@ class SetupPage(Page):
         # scheme the job was NOT using while its fields stayed hidden.
         for box, val in ((self.mirror, bool(st.mirror)),
                          (self.double, bool(getattr(ctl, "_double", False))),
-                         (self.screwed, bool(getattr(ctl, "screwed", False))),
-                         (self.laser_traces,
-                          bool(getattr(ctl, "_laser_traces", False))),
-                         (self.solder_mask,
-                          bool(getattr(ctl, "_solder_mask", False))),
-                         (self.silkscreen,
-                          bool(getattr(ctl, "_silkscreen", False))),
-                         (self.stencil,
-                          bool(getattr(ctl, "_stencil", False)))):
+                         (self.screwed, bool(getattr(ctl, "screwed", False)))):
             box.blockSignals(True)
             box.setChecked(val)
             box.blockSignals(False)
@@ -1073,10 +924,7 @@ class SetupPage(Page):
         self.machine.blockSignals(True)
         self.machine.setCurrentText(st.machine)
         self.machine.blockSignals(False)
-        self.sync_laser_traces()
-        self.sync_mask()
-        self.sync_silk()
-        self.sync_stencil()
+        self.sync_method()
         full = tier.is_full()
         self.advanced.setVisible(full)
         self.copper_more.setVisible(full)
@@ -1116,87 +964,29 @@ class SetupPage(Page):
         self.screw_row.setVisible(self.screwed.isChecked())
         self.screw_file_btn.setVisible(self.screwed.isChecked())
 
-    def sync_laser_traces(self):
-        """The DXF controls show once ticked; the xTool button is always ready."""
+    def sync_method(self):
+        """How the board is made, as the header chip says it. A laser board
+        is milled one-sided whatever its copper: the double-sided section
+        gives way to a line saying so."""
         ctl = self.ctl
-        on = bool(getattr(ctl, "_laser_traces", False))
-        has_board = ctl.state.board is not None
-        self.laser_offsets.blockSignals(True)
-        self.laser_offsets.setValue(getattr(ctl, "_laser_offsets",
-                                            self.laser_offsets.value()))
-        self.laser_offsets.blockSignals(False)
-        for w in (self.laser_offsets_field, self.laser_traces_note,
-                  self.laser_traces_write_btn):
-            w.setVisible(on)
-        self.laser_traces_run_btn.setVisible(True)
-        self.laser_traces_run_btn.setEnabled(has_board)
-        if not on:
-            return
-        level, text = ctl.laser_traces_status()
-        self.laser_traces_note.setText(text)
-        self.laser_traces_note.setStyleSheet(
-            f"color: {theme.CAUTION};" if level == "warn" else "")
-        self.laser_traces_write_btn.setEnabled(has_board)
-
-    def sync_mask(self):
-        """The DXF controls show once ticked; the xTool button is always ready."""
-        ctl = self.ctl
-        on = bool(getattr(ctl, "_solder_mask", False))
-        has_board = ctl.state.board is not None
-        self.mask_shrink.blockSignals(True)
-        self.mask_shrink.setValue(getattr(ctl, "_mask_shrink",
-                                          self.mask_shrink.value()))
-        self.mask_shrink.blockSignals(False)
-        for w in (self.mask_shrink_field, self.mask_note, self.mask_write_btn):
-            w.setVisible(on)
-        self.mask_laser_btn.setVisible(True)
-        self.mask_laser_btn.setEnabled(has_board)
-        if not on:
-            return
-        level, text = ctl.mask_status()
-        self.mask_note.setText(text)
-        self.mask_note.setStyleSheet(
-            f"color: {theme.CAUTION};" if level == "warn" else "")
-        self.mask_write_btn.setEnabled(has_board)
-
-    def sync_silk(self):
-        """The DXF controls show once ticked; the xTool button is always ready."""
-        ctl = self.ctl
-        on = bool(getattr(ctl, "_silkscreen", False))
-        has_board = ctl.state.board is not None
-        for w in (self.silk_note, self.silk_write_btn):
-            w.setVisible(on)
-        self.silk_laser_btn.setVisible(True)
-        self.silk_laser_btn.setEnabled(has_board)
-        if not on:
-            return
-        level, text = ctl.silk_status()
-        self.silk_note.setText(text)
-        self.silk_note.setStyleSheet(
-            f"color: {theme.CAUTION};" if level == "warn" else "")
-        self.silk_write_btn.setEnabled(has_board)
-
-    def sync_stencil(self):
-        """The DXF controls show once ticked; the xTool button is always ready."""
-        ctl = self.ctl
-        on = bool(getattr(ctl, "_stencil", False))
-        has_board = ctl.state.board is not None
-        self.stencil_kerf.blockSignals(True)
-        self.stencil_kerf.setValue(getattr(ctl, "_stencil_kerf",
-                                           self.stencil_kerf.value()))
-        self.stencil_kerf.blockSignals(False)
-        for w in (self.stencil_kerf_field, self.stencil_note,
-                  self.stencil_write_btn):
-            w.setVisible(on)
-        self.stencil_cut_btn.setVisible(True)
-        self.stencil_cut_btn.setEnabled(has_board)
-        if not on:
-            return
-        level, text = ctl.stencil_status()
-        self.stencil_note.setText(text)
-        self.stencil_note.setStyleSheet(
-            f"color: {theme.CAUTION};" if level == "warn" else "")
-        self.stencil_write_btn.setEnabled(has_board)
+        from gerber2rml.engine import method as fab
+        has = ctl.state.board is not None
+        mid = ctl.method_id() if hasattr(ctl, "method_id") else fab.FLAT
+        self.method.blockSignals(True)
+        i = self.method.findData(mid)
+        if i >= 0:
+            self.method.setCurrentIndex(i)
+        self.method.blockSignals(False)
+        self.method.setEnabled(has)
+        src = fab.SOURCE_WORDS.get(getattr(ctl, "_method_source", ""), "")
+        self.method_note.setText(
+            (f"{src.capitalize()}. " if has and src else "")
+            + fab.METHODS[mid].about)
+        laser = mid == fab.LASER
+        self.ds_section.setVisible(not laser)
+        top = getattr(ctl.state.board, "copper_top", None) if has else None
+        two = top is not None and not top.is_empty
+        self.laser_faces.setVisible(laser and two)
 
 
 # ---------------------------------------------------------------------------
@@ -1230,6 +1020,11 @@ class ChecksPage(Page):
                                        "whoever owns the machine."))
         h.addStretch(1)
         self.add(row)
+        # On to the run, from where the findings were read.
+        self.next_btn = widgets.button(
+            "Next: Run it →", kind="primary",
+            on=lambda: ctl.select_step("autorun"))
+        self.add(self.next_btn)
         self.finish()
         self._items = []
 
@@ -1262,9 +1057,7 @@ class ChecksPage(Page):
                 f"{n_warn} things to look at. None of them stops the job, but "
                 f"each is a way it could come out wrong.")
         else:
-            self.summary.setText("Everything checks out. Run the dry run "
-                                 "anyway — it is the only check that tests "
-                                 "where the copper actually is.")
+            self.summary.setText("Everything checks out.")
         for c in checks:
             card = widgets.Card(quiet=True, pad=theme.GAP_M, gap=5)
             top = QWidget()
@@ -1645,103 +1438,6 @@ class HandoffPage(Page):
         self.note.setVisible(bool(step.note))
         self.done_btn.setText("Not done after all" if self.ctl.is_done(step.key)
                               else "Done — mark it off")
-
-
-# ---------------------------------------------------------------------------
-
-class LaserPage(Page):
-    """The xTool F1 Ultra hub: Traces, Solder mask, Silkscreen, and Stencil."""
-
-    def __init__(self, ctl, parent=None):
-        super().__init__(parent)
-        self.ctl = ctl
-        self.set_head("Step", "xTool F1 Ultra")
-        self.add(widgets.body(
-            "Direct USB control of the F1 Ultra (no XCS needed). Pick any "
-            "job below, or switch between all four inside the laser window."))
-
-        from gerber2rml.engine.xtool import DEFAULT_TRACE_OFFSETS
-        from gerber2rml.engine.soldermask import DEFAULT_SHRINK, MAX_SHRINK
-        from gerber2rml.engine.stencil import DEFAULT_KERF, MAX_KERF
-
-        # 1. Copper traces
-        sec_t = widgets.Section("Copper traces")
-        self.traces_offsets = num(DEFAULT_TRACE_OFFSETS, 1, 50, 1, 0,
-                                  lambda v: ctl.action_laser_offsets(int(v)),
-                                  suffix=" passes")
-        sec_t.add(widgets.Field(
-            "Isolation passes", self.traces_offsets,
-            help="FlatCAM-style concentric laser rings around every trace "
-                 "and pad (6 passes ≈ 0.22 mm gap). Runs in minutes instead "
-                 "of hours."))
-        self.traces_run_btn = widgets.button(
-            "Etch the traces on the xTool…", kind="primary",
-            on=ctl.action_traces_laser)
-        self.traces_dxf_btn = widgets.button(
-            "Write the traces DXF now…",
-            on=ctl.action_write_laser_traces)
-        self.traces_from_dxf_btn = widgets.button(
-            "Etch traces from a DXF…", on=ctl.action_traces_laser_dxf,
-            tip="Copper drawn in another CAD program: no Gerber folder needed")
-        sec_t.add(self.traces_run_btn)
-        sec_t.add(self.traces_dxf_btn)
-        sec_t.add(self.traces_from_dxf_btn)
-        self.add(sec_t)
-
-        # 2. Solder mask
-        sec_m = widgets.Section("Solder mask")
-        self.mask_shrink = num(DEFAULT_SHRINK, 0.0, MAX_SHRINK, 0.05, 2,
-                               ctl.action_mask_shrink, suffix=" mm")
-        sec_m.add(widgets.Field("Shrink by", self.mask_shrink))
-        self.mask_run_btn = widgets.button(
-            "Open the mask on the xTool…", on=ctl.action_mask_laser)
-        self.mask_dxf_btn = widgets.button(
-            "Write the mask DXF now…", on=ctl.action_write_mask)
-        sec_m.add(self.mask_run_btn)
-        sec_m.add(self.mask_dxf_btn)
-        self.add(sec_m)
-
-        # 3. Silkscreen
-        sec_s = widgets.Section("Silkscreen")
-        self.silk_run_btn = widgets.button(
-            "Mark it on the xTool…", on=ctl.action_silk_laser)
-        self.silk_dxf_btn = widgets.button(
-            "Write the silkscreen DXF now…", on=ctl.action_write_silk)
-        sec_s.add(self.silk_run_btn)
-        sec_s.add(self.silk_dxf_btn)
-        self.add(sec_s)
-
-        # 4. Solder paste stencil
-        sec_p = widgets.Section("Solder paste stencil")
-        self.stencil_kerf = num(DEFAULT_KERF, 0.0, MAX_KERF, 0.01, 2,
-                                ctl.action_stencil_kerf, suffix=" mm")
-        sec_p.add(widgets.Field("Kerf", self.stencil_kerf))
-        self.stencil_run_btn = widgets.button(
-            "Cut it on the xTool…", on=ctl.action_cut_stencil)
-        self.stencil_dxf_btn = widgets.button(
-            "Write the stencil DXF now…", on=ctl.action_write_stencil)
-        sec_p.add(self.stencil_run_btn)
-        sec_p.add(self.stencil_dxf_btn)
-        self.add(sec_p)
-
-        self.finish()
-
-    def sync(self):
-        ctl = self.ctl
-        has_board = ctl.state.board is not None
-        for box, attr in (
-            (self.traces_offsets, "_laser_offsets"),
-            (self.mask_shrink, "_mask_shrink"),
-            (self.stencil_kerf, "_stencil_kerf"),
-        ):
-            box.blockSignals(True)
-            box.setValue(getattr(ctl, attr, box.value()))
-            box.blockSignals(False)
-        for btn in (self.traces_run_btn, self.traces_dxf_btn,
-                    self.mask_run_btn, self.mask_dxf_btn,
-                    self.silk_run_btn, self.silk_dxf_btn,
-                    self.stencil_run_btn, self.stencil_dxf_btn):
-            btn.setEnabled(has_board)
 
 
 # ---------------------------------------------------------------------------

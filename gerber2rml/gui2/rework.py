@@ -563,6 +563,8 @@ class ReworkPage(inspector.Page):
             self.ctl.report_error("The rework program could not be written", e)
             return
         workspace.remember_dir("out", path)
+        if hasattr(self.ctl, "record_files"):
+            self.ctl.record_files([path], "Fix spots: the rework program")
         self.status.setText(f"{len(clipped)} cut runs written"
                             + (f", {levelled} box{'' if levelled == 1 else 'es'}"
                                " following the height map." if levelled

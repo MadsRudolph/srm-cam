@@ -80,9 +80,10 @@ class ProjectState:
             m.place_y += dy
         self._sync()
 
-    def arrange(self, gap=panel_mod.PANEL_GAP_MM):
-        """Lay the boards side by side, left to right, ``gap`` mm apart."""
-        panel_mod.arrange_row(self.boards, gap)
+    def arrange(self, gap=panel_mod.PANEL_GAP_MM, width=None):
+        """Lay the boards side by side, left to right, ``gap`` mm apart -
+        in rows no wider than ``width`` mm, when it is given."""
+        panel_mod.arrange_rows(self.boards, gap, width)
         self._sync()
 
     def reload(self):
@@ -150,7 +151,7 @@ class ProjectState:
             return cut_outline(self.board.outline, self.cutout, stock=stock)
         raise ValueError(f"unknown operation: {op}")
 
-    def export(self, out_dir, level=None, stock=None):
+    def export(self, out_dir, level=None, stock=None, traces=True):
         """``stock`` is the copper sheet as ``(x0, y0, x1, y1)`` in machine
         mm, when the operator declared one; the cut-out leaves out edges that
         lie on it."""
@@ -170,9 +171,10 @@ class ProjectState:
                               trace=self.trace, drill=self.drill,
                               cutout=self.cutout, mirror=self.mirror,
                               machine=self.machine, level=level,
-                              panel=self.panel_summary(), stock=stock)
+                              panel=self.panel_summary(), stock=stock,
+                              traces=traces)
         return build_jobs(self.gerber_dir, out_dir, self.name,
                           trace=self.trace, drill=self.drill, cutout=self.cutout,
                           mirror=self.mirror, machine=self.machine,
                           offset=(self.place_x, self.place_y), level=level,
-                          rotate=self.rotate, stock=stock)
+                          rotate=self.rotate, stock=stock, traces=traces)

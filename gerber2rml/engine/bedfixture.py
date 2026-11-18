@@ -105,10 +105,7 @@ def procedure(stock_w, stock_h, pin_diameter=DEFAULT_PIN_DIAMETER):
         f"From then on: DO NOT move the XY origin. Re-zero Z after every bit\n"
         f"change, never XY. If the XY origin moves between passes, the traces,\n"
         f"drill and cut-out stop lining up with each other and the board is\n"
-        f"scrap even though each pass looked fine.\n"
-        f"\n"
-        f"Run the _airpass file before each job to confirm the stock is where\n"
-        f"the toolpath expects it.\n")
+        f"scrap even though each pass looked fine.\n")
 
 
 def bed_depth_note(bed_depth=DEFAULT_BED_DEPTH):
