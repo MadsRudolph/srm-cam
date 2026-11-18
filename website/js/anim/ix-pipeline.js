@@ -14,7 +14,7 @@
     ["SRM-CAM", "checks · plan", "milling-a-board.html#setup",
       "Open the folder: the board lands on the bed, the checks mark every short, and the rail becomes the run plan."],
     [".nc files", "+ run sheet", "reference.html",
-      "Export the files for VPanel writes one file per step: drill, isolation traces, cut-out, and the run sheet with the order."],
+      "Export for VPanel writes one file per step: drill, isolation traces, cut-out, and the run sheet with the order."],
     ["VPanel", "Cut › Add › Output", "milling-a-board.html#cut",
       "Roland's VPanel plays the files on the machine. It lists them alphabetically: move the cut-out to the bottom."],
     ["SRM-20", "the board", "milling-a-board.html#finish",

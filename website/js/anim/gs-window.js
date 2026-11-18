@@ -94,7 +94,7 @@
       rows.push(bg);
     });
     A.el(rg, "rect", { x: L.x0 + 8, y: railBottom - 40, width: L.rw - 16, height: 30, rx: 3, fill: C.primary || C.text });
-    A.text(rg, L.x0 + L.rw / 2, railBottom - 20, "Export the files for VPanel…", { size: 14, anchor: "middle", fill: C.ink, weight: 600 });
+    A.text(rg, L.x0 + L.rw / 2, railBottom - 20, "Export for VPanel…", { size: 14, anchor: "middle", fill: C.ink, weight: 600 });
     // bring step rows above the region rect
     rows.forEach(function (r) { s.appendChild(r.parentNode); });
 
