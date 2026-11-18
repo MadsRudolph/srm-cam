@@ -38,7 +38,7 @@ def cut_depths(trace, drill, cutout, dowel_depth=None):
 def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
               holes=None, bit_diameter=None, trace=None, leveled=False,
               z_floor=SRM20_Z_FLOOR, shorts=None, thickness=None,
-              bed_bite=0.2, eaten=None):
+              bed_bite=0.2, eaten=None, method=None):
     """Run the checks and return a list of :class:`Check`.
 
     ``depths``: {op: mm} from :func:`cut_depths`. ``design_bounds``: placed
@@ -49,7 +49,9 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
     :func:`gerber2rml.engine.drc.isolation_bridges` - places the cutter
     physically cannot separate two nets. ``eaten`` is
     :func:`gerber2rml.engine.pinch.pinch_losses` - the pads that a
-    cut-it-anyway pass takes most of."""
+    cut-it-anyway pass takes most of. ``method`` is how the copper is made
+    (engine/method.py): on a laser board the shorts are gaps under the
+    laser's floor, and the mill's cutter has nothing to do with them."""
     checks = []
 
     # --- fits the bed -------------------------------------------------------
@@ -135,7 +137,24 @@ def preflight(*, depths, bed=None, design_bounds=None, surface_z=None,
     # This is the only check here that fails on the DESIGN rather than the
     # setup, and it is the most expensive to discover late: a board milled
     # perfectly to a layout the bit cannot separate is scrap either way.
-    if shorts is not None:
+    if shorts is not None and method == "laser":
+        from gerber2rml.engine.method import FLOOR
+        floor = FLOOR["laser"]
+        if shorts:
+            worst = min(s["gap"] for s in shorts)
+            checks.append(Check(
+                "fail", "Nets closer than the laser can separate",
+                f"{len(shorts)} spot(s) where two separate nets sit under "
+                f"{floor:.2f} mm apart (worst {worst:.2f} mm, marked X on the "
+                f"board). Move the tracks apart in KiCad: the clearance there "
+                f"has to be at least {floor:.2f} mm. Set design rules for "
+                f"SRM-CAM ▸ Fiber laser copper sets it."))
+        else:
+            checks.append(Check(
+                "ok", "Net clearance",
+                f"no two nets sit closer than the laser's {floor:.2f} mm. "
+                f"The mill only drills and cuts out this board."))
+    elif shorts is not None:
         if shorts and getattr(trace, "cut_pinches", False):
             # The operator has said to cut them anyway. They are no longer
             # shorts, so saying "WILL be shorted" would be a lie - but the

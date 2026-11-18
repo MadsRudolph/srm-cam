@@ -197,19 +197,15 @@ def win(qt_app, monkeypatch):
     w.close()
 
 
-def test_off_by_default_and_hidden(win, tmp_path):
-    setup = win.inspector.setup
-    assert not setup.stencil.isChecked()
-    assert setup.stencil_write_btn.isHidden()
-    assert not setup.stencil_cut_btn.isHidden()
+def test_a_board_with_paste_has_a_stencil_row(win, tmp_path):
+    assert win.plan.by_key("laser_stencil") is not None
     win.export_to(tmp_path)
-    assert not list(tmp_path.glob("*stencil*"))
+    assert list(tmp_path.glob("*_stencil_*.dxf"))
 
 
 def test_ticked_the_export_writes_the_stencil(win, tmp_path):
     setup = win.inspector.setup
-    setup.stencil.setChecked(True)
-    assert not setup.stencil_cut_btn.isHidden()
+    setup.ctl.action_stencil(True)
     assert "B.Paste" in win.stencil_status()[1]
     written = win.export_to(tmp_path)
     assert written
@@ -219,8 +215,8 @@ def test_ticked_the_export_writes_the_stencil(win, tmp_path):
 
 def test_the_kerf_box_reaches_the_file(win, tmp_path):
     setup = win.inspector.setup
-    setup.stencil.setChecked(True)
-    setup.stencil_kerf.setValue(0.0)
+    setup.ctl.action_stencil(True)
+    setup.ctl.action_stencil_kerf(0.0)
     arts, _ = win._stencil_arts(WROOM)
     assert sizes(arts[0].apertures) == {(0.9, 1.5): 38, (1.05, 1.05): 9}
 
@@ -623,13 +619,9 @@ def test_setup_page_laser_traces_dxf_export(qt_app, monkeypatch, tmp_path):
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        setup = w.inspector.setup
-        assert not setup.laser_traces.isChecked()
-        assert setup.laser_traces_write_btn.isHidden()
-        assert not setup.laser_traces_run_btn.isHidden()
-        setup.laser_traces.setChecked(True)
-        assert not setup.laser_traces_write_btn.isHidden()
-        setup.laser_offsets.setValue(8)
+        from gerber2rml.engine import method as fab
+        w.action_method(fab.LASER)              # a laser board: its file too
+        w.action_laser_offsets(8)
         assert w._laser_offsets == 8
         w.export_to(tmp_path)
         dxf = list(tmp_path.glob("*_traces_bottom_mirrored.dxf"))
@@ -646,10 +638,7 @@ def test_laser_rail_tab_and_header_button(qt_app, monkeypatch):
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        assert w.plan.by_key("laser") is not None
-        w.select_step("laser")
-        assert w.inspector.stack.currentWidget() is w.laser_page
-        assert w.laser_page.traces_run_btn.isEnabled()
+        assert w.plan.by_key("laser") is None          # no hub row any more
         (btn,) = [b for b in w.mode_switch.findChildren(QPushButton)
                   if b.text() == "Laser"]
         btn.click()

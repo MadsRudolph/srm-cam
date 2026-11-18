@@ -53,7 +53,7 @@ def test_a_drag_is_one_undo_and_one_redo(loaded):
     w.stage.placement_changed.emit(12.5, -3.0)
     moved = _where(w)
     assert moved != start
-    assert w.undo_act.isEnabled() and w.inspector.setup.undo_place_btn.isEnabled()
+    assert w.undo_act.isEnabled() and w.undo_btn.isEnabled()
     w.undo_act.trigger()
     assert _where(w) == start
     assert w.inspector.setup.place_x.value() == pytest.approx(start[0])
@@ -90,7 +90,7 @@ def test_the_button_undoes_as_ctrl_z_does(loaded):
     w = loaded
     start = _where(w)
     w.stage.placement_changed.emit(5.0, 5.0)
-    w.inspector.setup.undo_place_btn.click()
+    w.undo_btn.click()
     assert _where(w) == start
 
 

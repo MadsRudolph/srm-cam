@@ -120,15 +120,14 @@ def test_no_side_panel_page_widens_for_a_sheet_or_a_long_name(qt_app):
                 f"{key}: {width} px on a two-board sheet, {plain[key]} px alone")
 
 
-def test_the_placement_buttons_are_two_by_two(win, qt_app):
+def test_the_arrange_buttons_are_one_above_the_other(win, qt_app):
     from PySide6.QtWidgets import QGridLayout
     setup = win.inspector.setup
-    grid = setup.autoplace_btn.parentWidget().layout()
+    grid = setup.arrange_btn.parentWidget().layout()
     assert isinstance(grid, QGridLayout)
     spots = {b: grid.getItemPosition(grid.indexOf(b))[:2]
-             for b in (setup.autoplace_btn, setup.centre_copper_btn,
-                       setup.arrange_btn, setup.butt_btn)}
-    assert sorted(spots.values()) == [(0, 0), (0, 1), (1, 0), (1, 1)]
+             for b in (setup.arrange_btn, setup.butt_btn)}
+    assert sorted(spots.values()) == [(0, 0), (1, 0)]
 
 
 def test_a_file_name_gives_up_characters_not_width(qt_app):

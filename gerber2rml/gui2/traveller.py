@@ -29,6 +29,10 @@ from gerber2rml.gui2 import theme, widgets
 from gerber2rml.engine.estimate import format_duration
 
 NUM_COL = 34            # px: the step-number column, and the rule beside it
+
+# The rail's headings: the job, in the order it is done, across both machines.
+GROUP_WORDS = {"run": "On the mill", "steps": "One step at a time",
+               "laser": "On the laser", "after": "When you need it"}
 ROW_PAD = 9
 
 
@@ -132,7 +136,7 @@ class StepRow(QWidget):
             p.setPen(QPen(QColor(theme.TEXT_4), 1.4))
             cy = y + 8
             p.drawLine(QPointF(NUM_COL - 20, cy), QPointF(NUM_COL - 11, cy))
-        elif s.kind == "tool":
+        elif s.kind in ("tool", "laser"):
             p.setPen(QPen(QColor(theme.TEXT_3 if not self.selected else theme.TEXT), 1.3))
             cy = y + 7
             x = 13
@@ -152,6 +156,23 @@ class StepRow(QWidget):
         if s.seconds is not None:
             est = "~" + format_duration(s.seconds)
         est_w = 0
+        # Which machine a row runs on, where the rail mixes the two: the run
+        # on the mill and the laser's jobs. A tag, as on the machine itself.
+        if s.machine and s.kind in ("tool", "laser"):
+            tf = theme.font("micro")
+            tfm = QFontMetricsF(tf)
+            word = "LASER" if s.machine == "laser" else "MILL"
+            colour = theme.LIVE if s.machine == "laser" else theme.TEXT_3
+            tw = tfm.horizontalAdvance(word) + 10
+            box = QRectF(r.width() - 12 - tw, y + 1, tw, tfm.height() + 2)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(theme.alpha(colour, 0.14)))
+            p.drawRoundedRect(box, theme.RADIUS_CHIP, theme.RADIUS_CHIP)
+            p.setFont(tf)
+            p.setPen(QPen(QColor(colour), 1))
+            p.drawText(box, Qt.AlignCenter, word)
+            p.setFont(f)
+            est_w = tw + 6
         if est:
             ef = theme.font("small", mono=True)
             efm = QFontMetricsF(ef)
@@ -292,10 +313,13 @@ class Traveller(QWidget):
         th.addWidget(self.total_value)
         fv.addWidget(trow)
         self.total_row = trow
+        # The run on the rail sends the job to the mill; the files are for
+        # VPanel on another PC, and for looking at.
         self.export_btn = widgets.button(
-            "Export the job", kind="primary", on=self.export_requested.emit,
+            "Export the files for VPanel…", on=self.export_requested.emit,
             tip="Write every file in this plan, plus the printed run plan, "
-                "into a folder you choose.")
+                "into a folder you choose - to run from VPanel, or to look "
+                "at. Mill it on the rail sends them to the mill itself.")
         self.export_btn.setEnabled(False)
         fv.addWidget(self.export_btn)
         # The caveat is a footnote, and a footnote does not need fifty pixels
@@ -328,19 +352,18 @@ class Traveller(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self._rows = {}
-        last_kind = None
+        last_group = None
         for step in (plan if rail is None else rail):
-            if step.kind == "run" and last_kind != "run" and last_kind is not None:
-                self._add_eyebrow("Run order" if last_kind == "tool" else "")
-            if step.kind == "tool" and last_kind in ("run", "handoff"):
-                self._add_eyebrow("When you need it")
+            group = getattr(step, "group", None) or "steps"
+            if group != last_group and group in GROUP_WORDS:
+                self._add_eyebrow(GROUP_WORDS[group])
+            last_group = group
             row = StepRow(step)
             row.clicked.connect(self._on_click)
             row.set_done(step.key in self._done)
             row.set_exported(step.key in self._exported)
             self.list.addWidget(row)
             self._rows[step.key] = row
-            last_kind = step.kind
         self.list.addStretch(1)
         if self._current in self._rows:
             self._rows[self._current].set_selected(True)
@@ -421,9 +444,11 @@ class Traveller(QWidget):
             row.set_exported(k in self._exported)
 
     def set_novice(self, on):
-        """Novice runs the job itself: no files to write, no plan to total."""
+        """Novice runs the job itself, so no plan to total; the files are
+        still there to save, to run from the lab's own PC."""
         self.total_row.setVisible(not on)
-        self.export_btn.setVisible(not on)
+        self.export_btn.setText("Save the files for the lab PC…" if on
+                                else "Export the files for VPanel…")
 
     def set_export_enabled(self, on, reason=""):
         self.export_btn.setEnabled(on)

@@ -166,16 +166,36 @@ def test_in_novice_the_sheet_the_bracket_and_the_board_are_there_at_import(
     assert w.stage._bracket is not None and w.stage._bracket[3] is None
 
 
-def test_in_pro_loading_a_board_leaves_the_sheet_alone(qt_app, monkeypatch,
-                                                       tmp_path):
+def test_in_pro_the_board_goes_into_the_bracket_too(qt_app, monkeypatch,
+                                                    tmp_path):
+    """Pro runs the same smart run as Novice: the bracket is drawn and a
+    board opened goes into its corner."""
     from gerber2rml import platform as plat
     monkeypatch.setattr(plat, "documents_dir", lambda *a, **k: tmp_path)
     w = MainWindow()                                   # the suite pins Pro
     w.show()
-    stock = tuple(w.stock)
+    w.autorun_page.show_size(160.0, 130.0)             # the board is 104 mm
     assert w.open_from_outside(str(FIXT))
-    assert tuple(w.stock) == stock
-    assert w.stage._bracket is None
+    assert w.stage._bracket is not None
+    b, (sx, sy, sw, sh) = w.work_extent(), w.stock
+    assert sx <= b[0] and sy <= b[1] and b[2] <= sx + sw and b[3] <= sy + sh
+    w.close()
+
+
+def test_in_pro_anywhere_draws_the_copper_round_the_board(qt_app):
+    """No bracket: the board is put where the copper is, and the copper is
+    drawn round it for the probe to find from there."""
+    w = MainWindow()
+    w.show()
+    w.load_folder(str(FIXT))
+    page = w.autorun_page
+    page.where.setCurrentIndex(page.where.findData("click"))
+    w.select_step("autorun")
+    w.action_place(60.0, 40.0)
+    page.board_dragged()
+    b, (sx, sy, sw, sh) = w.work_extent(), w.stock
+    assert abs((sx + sw / 2) - (b[0] + b[2]) / 2) < 1e-6
+    assert abs((sy + sh / 2) - (b[1] + b[3]) / 2) < 1e-6
     w.close()
 
 

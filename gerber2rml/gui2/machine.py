@@ -834,7 +834,8 @@ class MachineBar(QWidget):
             tip="Lift the bit to the top and bring the board out to look at "
                 "it: the same view position the automatic run stops at "
                 "after the traces (machine X 0, Y 150).")
-        lh.addWidget(self.view_btn)
+        # In the Machine menu: the bar has to fit a laptop on one row.
+        self.view_btn.hide()
 
         # One touch: Probe Z finds the copper and tells the APP where it
         # is. Zero Z, which also wrote the machine's Z origin, is gone

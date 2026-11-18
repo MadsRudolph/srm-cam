@@ -51,6 +51,9 @@ class Step:
     caution: str = ""              # a consequence worth reading before running
     irreversible: bool = False     # cannot be undone by re-running it
     note: str = ""                 # longer explanation for the inspector
+    machine: str = None            # "mill" | "laser": which machine runs it
+    group: str = None              # where the rail puts it: "prepare",
+                                   # "run", "steps", "laser" or "after"
 
     @property
     def numbered(self):
@@ -196,8 +199,14 @@ ORIGIN_NOTE = (
     "corner from the tool instead. The traces, the holes and the outline only "
     "land on top of each other because every pass shares that one origin.\n\n"
     "Zero Z on the copper with the bit you are about to cut with, with VPanel "
-    "on G54 (not Machine or User). The dry run that follows holds the bit 5 mm "
-    "above THIS zero, so it only means anything once the zero is set.")
+    "on G54 (not Machine or User). Every file measures its depth from THIS "
+    "zero.")
+
+CUTOUT_LASER_NOTE = (
+    "The outline is cut through except at the tabs, so the board stays in "
+    "the sheet. The whole sheet then goes to the laser, which lines the "
+    "copper up on the holes just drilled. Break the tabs when the laser is "
+    "done.")
 
 ONE_BIT_NOTE = (
     "One bit does this whole job — traces, holes and outline — so it never "
@@ -262,8 +271,7 @@ ALIGN_NOTE = (
     "holes stay in the bed after the job. That is the point — the pins seated "
     "in them are what the board registers against before and after the flip — "
     "but it is also why this is the one cut in the app you cannot take back "
-    "by re-zeroing and trying again.\n\n"
-    "Run the dry run first.")
+    "by re-zeroing and trying again.")
 
 GRID_ALIGN_NOTE = (
     "The pins stand in two holes of the spoilboard's tapped grid, so nothing "
@@ -288,16 +296,42 @@ FIDUCIAL_FLIP_NOTE = (
     "as the spread of the holes you probe.")
 
 
+# The laser's jobs, in the order they are done on one sheet: the copper
+# first, then the mask over it, then the ink on top; the stencil is foil, not
+# the board, and comes last.
+LASER_JOBS = (
+    ("traces", "Etch the traces",
+     "On the drilled holes · the whole sheet",
+     "The sheet comes off the mill with its holes drilled and the board cut "
+     "out on tabs, so it is still one piece. On the laser the copper is "
+     "etched lined up on those holes."),
+    ("mask", "Solder mask", "Openings over the pads",
+     "The mask openings, lined up on the same holes."),
+    ("silk", "Silkscreen", "The component side",
+     "The silkscreen artwork, lined up on the same holes."),
+    ("stencil", "Paste stencil", "Steel foil",
+     "Holes over every paste pad, cut from stainless foil."),
+)
+
+
 def build(state, *, double_sided=False, registration="dowel", holes=None,
           align_holes=None, dowels=None, bed_bite=None, flip_axis="vertical",
-          autorun=False):
+          autorun=True, method="mill_flat", laser_jobs=()):
     """The plan for the job currently in ``state``.
 
     ``holes`` overrides the hole list used to name per-diameter drill files
     (the double-sided path drills the placed layout's holes, not the board's).
     ``dowels`` (a DowelSpec), ``bed_bite`` and ``flip_axis`` only word the
     dowel and flip steps: which pins, how deep, and which way the board turns.
+
+    ``method`` is how the copper is made (engine/method.py). On the laser
+    the mill drills the holes and cuts the board out on its tabs, and the
+    copper is a laser row; ``laser_jobs`` are the laser's rows this board
+    has the layers for ("traces", "mask", "silk", "stencil").
     """
+    laser = method == "laser"
+    if laser:
+        double_sided = False       # the holes go through: one side on the mill
     ext = BACKENDS[state.machine].ext
     name = state.name or "board"
     trace, drill, cutout = state.trace, state.drill, state.cutout
@@ -313,34 +347,33 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     seq.add(Step("setup", "tool", "Set up the job",
                  detail=(f"{boards} boards on one sheet, copper, tool, placement"
                          if boards > 1 else "Board, copper, tool, placement"),
-                 op="board"))
+                 op="board", group="prepare"))
     seq.add(Step("checks", "tool", "Check before cutting",
-                 detail="Fit, depth, reach, shorts", op="board"))
+                 detail="Fit, depth, reach, shorts", op="board",
+                 group="prepare"))
     if autorun:
-        # Automatic mode, when it is switched on: everything below still
-        # works by hand, this step just does it all.
-        seq.add(Step("autorun", "tool", "Run it all, automatically",
-                     detail=("Finds the stock, probes, cuts - you only flip"
-                             if double_sided else
-                             "Finds the stock, probes, cuts the whole board"),
-                     op="board"))
+        # The run: it finds the stock, levels, cuts, asks for the flip and
+        # stops before the cut-out by itself. The steps below it are the same
+        # run, one step at a time.
+        if laser:
+            title, detail = ("Drill and cut out",
+                             "Holes and outline, on tabs - stays in the sheet")
+        else:
+            title = "Mill it"
+            detail = ("Finds the stock, probes, cuts - you only flip"
+                      if double_sided else
+                      "Finds the stock, probes, cuts the whole board")
+        seq.add(Step("autorun", "tool", title, detail=detail, op="board",
+                     machine="mill", group="run"))
 
     # -- the origin, which nothing works without ---------------------------
-    # The dry run holds the bit 5 mm above the WORK Z ZERO, so it means nothing
-    # until that zero exists - and VPanel will not output a file without an
-    # origin either. This step was missing entirely: the plan opened with the
-    # dry run and told you to fit a bit afterwards.
+    # VPanel will not output a file without an origin, and every depth is
+    # measured from it.
     first_tool = drill_tool if double_sided else trace_tool
     seq.hand("origin", f"Fit the {tool_label(first_tool)}, set the Z origin",
              "Z on the copper, in G54. Never re-zero XY: it stays at the "
              "machine origin.",
              tool=first_tool, note=ORIGIN_NOTE)
-
-    # -- step 0 is the same on both paths, and it is deliberately first -----
-    seq.run("airpass", "Dry run", ordinal=0, op="airpass",
-            file=f"{name}_airpass{ext}",
-            detail="Spindle off, bit held 5 mm up, tracing the outline",
-            note=AIRPASS_NOTE)
 
     if not double_sided:
         # One bit for traces and holes: the lab drills first (config.drill_first,
@@ -373,13 +406,25 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                          "stop touching. This is the pass that decides whether the "
                          "board works, and the one bed levelling exists for.")
 
-        for part in ((_drill, _traces) if first else (_traces, _drill)):
-            part()
+        if laser:
+            # The copper is the laser's: the mill drills, then cuts out.
+            t_no, d_no = None, 1
+            _drill()
+        else:
+            for part in ((_drill, _traces) if first else (_traces, _drill)):
+                part()
 
-        seq.run("cutout_run", "Cut the board out", ordinal=3, op="cutout",
-                file=f"{name}_cutout{ext}", tool=cutout_tool,
-                bit=cutout.bit_diameter, detail=_cutout_detail(cutout),
-                caution="Runs last - it frees the board", note=CUTOUT_NOTE)
+        if laser:
+            seq.run("cutout_run", "Cut the board out", ordinal=2, op="cutout",
+                    file=f"{name}_cutout{ext}", tool=cutout_tool,
+                    bit=cutout.bit_diameter, detail=_cutout_detail(cutout),
+                    caution="On its tabs - the sheet goes to the laser whole",
+                    note=CUTOUT_LASER_NOTE)
+        else:
+            seq.run("cutout_run", "Cut the board out", ordinal=3, op="cutout",
+                    file=f"{name}_cutout{ext}", tool=cutout_tool,
+                    bit=cutout.bit_diameter, detail=_cutout_detail(cutout),
+                    caution="Runs last - it frees the board", note=CUTOUT_NOTE)
     else:
         fiducial = registration == "fiducial"
         grid = (not fiducial and dowels is not None
@@ -473,22 +518,31 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                 caution="Runs last - it frees the board and the dowel waste",
                 note=CUTOUT_NOTE)
 
-    seq.add(Step("laser", "tool", "xTool F1 Ultra",
-                 detail="Traces, solder mask, silkscreen, stencil",
-                 op="board"))
+    # The laser's rows: the copper on a laser board, and on any board the
+    # mask, the silkscreen and the stencil its folder has the layers for.
+    for kind, title, detail, note in LASER_JOBS:
+        if kind not in laser_jobs or (kind == "traces" and not laser):
+            continue
+        seq.add(Step(f"laser_{kind}", "laser", title, detail=detail,
+                     op="board", machine="laser", group="laser", note=note))
+    seq.add(Step("rework", "tool", "Fix spots",
+                 detail="Box what did not cut through, and run it again",
+                 op="rework", group="after"))
     seq.add(Step("level", "tool", "Level the bed",
                  detail="Measure the surface so cut depth follows it",
-                 op="level"))
-    seq.add(Step("rework", "tool", "Rework",
-                 detail="Box up spots on a cut board and machine them again",
-                 op="rework"))
+                 op="level", group="after"))
     if not double_sided:
         # Not part of this job's run: a different job on the same Gerbers,
         # for a board whose copper was made elsewhere (etched on the laser)
         # and only needs its holes. It writes its own file when asked.
         seq.add(Step("fitdrill", "tool", "Drill a board made elsewhere",
                      detail="Measure three pads; the holes move onto the board",
-                     op="fitdrill"))
+                     op="fitdrill", group="after"))
+    for st in seq.steps:
+        if st.group is None:
+            st.group = "steps"
+        if st.machine is None and st.kind in ("run", "handoff"):
+            st.machine = "mill"
 
     plan = Plan(steps=seq.steps, double_sided=double_sided,
                 registration=registration, ext=ext)
