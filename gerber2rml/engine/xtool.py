@@ -70,6 +70,31 @@ def to_bed(ring_coords, origin, height):
     return [(ox + x, oy + (height - y)) for x, y in ring_coords]
 
 
+def outline_rings(outline):
+    """Every ring of a board outline: a Polygon, or a MultiPolygon with one
+    polygon per board when a panel goes to the laser as one job."""
+    for poly in getattr(outline, "geoms", [outline]):
+        yield poly.exterior
+        yield from poly.interiors
+
+
+def _outline_on_bed(art, origin, h):
+    """The outline's area on the bed: each board's, joined."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    return unary_union([Polygon(to_bed(list(p.exterior.coords), origin, h)).buffer(0)
+                        for p in getattr(art.outline, "geoms", [art.outline])])
+
+
+def _exteriors(area):
+    """The outside edge of an area: one ring, or one per board of a panel."""
+    from shapely.geometry import MultiLineString
+    parts = list(getattr(area, "geoms", [area]))
+    if len(parts) == 1:
+        return parts[0].exterior
+    return MultiLineString([list(p.exterior.coords) for p in parts])
+
+
 def stencil_paths(art, origin, only=None):
     """(holes, outline) as closed point lists on the bed. ``only``, a set of
     indices into ``art.apertures``, keeps just those holes: a re-cut."""
@@ -81,7 +106,7 @@ def stencil_paths(art, origin, only=None):
         for ring in (poly.exterior, *poly.interiors):
             holes.append(to_bed(list(ring.coords), origin, h))
     outline = [to_bed(list(r.coords), origin, h)
-               for r in (art.outline.exterior, *art.outline.interiors)]
+               for r in outline_rings(art.outline)]
     return holes, outline
 
 
@@ -1125,7 +1150,7 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     _, h = art.size
     bed_groups = [[to_bed(rg, origin, h) for rg in grp] for grp in cache[key]]
     outline = [to_bed(list(r.coords), origin, h)
-               for r in (art.outline.exterior, *art.outline.interiors)]
+               for r in outline_rings(art.outline)]
     return bed_groups, outline
 
 
@@ -1313,14 +1338,14 @@ def proof_in_waste(art, origin, recipe=None, *, margin=PROOF_WASTE_MARGIN,
     from shapely.geometry import Point, Polygon, box
     recipe = recipe or DEFAULT_TRACES_RECIPE
     _, h = art.size
-    outline = Polygon(to_bed(list(art.outline.exterior.coords), origin, h)).buffer(0)
+    outline = _outline_on_bed(art, origin, h)
     near = _drills_on_bed(art, origin)
     if len(near) < 2:
         x0, y0, x1, y1 = outline.bounds
         near = [(x0, y0), (x1, y1), (x0, y1), (x1, y0)]
     near = [near[k] for k in spread(near, n)]
-    lane = outline.buffer(margin + size / 2).exterior
-    edge = outline.exterior
+    lane = _exteriors(outline.buffer(margin + size / 2))
+    edge = _exteriors(outline)
     marks, inside, paths = [], [], []
     step = max(recipe.stepover, 0.02)
     for c in near:
@@ -1366,7 +1391,7 @@ def proof_in_area(art, origin, recipe=None, *, inset=PROOF_AREA_INSET,
     from shapely.geometry import Polygon, box
     recipe = recipe or DEFAULT_TRACES_RECIPE
     _, h = art.size
-    outline = Polygon(to_bed(list(art.outline.exterior.coords), origin, h)).buffer(0)
+    outline = _outline_on_bed(art, origin, h)
     x0, y0, x1, y1 = outline.bounds
     d = inset + size / 2
     corners = [(x0 + d, y0 + d), (x1 - d, y1 - d), (x0 + d, y1 - d), (x1 - d, y0 + d)]
