@@ -29,12 +29,16 @@ for them, and a run waits for the newest before it starts (``_settle``).
 The page is a page of the main window (``embedded=True``, switched with the
 mill's page there) and, for ``srm-cam-laser``, a window of its own. Ctrl+Z
 undoes a move or a turn (``undo.PlacementUndo``).
+
+Beside the main window's rail it has to fit a 1366 px laptop: the bars above
+and below the bed go onto two rows when there is no room for one
+(``_Reflow``), and the side panel wraps its text and only scrolls up and down.
 """
 import json
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QThread, Signal
+from PySide6.QtCore import QPointF, QRectF, QSettings, QSize, Qt, QThread, Signal
 from PySide6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath, QPen,
                            QPixmap, QPolygonF)
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
@@ -253,8 +257,9 @@ class _StencilItem(QGraphicsPathItem):
         self._on_move = on_move
         w, h = art.size
         outline = QPainterPath()
-        for ring in (art.outline.exterior, *art.outline.interiors):
+        for ring in _rings(art.outline):        # each board of a panel
             outline.addPolygon(QPolygonF([QPointF(x, h - y) for x, y in ring.coords]))
+            outline.closeSubpath()
         self.setPath(outline)
         self.setPen(_pen(theme.OUTLINE, 2.2))
         self.setBrush(QBrush(_c(theme.INK, 0.62)))
@@ -363,10 +368,14 @@ class _BedView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.scale(f, f)
 
+    on_resize = None                    # the page keeps its legend in the corner
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if self._fitted:
             self.fit()
+        if self.on_resize is not None:
+            self.on_resize()
 
     def wheelEvent(self, e):
         self.zoom(1.2 if e.angleDelta().y() > 0 else 1 / 1.2)
@@ -481,6 +490,99 @@ def _row(*items, gap=None):
     return w
 
 
+def _group(*items, gap=None):
+    """A row of widgets that stays together when a bar wraps."""
+    w = _row(*items, gap=gap)
+    w.setObjectName("barGroup")
+    w.setStyleSheet("QWidget#barGroup { background: transparent; }")
+    return w
+
+
+class _Reflow(QFrame):
+    """A bar on one row when there is room, on two when there is not.
+
+    ``lead`` and ``tail`` share a row, at its two ends. ``move`` sits between
+    them when it fits, and on a row of its own when it does not (above them
+    with ``move_first``). ``room``: the width ``move`` needs on the shared row;
+    by default what it asks for. ``joint`` (a divider) shows only on one row.
+
+    The bar never asks for more width than the two-row form needs, so the
+    page can be as narrow as a laptop screen allows."""
+
+    def __init__(self, lead, move, tail, *, move_first=False, stretch=0,
+                 room=None, joint=None, margins=(0, 0, 0, 0), spacing=0,
+                 parent=None):
+        super().__init__(parent)
+        self._lead, self._move, self._tail = lead, move, tail
+        self._stretch, self._room, self._joint = stretch, room, joint
+        self._margins, self._spacing = margins, spacing
+        v = QVBoxLayout(self)
+        v.setContentsMargins(*margins)
+        v.setSpacing(spacing)
+        self._shared = QHBoxLayout()
+        self._shared.setSpacing(spacing)
+        self._shared.addWidget(lead)
+        if joint is not None:
+            self._shared.addWidget(joint)
+        self._shared.addStretch(1)
+        self._shared.addWidget(tail)
+        self._own = QHBoxLayout()
+        self._own.setSpacing(spacing)
+        rows = (self._own, self._shared) if move_first else (self._shared, self._own)
+        for r in rows:
+            v.addLayout(r)
+        self.one_row = None
+        self._arrange(False)
+
+    def _need(self):
+        """The width the bar needs on one row."""
+        m = self._margins
+        room = self._room or self._move.sizeHint().width()
+        joint = (self._joint.sizeHint().width() + self._spacing
+                 if self._joint is not None else 0)
+        return (m[0] + m[2] + self._lead.sizeHint().width() + room + joint
+                + self._tail.sizeHint().width() + 3 * self._spacing)
+
+    def _arrange(self, one_row):
+        if one_row == self.one_row:
+            return
+        self.one_row = one_row
+        stretch_at = self._shared.count() - 2     # the stretch before ``tail``
+        if one_row:
+            self._own.removeWidget(self._move)
+            self._shared.insertWidget(stretch_at, self._move, self._stretch)
+            self._shared.setStretch(stretch_at + 1, 0 if self._stretch else 1)
+        else:
+            self._shared.removeWidget(self._move)
+            self._shared.setStretch(self._shared.count() - 2, 1)
+            self._own.addWidget(self._move, self._stretch,
+                                Qt.Alignment() if self._stretch else Qt.AlignLeft)
+        if self._joint is not None:
+            self._joint.setVisible(one_row)
+        self.updateGeometry()
+
+    def reflow(self):
+        self._arrange(self.width() >= self._need())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.reflow()
+
+    def minimumSizeHint(self):
+        m = self._margins
+        two = max(self._lead.minimumSizeHint().width() + self._spacing
+                  + self._tail.minimumSizeHint().width(),
+                  self._move.minimumSizeHint().width())
+        return QSize(m[0] + m[2] + two, super().minimumSizeHint().height())
+
+
+def _rings(geom):
+    """Every ring of a Polygon or of each board in a MultiPolygon (a panel)."""
+    for poly in getattr(geom, "geoms", [geom]):
+        yield poly.exterior
+        yield from poly.interiors
+
+
 class _Into:
     """A layout that takes rows the way a Section does."""
 
@@ -520,6 +622,12 @@ class StencilLaserDialog(QDialog):
     """``art`` is a :class:`gerber2rml.engine.stencil.StencilArtwork` or an
     :class:`xtool.LaserArt` (traces, solder mask, silkscreen, or stencil)."""
 
+    # The job on the page changed: "traces", "mask", "silk" or "stencil".
+    kind_changed = Signal(str)
+    # The isolation rings the traces recipe etches; the main window writes
+    # its traces files with the same number.
+    rings_changed = Signal(int)
+
     def __init__(self, art=None, parent=None, laser=None, name="stencil",
                  jobs=None, dxf=None, embedded=False):
         super().__init__(parent)
@@ -550,6 +658,7 @@ class StencilLaserDialog(QDialog):
         self._rework_items = []
         self.kind = art.kind
         self.k = KINDS[self.kind]
+        self._made_with = self._host_setting(self.kind)
         self._jobs = jobs
         self._source = art
         self.base_art = art
@@ -602,6 +711,7 @@ class StencilLaserDialog(QDialog):
         self.view.context.connect(self._context)
         self.view.boxed.connect(self._boxed)
         self.view.reference_clicked.connect(self._pick_reference)
+        self.view.on_resize = lambda: hasattr(self, "legend") and self._place_legend()
         self.legend = _Legend([(theme.PATH, _LEGEND_NOUN[self.kind]),
                                (theme.PATH_FAR, "selected"),
                                (theme.TOOL, "cutting now"),
@@ -609,13 +719,9 @@ class StencilLaserDialog(QDialog):
                                (theme.OUTLINE, "board edge")], self.view)
 
         # -- header --------------------------------------------------------
-        header = QFrame()
-        header.setObjectName("header")
-        header.setStyleSheet(f"QFrame#header {{ background: {theme.PANEL};"
-                             f" border-bottom: 1px solid {theme.RULE}; }}")
-        hh = QHBoxLayout(header)
-        hh.setContentsMargins(theme.GAP_M, theme.GAP_S, theme.GAP_M, theme.GAP_S)
-        hh.setSpacing(theme.GAP_S)
+        # Two rows on a laptop beside the main window's rail, one where there
+        # is room: the camera and the turns, then how a click on the bed acts
+        # and how the job is drawn.
         brand = QLabel("XTOOL F1 ULTRA")
         brand.setFont(theme.font("label"))
         brand.setStyleSheet(f"color: {theme.TEXT_3};")
@@ -635,6 +741,18 @@ class StencilLaserDialog(QDialog):
             "Autofocus", on=lambda: self.autofocus(),
             tip="Measure the height under the focus point with the blue dot "
                 "and move the head")
+        # Focus over the whole board, not only its middle: heights measured
+        # with the blue dot at a grid of points, and the run split into bands
+        # each refocused (engine/laser_focus.py).
+        from gerber2rml.gui2 import laser_focus_ui as _lfu
+        self.focus_map_btn = widgets.button(
+            "Focus map", on=lambda: _lfu.measure(self),
+            tip="Measure the height with the blue dot at the corners, the "
+                "edges and the middle of the job. A board that is tilted or "
+                "bowed is then run in bands, the head refocused for each, so "
+                "the edges come out as clean as the middle. Autofocus first.")
+        self._focus_map = None
+        self._focus_marks = []
         self.align_btn = widgets.button(
             "Align", on=self.align,
             tip="Take a photo and find the enabled automatic references. "
@@ -650,8 +768,10 @@ class StencilLaserDialog(QDialog):
         self.redo_btn = widgets.button(
             "Redo", kind="ghost", on=self.redo_place,
             tip="Do it again (Ctrl+Shift+Z or Ctrl+Y)")
-        self.all_btn = widgets.button("All", kind="ghost", on=self.select_all)
-        self.none_btn = widgets.button("None", kind="ghost", on=self.select_none)
+        self.all_btn = widgets.button("All", kind="ghost", on=self.select_all,
+                                      tip="Select every shape")
+        self.none_btn = widgets.button("None", kind="ghost", on=self.select_none,
+                                       tip="Select nothing: the run does the whole job")
         fit = widgets.button("Fit", on=self.view.fit, tip="Show the whole bed")
         self.look_switch = widgets.Segmented([
             ("filled", "Filled", "The stencil as it will be cut"),
@@ -660,15 +780,19 @@ class StencilLaserDialog(QDialog):
             ("hidden", "Hidden", "Only the photo (H)")], "filled")
         self.look_switch.changed.connect(self.set_look)
         self.link = widgets.Chip("Laser not asked yet", "idle")
-        for w in (brand, widgets.vrule(), self.photo_btn, self.focus_btn,
-                  self.align_btn,
-                  widgets.vrule(), self.mode, self.all_btn, self.none_btn,
-                  widgets.vrule(), self.rot_l, self.rot_r, self.undo_btn,
-                  self.redo_btn, fit,
-                  widgets.vrule(), self.look_switch):
-            hh.addWidget(w)
-        hh.addStretch(1)
-        hh.addWidget(self.link)
+        brand_rule = widgets.vrule()
+        tools = _group(brand, brand_rule, self.photo_btn, self.focus_btn,
+                       self.focus_map_btn, self.align_btn, widgets.vrule(), self.rot_l, self.rot_r,
+                       widgets.vrule(), self.undo_btn, self.redo_btn, fit)
+        views = _group(self.mode, self.all_btn, self.none_btn, widgets.vrule(),
+                       self.look_switch)
+        header = _Reflow(tools, views, self.link, joint=widgets.vrule(),
+                         margins=(theme.GAP_M, theme.GAP_S, theme.GAP_M, theme.GAP_S),
+                         spacing=theme.GAP_S)
+        header.setObjectName("header")
+        header.setStyleSheet(f"QFrame#header {{ background: {theme.PANEL};"
+                             f" border-bottom: 1px solid {theme.RULE}; }}")
+        self.header = header
 
         # -- inspector -----------------------------------------------------
         panel = QWidget()
@@ -683,6 +807,8 @@ class StencilLaserDialog(QDialog):
             ("stencil", "Stencil", "Cut the solder paste stencil")], self.kind)
         for b in self.job_switch.findChildren(QPushButton):
             b.setSizePolicy(QSizePolicy.Ignored, b.sizePolicy().verticalPolicy())
+            # Four to a narrow panel: the words need the room, not the padding.
+            b.setStyleSheet("QPushButton#seg { padding: 5px 2px; }")
         self.job_switch.changed.connect(self.switch_kind)
         pv.addWidget(self.job_switch)
 
@@ -711,7 +837,11 @@ class StencilLaserDialog(QDialog):
         self.gerber_btn = widgets.button(
             "Open Gerber folder…", kind="ghost", on=self.open_gerber,
             tip="A KiCad Gerber folder: traces, mask, silkscreen and stencil")
-        s.add(_row(self.gerber_btn, self.dxf_btn))
+        self.open_row = _row(self.gerber_btn, self.dxf_btn)
+        s.add(self.open_row)
+        # In the main window the board is opened there, once, for the mill
+        # and the laser alike; the buttons are for srm-cam-laser on its own.
+        self.open_row.setVisible(not (embedded and parent is not None))
         self.empty_hint = widgets.hint(
             "Nothing loaded. Open a Gerber folder or a DXF to etch, or drag the "
             "calibration area onto the material and run Calibrate the camera "
@@ -723,7 +853,6 @@ class StencilLaserDialog(QDialog):
                 "at a time")
         s.add(self.empty_cal_btn)
         self.empty_hint.setVisible(self._empty)
-        self.empty_cal_btn.setVisible(self._empty)
         self.copper_side = QComboBox()
         self.copper_side.addItem("B.Cu — bottom copper", "bottom")
         self.copper_side.addItem("F.Cu — top copper", "top")
@@ -741,8 +870,7 @@ class StencilLaserDialog(QDialog):
         self.flip_box.toggled.connect(self._orientation)
         self.orient_row = _row(self.mirror_box, self.flip_box)
         s.add(self.orient_row)
-        self.skip_auto = QCheckBox("Skip trenches that isolate nothing "
-                                   "(board edge, mounting holes)")
+        self.skip_auto = QCheckBox("Skip trenches that isolate nothing")
         self.skip_auto.setToolTip(
             "A trench with the pour on one side and only bare copper on the other "
             "(round the board's edge, round a mounting hole) separates nothing. "
@@ -817,6 +945,7 @@ class StencilLaserDialog(QDialog):
             help="Enough for the camera to see the mark, far fewer than the job."))
         s.add(self.proof_more)
         manual = widgets.Disclosure("Match points by hand", key="laser-manual-points")
+        self.manual_refs = manual
         s.add(manual)
         s_manual, s = s, _Into(manual.body)     # the next rows go under the fold
         s.add(widgets.hint("Pick the same holes, pad centres, corners or marks in the "
@@ -843,6 +972,7 @@ class StencilLaserDialog(QDialog):
         s.add(_row(self.remove_ref_btn, self.clear_refs_btn, None))
         s = s_manual
         auto = widgets.Disclosure("Automatic alignment references", key="alignment-references")
+        self.auto_refs = auto
         auto.body.addWidget(widgets.hint("Tick only holes or shapes that already exist "
                                         "on the material. These picks do not change what gets etched."))
         self.auto_reference_source = QComboBox()
@@ -887,6 +1017,7 @@ class StencilLaserDialog(QDialog):
         pv.addWidget(s)
 
         s = widgets.Section("Camera")
+        self.camera_section = s
         self.off_x = widgets.Readout("Photo offset X", "")
         self.off_y = widgets.Readout("Photo offset Y", "")
         s.add(_row(self.off_x, self.off_y, None, gap=theme.GAP_L))
@@ -991,33 +1122,35 @@ class StencilLaserDialog(QDialog):
                                       on=self.delete_preset)
         self.recipe_more.body.addWidget(_row(None, self.save_btn, self.del_btn))
         self.calibrate_btn = widgets.button("Calibrate copper vectors…", on=self.open_copper_calibration)
-        self.calibrate_btn.setVisible(self.kind == "traces")
         self.recipe_more.body.addWidget(self.calibrate_btn)
         s.add(self.recipe_more)
         pv.addWidget(s)
         pv.addStretch(1)
+        # A long name in a list sets no width: the panel wraps, never scrolls
+        # sideways. The whole name is in the drop-down.
+        for c in panel.findChildren(QComboBox):
+            widgets._tame(c)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(panel)
         scroll.setFixedWidth(_INSPECTOR_W)
+        # Text wraps to the panel's width; it only ever scrolls up and down.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.inspector = scroll
         scroll.setObjectName("inspector")
         scroll.setStyleSheet(f"QScrollArea#inspector {{ background: {theme.PANEL};"
                              f" border-left: 1px solid {theme.RULE}; }}")
         panel.setStyleSheet(f"background: {theme.PANEL};")
 
         # -- the bar along the bottom ----------------------------------------
-        foot = QFrame()
-        foot.setObjectName("foot")
-        foot.setStyleSheet(f"QFrame#foot {{ background: {theme.PANEL};"
-                           f" border-top: 1px solid {theme.RULE}; }}")
-        fh = QHBoxLayout(foot)
-        fh.setContentsMargins(theme.GAP_M, theme.GAP_S + 2, theme.GAP_M, theme.GAP_S + 2)
-        fh.setSpacing(theme.GAP_L)
-        self.cursor_read = widgets.Readout("Cursor", "—", width=170)
-        self.sel_read = widgets.Readout("Holes", "—", width=110)
-        self.time_read = widgets.Readout("Estimate", "—", width=110)
+        # The readouts and the run buttons; what the page says goes between
+        # them, or on a line of its own above them when the page is narrow.
+        self.cursor_read = widgets.Readout("Cursor", "—", width=150)
+        self.sel_read = widgets.Readout("Holes", "—", width=100)
+        self.time_read = widgets.Readout("Estimate", "—", width=100)
         mid = QWidget()
         mid.setStyleSheet("background: transparent;")
         mv = QVBoxLayout(mid)
@@ -1026,6 +1159,7 @@ class StencilLaserDialog(QDialog):
         self.status = QLabel("")
         self.status.setFont(theme.font("small"))
         self.status.setWordWrap(True)
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.bar = QProgressBar()
         self.bar.setTextVisible(False)
         self.bar.setFixedHeight(4)
@@ -1038,14 +1172,21 @@ class StencilLaserDialog(QDialog):
             "Show where", on=self.trace,
             tip="The blue diode round the outline, faint enough not to mark steel")
         self.cut_btn = widgets.button("Cut", kind="primary", on=self.cut)
-        self.cut_btn.setMinimumWidth(170)
+        self.cut_btn.setMinimumWidth(150)
         self.stop_btn = widgets.button("STOP", kind="stop", on=self.stop)
         self.stop_btn.setMinimumWidth(112)
-        for w in (self.cursor_read, self.sel_read, self.time_read, widgets.vrule()):
-            fh.addWidget(w)
-        fh.addWidget(mid, 1)
-        for w in (self.photo_after, self.trace_btn, self.cut_btn, self.stop_btn):
-            fh.addWidget(w)
+        readouts = _group(self.cursor_read, self.sel_read, self.time_read,
+                          gap=theme.GAP_M)
+        runs = _group(self.photo_after, self.trace_btn, self.cut_btn,
+                      self.stop_btn, gap=theme.GAP_M)
+        foot = _Reflow(readouts, mid, runs, move_first=True, stretch=1, room=240,
+                       joint=widgets.vrule(),
+                       margins=(theme.GAP_M, theme.GAP_S + 2, theme.GAP_M, theme.GAP_S + 2),
+                       spacing=theme.GAP_L)
+        foot.setObjectName("foot")
+        foot.setStyleSheet(f"QFrame#foot {{ background: {theme.PANEL};"
+                           f" border-top: 1px solid {theme.RULE}; }}")
+        self.foot = foot
 
         # -- assemble --------------------------------------------------------
         middle = QHBoxLayout()
@@ -1069,12 +1210,37 @@ class StencilLaserDialog(QDialog):
         self._fill_presets(cfg.value(self._key("preset"), next(iter(self.k["presets"]))))
         self._build_item()
         self._busy(False)
+        self._tell_host_rings()
+        self.apply_tier()
         if embedded:
             brand.setVisible(False)         # the main window's header says it
+            brand_rule.setVisible(False)
         self.undo.on_change = self._sync_undo_buttons
         self.undo_act, self.redo_act = install_undo(self, self.undo_place,
                                                     self.redo_place)
         self._sync_undo_buttons()
+
+    # -- Novice and Pro ----------------------------------------------------
+    @staticmethod
+    def _pro():
+        from gerber2rml.gui2 import tier
+        return tier.is_full()
+
+    def apply_tier(self):
+        """Novice sees the page for running a job: Photo, Autofocus, Align,
+        the jobs, moving and turning, Run and STOP. Pro also gets saving and
+        deleting recipes, the copper and camera calibrations, and matching
+        points by hand. Call again when the profile changes."""
+        pro = self._pro()
+        for w in (self.save_btn, self.del_btn, self.manual_refs, self.auto_refs,
+                  self.camera_section):
+            w.setVisible(pro)
+        if not pro and self.view.pick_reference:
+            self.pick_refs_btn.setChecked(False)
+            self._toggle_reference_pick()
+        self._sync_recipe_widgets()
+        self._sync_empty()
+        self._sync_proof()
 
     # -- the bed picture -------------------------------------------------
     @staticmethod
@@ -1106,6 +1272,28 @@ class StencilLaserDialog(QDialog):
                     lbl.setFlag(QGraphicsItem.ItemIgnoresTransformations)
                     lbl.setPos(x, y)
                     self.scene.addItem(lbl)
+
+    def show_focus_points(self, points):
+        """The focus map on the bed: each measured point, and how far it was
+        from focus (mm, + above)."""
+        for item in self._focus_marks:
+            self.scene.removeItem(item)
+        self._focus_marks = []
+        for x, y, dz in points:
+            path = QPainterPath()
+            path.addEllipse(QPointF(x, y), 1.2, 1.2)
+            colour = theme.CAUTION if abs(dz) > 0.15 else theme.VERIFIED
+            marker = self.scene.addPath(path, _pen(colour, 1.6))
+            label = self.scene.addSimpleText(f"{dz:+.2f}")
+            label.setBrush(QBrush(_c(colour)))
+            label.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+            label.setPos(x + 1.4, y + 1.4)
+            for item in (marker, label):
+                item.setZValue(26)
+                item.setAcceptedMouseButtons(Qt.NoButton)
+                item.setToolTip("Measured with the blue dot: mm above focus "
+                                "at the head's height when measured")
+                self._focus_marks.append(item)
 
     def _make_focus_mark(self):
         p = QPainterPath()
@@ -1139,6 +1327,7 @@ class StencilLaserDialog(QDialog):
 
     def showEvent(self, e):
         super().showEvent(e)
+        self.refresh_from_host()
         self._place_legend()
         self.view.setFocus()            # the arrow keys move the stencil at once
 
@@ -1169,7 +1358,7 @@ class StencilLaserDialog(QDialog):
         self.density.setMaximum(10000 if is_traces else 1000)
         self.density.setDecimals(2 if is_traces else 0)
         if hasattr(self, "calibrate_btn"):
-            self.calibrate_btn.setVisible(is_traces)
+            self.calibrate_btn.setVisible(is_traces and self._pro())
         strat = self.strategy.currentData() or "concentric"
         is_hatch = is_traces and strat in ("moat", "rubout")
         self.copper_side_field.setVisible(is_traces)
@@ -1286,8 +1475,8 @@ class StencilLaserDialog(QDialog):
         self._say(f"Opened {folder.name}: {self.k['window']}.")
 
     def _sync_empty(self):
-        for w in (self.empty_hint, self.empty_cal_btn):
-            w.setVisible(self._empty)
+        self.empty_hint.setVisible(self._empty)
+        self.empty_cal_btn.setVisible(self._empty and self._pro())
 
     def open_dxf(self):
         """Copper traces from a DXF: the drawing as seen from above, F.Cu."""
@@ -1328,6 +1517,7 @@ class StencilLaserDialog(QDialog):
 
     def switch_kind(self, kind, force=False):
         if kind == self.kind and not force:
+            self.refresh_from_host()        # the same job, with today's settings
             return
         try:
             if kind == "traces" and (self._trace_side is not None
@@ -1353,6 +1543,10 @@ class StencilLaserDialog(QDialog):
         """A new job on the page as it stands: the main window's board after
         it changed, or a DXF. Where the work sits on the bed is kept."""
         art = as_laser_art(art)
+        if getattr(self, "_focus_map", None) is not None:
+            # Another board on the bed: its heights are not this one's.
+            from gerber2rml.gui2 import laser_focus_ui as _lfu
+            _lfu.clear(self)
         self._sums.cancel("rings")
         self._jobs = jobs
         self._dxf = Path(dxf) if dxf else None
@@ -1365,8 +1559,10 @@ class StencilLaserDialog(QDialog):
         self._apply_kind(art.kind, art)
 
     def _apply_kind(self, kind, new_art):
+        changed = kind != self.kind
         self.kind = kind
         self.k = KINDS[kind]
+        self._made_with = self._host_setting(kind)
         self.base_art = self._orient(new_art)
         self._clear_references()
         self.auto_reference_source.setCurrentIndex(1 if kind == "stencil" else 0)
@@ -1393,6 +1589,48 @@ class StencilLaserDialog(QDialog):
         self._fill_presets(cfg.value(self._key("preset"),
                                      next(iter(self.k["presets"]))))
         self._build_item()
+        if changed:
+            self.kind_changed.emit(kind)
+
+    # The main window's settings each job is built with. When one changes,
+    # the job on the page is built again (``refresh_from_host``).
+    _HOST_SETTINGS = {"stencil": "_stencil_kerf", "mask": "_mask_shrink"}
+
+    def _host_setting(self, kind):
+        name = self._HOST_SETTINGS.get(kind)
+        if name is None or self._host is None:
+            return None
+        return getattr(self._host, name, None)
+
+    def refresh_from_host(self):
+        """The job on the page again from the main window, if a setting it
+        is built with (the stencil's kerf, the mask's shrink) has changed
+        since. Where the work sits, its turn and the recipe are kept. True
+        when it was rebuilt."""
+        if (self._empty or self._dxf is not None or self._worker_running()
+                or self._host_setting(self.kind) == getattr(self, "_made_with", None)):
+            return False
+        try:
+            if callable(self._jobs):
+                new_art = self._jobs(self.kind)
+            elif self._host is not None and hasattr(self._host, "_laser_art_for"):
+                new_art = self._host._laser_art_for(self.kind)
+            else:
+                return False
+        except Exception as e:                  # noqa: BLE001 - shown in status bar
+            self._say(str(e), warn=True)
+            return False
+        self._made_with = self._host_setting(self.kind)
+        self.base_art = self._orient(new_art)
+        self._clear_references()
+        self._populate_auto_references()
+        self.art = xtool.rotated(self.base_art, self.turns, self.fine)
+        self.selected.clear()
+        self._sync_warnings()
+        self._build_item()
+        self._say(f"Updated the {self.k['window']} from the main window's "
+                  f"settings{f': {self.art.note}' if self.art.note else ''}.")
+        return True
 
     def _build_item(self):
         self._find_skips()
@@ -1878,6 +2116,9 @@ class StencilLaserDialog(QDialog):
         if e.key() == Qt.Key_H and not e.modifiers():
             self.set_look("filled" if self.look == "hidden" else "hidden")
             return
+        if e.key() == Qt.Key_Escape and self.embedded:
+            e.ignore()                  # the main window's: it may stop the laser
+            return
         super().keyPressEvent(e)
 
     def _paint(self, active=None, *, estimate=True):
@@ -2065,6 +2306,44 @@ class StencilLaserDialog(QDialog):
         self.recipe_lbl.setText(("Uncalibrated starting values · " if uncalibrated else "")
                                + ("Changed from the preset · " if changed else "") + what)
         self._estimate()
+        self._tell_host_rings()
+
+    def trace_rings(self):
+        """The isolation rings the traces job etches: the recipe's on the
+        page, or, on another job, the chosen traces preset's."""
+        if self.kind == "traces":
+            return self.offsets.value()
+        cfg = QSettings(*_SETTINGS)
+        name = cfg.value("preset_traces", next(iter(TRACES_PRESETS)))
+        presets = {k: _recipe_dict(v) for k, v in TRACES_PRESETS.items()}
+        try:
+            presets.update(json.loads(cfg.value("presets_traces", "{}")))
+        except (TypeError, ValueError):
+            pass
+        d = presets.get(name) or presets[next(iter(TRACES_PRESETS))]
+        return int(d.get("offsets", xtool.DEFAULT_TRACE_OFFSETS))
+
+    def _tell_host_rings(self):
+        """The recipe is the one place the ring count is set: the main window
+        gets it, so the traces files it writes match what this page etches."""
+        n = int(self.trace_rings())
+        host = self._host
+        if host is not None and hasattr(host, "_laser_offsets") \
+                and host._laser_offsets != n:
+            # The main window rebuilds the page's jobs when what they are built
+            # from changes; the rings are the page's own, so that is not a
+            # change to rebuild for.
+            current = (hasattr(host, "_laser_job_token")
+                       and getattr(host, "_laser_token", None) == host._laser_job_token())
+            if hasattr(host, "action_laser_offsets"):
+                host.action_laser_offsets(n)
+            else:
+                host._laser_offsets = n
+            if current:
+                host._laser_token = host._laser_job_token()
+        if n != getattr(self, "_rings_told", None):
+            self._rings_told = n
+            self.rings_changed.emit(n)
 
     def _estimate(self):
         """The run time in the bar. Worked out on the thread pool once the
@@ -2532,8 +2811,9 @@ class StencilLaserDialog(QDialog):
                if holes else
                "Works on a blank. Drag the drawing onto the blank first; the "
                "marks go beside it or on copper the job removes anyway."))
-        for w in (self.proof_hint, self.proof_btn, self.proof_more):
+        for w in (self.proof_hint, self.proof_btn):
             w.setVisible(on)
+        self.proof_more.setVisible(on and self._pro())
         if not on:
             self.proof_note.setVisible(False)
 
@@ -2860,10 +3140,49 @@ class StencilLaserDialog(QDialog):
         take_photo = self.photo_after.isChecked()
         before = self._raw_rgb
 
+        fmap = getattr(self, "_focus_map", None)
+        zones = None
+        if fmap is not None and fmap.points:
+            from gerber2rml.engine import laser_focus as _lf
+            from gerber2rml.gui2 import laser_focus_ui as _lfu
+            recipe = self._run_recipe()
+            if self.kind == "traces":
+                zones = _lfu.zones_for(self, sorted(picked))
+                origin = self.origin()
+
+                def build(idx):
+                    return xtool.traces_job(self.art, origin, recipe, only=idx)
+            else:
+                shapes = self._shapes()
+                _, outline = xtool.stencil_paths(self.art, self.origin())
+                zones = _lf.zone_indices(
+                    [(p.centroid.x, p.centroid.y) for p in shapes], fmap)
+
+                def build(idx):
+                    return xtool.fill_job([shapes[i] for i in sorted(idx)],
+                                          outline, recipe)
+
         def work(progress):
             z = self.laser.z()
-            self.laser.run(job.text)
-            self.laser.wait(job.seconds * 2 + 120, progress=progress)
+            if zones is not None and len(zones) > 1:
+                from gerber2rml.gui2 import laser_focus_ui as _lfu
+                z = _lfu.run_zoned(self.laser, fmap, zones, build,
+                                   progress=progress,
+                                   timeout_for=lambda j: j.seconds * 2 + 120)
+            else:
+                if zones is not None and fmap is not None:
+                    # One band: the whole job at its middle height.
+                    dz = zones[0][0] if zones else 0.0
+                    if abs(dz) > 0.02:
+                        self.laser._json("POST", "/device/modeSwitch",
+                                         {"state": "P_AUTOFOCUS"})
+                        try:
+                            z = self.laser._goto_z(fmap.z + dz)
+                        finally:
+                            self.laser._json("POST", "/device/modeSwitch",
+                                             {"state": "P_IDLE"})
+                self.laser.run(job.text)
+                self.laser.wait(job.seconds * 2 + 120, progress=progress)
             return z, (self._photo_after_job(before) if take_photo else None)
 
         def done(res):
@@ -2879,6 +3198,7 @@ class StencilLaserDialog(QDialog):
         self._start(work, f"{self.k['busy']}: {what}, {job.passes} passes…", done)
 
     def stop(self):
+        """Stop the laser, whatever it is doing: what STOP does."""
         try:
             self.laser.stop()
             self._say("Stopped.", warn=True)
@@ -2935,7 +3255,7 @@ class StencilLaserDialog(QDialog):
         self._say(msg, warn=warn)
 
     def _busy(self, on):
-        for b in (self.photo_btn, self.focus_btn, self.align_btn, self.set_focus_btn,
+        for b in (self.photo_btn, self.focus_btn, self.focus_map_btn, self.align_btn, self.set_focus_btn,
                   self.learn_btn, self.reset_off_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
                   self.mode, self.job_switch, self.strategy,
@@ -2959,6 +3279,11 @@ class StencilLaserDialog(QDialog):
 
     def _worker_running(self):
         return self._worker is not None and self._worker.isRunning()
+
+    def is_running(self):
+        """True while the laser is busy with something this page started:
+        a run, a photo, autofocus, a proof."""
+        return self._worker_running()
 
     def reject(self):
         if self.embedded:

@@ -60,7 +60,10 @@ def _redirect_output():
     return path
 
 
-def main(argv=None):
+def main(argv=None, *, start_on=None, start_dxf=None):
+    """``start_on``: a laser job ("traces", "mask", "silk", "stencil") to
+    open the window on, beside the rail - how ``srm-cam-laser`` starts.
+    ``start_dxf``: a DXF of copper traces to open on the laser page."""
     log = _redirect_output()
     try:
         from PySide6.QtWidgets import QApplication
@@ -128,6 +131,17 @@ def main(argv=None):
     # Load or Open would.
     if wanted:
         QTimer.singleShot(0, lambda: w.open_from_outside(wanted[0]))
+    if start_on or start_dxf:
+        def _laser():
+            if start_dxf:
+                w.open_laser_dxf(start_dxf)
+                return
+            key = f"laser_{start_on}"
+            if w.plan is not None and w.plan.by_key(key) is not None:
+                w.select_step(key)
+            else:
+                w.show_mode("laser")
+        QTimer.singleShot(100, _laser)
     try:
         w._handoff = handoff.Server(w.open_from_outside, parent=w)
         w._handoff.listen()
