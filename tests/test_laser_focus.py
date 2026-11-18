@@ -196,3 +196,62 @@ def test_the_laser_page_runs_a_tilted_board_in_bands(qt_app, monkeypatch):
     assert zs[-1] == 10.0                       # back where it was measured
     assert min(zs[:-1]) < 10.2 and max(zs[:-1]) > 10.4
     d.close()
+
+
+def _page(qt_app, monkeypatch):
+    from shapely.geometry import box
+    from gerber2rml.engine import xtool
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "laser-focus"))
+    art = xtool.LaserArt(kind="traces", outline=box(0, 0, 120, 80),
+                         apertures=[box(5, 5, 9, 9)], mirrored=False)
+    return sl.StencilLaserDialog(art)
+
+
+def test_the_focus_cross_can_be_dragged_to_any_spot(qt_app, monkeypatch):
+    """Dropped somewhere else, Autofocus measures there - on the grid."""
+    d = _page(qt_app, monkeypatch)
+    middle = d.focus_point()
+    d._focus_mark.setPos(23.0, 141.0)
+    d._focus_dropped(23.0, 141.0)
+    assert d.focus_point() == (20, 140) != middle
+    assert d._focus_mark.pos().x() == 20 and d._focus_mark.pos().y() == 140
+    asked = []
+    d.autofocus = lambda at=None: asked.append(at or d.focus_point())
+    d.focus_btn.click()
+    assert asked == [(20, 140)]
+    d.set_focus_point(None)                     # back to the middle
+    assert d.focus_point() == middle
+    d.close()
+
+
+def test_focus_on_the_boxes_focuses_where_the_rework_is(qt_app, monkeypatch):
+    d = _page(qt_app, monkeypatch)
+    assert not d.rework_focus_btn.isEnabled()   # nothing to focus on yet
+    d.rework_boxes = [(148.0, 66.0, 156.0, 72.0)]
+    d._draw_rework()
+    assert d.rework_focus_btn.isEnabled()
+    asked = []
+    d.autofocus = lambda at=None: asked.append(d.focus_point())
+    d.rework_focus_btn.click()
+    assert asked == [(150, 70)]
+    d.close()
+
+
+def test_the_focus_moves_with_the_design(qt_app, monkeypatch):
+    """At the middle by default, or where it was put on the board: moving
+    the design takes the focus point with it."""
+    d = _page(qt_app, monkeypatch)
+    d.x.setValue(20.0)
+    d.y.setValue(20.0)                    # the 120 x 80 job's middle: 80, 60
+    assert d.focus_point() == (80, 60)
+    d.x.setValue(60.0)                    # 40 mm to the right
+    assert d.focus_point() == (120, 60)
+    assert d._focus_mark.pos().x() == 120
+    d._focus_dropped(150.0, 60.0)         # 30 mm right of the middle
+    d.x.setValue(20.0)
+    d.y.setValue(40.0)                    # the design moves 40 left, 20 down
+    assert d.focus_point() == (110, 80)   # and the point with it
+    d.rotate(1)                           # a quarter turn clockwise
+    assert d.focus_point() == (80, 110)   # right of the middle -> below it
+    d.close()

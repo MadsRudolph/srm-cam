@@ -1095,6 +1095,20 @@ class StepPage(Page):
         self.note = widgets.body("")
         self.add(self.note)
 
+        # Pro: send this one job to the mill, as Mill it sends the lot -
+        # the stock found and the copper probed first, so it lands where
+        # the rest of the board is. No VPanel, no origin to set.
+        self.run_section = widgets.Section("Run it")
+        self.run_btn = widgets.button(
+            "Run this step on the mill", kind="primary", on=self._run,
+            tip="Finds the stock, probes the copper and cuts this step "
+                "alone, with the stock as it is set on Mill it.")
+        self.run_section.add(self.run_btn)
+        self.run_hint = widgets.hint("")
+        self.run_hint.setWordWrap(True)
+        self.run_section.add(self.run_hint)
+        self.add(self.run_section)
+
         facts = widgets.Section("What it needs")
         self.bit = widgets.Readout("Bit needed", "—")
         self.est = widgets.Readout("Cutting time", "—")
@@ -1145,6 +1159,37 @@ class StepPage(Page):
         if self.step:
             self.ctl.action_toggle_done(self.step.key)
 
+    def _run(self):
+        if self.step is not None:
+            self.ctl.action_run_step(self.step.key)
+            self.sync_run()
+
+    def sync_run(self):
+        """The Run button: Pro, a step the mill cuts, and nothing running."""
+        step = self.step
+        show = (step is not None and tier.is_full() and step.kind == "run"
+                and step.machine in (None, "mill")
+                and hasattr(self.ctl, "action_run_step"))
+        self.run_section.setVisible(bool(show))
+        if not show:
+            return
+        page = getattr(self.ctl, "autorun_page", None)
+        busy = page is not None and getattr(page, "_thread", None) is not None
+        self.run_btn.setEnabled(not busy)
+        self.run_btn.setText("Running… STOP on the bar stops it" if busy
+                             else "Run this step on the mill")
+        if page is not None and not busy:
+            where = ("in the corner bracket" if page.bracket()
+                     else "anywhere - the probe finds its corner")
+            self.run_hint.setText(
+                f"Stock {page.w_spin.value():g} × {page.h_spin.value():g} mm, "
+                f"{where}, as set on Mill it. The probe finds it"
+                + (" and measures the copper" if page.level_chk.isChecked()
+                   else "")
+                + ", then this step is cut alone - put the "
+                + (f"{step.bit:.2f} mm " if step.bit else "")
+                + "bit in first.")
+
     def set_step(self, step, plan):
         self.step = step
         label = f"Step {step.ordinal}" if step.numbered else "Step"
@@ -1175,6 +1220,7 @@ class StepPage(Page):
             self.zero_note.setText(
                 "Re-zero Z after every bit change. Never re-zero XY.")
         self.zero_note.setVisible(step.bit is not None)
+        self.sync_run()
         self._rebuild_params(step)
 
     def _rebuild_params(self, step):

@@ -820,6 +820,18 @@ class AutoRunPage(inspector.Page):
                         lambda: setattr(ctl, "_fid_diameter", want)))
         return out
 
+    def _bit_in(self, step):
+        """A job with more than one bit: is this step's in the collet? The
+        stock is found and the surface probed with whatever is in it."""
+        from gerber2rml.gui2 import dialogs
+        from gerber2rml.gui2.runplan import tool_label
+        return dialogs.confirm(
+            self, "Is the right bit in?",
+            f"{step.title} cuts with the {tool_label(step.tool)}. Put it in "
+            f"the collet before you start: the probe finds the stock and the "
+            f"copper's height with the bit that is in.",
+            "It is in - start")
+
     def _double_settings_ok(self):
         """In Pro the job's own choices are never changed in silence: Start
         says what the run needs and asks."""
@@ -1264,11 +1276,14 @@ class AutoRunPage(inspector.Page):
             self.click_lbl.setText("Click anywhere on the stock, on the "
                                    "stage. Not near an edge.")
         else:
-            self.pick_btn.setText("Click where it is")
+            self.pick_btn.setText("Start the probe somewhere else")
             if self.ctl.stage.mode == "stock":
                 self.ctl.set_stage_mode("place")
             if self._click is None:
-                self.click_lbl.setText("No spot clicked yet.")
+                self.click_lbl.setText(
+                    "Drag the board on the bed to where the copper is. The "
+                    "probe starts in its middle and finds the copper's "
+                    "corner by itself.")
 
     def on_stock_click(self, x, y):
         self._click = (x, y)
@@ -1344,7 +1359,13 @@ class AutoRunPage(inspector.Page):
                  "level": 150.0 if self.level_chk.isChecked() else 2.0,
                  "level_top": 150.0 if self.level_chk.isChecked() else 2.0}
         out = []
+        only = getattr(self, "_only", None)
+        top = {k for k, _l in src.top_steps()} if only else set()
         for key, label in self._plan_rows():
+            if only and key != only and key not in (
+                    ("stock", "stock_top", "fiducials", "level_top")
+                    if only in top else ("stock", "level")):
+                continue
             if key in fixed:
                 out.append((key, label, fixed[key]))
                 continue
@@ -1459,7 +1480,9 @@ class AutoRunPage(inspector.Page):
         if self.pick_btn.isChecked():
             self.pick_btn.setChecked(False)      # leaving the page disarms it
 
-    def start(self):
+    def start(self, only=None):
+        """Start the run; ``only`` a run step's key sends that one job
+        alone (Pro's steps, each from its own page)."""
         ctl = self.ctl
         if self._thread is not None:
             ctl.say("warn", "Already running. STOP stops it.")
@@ -1472,7 +1495,11 @@ class AutoRunPage(inspector.Page):
         if ctl.state.board is None:
             ctl.say("warn", "Load a board first.")
             return
-        if ctl.plan is not None and len(ctl.plan.tools) > 1:
+        one = ctl.plan.by_key(only) if (only and ctl.plan) else None
+        if only and (one is None or one.kind != "run"):
+            ctl.say("warn", "There is no step to run there.")
+            return
+        if one is None and ctl.plan is not None and len(ctl.plan.tools) > 1:
             # The run never stops for a bit change: one bit cuts it all.
             ctl.say("fail", "This tool profile needs %d different bits, and "
                             "the run uses the one in the collet for "
@@ -1492,6 +1519,9 @@ class AutoRunPage(inspector.Page):
         else:
             start_click = self._click
         if ctl._double and not self._double_settings_ok():
+            return
+        if one is not None and ctl.plan is not None \
+                and len(ctl.plan.tools) > 1 and not self._bit_in(one):
             return
         sim = simmachine.is_sim(port)
         if sim:
@@ -1523,6 +1553,7 @@ class AutoRunPage(inspector.Page):
         if ctl._double:
             self._apply_double_settings()
         ctl.show_auto_face(False)
+        self._only = one.key if one is not None else None
         size = (self.w_spin.value(), self.h_spin.value())
         ctl.action_stock(size[0], size[1])
         self._fill_rows()
@@ -1551,20 +1582,24 @@ class AutoRunPage(inspector.Page):
         # In the run's folder with its programs: Novice has no export to carry
         # it, and a file that did not get made must not stop the run. The
         # setup page keeps what it has to say.
-        kinds = ctl.laser_jobs() if hasattr(ctl, "laser_jobs") else ()
-        if (ctl._laser_traces or "traces" in kinds) and self.run_dir is not None:
+        kinds = (ctl.laser_jobs() if hasattr(ctl, "laser_jobs")
+                 and one is None else ())
+        if (one is None and (ctl._laser_traces or "traces" in kinds)
+                and self.run_dir is not None):
             paths, notes = ctl.write_laser_traces_to(self.run_dir)
             for p in paths:
                 self._log(f"Laser traces file: {p.name}")
             for n in notes:
                 self._log(f"Laser traces: {n}")
-        if (ctl._solder_mask or "mask" in kinds) and self.run_dir is not None:
+        if (one is None and (ctl._solder_mask or "mask" in kinds)
+                and self.run_dir is not None):
             paths, notes = ctl.write_mask_to(self.run_dir)
             for p in paths:
                 self._log(f"Solder mask file: {p.name}")
             for n in notes:
                 self._log(f"Solder mask: {n}")
-        if (ctl._silkscreen or "silk" in kinds) and self.run_dir is not None:
+        if (one is None and (ctl._silkscreen or "silk" in kinds)
+                and self.run_dir is not None):
             paths, notes = ctl.write_silk_to(self.run_dir)
             for p in paths:
                 self._log(f"Silkscreen file: {p.name}")
@@ -1577,12 +1612,20 @@ class AutoRunPage(inspector.Page):
         self._last_port = port
         self._measured = None
         click = start_click or (0.0, 0.0)
-        bit = ctl.state.drill.bit_diameter
+        # The probe touches with the bit in the collet: for one step that
+        # is the step's own bit.
+        bit = (one.bit if one is not None and one.bit
+               else ctl.state.drill.bit_diameter)
         level = self.level_chk.isChecked()
         dry = False
         check_cut = self.check_chk.isChecked()
         no_cut = self.no_cutout() and datum is not None
-        start_at = self.start_box.currentData()
+        start_at = None if one is not None else self.start_box.currentData()
+        if one is not None:
+            check_cut = False
+        only_keys = [one.key] if one is not None else None
+        done_msg = (f"Done: {one.title}." if one is not None
+                    else "The board is done.")
         nogo = self.nogo()
         level_margin = self.level_margin_spin.value()
         from gerber2rml.gui2 import workspace
@@ -1612,7 +1655,8 @@ class AutoRunPage(inspector.Page):
                                             else ar.PLACE_MARGIN_MM),
                                  check_cut=check_cut and not no_cut,
                                  start_at=start_at, nogo=nogo,
-                                 level_margin=level_margin)
+                                 level_margin=level_margin,
+                                 only=only_keys)
                 try:
                     ok = run.run()
                 finally:
@@ -1622,7 +1666,7 @@ class AutoRunPage(inspector.Page):
                         # the top.
                         workspace.set_setting("autorun/surface_z",
                                               "%.3f" % run.pose.z)
-                msg = "The board is done."
+                msg = done_msg
             except Exception as e:
                 msg = str(e) or e.__class__.__name__
                 self._measured = getattr(e, "measured", None)
@@ -1642,7 +1686,8 @@ class AutoRunPage(inspector.Page):
         self._sync_offline()
         if sim:
             self._sim_timer.start()
-        ctl.say("info", "Running. STOP on the bar stops it.")
+        ctl.say("info", (f"Running one step: {one.title}. " if one is not None
+                         else "Running. ") + "STOP on the bar stops it.")
 
     def _on_note(self, text):
         self.status.setText(text)
@@ -1988,6 +2033,9 @@ class AutoRunPage(inspector.Page):
             self.h_spin.setValue(round(self._measured[1], 1))
         self.ctl.say("ok" if ok else "fail",
                      msg if ok else "The run stopped: " + msg)
+        one, self._only = getattr(self, "_only", None), None
+        if ok and one and hasattr(self.ctl, "traveller"):
+            self.ctl.traveller.set_done(one, True)
         link = self.ctl.link
         link.mark_external(False)
         port = getattr(self, "_last_port", None)

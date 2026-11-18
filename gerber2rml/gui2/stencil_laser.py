@@ -332,6 +332,26 @@ class _StencilItem(QGraphicsPathItem):
             self.on_release()
 
 
+class _FocusCross(QGraphicsPathItem):
+    """Where Autofocus measures. Dragged anywhere on the bed - a spot to
+    re-etch, a corner - and it lands on the factory's 10 mm grid there."""
+
+    def __init__(self, path, on_drop):
+        super().__init__(path)
+        self._on_drop = on_drop
+        self.setFlag(QGraphicsItem.ItemIsMovable)
+        self.setCursor(Qt.OpenHandCursor)
+
+    def shape(self):                # grab it anywhere inside its ring
+        s = QPainterPath()
+        s.addEllipse(QPointF(0, 0), 4.5, 4.5)
+        return s
+
+    def mouseReleaseEvent(self, e):
+        super().mouseReleaseEvent(e)
+        self._on_drop(self.pos().x(), self.pos().y())
+
+
 class _BedView(QGraphicsView):
     """Keeps the bed in view; wheel zooms, double-click fits, arrows nudge,
     right-click offers placing and focusing at that point."""
@@ -678,7 +698,9 @@ class StencilLaserDialog(QDialog):
         self.selected = set()
         self._job = None
         self._zone_holes = []
-        self._focus_point = None            # None: follow the stencil's middle
+        # Where Autofocus measures, as a step from the job's middle: it moves
+        # and turns with the job. None is the middle itself.
+        self._focus_offset = None
         self._bed_rgb = None
         self._raw_rgb = None
         self._reference_pairs = []  # (unrotated artwork XY, corrected photo XY)
@@ -739,8 +761,9 @@ class StencilLaserDialog(QDialog):
                                         tip="Take a picture of the bed")
         self.focus_btn = widgets.button(
             "Autofocus", on=lambda: self.autofocus(),
-            tip="Measure the height under the focus point with the blue dot "
-                "and move the head")
+            tip="Measure the height under the focus cross with the blue dot "
+                "and move the head. Drag the cross on the bed to focus "
+                "somewhere else.")
         # Focus over the whole board, not only its middle: heights measured
         # with the blue dot at a grid of points, and the run split into bands
         # each refocused (engine/laser_focus.py).
@@ -870,13 +893,18 @@ class StencilLaserDialog(QDialog):
         self.flip_box.toggled.connect(self._orientation)
         self.orient_row = _row(self.mirror_box, self.flip_box)
         s.add(self.orient_row)
-        self.skip_auto = QCheckBox("Skip trenches that isolate nothing")
+        self.skip_auto = QPushButton()
+        self.skip_auto.setCheckable(True)
+        self.skip_auto.setCursor(Qt.PointingHandCursor)
         self.skip_auto.setToolTip(
-            "A trench with the pour on one side and only bare copper on the other "
-            "(round the board's edge, round a mounting hole) separates nothing. "
-            "Pads, vias and traces on any other net always keep theirs.")
+            "On: trenches that isolate nothing are left un-etched (round the "
+            "board's edge, round a mounting hole: the pour on one side and only "
+            "bare copper on the other). Thermal reliefs, pads, vias and traces "
+            "on any other net always keep theirs. Off: every trench is etched. "
+            "Click to switch.")
         self.skip_auto.setChecked(QSettings(*_SETTINGS).value("skip_auto", True, type=bool))
         self._skip_auto_on = self.skip_auto.isChecked()
+        self._sync_skip_button()
         self.skip_auto.toggled.connect(self._skip_auto_toggled)
         s.add(self.skip_auto)
         self.skip_note = widgets.hint("")
@@ -920,6 +948,11 @@ class StencilLaserDialog(QDialog):
         self.rework_clear_btn = widgets.button(
             "Clear boxes", kind="ghost", on=self.clear_rework, enabled=False)
         s.add(_row(self.rework_btn, self.rework_clear_btn))
+        self.rework_focus_btn = widgets.button(
+            "Focus on the boxes", on=self.focus_on_boxes, enabled=False,
+            tip="Autofocus at the middle of the boxes, so the re-etch is in "
+                "focus where the copper was left - not at the board's middle.")
+        s.add(self.rework_focus_btn)
         pv.addWidget(s)
 
         s = widgets.Section("Alignment")
@@ -1076,6 +1109,12 @@ class StencilLaserDialog(QDialog):
         self.zones = _ispin(r.zones, 1, 12)
         self.spot_drills = QCheckBox("Etch drill hole centres inside pads")
         self.spot_drills.setChecked(True)
+        # A mark to drill by, so only worth etching while the holes are not
+        # drilled: off when the mill drills them first (a laser board). A
+        # tick set by hand stays, until another board is loaded.
+        self._spot_by_hand = False
+        self._spot_auto = False             # True while the page sets it
+        self.spot_drills.toggled.connect(self._spot_toggled)
         self.cross = QCheckBox("Cross hatch: each pass at right angles to the last")
         self.one_way = QCheckBox("One way: every line drawn the same direction")
         self.mark = QCheckBox("Mark the board outline afterwards")
@@ -1143,7 +1182,10 @@ class StencilLaserDialog(QDialog):
         scroll.setObjectName("inspector")
         scroll.setStyleSheet(f"QScrollArea#inspector {{ background: {theme.PANEL};"
                              f" border-left: 1px solid {theme.RULE}; }}")
-        panel.setStyleSheet(f"background: {theme.PANEL};")
+        # Scoped to the panel: a bare "background" reaches every widget in
+        # it, and painted the white Re-etch button dark under its dark text.
+        panel.setObjectName("laserPanel")
+        panel.setStyleSheet(f"QWidget#laserPanel {{ background: {theme.PANEL}; }}")
 
         # -- the bar along the bottom ----------------------------------------
         # The readouts and the run buttons; what the page says goes between
@@ -1307,13 +1349,53 @@ class StencilLaserDialog(QDialog):
         p.lineTo(0, 3.5)
         p.addEllipse(QPointF(0, 0), 2.0, 2.0)
         halo = self.scene.addPath(p, _pen(theme.INK, 5.0, 0.7))
-        item = self.scene.addPath(p, _pen(theme.PROBE, 2.4))
+        item = _FocusCross(p, self._focus_dropped)
+        item.setPen(_pen(theme.PROBE, 2.4))
+        self.scene.addItem(item)
         halo.setParentItem(item)
         halo.setPos(0, 0)
         halo.setFlag(QGraphicsItem.ItemStacksBehindParent)
         item.setZValue(20)
-        item.setToolTip("Autofocus measures here (the factory's 10 mm grid)")
+        item.setToolTip("Autofocus measures here. Drag it to focus somewhere "
+                        "else - on a spot to re-etch, say; it snaps to the "
+                        "factory's 10 mm grid.")
         return item
+
+    def _focus_dropped(self, x, y):
+        """The cross was dragged: Autofocus measures there from now on."""
+        self.set_focus_point((x, y))
+
+    def _focus_at(self, at):
+        """Autofocus measures at ``at`` on the bed - kept as a step from the
+        job's middle, so it goes where the job goes; None is the middle."""
+        if at is None:
+            self._focus_offset = None
+        else:
+            cx, cy = self.centre()
+            self._focus_offset = (float(at[0]) - cx, float(at[1]) - cy)
+        self._place_focus_mark()
+
+    def set_focus_point(self, at):
+        """Move where Autofocus measures; None puts it back on the job's
+        middle. Nothing is measured until Autofocus is pressed."""
+        self._focus_at(at)
+        fx, fy = self.focus_point()
+        self._say(f"Autofocus will measure at X{fx:g} Y{fy:g}. Press "
+                  f"Autofocus to focus there." if at is not None else
+                  "Autofocus measures at the job's middle again.")
+
+    def focus_on_boxes(self):
+        """Put the focus point on the rework boxes - the middle of them -
+        and autofocus there: the copper that did not cut through, in
+        focus."""
+        if not self.rework_boxes:
+            return self._say("Draw a box over the spot first.", warn=True)
+        x0 = min(b[0] for b in self.rework_boxes)
+        y0 = min(b[1] for b in self.rework_boxes)
+        x1 = max(b[2] for b in self.rework_boxes)
+        y1 = max(b[3] for b in self.rework_boxes)
+        self._focus_at(((x0 + x1) / 2.0, (y0 + y1) / 2.0))
+        self.autofocus()
 
     def show_bed(self, rgb):
         self._bed_rgb = rgb
@@ -1370,6 +1452,7 @@ class StencilLaserDialog(QDialog):
         self.rest_field.setVisible(is_stencil or (is_traces and strat == "concentric"))
         self.zones_field.setVisible(is_stencil)
         self.spot_drills.setVisible(is_traces and bool(self.base_art.drills))
+        self._sync_spot_drills()
         self.cross.setVisible(self.kind in ("mask", "silk") or is_hatch)
         self.one_way.setVisible(self.kind in ("mask", "silk") or is_hatch)
         self.mark.setText("Mark the board outline afterwards"
@@ -1414,6 +1497,7 @@ class StencilLaserDialog(QDialog):
         src = self._source or self.base_art
         self._extra_mirror = self.mirror_box.isChecked() != bool(src.mirrored)
         self._extra_flip = self.flip_box.isChecked() != bool(getattr(src, "flipped", False))
+        self._focus_offset = None               # the job turned over: its middle
         self.base_art = self._orient(src)
         self._clear_references()
         self._populate_auto_references()
@@ -1539,10 +1623,47 @@ class StencilLaserDialog(QDialog):
         self._apply_kind(kind, new_art)
         self._say(f"Switched to {self.k['window']}.")
 
+    def holes_drilled(self):
+        """Are this board's holes drilled on the mill before the laser? None
+        when nobody knows (a DXF on its own)."""
+        ask = getattr(self._host, "holes_drilled_first", None)
+        if ask is None or self._dxf is not None:
+            return None
+        try:
+            return bool(ask())
+        except Exception:                               # noqa: BLE001
+            return None
+
+    def _sync_spot_drills(self):
+        """The drill-centre marks follow whether the holes are drilled yet,
+        unless they were ticked or cleared by hand for this board."""
+        drilled = self.holes_drilled()
+        tip = ("Etches a small mark at each hole's centre, inside its pad, "
+               "to drill by. ")
+        if drilled:
+            tip += "Off: the mill drills the holes before the laser."
+        elif drilled is False:
+            tip += "On: the holes are not drilled yet."
+        self.spot_drills.setToolTip(tip)
+        if drilled is None or self._spot_by_hand:
+            return
+        want = not drilled
+        if self.spot_drills.isChecked() != want:
+            self._spot_auto = True
+            try:
+                self.spot_drills.setChecked(want)
+            finally:
+                self._spot_auto = False
+
+    def _spot_toggled(self, _on):
+        if not self._spot_auto:
+            self._spot_by_hand = True
+
     def show_job(self, art, name, jobs=None, dxf=None):
         """A new job on the page as it stands: the main window's board after
         it changed, or a DXF. Where the work sits on the bed is kept."""
         art = as_laser_art(art)
+        self._spot_by_hand = False          # another board: its own holes
         if getattr(self, "_focus_map", None) is not None:
             # Another board on the bed: its heights are not this one's.
             from gerber2rml.gui2 import laser_focus_ui as _lfu
@@ -1665,8 +1786,15 @@ class StencilLaserDialog(QDialog):
         """Turn the stencil about its middle, keeping the middle where it is."""
         self._remember_place()
         cx, cy = self.centre()
+        before = self.turns * 90 + self.fine
         self.turns = turns % 4
         self.fine = fine
+        if self._focus_offset is not None:
+            import math
+            a = math.radians(self.turns * 90 + self.fine - before)
+            dx, dy = self._focus_offset         # bed Y is down: clockwise
+            self._focus_offset = (dx * math.cos(a) - dy * math.sin(a),
+                                  dx * math.sin(a) + dy * math.cos(a))
         self.art = xtool.rotated(self.base_art, self.turns, self.fine)
         if not preserve_selection:
             self.selected.clear()
@@ -1790,6 +1918,7 @@ class StencilLaserDialog(QDialog):
                 self.skip_auto.blockSignals(True)
                 self.skip_auto.setChecked(skip_auto)
                 self.skip_auto.blockSignals(False)
+                self._sync_skip_button()
                 self._skip_auto_on = skip_auto
                 QSettings(*_SETTINGS).setValue("skip_auto", bool(skip_auto))
             skipped, of = skipped
@@ -1852,7 +1981,9 @@ class StencilLaserDialog(QDialog):
             self.redo_btn.setEnabled(self.undo.can_redo())
 
     def focus_point(self):
-        return xtool.snap_to_grid(self._focus_point or self.centre())
+        cx, cy = self.centre()
+        dx, dy = self._focus_offset or (0.0, 0.0)
+        return xtool.snap_to_grid((cx + dx, cy + dy))
 
     def _place_focus_mark(self):
         self._focus_mark.setPos(*self.focus_point())
@@ -1866,7 +1997,7 @@ class StencilLaserDialog(QDialog):
         a1 = m.addAction("Centre the stencil here")
         a2 = m.addAction("Autofocus here")
         a3 = m.addAction("Focus at the stencil's middle again")
-        a3.setEnabled(self._focus_point is not None)
+        a3.setEnabled(self._focus_offset is not None)
         busy = self._worker is not None and self._worker.isRunning()
         for a in (a1, a2, a3):
             a.setEnabled(a.isEnabled() and not busy)
@@ -1874,12 +2005,10 @@ class StencilLaserDialog(QDialog):
         if got is a1:
             self.centre_at(p)
         elif got is a2:
-            self._focus_point = (p.x(), p.y())
-            self._place_focus_mark()
+            self._focus_at((p.x(), p.y()))
             self.autofocus()
         elif got is a3:
-            self._focus_point = None
-            self._place_focus_mark()
+            self.set_focus_point(None)
 
     # -- selection ---------------------------------------------------------
     def _set_mode(self, mode):
@@ -1936,6 +2065,8 @@ class StencilLaserDialog(QDialog):
                                   if n else "No boxes yet.")
         self.rework_btn.setEnabled(bool(n))
         self.rework_clear_btn.setEnabled(bool(n))
+        self.rework_focus_btn.setEnabled(bool(n) and not (
+            self._worker is not None and self._worker.isRunning()))
         self.rework_btn.setText(f"Re-etch {n} box{'' if n == 1 else 'es'}"
                                 if n else "Re-etch the boxes")
 
@@ -2005,8 +2136,13 @@ class StencilLaserDialog(QDialog):
                         if self.skip_auto.isChecked() else set())
         self._sync_skip_note()
 
+    def _sync_skip_button(self):
+        on = self.skip_auto.isChecked()
+        self.skip_auto.setText("Auto-skip: on" if on else "Auto-skip: off")
+
     def _skip_auto_toggled(self, on):
         self._remember_edit()                    # still says how it was
+        self._sync_skip_button()
         self._skip_auto_on = bool(on)
         QSettings(*_SETTINGS).setValue("skip_auto", bool(on))
         self._find_skips(force=True)
@@ -2187,7 +2323,12 @@ class StencilLaserDialog(QDialog):
             self.trace_kerf.setValue(d.get("kerf", xtool.DEFAULT_TRACE_KERF))
             self.density.setValue(d["lines_per_cm"])
             self.rest.setValue(d.get("rest_s", 0.0))
-            self.spot_drills.setChecked(bool(d.get("spot_drills", True)))
+            self._spot_auto = True
+            try:
+                self.spot_drills.setChecked(bool(d.get("spot_drills", True)))
+            finally:
+                self._spot_auto = False
+            self._sync_spot_drills()
             self.cross.setChecked(bool(d["cross_hatch"]))
             self.one_way.setChecked(bool(d["one_way"]))
             self.mark.setChecked(bool(d["mark_outline"]))
@@ -3266,8 +3407,15 @@ class StencilLaserDialog(QDialog):
                   self.clear_refs_btn, self.reference_snap, self.auto_reference_source,
                   self.auto_reference_list, self.auto_all_btn, self.auto_none_btn, self.auto_contrast,
                   self.offset_x, self.offset_y, self.calibrate_btn,
-                  self.proof_btn, self.proof_where, self.proof_passes):
+                  self.proof_btn, self.proof_where, self.proof_passes,
+                  self.rework_focus_btn):
             b.setEnabled(not on)
+        if not on:
+            # The rework buttons need boxes to work on.
+            n = bool(getattr(self, "rework_boxes", None))
+            for b in (self.rework_btn, self.rework_clear_btn,
+                      self.rework_focus_btn):
+                b.setEnabled(n)
         if self.item is not None:
             self.item.setFlag(QGraphicsItem.ItemIsMovable,
                               not on and not self.view.select_mode and not self.view.pick_reference)

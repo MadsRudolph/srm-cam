@@ -665,6 +665,8 @@ class MainWindow(QMainWindow):
         self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
         self.stage.bracket_moved.connect(self.autorun_page.on_bracket_moved)
         self.stage.nogo_picked.connect(self.autorun_page.on_nogo_picked)
+        self.autorun_page.finished.connect(
+            lambda *_: self.inspector.step.sync_run())
         self.split.addWidget(self.inspector)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
@@ -1183,6 +1185,13 @@ class MainWindow(QMainWindow):
         smart run as Novice, and has the steps as well."""
         return True
 
+    def action_run_step(self, key):
+        """Pro: one step of the plan, sent to the mill by itself - found,
+        probed and cut as Mill it would, without the rest."""
+        if not tier.is_full():
+            return
+        self.autorun_page.start(only=key)
+
     def _toggle_tier(self):
         self.set_tier(tier.ESSENTIAL if tier.is_full() else tier.FULL)
 
@@ -1201,6 +1210,18 @@ class MainWindow(QMainWindow):
 
     def laser_method(self):
         return self.method_id() == fab.LASER
+
+    def holes_drilled_first(self):
+        """Does the mill drill this board's holes before the laser? On a
+        laser board it does (Drill and cut out, then the laser); on any
+        other, once a drilling step or the run is ticked off."""
+        if self.state.board is None:
+            return False
+        if self.laser_method():
+            return True
+        done = [s.key for s in (self.plan or []) if s.op == "drill"
+                or s.key == "autorun"]
+        return any(self.traveller.is_done(k) for k in done)
 
     def check_width(self):
         """The narrowest gap between two nets this board's method can make:
