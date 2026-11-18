@@ -34,6 +34,53 @@ NUM_COL = 34            # px: the step-number column, and the rule beside it
 GROUP_WORDS = {"run": "On the mill", "steps": "One step at a time",
                "laser": "On the laser", "after": "When you need it"}
 ROW_PAD = 9
+# Folded shut until opened: the run on the rail is what a job is for, and
+# a dozen hand-run steps under it read as the way to do it.
+FOLDING = ("steps",)
+FOLD_KEY = "rail/steps_open"
+
+
+class GroupHead(QWidget):
+    """A group's heading that opens and shuts it: the eyebrow, how many
+    steps it holds, and a chevron."""
+    toggled = Signal(bool, bool)          # open, and was it a click
+
+    def __init__(self, text, count, is_open, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.text, self.count, self.is_open = text, count, is_open
+        h = QHBoxLayout(self)
+        h.setContentsMargins(theme.GAP_M + 2, theme.GAP_M, theme.GAP_M + 2, 5)
+        h.setSpacing(theme.GAP_S)
+        self.chev = QLabel()
+        self.chev.setFont(theme.font("small"))
+        self.chev.setStyleSheet(f"color: {theme.TEXT_3};")
+        h.addWidget(self.chev)
+        self.label = widgets.eyebrow(text)
+        h.addWidget(self.label)
+        h.addWidget(widgets.rule(), 1)
+        self.more = QLabel()
+        self.more.setFont(theme.font("micro"))
+        self.more.setStyleSheet(f"color: {theme.TEXT_3};")
+        h.addWidget(self.more)
+        self.setToolTip("Each step on its own, run from its page or "
+                        "exported for VPanel. Mill it runs them all.")
+        self._sync()
+
+    def _sync(self):
+        self.chev.setText("▾" if self.is_open else "▸")
+        self.more.setText("hide" if self.is_open
+                          else f"{self.count} step{'s' if self.count != 1 else ''}")
+
+    def set_open(self, on, clicked=False):
+        if on != self.is_open:
+            self.is_open = on
+            self._sync()
+            self.toggled.emit(on, clicked)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.set_open(not self.is_open, clicked=True)
 
 
 class StepRow(QWidget):
@@ -352,13 +399,23 @@ class Traveller(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self._rows = {}
+        self._folds = {}                  # group: (GroupHead, [StepRow])
         last_group = None
-        for step in (plan if rail is None else rail):
+        shown = list(plan if rail is None else rail)
+        for step in shown:
             group = getattr(step, "group", None) or "steps"
             if group != last_group and group in GROUP_WORDS:
-                self._add_eyebrow(GROUP_WORDS[group])
+                if group in FOLDING:
+                    self._add_fold(group, [s for s in shown if (
+                        getattr(s, "group", None) or "steps") == group])
+                else:
+                    self._add_eyebrow(GROUP_WORDS[group])
             last_group = group
             row = StepRow(step)
+            if group in self._folds:
+                head, rows = self._folds[group]
+                rows.append(row)
+                row.setVisible(head.is_open)
             row.clicked.connect(self._on_click)
             row.set_done(step.key in self._done)
             row.set_exported(step.key in self._exported)
@@ -366,10 +423,40 @@ class Traveller(QWidget):
             self._rows[step.key] = row
         self.list.addStretch(1)
         if self._current in self._rows:
-            self._rows[self._current].set_selected(True)
+            self.select(self._current)
         elif self._rows:
             self.select(next(iter(self._rows)))
         self._update_total(plan)
+
+    def _add_fold(self, group, steps):
+        from gerber2rml.gui2 import workspace
+        is_open = str(workspace.setting(FOLD_KEY, "false")).lower() in (
+            "true", "1")
+        head = GroupHead(GROUP_WORDS[group],
+                         sum(1 for s in steps if s.kind == "run"), is_open)
+        head.toggled.connect(lambda on, clicked, g=group:
+                             self._fold(g, on, clicked))
+        self._folds[group] = (head, [])
+        self.list.addWidget(head)
+
+    def _fold(self, group, on, clicked=False):
+        # Remembered when it was a click on the heading; opened because a
+        # step in it was picked, it shuts again next time.
+        if clicked:
+            from gerber2rml.gui2 import workspace
+            workspace.set_setting(FOLD_KEY, "true" if on else "false")
+        _head, rows = self._folds[group]
+        for row in rows:
+            row.setVisible(on)
+
+    def is_folded(self, group="steps"):
+        f = getattr(self, "_folds", {}).get(group)
+        return f is not None and not f[0].is_open
+
+    def set_folded(self, group, folded, remember=False):
+        f = getattr(self, "_folds", {}).get(group)
+        if f is not None:
+            f[0].set_open(not folded, clicked=remember)
 
     def _add_eyebrow(self, text):
         w = QWidget()
@@ -406,6 +493,9 @@ class Traveller(QWidget):
         for k, row in self._rows.items():
             row.set_selected(k == key)
         self._current = key
+        for head, rows in getattr(self, "_folds", {}).values():
+            if not head.is_open and self._rows[key] in rows:
+                head.set_open(True)
 
     def current(self):
         return self._current

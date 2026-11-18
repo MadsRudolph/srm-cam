@@ -405,3 +405,27 @@ def test_the_mills_boxes_zones_clamps_and_screws_are_undone(qt_app, sl, monkeypa
         assert len(rw._regions) == 1 and len(ar._nogo) == 1
     finally:
         w.close()
+
+
+def test_drill_centres_are_etched_only_while_the_holes_are_not_drilled(
+        qt_app, sl, monkeypatch):
+    """A mark to drill by: off on a laser board, whose holes the mill drills
+    first; on while nothing has drilled them; a tick by hand stays."""
+    monkeypatch.setenv("SRM_CAM_MODE", "pro")
+    from gerber2rml.gui2.window import MainWindow
+    w = MainWindow()
+    try:
+        w.load_folder(str(BUCK))
+        w.action_method("mill_flat", quiet=True)
+        w.show_mode("laser")
+        d = w.laser_view
+        d.switch_kind("traces")
+        assert d.holes_drilled() is False and d.spot_drills.isChecked()
+        w.action_method("laser", quiet=True)
+        d._sync_spot_drills()
+        assert d.holes_drilled() is True and not d.spot_drills.isChecked()
+        d.spot_drills.click()                         # by hand: it stays
+        d._sync_spot_drills()
+        assert d.spot_drills.isChecked()
+    finally:
+        w.close()

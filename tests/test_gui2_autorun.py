@@ -919,3 +919,69 @@ def test_a_laser_board_needs_no_flip_on_the_mill(win, qt_app):
     assert win._laser_art_for("traces", side="top").side == "top"
     win.action_method(fab.FLAT)
     assert win._double
+
+
+# -- Pro: one step at a time, each sent from its own page ----------------------
+def _first_mill_step(w):
+    return next(s for s in w.plan.steps if s.kind == "run")
+
+
+def test_pro_sends_one_step_to_the_mill_from_its_page(win, qt_app):
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    page = win.autorun_page
+    page.w_spin.setValue(150)
+    page.h_spin.setValue(120)
+    page.on_stock_click(110.0, 80.0)
+    step = next(s for s in win.plan.steps if s.op == "traces")
+    win.select_step(step.key)
+    sp = win.inspector.step
+    assert win.inspector.stack.currentWidget() is sp
+    assert sp.run_section.isVisibleTo(sp) and sp.run_btn.isEnabled()
+    done = []
+    page.finished.connect(lambda ok, msg: done.append((ok, msg)))
+    sp.run_btn.click()
+    assert not sp.run_btn.isEnabled()              # running: not twice
+    assert _wait(qt_app, lambda: bool(done), 120), "the step never finished"
+    assert done[0][0], done[0][1]
+    assert step.title in done[0][1]
+    assert sm.machine().lines, "nothing was cut"
+    # Only that step's program went to the mill.
+    sent = sorted(p.name for p in page.run_dir.glob("*.nc"))
+    assert len(sent) == 1, sent
+    assert win.traveller.is_done(step.key)
+    assert sp.run_btn.isEnabled()                  # ready for the next one
+
+
+def test_novice_has_no_step_to_run_on_its_own(win, qt_app, monkeypatch):
+    from gerber2rml.gui2 import tier
+    step = _first_mill_step(win)
+    win.select_step(step.key)
+    assert win.inspector.step.run_section.isVisibleTo(win.inspector.step)
+    monkeypatch.setattr(tier, "is_full", lambda: False)   # the suite pins Pro
+    win.inspector.step.set_step(step, win.plan)
+    assert not win.inspector.step.run_section.isVisibleTo(win.inspector.step)
+
+
+def test_the_steps_are_folded_away_under_the_run_in_pro(win, qt_app):
+    """The run is what the rail is for: the steps are there, shut."""
+    from gerber2rml.gui2 import workspace
+    workspace.set_setting("rail/steps_open", "false")
+    win.refresh_plan()
+    win.show()
+    qt_app.processEvents()
+    trav = win.traveller
+    step = _first_mill_step(win)
+    assert trav.is_folded("steps")
+    assert not trav._rows[step.key].isVisible()
+    assert trav._rows["autorun"].isVisible()
+    # Picking a step opens it - and that is not remembered as a choice.
+    win.select_step(step.key)
+    qt_app.processEvents()
+    assert not trav.is_folded("steps") and trav._rows[step.key].isVisible()
+    assert workspace.setting("rail/steps_open", "false") == "false"
+    # A click on the heading is.
+    trav._folds["steps"][0].set_open(False, clicked=True)
+    trav._folds["steps"][0].set_open(True, clicked=True)
+    assert workspace.setting("rail/steps_open") == "true"
+    workspace.set_setting("rail/steps_open", "false")

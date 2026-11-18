@@ -971,6 +971,8 @@ def traces_art(copper, outline_raw, raw_drills, *, side="bottom", mirror=True,
 
 
 POUR_SHARE = 0.25       # of the board: a copper piece this big is a pour
+RELIEF_GAP_MM = 1.0     # a bare gap in a pour this narrow, or narrower, is a
+                        # thermal relief's gap, not a clearance round a hole
 
 
 def needless_trenches(art, *, eps=0.02):
@@ -980,8 +982,13 @@ def needless_trenches(art, *, eps=0.02):
     ring round a mounting hole's clearance are such; skipping them only makes
     the pour bigger. A via or pad on any other net is never among them.
 
+    A thermal relief is never among them: a pad joined to the pour by spokes is
+    the same copper as the pour, so the narrow gaps between its spokes border
+    only the pour too, but they are what makes the relief and are etched.
+
     Taken one by one, merging what each skipped trench joins (stock regions
     included), so no set of skips can connect two nets."""
+    from shapely.geometry import Polygon
     from shapely.strtree import STRtree
     from shapely.ops import unary_union
     from gerber2rml.engine import soldermask
@@ -997,6 +1004,15 @@ def needless_trenches(art, *, eps=0.02):
         if g.area > 1e-4]
     nodes = pieces + stock
     tree = STRtree(nodes)
+    # The narrow bare gaps inside a pour: between a pad and the pour it is
+    # joined to by spokes. A trench in one of them is a relief's, and stays.
+    gaps = []
+    for i in pours:
+        for ring in pieces[i].interiors:
+            for c in soldermask._polygons(Polygon(ring).difference(art.copper)):
+                if c.area > 1e-4 and c.buffer(-RELIEF_GAP_MM / 2).is_empty:
+                    gaps.append(c)
+    gap_tree = STRtree(gaps) if gaps else None
     parent = list(range(len(nodes)))
     nets = [{i} if i < len(pieces) else set() for i in range(len(nodes))]
 
@@ -1008,6 +1024,9 @@ def needless_trenches(art, *, eps=0.02):
     out = set()
     for k, ap in enumerate(art.apertures):
         g = ap.buffer(eps)
+        if gap_tree is not None and any(
+                gaps[int(j)].intersects(g) for j in gap_tree.query(g)):
+            continue                            # a thermal relief's gap
         roots = {find(int(j)) for j in tree.query(g) if nodes[int(j)].intersects(g)}
         joined = set().union(*(nets[r] for r in roots)) if roots else set()
         if len(joined) != 1 or not joined <= pours:

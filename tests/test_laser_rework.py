@@ -217,6 +217,26 @@ def test_the_edge_and_the_mounting_hole_isolate_nothing_the_signal_pad_does():
     assert edge and set(edge) <= skip
 
 
+def test_thermal_relief_gaps_are_etched_but_the_mounting_ring_is_not():
+    """A pad joined to the pour by four spokes is one piece of copper with the
+    pour, so its gaps border only the pour. They make the relief: kept."""
+    from shapely.geometry import Point, box
+    outline = box(0, 0, 40, 30)
+    pour = (box(0.5, 0.5, 39.5, 29.5)
+            .difference(Point(5, 5).buffer(2.5))
+            .difference(Point(20, 15).buffer(1.5)))
+    pad = Point(20, 15).buffer(1.0)
+    spokes = (box(18.5, 14.75, 21.5, 15.25).union(box(19.75, 13.5, 20.25, 16.5)))
+    copper = pour.union(pad).union(spokes)
+    art = xtool.traces_art(copper, outline, [(5.0, 5.0, 3.2), (20.0, 15.0, 0.8)],
+                           side="top", mirror=False)
+    skip = xtool.needless_trenches(art)
+    relief = [k for k, g in enumerate(art.apertures) if 0.6 < g.distance(Point(20, 15)) < 1.8 and g.area > 0.3]      # the four gaps
+    mount = [k for k, g in enumerate(art.apertures) if g.distance(Point(5, 5)) < 2.6]
+    assert len(relief) == 4 and not (set(relief) & skip)
+    assert mount and set(mount) <= skip
+
+
 def test_a_board_without_a_pour_skips_nothing():
     from shapely.geometry import Point, box
     copper = Point(10, 10).buffer(1).union(Point(30, 10).buffer(1))
@@ -253,6 +273,7 @@ def test_the_page_skips_them_and_runs_the_rest(qt_app, monkeypatch):
         assert d.skipped == auto
         d.skip_auto.setChecked(False)
         assert d.skipped == set() and d._traces_only() is None
+        assert d.skip_auto.text() == "Auto-skip: off" and not d.skip_auto.isHidden()
     finally:
         d.close()
 
