@@ -75,51 +75,114 @@ def _drill_mm(info):
     return _mm(info, "drill_mm", rules.DEFAULT_DRILL_MM)
 
 
-def _set_rules(board, cutter, drill):
-    """Set the design rules and say what changed."""
-    from srm20area import rules
+def _guess_method(info, current):
+    """The method to take a board for when it has none yet: what its own
+    rules were set for (a gap only the laser or the ball mill can make),
+    else the mill bit SRM-CAM has selected. ``current`` is what
+    ``rules.read_current`` returns."""
+    from srm20area import methods
+    return methods.guess_from_rules(current, _cutter_mm(info))
+
+
+def choose_rules(board, info):
+    """Show the design-rules window, apply what is chosen, and say what
+    changed. True when rules were applied."""
+    from srm20area import methods, rules, rules_dialog
+    board_file = board.GetFileName()
+    stored, _ = methods.read_method(board_file) if board_file else (None, None)
+    rules_path = rules.rules_file(board)
+    rules_text = ""
+    if rules_path:
+        try:
+            with open(rules_path, encoding="utf-8") as f:
+                rules_text = f.read()
+        except OSError:
+            pass
+    current = rules.read_current(board)
+    picked = rules_dialog.ask(None, current,
+                              stored or _guess_method(info, current),
+                              _drill_mm(info), rules_text)
+    if picked is None:
+        return False
+    method_id, values = picked
+    ops = methods.plan(current, values)
     wx.BeginBusyCursor()
     try:
-        changed = rules.apply(board, cutter, drill)
+        changed = rules.apply_plan(board, ops, values["drill"])
     finally:
         wx.EndBusyCursor()
     pcbnew.Refresh()
+    remembered = ""
+    if board_file:
+        try:
+            methods.write_method(board_file, method_id, values)
+            remembered = ("\n\n*Send to SRM-CAM* now checks this board for "
+                          "this method (kept in srm-cam/method.json).")
+        except OSError:
+            pass
+    notes = methods.rule_file_notes(rules_text, values)
     wx.MessageBox(
-        "Design rules set for a %.2f mm cutter and a %.2f mm drill:\n\n"
-        "    %s\n\n"
-        "The zones are refilled. The tracks are where they were: run "
-        "Inspect > Design Rules Checker and move what it marks, then send "
-        "the board. Save to keep the changes; close without saving to undo "
-        "them."
-        % (cutter, drill, "\n    ".join(changed) or "nothing needed changing"),
-        "SRM-20 design rules", wx.OK | wx.ICON_INFORMATION)
+        "%s:\n\n    %s%s\n\nThe pours are refilled. Tracks are where they "
+        "were: run Inspect > Design Rules Checker and move what it marks. "
+        "Save to keep the changes; close without saving to undo them.%s"
+        % (methods.method(method_id)["name"],
+           "\n    ".join(changed) or "nothing needed changing",
+           ("\n\nThe custom rules file still decides some of this:\n    "
+            + "\n    ".join(notes)) if notes else "",
+           remembered),
+        "Design rules for SRM-CAM", wx.OK | wx.ICON_INFORMATION)
+    return True
+
+
+GUESSED = "guessed — set it with Set design rules for SRM-CAM"
+
+
+def board_check(board, info):
+    """``(problems, what they were checked against)`` before a send.
+
+    A board with a method set is checked for that method. One without is
+    checked for the method its own rules point to (``_guess_method``), said
+    as a guess: checking a laser board's 0.25 mm gaps against the mill bit
+    warned on every send, and its *Set the rules...* raised them to the
+    mill's. Holes are checked against the drill either way, vias already
+    placed included: every method drills on the mill."""
+    from srm20area import methods, rules
+    board_file = board.GetFileName()
+    method_id, values = methods.read_method(board_file) if board_file else (None, None)
+    current = rules.read_current(board)
+    guessed = not method_id
+    if guessed:
+        method_id, values = _guess_method(info, current), None
+    want = methods.defaults(method_id, _drill_mm(info))
+    want.update(values or {})
+    found = methods.too_tight(current, want)
+    try:
+        found += [line for line in rules.holes_too_small(board, want["drill"])
+                  if line not in found]
+    except Exception:                                   # noqa: BLE001
+        pass
+    name = methods.method(method_id)["name"]
+    return found, (name + (" (%s)" % GUESSED if guessed else ""))
 
 
 class SRM20RulesAction(pcbnew.ActionPlugin):
-    """Tools > External Plugins > Set SRM-20 design rules."""
+    """Tools > External Plugins > Set design rules for SRM-CAM."""
 
     def defaults(self):
-        self.name = "Set SRM-20 design rules"
+        self.name = "Set design rules for SRM-CAM"
         self.category = "Modify PCB"
-        self.description = ("Set the clearance of the board, its net classes "
-                            "and its zones to the SRM-20's cutter, so what "
-                            "DRC passes the mill can cut.")
-        self.show_toolbar_button = False
+        self.description = ("Choose how the board is made - flat endmill, "
+                            "ball mill or fiber laser - and set the design "
+                            "rules that method needs, before laying tracks.")
+        self.show_toolbar_button = True
+        icon = os.path.join(os.path.dirname(__file__), "icon_rules.png")
+        if os.path.exists(icon):
+            self.icon_file_name = icon
 
     def Run(self):
-        from srm20area import rules
         board = pcbnew.GetBoard()
         info = sendto.read_launch_info(os.path.dirname(__file__))
-        cutter, drill = _cutter_mm(info), _drill_mm(info)
-        found, want = rules.too_tight(board, cutter, drill)
-        if not found:
-            wx.MessageBox("The design rules already suit a %.2f mm cutter and "
-                          "a %.2f mm drill: every clearance is at least "
-                          "%.2f mm and no via hole is smaller than the drill."
-                          % (cutter, drill, want), "SRM-20 design rules",
-                          wx.OK | wx.ICON_INFORMATION)
-            return
-        _set_rules(board, cutter, drill)
+        choose_rules(board, info)
 
 
 class SendToSRMCAMAction(pcbnew.ActionPlugin):
@@ -142,29 +205,26 @@ class SendToSRMCAMAction(pcbnew.ActionPlugin):
                           wx.OK | wx.ICON_INFORMATION)
             return
         info = sendto.read_launch_info(os.path.dirname(__file__))
-        # Rules tighter than the cutter mean nets the mill cannot separate:
-        # better found here, where they can be fixed, than in SRM-CAM.
+        # Rules tighter than the board's method can make mean nets that are
+        # not separated: better found here, where they can be fixed.
         try:
-            from srm20area import rules
-            cutter, drill = _cutter_mm(info), _drill_mm(info)
-            found, want = rules.too_tight(board, cutter, drill)
+            found, against = board_check(board, info)
         except Exception:                               # noqa: BLE001
             found = []
         if found:
             ask = wx.MessageDialog(
                 None,
-                "This board asks for more than the SRM-20's %.2f mm cutter "
-                "and %.2f mm drill can do:\n\n    %s\n\n"
-                "Set the clearances to %.2f mm and the via holes to %.2f mm "
-                "now? The board is not sent yet: run DRC afterwards and move "
-                "what it marks."
-                % (cutter, drill, "\n    ".join(found), want, drill),
+                "This board asks for more than its method can make, checked "
+                "as %s:\n\n    %s\n\n"
+                "Open the design rules and set them for how the board is "
+                "made? The board is not sent yet."
+                % (against, "\n    ".join(found)),
                 TITLE, wx.YES_NO | wx.CANCEL | wx.ICON_WARNING)
-            ask.SetYesNoCancelLabels("Set the rules", "Send anyway", "Cancel")
+            ask.SetYesNoCancelLabels("Set the rules...", "Send anyway", "Cancel")
             answer = ask.ShowModal()
             ask.Destroy()
             if answer == wx.ID_YES:
-                _set_rules(board, cutter, drill)
+                choose_rules(board, info)
                 return
             if answer != wx.ID_NO:
                 return
