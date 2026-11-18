@@ -91,9 +91,11 @@ def test_the_embedded_page_fits_a_laptop_beside_the_rail(qt_app, sl):
         assert not bar.isVisible()
         panel = d.inspector.widget()
         assert panel.minimumSizeHint().width() <= d.inspector.viewport().width()
-        # With room, each bar goes back to one row.
-        host.resize(2000, 900)
-        d.resize(2000, 900)
+        # With room, each bar goes back to one row: as wide as the wider
+        # bar's one row needs (over 2000 px with Windows' wider words).
+        wide = max(2000, d.header._need() + 40, d.foot._need() + 40)
+        host.resize(wide, 900)
+        d.resize(wide, 900)
         QCoreApplication.processEvents()
         assert d.header.one_row and d.foot.one_row
     finally:
