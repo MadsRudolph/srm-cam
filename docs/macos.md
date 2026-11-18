@@ -21,7 +21,7 @@ the SRM-20. Same code as Windows and Linux; the macOS patch lives on the
 | `gerber2rml/gui2/kicadsetup.py`, `engine/kicadplugin.py` | the plugin learns where SRM-CAM is (`launch.json`) |
 | `gerber2rml/gui2/updatecheck.py` | Check for updates rebuilds a Mac copy from its checkout |
 | `gerber2rml/loader.py`, `engine/drc.py`, `engine/pinch.py`, `engine/traces.py` | true pad shapes, net names, gaps the cutter's own width |
-| `kicad-plugin/` | **Send to SRM-CAM** and **Set SRM-20 design rules** (plugin 1.4.0) |
+| `kicad-plugin/` | **Send to SRM-CAM** and **Set design rules for SRM-CAM** (plugin 1.5.0) |
 | `packaging/` | `build-macos.sh` (app, DMG, signing, notarising), `update-macos.sh`, entitlements |
 
 Linux stays without the link, as upstream decided.
@@ -48,7 +48,8 @@ packaging/build-macos.sh                  # dist/SRM-CAM.app
    toolbar button). It plots the board **as it is on screen** - unsaved edits
    included, from a copy, so the board file and its plot settings are not
    touched - into a `srm-cam` folder beside the board, with every layer
-   SRM-CAM reads (B.Cu, F.Cu, Edge.Cuts, masks, silkscreen, PTH/NPTH drill).
+   SRM-CAM reads (B.Cu, F.Cu, Edge.Cuts, masks, silkscreen, paste, PTH/NPTH
+   drill).
 3. SRM-CAM comes to the front with the board loaded. If it was not running it
    is started; if it was, the board goes to that window, which holds the
    serial port. While a run is going the board is **not** loaded, and the
@@ -71,9 +72,10 @@ the lab's flat endmill.
 
 - **In KiCad** the clearance lives in three places - Board Setup ▸ Design
   Rules ▸ Constraints, every Net Class, and every zone's own Clearance.
-  *Tools ▸ External Plugins ▸ Set SRM-20 design rules* raises all three to
-  the cutter's width and refills the zones; *Send to SRM-CAM* checks them
-  first and offers the same. Run DRC afterwards and move what it marks.
+  *Tools ▸ External Plugins ▸ Set design rules for SRM-CAM* asks how the
+  board is made (flat endmill, ball mill or fiber laser), sets all three for
+  that method and refills the zones; *Send to SRM-CAM* checks them first
+  and offers the same. Run DRC afterwards and move what it marks.
 - **Holes are the same argument with the drill.** It cannot make a hole
   smaller than itself, so the same action raises the via holes - the
   board's minimum drill, the net classes', and the vias already placed - to

@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from PySide6.QtWidgets import QPushButton
 
 from gerber2rml.engine import stencil, xtool
 
@@ -196,19 +197,15 @@ def win(qt_app, monkeypatch):
     w.close()
 
 
-def test_off_by_default_and_hidden(win, tmp_path):
-    setup = win.inspector.setup
-    assert not setup.stencil.isChecked()
-    assert setup.stencil_write_btn.isHidden()
-    assert not setup.stencil_cut_btn.isHidden()
+def test_a_board_with_paste_has_a_stencil_row(win, tmp_path):
+    assert win.plan.by_key("laser_stencil") is not None
     win.export_to(tmp_path)
-    assert not list(tmp_path.glob("*stencil*"))
+    assert list(tmp_path.glob("*_stencil_*.dxf"))
 
 
 def test_ticked_the_export_writes_the_stencil(win, tmp_path):
     setup = win.inspector.setup
-    setup.stencil.setChecked(True)
-    assert not setup.stencil_cut_btn.isHidden()
+    setup.ctl.action_stencil(True)
     assert "B.Paste" in win.stencil_status()[1]
     written = win.export_to(tmp_path)
     assert written
@@ -218,8 +215,8 @@ def test_ticked_the_export_writes_the_stencil(win, tmp_path):
 
 def test_the_kerf_box_reaches_the_file(win, tmp_path):
     setup = win.inspector.setup
-    setup.stencil.setChecked(True)
-    setup.stencil_kerf.setValue(0.0)
+    setup.ctl.action_stencil(True)
+    setup.ctl.action_stencil_kerf(0.0)
     arts, _ = win._stencil_arts(WROOM)
     assert sizes(arts[0].apertures) == {(0.9, 1.5): 38, (1.05, 1.05): 9}
 
@@ -493,13 +490,13 @@ def test_mask_and_silkscreen_open_the_laser_page(qt_app, monkeypatch, action, ki
     from gerber2rml.gui2 import stencil_laser as sl
     from gerber2rml.gui2.window import MainWindow
     monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
-    opened = []
-    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
         getattr(w, action)()
-        (d,) = opened
+        d = w.laser_view
+        assert w.mode() == "laser" and w.modes.currentWidget() is d
+        assert d.embedded and not d.isWindow()
         assert d.kind == kind and d.cut_btn.text() == run
         assert d.preset.currentText() == "RemoveSolderMask (sphawes)"
         assert len(d.base_art.features) == 27
@@ -567,13 +564,13 @@ def test_laser_dialog_traces_strategies_and_job_switcher(qt_app, monkeypatch):
     from gerber2rml.gui2 import stencil_laser as sl
     from gerber2rml.gui2.window import MainWindow
     monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
-    opened = []
-    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
         w.action_traces_laser()
-        (d,) = opened
+        d = w.laser_view
+        assert w.mode() == "laser" and w.modes.currentWidget() is d
+        assert d.embedded and not d.isWindow()
         assert d.kind == "traces" and d.cut_btn.text() == "Etch the traces"
         assert d.job_switch.current() == "traces"
         d.x.setValue(45.0)
@@ -622,13 +619,9 @@ def test_setup_page_laser_traces_dxf_export(qt_app, monkeypatch, tmp_path):
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        setup = w.inspector.setup
-        assert not setup.laser_traces.isChecked()
-        assert setup.laser_traces_write_btn.isHidden()
-        assert not setup.laser_traces_run_btn.isHidden()
-        setup.laser_traces.setChecked(True)
-        assert not setup.laser_traces_write_btn.isHidden()
-        setup.laser_offsets.setValue(8)
+        from gerber2rml.engine import method as fab
+        w.action_method(fab.LASER)              # a laser board: its file too
+        w.action_laser_offsets(8)
         assert w._laser_offsets == 8
         w.export_to(tmp_path)
         dxf = list(tmp_path.glob("*_traces_bottom_mirrored.dxf"))
@@ -642,17 +635,16 @@ def test_laser_rail_tab_and_header_button(qt_app, monkeypatch):
     from gerber2rml.gui2 import stencil_laser as sl
     from gerber2rml.gui2.window import MainWindow
     monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
-    opened = []
-    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        assert w.plan.by_key("laser") is not None
-        w.select_step("laser")
-        assert w.inspector.stack.currentWidget() is w.laser_page
-        assert w.laser_page.traces_run_btn.isEnabled()
-        w.header_laser_btn.click()
-        (d,) = opened
+        assert w.plan.by_key("laser") is None          # no hub row any more
+        (btn,) = [b for b in w.mode_switch.findChildren(QPushButton)
+                  if b.text() == "Laser"]
+        btn.click()
+        d = w.laser_view
+        assert w.mode() == "laser" and w.modes.currentWidget() is d
+        assert d.embedded and not d.isWindow()
         assert d.kind == "traces"
         d.close()
     finally:
@@ -663,13 +655,13 @@ def test_curtain_drive_top_traces_can_be_selected(qt_app, monkeypatch):
     from gerber2rml.gui2 import stencil_laser as sl
     from gerber2rml.gui2.window import MainWindow
     monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "curtain-laser"))
-    opened = []
-    monkeypatch.setattr(sl.StencilLaserDialog, "exec", lambda self: opened.append(self))
     w = MainWindow()
     try:
         w.load_folder(str(Path(__file__).parent / "fixtures" / "curtain_drive"))
         w.action_traces_laser()
-        (d,) = opened
+        d = w.laser_view
+        assert w.mode() == "laser" and w.modes.currentWidget() is d
+        assert d.embedded and not d.isWindow()
         assert d.art.side == "bottom"
         assert d.art.copper.area < 10  # B.Cu contains only four small shapes.
         d.x.setValue(45)

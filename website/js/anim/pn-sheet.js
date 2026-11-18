@@ -3,7 +3,8 @@
      front edge level with the panel's (app/panel.py next_slot, PANEL_GAP_MM = 4.0).
      The same folder again is "buck 2", "buck 3" (app/panel.py read_board).
    - Lay them side by side / Butt them together: left to right in list order, the first
-     staying where it is, 4 mm apart or touching (app/panel.py arrange_row).
+     staying where it is, 4 mm apart or touching; a board that would run past the sheet
+     starts a new row behind (app/panel.py arrange_rows, 2 mm short of the sheet's edge).
    - Pick a board by clicking it; drag it, or nudge it (arrow keys: 0.1 mm in the app,
      Shift 1 mm; here each press is 1 mm).
    - The files are named after every board: buck+buck_2_traces.nc (gui2/window.py _auto_name).
@@ -56,7 +57,12 @@
       return [x0, y0, x1, y1];
     }
     function arrange(gap) {
-      for (var i = 1; i < boards.length; i++) { boards[i].x = boards[i - 1].x + BW + gap; boards[i].y = boards[i - 1].y; }
+      var x0 = boards[0].x, width = Math.max(SW - x0 - 2, 1);
+      var rx = x0, ry = boards[0].y, top = ry;
+      boards.forEach(function (b, i) {
+        if (i && rx + BW > x0 + width + 1e-6) { rx = x0; ry = top + gap; }   // a new row, behind
+        b.x = rx; b.y = ry; rx += BW + gap; top = Math.max(top, ry + BH);
+      });
     }
     function pairGap(a, b) {
       var dx = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + BW, b.x + BW));
@@ -102,7 +108,8 @@
         var tx = sx(b.x + 6), ty = sy(b.y + 32);
         A.el(g, "path", { d: "M" + tx + "," + ty + " h" + 14 * K + " v" + 12 * K + " h" + 8 * K + " M" + tx + "," + (ty + 20 * K) + " h" + 20 * K,
           fill: "none", stroke: C.copperHi, "stroke-width": 2.5, opacity: 0.85 });
-        A.text(g, sx(b.x + BW / 2), sy(b.y + BH) - 8, b.name, { size: 16, anchor: "middle", weight: 700, fill: i === picked ? C.live : C.text });
+        // the name inside the board's top edge, so a second row cannot hide the first's
+        A.text(g, sx(b.x + BW / 2), sy(b.y + BH) + 22, b.name, { size: 16, anchor: "middle", weight: 700, fill: i === picked ? C.live : C.text });
         g.addEventListener("pointerdown", function (e) { startDrag(e, i); });
         g.addEventListener("focus", function () { if (picked !== i) { picked = i; draw(); focusPicked(); } });
         g.addEventListener("keydown", function (e) {

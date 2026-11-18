@@ -93,12 +93,16 @@ class RunSheet(QWidget):
         return self._text
 
     def show_plan(self, plan, *, name, out_dir, machine, leveled=False,
-                  double_sided=False, panel=None, mask=None, silk=None):
+                  double_sided=False, panel=None, mask=None, silk=None,
+                  extra=None):
         """``panel``: ``[(name, x, y, rotate)]`` for a sheet carrying several
         boards - each one's front-left corner in machine mm, printed so the
         operator can check the boards sit where the files expect them.
         ``mask``: ``(paths, notes)`` from writing the solder mask file, when
-        that was asked for. ``silk``: the same, for the silkscreen file."""
+        that was asked for. ``silk``: the same, for the silkscreen file.
+        ``extra``: ``[(heading, (paths, notes))]`` for every other file the
+        job has: the laser's traces and stencil, and files written on their
+        own pages (rework, a fitted drill, re-written top traces)."""
         page = QWidget()
         page.setObjectName("sheetPage")
         page.setStyleSheet(f"QWidget#sheetPage {{ background: {theme.INK}; }}")
@@ -245,6 +249,9 @@ class RunSheet(QWidget):
         if silk:
             self._laser_block(v, silk, lines,
                               "For the laser, after milling: silkscreen")
+        for heading, block in (extra or []):
+            if block and block[0]:
+                self._laser_block(v, block, lines, heading)
 
         wrap.addWidget(doc)
         wrap.addStretch(1)

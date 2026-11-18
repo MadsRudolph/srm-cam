@@ -28,7 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl, QEvent
+from PySide6.QtCore import Qt, QTimer, QUrl, QEvent, QThread, Signal
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QStackedWidget, QFileDialog, QApplication,
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from dataclasses import replace
 
 from gerber2rml.gui2.jogpad import KEY_DIRECTIONS
+from gerber2rml.gui2 import undo
 from gerber2rml.app.state import ProjectState
 from gerber2rml.app.preview import toolpath_segments, traverse_segments
 from gerber2rml.app import presets as presets_mod
@@ -48,6 +49,7 @@ from gerber2rml.naming import clean_name
 from gerber2rml.config import checked_job
 from gerber2rml.backends import BACKENDS
 from gerber2rml.engine import diagnostics as diag
+from gerber2rml.engine import method as fab
 from gerber2rml.engine import silkscreen
 from gerber2rml.engine import soldermask
 from gerber2rml.engine import stencil
@@ -133,7 +135,7 @@ from gerber2rml.gui2 import (theme, widgets, style, runplan, tier, workspace,
                              dialogs)
 from gerber2rml.gui2.stage import Stage
 from gerber2rml.gui2.traveller import Traveller
-from gerber2rml.gui2.inspector import Inspector, LaserPage
+from gerber2rml.gui2.inspector import Inspector
 from gerber2rml.gui2.machine import MachineLink, MachineBar, RunTracker
 from gerber2rml.gui2.leveling import LevelPage
 from gerber2rml.gui2.rework import ReworkPage
@@ -148,6 +150,109 @@ USER_GUIDE_URL = "https://madsrudolph.github.io/srm-cam/"
 DEMO = Path(__file__).resolve().parents[2] / "examples" / "calibration"
 FIXTURE = Path(__file__).resolve().parents[1] / "examples"
 
+
+
+class _IsolationDeferred(Exception):
+    """An isolation pass the stage asked for, to be built off the GUI thread."""
+
+    def __init__(self, copper, job, outline):
+        super().__init__("isolation deferred to the background")
+        self.copper, self.job, self.outline = copper, job, outline
+
+
+# Every isolation worker that has started and not been collected. A QThread
+# whose Python object is dropped while it runs takes the process down; a
+# window closed or deleted mid-build would do that. Held here instead, and
+# waited for at exit.
+_LIVE_WORKERS = set()
+
+
+def _wait_live_workers():
+    for w in list(_LIVE_WORKERS):
+        w.wait()
+
+
+import atexit                                           # noqa: E402
+atexit.register(_wait_live_workers)
+
+
+class _IsolationWorker(QThread):
+    """``isolate()`` on its own thread. Touches no widget: it is handed the
+    copper, a copy of the job and the outline, and hands back the paths."""
+    done = Signal(object, object)          # paths, error text or None
+
+    def __init__(self, copper, job, outline):
+        super().__init__()
+        self.args = (copper, job, outline)
+        _LIVE_WORKERS.add(self)
+
+    def run(self):
+        from gerber2rml.engine.traces import isolate
+        copper, job, outline = self.args
+        try:
+            paths = isolate(copper, job, outline=outline)
+        except Exception as e:                  # noqa: BLE001 - re-raised on the GUI thread
+            self.done.emit(None, f"{e.__class__.__name__}: {e}")
+            return
+        self.done.emit(paths, None)
+
+
+# The quarter turns, and the same mirrored, as (a, b, d, e) of shapely's
+# affine_transform, exactly: everything Rotate and Mirror can do to a board.
+_QUARTER_TURNS = ((1, 0, 0, 1), (0, -1, 1, 0), (-1, 0, 0, -1), (0, 1, -1, 0),
+                  (-1, 0, 0, 1), (1, 0, 0, -1), (0, 1, 1, 0), (0, -1, -1, 0))
+
+
+def _moved_by(old, new, old_outline, new_outline, tol=1e-6):
+    """The affine matrix (shapely's ``[a, b, d, e, xoff, yoff]``) that takes
+    ``old`` to ``new`` and ``old_outline`` to ``new_outline`` - a move, a
+    quarter turn or a mirror, and a move - else None. Vertex for vertex: anything but the
+    same geometry moved or turned is not recognised, and is worked out
+    afresh."""
+    import shapely
+    from shapely.affinity import affine_transform
+    if old is None or new is None:
+        return None
+    if old is new and old_outline is new_outline:
+        return [1, 0, 0, 1, 0.0, 0.0]
+    if (old.is_empty or new.is_empty or old.geom_type != new.geom_type
+            or shapely.get_num_coordinates(old)
+            != shapely.get_num_coordinates(new)):
+        return None
+    a_empty = old_outline is None or old_outline.is_empty
+    b_empty = new_outline is None or new_outline.is_empty
+    if a_empty != b_empty or (not a_empty and (
+            shapely.get_num_coordinates(old_outline)
+            != shapely.get_num_coordinates(new_outline))):
+        return None
+    for a, b, d, e in _QUARTER_TURNS:
+        turned = affine_transform(old, [a, b, d, e, 0.0, 0.0])
+        dx = new.bounds[0] - turned.bounds[0]
+        dy = new.bounds[1] - turned.bounds[1]
+        m = [a, b, d, e, dx, dy]
+        if not affine_transform(old, m).equals_exact(new, tol):
+            continue
+        if a_empty or affine_transform(old_outline, m).equals_exact(
+                new_outline, tol):
+            return m
+    return None
+
+
+def _translate_drc(found, m):
+    """The copper checks' answer, carried by the matrix ``m``."""
+    shorts, eaten, gaps, corners = found
+    if m == [1, 0, 0, 1, 0.0, 0.0]:
+        return list(shorts), list(eaten), gaps, corners
+    from shapely.affinity import affine_transform
+    a, b, d, e, xoff, yoff = m
+
+    def move(marks):
+        return [dict(k, x=a * k["x"] + b * k["y"] + xoff,
+                     y=d * k["x"] + e * k["y"] + yoff) for k in marks]
+
+    def geom(g):
+        return None if g is None else affine_transform(g, m)
+    return move(shorts), move(eaten), geom(gaps), geom(corners)
 
 
 def _and_list(items):
@@ -327,9 +432,9 @@ class Toast(QLabel):
 
 
 # Novice's whole rail, in order: keys of the one plan, in its own words.
-NOVICE_RAIL = {"setup": ("Your board", "Load it, one side or two, the tool"),
-               "checks": ("Check it", "Can it be milled as drawn?"),
-               "autorun": ("Run it", "Stock in the bracket, then Start")}
+NOVICE_RAIL = {"setup": ("Your board", "How it is made, one side or two"),
+               "checks": ("Check it", "Can it be made as drawn?"),
+               "autorun": (None, "Stock in the bracket, then Start")}
 
 
 class MainWindow(QMainWindow):
@@ -372,6 +477,15 @@ class MainWindow(QMainWindow):
         self._laser_offsets = xtool.DEFAULT_TRACE_OFFSETS
         self._laser_traces_result = None
         self._registration = "fiducial"     # the lab standard; dowels drill the bed
+        # How the board's copper is made (engine/method.py): None until a
+        # board says, and then the tool profile answers. Its source is shown
+        # beside it: from KiCad, guessed from the gaps, or chosen here.
+        self._method = None
+        self._method_source = "profile"
+        self._method_gap = None
+        # A double-sided board set to the laser is milled single-sided (the
+        # holes go through); what the tick said before, to give it back.
+        self._double_before_laser = None
         # Bigger than the bit, on purpose. The engine's default is 0.8 mm —
         # the same as the bit that drills it and the same as the bit that must
         # descend INSIDE it to probe it, which is a hole no bit can enter.
@@ -418,16 +532,20 @@ class MainWindow(QMainWindow):
         # its measured pads: design -> bed. Only the drill-only step uses it.
         self._board_fit = None
         self._stock_turn = None       # the job turned to the found stock
-        # Automatic mode: opt-in, remembered between sessions.
-        self._autorun = str(workspace.setting("autorun", "false")).lower() \
-            in ("true", "1")
         from gerber2rml.gui2 import machine as _machine
-        _machine.SHOW_SIM = tier.is_full() and self._autorun
+        _machine.SHOW_SIM = tier.is_full()
         self._layout_base = None       # the layout at offset (0, 0)
         self._layout_key = None        # what that base was built from
         self._layout_placed = None     # ...translated to the placement
         self._layout_placed_key = None
         self._paths_cache = {}         # step key -> (paths, far, cut width)
+        self._drc_memo = None          # the copper checks, for a moved board
+        self._iso_memo = []            # [(copper, outline, job, paths)]
+        self._iso_worker = None        # an isolation pass being built
+        self._iso_defer = False        # True: a slow isolation goes to it
+        self._iso_failed = None        # ...and the one it could not build
+        # Ctrl+Z for where the boards sit: every move, turn and mirror.
+        self.placement_undo = undo.PlacementUndo(self._sync_undo)
         self._current_step = None
         self._drawing = False          # a toolpath is being built right now
         self._redraw_after = False     # ...and a redraw was asked for meanwhile
@@ -469,20 +587,27 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        v.addWidget(self._build_header())
+        self.header = self._build_header()
+        v.addWidget(self.header)
         v.addWidget(widgets.rule())
+
+        # The rail is the whole job, across both machines: it stays on screen
+        # whichever machine's page is beside it.
+        body = QWidget()
+        bh = QHBoxLayout(body)
+        bh.setContentsMargins(0, 0, 0, 0)
+        bh.setSpacing(0)
+        self.traveller = Traveller()
+        self.traveller.step_selected.connect(self.select_step)
+        self.traveller.export_requested.connect(self.action_export)
+        self.traveller.banner_action.connect(lambda: self.select_step("checks"))
+        bh.addWidget(self.traveller)
+        bh.addWidget(widgets.vrule())
 
         middle = QWidget()
         h = QHBoxLayout(middle)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
-
-        self.traveller = Traveller()
-        self.traveller.step_selected.connect(self.select_step)
-        self.traveller.export_requested.connect(self.action_export)
-        self.traveller.banner_action.connect(lambda: self.select_step("checks"))
-        h.addWidget(self.traveller)
-        h.addWidget(widgets.vrule())
 
         self.stage = Stage()
         self.stage.placement_changed.connect(self._on_drag)
@@ -519,11 +644,17 @@ class MainWindow(QMainWindow):
         self.split.setStyleSheet(
             "QSplitter::handle:horizontal { width: 6px; background: "
             "transparent; border-left: 1px solid %s; }" % theme.RULE)
-        self.split.addWidget(self.centre)
+        canvas = QWidget()
+        cvl = QVBoxLayout(canvas)
+        cvl.setContentsMargins(0, 0, 0, 0)
+        cvl.setSpacing(0)
+        cvl.addWidget(self._build_canvas_bar())
+        cvl.addWidget(widgets.rule())
+        cvl.addWidget(self.centre, 1)
+        self.split.addWidget(canvas)
         h.addWidget(self.split, 1)
 
         self.inspector = Inspector(self)
-        self.laser_page = self.inspector.add_page("laser", LaserPage(self))
         self.level_page = self.inspector.add_page("level", LevelPage(self))
         self.rework_page = self.inspector.add_page("rework", ReworkPage(self))
         self.flipfit_page = self.inspector.add_page("fitflip", FlipFitPage(self))
@@ -534,6 +665,8 @@ class MainWindow(QMainWindow):
         self.stage.stock_picked.connect(self.autorun_page.on_stock_click)
         self.stage.bracket_moved.connect(self.autorun_page.on_bracket_moved)
         self.stage.nogo_picked.connect(self.autorun_page.on_nogo_picked)
+        self.autorun_page.finished.connect(
+            lambda *_: self.inspector.step.sync_run())
         self.split.addWidget(self.inspector)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
@@ -547,9 +680,26 @@ class MainWindow(QMainWindow):
         self.split.splitterMoved.connect(
             lambda *_: workspace.set_setting("ui/inspector_w",
                                              self.inspector.width()))
-        v.addWidget(middle, 1)
+        # The mill and the laser are two pages of this one window, swapped by
+        # the switch in the header: the mill's rail, stage, inspector and
+        # machine bar on one, the laser page (bed, its inspector, its bar)
+        # on the other. The laser page is made the first time it is shown.
+        self.modes = QStackedWidget()
+        self.cnc_body = QWidget()
+        cv = QVBoxLayout(self.cnc_body)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(0)
+        cv.addWidget(middle, 1)
+        self.modes.addWidget(self.cnc_body)
+        self.laser_view = None
+        self._laser_token = None
+        bh.addWidget(self.modes, 1)
+        v.addWidget(body, 1)
 
-        v.addWidget(widgets.rule())
+        # The mill's bar spans the window, under the rail too: it is the
+        # mill's STOP, and it needs the room. The laser page has its own.
+        self.bar_rule = widgets.rule()
+        v.addWidget(self.bar_rule)
         self.bar = MachineBar(self.link)
         self.bar.message.connect(self.say)
         self.bar.jog_mode_changed.connect(
@@ -607,6 +757,17 @@ class MainWindow(QMainWindow):
         elif (ev.type() == QEvent.KeyPress and ev.key() == Qt.Key_Escape
                 and not self._esc_down):
             self._esc_down = True
+            view = getattr(self, "laser_view", None)
+            if view is not None and view._worker_running():
+                # Escape stops the laser as well, whichever page is up.
+                view.stop()
+                if not self.link.can_stop_something():
+                    return super().eventFilter(obj, ev)
+            if (view is not None and self.mode() == "laser"
+                    and not self.link.can_stop_something()):
+                # Nothing running on either machine; the mill's "no link to
+                # stop" means nothing on the laser's page.
+                return super().eventFilter(obj, ev)
             if self.link.can_stop_something():
                 self.bar._stop()
             elif QApplication.activeModalWidget() is None:
@@ -622,6 +783,8 @@ class MainWindow(QMainWindow):
         pad = getattr(getattr(self, "bar", None), "pad", None)
         if pad is None or not pad.keys_on():
             return False
+        if self.mode() == "laser":
+            return False           # the laser page's arrows move its job
         if ev.key() not in KEY_DIRECTIONS:
             return False
         if QApplication.activeModalWidget() is not None:
@@ -644,43 +807,42 @@ class MainWindow(QMainWindow):
         mark.setFont(theme.font("head"))
         mark.setStyleSheet(f"color: {theme.TEXT};")
         h.addWidget(mark)
-        sub = QLabel("Roland SRM-20")
-        sub.setFont(theme.font("label"))
-        sub.setStyleSheet(f"color: {theme.TEXT_4};")
-        h.addWidget(sub)
 
-        h.addSpacing(theme.GAP_M)
-        h.addWidget(widgets.vrule())
+        # How the board is made: one fact that decides the checks, the tool
+        # and the jobs on the rail. Shown on both machines, and changed here
+        # whatever KiCad or the guess said.
+        from PySide6.QtWidgets import QMenu
+        self.method_chip = widgets.ClickChip("No board", "idle")
+        self.method_menu = QMenu(self)
+        self.method_group = QActionGroup(self)
+        self.method_group.setExclusive(True)
+        self.method_acts = {}
+        for mid in fab.IDS:
+            a = QAction(fab.name(mid), self)
+            a.setCheckable(True)
+            a.setToolTip(fab.METHODS[mid].about)
+            a.triggered.connect(lambda _c=False, m=mid: self.action_method(m))
+            self.method_group.addAction(a)
+            self.method_menu.addAction(a)
+            self.method_acts[mid] = a
+        self.method_menu.setToolTipsVisible(True)
+        self.method_chip.menu = self.method_menu
+        h.addWidget(self.method_chip)
+
+        # Which machine: the switch names it, so the old "Roland SRM-20"
+        # caption went (the header is full at 1280 px).
         h.addSpacing(theme.GAP_XS)
-
-        self.frame_switch = widgets.Segmented(
-            [("bed", "Bed — as cut",
-              "Machine coordinates: exactly what the machine will do, in the "
-              "frame VPanel and the position readout use."),
-             ("xray", "Design X-ray",
-              "The board as KiCad drew it — the top view, unmirrored — for "
-              "finding a pad by looking at KiCad, and on a double-sided job "
-              "for checking that the two faces register. This is NOT what "
-              "gets cut.")], "bed")
-        self.frame_switch.changed.connect(self._on_frame)
-        h.addWidget(self.frame_switch)
-
-        h.addWidget(widgets.button("Fit", on=self.action_fit,
-                                   tip="Frame the work. Scroll to zoom, "
-                                       "right-drag to pan."))
-        self.travel_btn = widgets.button(
-            "Travel moves", on=self._toggle_travel,
-            tip="Show the moves where the bit is in the air. Useful for "
-                "spotting a path that crosses the board when it should go "
-                "around.")
-        self.travel_btn.setCheckable(True)
-        self.travel_btn.setChecked(True)
-        h.addWidget(self.travel_btn)
-        self.header_laser_btn = widgets.button(
-            "xTool laser…", on=self.action_open_laser_hub,
-            tip="Open the xTool F1 Ultra laser window (Traces, Solder mask, "
-                "Silkscreen, Stencil)")
-        h.addWidget(self.header_laser_btn)
+        self.mode_switch = widgets.Segmented([
+            ("cnc", "CNC", "The Roland SRM-20 mill: mill the copper, drill and "
+                           "cut the board out (Ctrl+1)"),
+            ("laser", "Laser", "The xTool F1 Ultra fiber laser: copper traces, "
+                               "solder mask, silkscreen and stencil (Ctrl+2)")],
+            "cnc")
+        self.mode_switch.changed.connect(self.show_mode)
+        h.addWidget(self.mode_switch)
+        # Everything after the switch belongs to the mill's page; the laser
+        # page has a header of its own.
+        cnc_from = h.count()
 
         h.addStretch(1)
         # One glance at the measured state of the job, in the order the work
@@ -714,12 +876,86 @@ class MainWindow(QMainWindow):
         self.coords.setMinimumWidth(150)
         self.coords.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         h.addWidget(self.coords)
-        self.tier_chip = widgets.Chip("Essential", "idle")
+        self._cnc_header = [h.itemAt(i).widget() for i in range(cnc_from, h.count())
+                            if h.itemAt(i).widget() is not None]
+        # The tier is the window's, not the mill's: on both pages, and the
+        # chip is the switch.
+        self.tier_chip = widgets.ClickChip("Novice", "idle")
         self.tier_chip.setToolTip(
-            "Which set of controls is on screen. Interface ▸ tells you exactly "
-            "what the other one adds.")
+            "Which set of controls is on screen. Click to switch between "
+            "Novice and Pro; Help ▸ What Novice and Pro differ by says "
+            "exactly what Pro adds.")
+        self.tier_chip.clicked.connect(self._toggle_tier)
         h.addWidget(self.tier_chip)
         return head
+
+    def _build_canvas_bar(self):
+        """The bed's own tools, above it: where the work sits (turn, mirror,
+        centre, undo), the photo, and how it is drawn. The laser page has
+        the same row above its bed."""
+        from PySide6.QtWidgets import QMenu, QToolButton
+        bar = QWidget()
+        bar.setObjectName("panel")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(theme.GAP_M, theme.GAP_XS, theme.GAP_M,
+                             theme.GAP_XS)
+        h.setSpacing(theme.GAP_S)
+        self.turn_left_btn = widgets.button(
+            "Turn left", on=lambda: self.action_turn(90),
+            tip="Turn the board a quarter turn anticlockwise (undoable).")
+        self.turn_right_btn = widgets.button(
+            "Turn right", on=lambda: self.action_turn(-90),
+            tip="Turn the board a quarter turn clockwise (undoable).")
+        self.mirror_btn = widgets.button(
+            "Mirror", on=lambda: self.action_mirror(not self.state.mirror),
+            tip="Mirror the design left to right. The bottom copper is cut "
+                "from above, so it is mirrored by default; untick only for "
+                "Gerbers that are already mirrored.")
+        self.centre_btn = widgets.button(
+            "Centre", on=lambda: self.action_autoplace("auto"),
+            tip="Centre the job on the copper sheet once it is set, else on "
+                "the bed. Ctrl+Z puts it back.")
+        self.undo_btn = widgets.button("Undo", on=self.action_undo,
+                                       enabled=False,
+                                       tip="Take back the last change on the "
+                                           "bed (Ctrl+Z).")
+        for w in (self.turn_left_btn, self.turn_right_btn, self.mirror_btn,
+                  self.centre_btn, self.undo_btn):
+            h.addWidget(w)
+        h.addSpacing(theme.GAP_S)
+        h.addWidget(widgets.vrule())
+        self.photo_btn = QToolButton()
+        self.photo_btn.setText("Photo ▾")
+        self.photo_btn.setPopupMode(QToolButton.InstantPopup)
+        self.photo_btn.setToolTip("A photo of the milled board, laid over the "
+                                  "design: for finding spots to fix.")
+        self.photo_menu = QMenu(self.photo_btn)
+        self.photo_btn.setMenu(self.photo_menu)
+        h.addWidget(self.photo_btn)
+        h.addStretch(1)
+        self.frame_switch = widgets.Segmented(
+            [("bed", "As cut",
+              "Machine coordinates: exactly what the machine will do, in the "
+              "frame VPanel and the position readout use."),
+             ("xray", "X-ray",
+              "The board as KiCad drew it — the top view, unmirrored — for "
+              "finding a pad by looking at KiCad, and on a double-sided job "
+              "for checking that the two faces register. This is NOT what "
+              "gets cut.")], "bed")
+        self.frame_switch.changed.connect(self._on_frame)
+        h.addWidget(self.frame_switch)
+
+        # Fit (Ctrl+0) and Travel moves are in the View menu: the bar has to
+        # fit a laptop beside the rail and the inspector.
+        self.travel_btn = widgets.button(
+            "Travel moves", on=self._toggle_travel,
+            tip="Show the moves where the bit is in the air. Useful for "
+                "spotting a path that crosses the board when it should go "
+                "around.")
+        self.travel_btn.setCheckable(True)
+        self.travel_btn.setChecked(True)
+        self.travel_btn.setVisible(False)
+        return bar
 
     def _build_menus(self):
         mb = self.menuBar()
@@ -729,6 +965,10 @@ class MainWindow(QMainWindow):
         self.add_board_act = self._act(f, "Add another board to the sheet…",
                                        self.action_add_board, "Ctrl+Shift+O")
         self._act(f, "Open the demo board", self.action_open_demo)
+        self.dxf_act = self._act(f, "Open a DXF for the laser…",
+                                 self.action_traces_laser_dxf)
+        self.dxf_act.setToolTip("Copper traces drawn as a DXF, etched on the "
+                                "laser without a Gerber folder.")
         f.addSeparator()
         self._act(f, "Save the setup…", self.action_save_setup, "Ctrl+S")
         self._act(f, "Load a setup…", self.action_load_setup)
@@ -737,20 +977,44 @@ class MainWindow(QMainWindow):
                                     "Ctrl+E")
         self.export_folder_act = self._act(f, "Open the export folder",
                                            self.action_open_export_folder)
+        self._act(f, "Show the run sheet", self.action_show_sheet)
         f.addSeparator()
         self._act(f, "Quit", self.close, "Ctrl+Q")
 
-        v = mb.addMenu("&View")
+        e = mb.addMenu("&Edit")
+        # Window-wide, but a text or number field with the keyboard keeps its
+        # own Ctrl+Z: Qt offers it the key first.
+        self.undo_act = self._act(e, "Undo", self.action_undo,
+                                  QKeySequence.Undo)
+        self.redo_act = self._act(e, "Redo", self.action_redo)
+        self.redo_act.setShortcuts([QKeySequence("Ctrl+Shift+Z"),
+                                    QKeySequence("Ctrl+Y")])
+        self._sync_undo()
+
+        # Kept: a menu reached again through the menu bar's actions can be a
+        # wrapper Qt has already let go of.
+        v = self.view_menu = mb.addMenu("&View")
+        self._act(v, "The CNC mill", lambda: self.show_mode("cnc"), "Ctrl+1")
+        self._act(v, "The xTool laser", lambda: self.show_mode("laser"), "Ctrl+2")
+        v.addSeparator()
         self._act(v, "Fit the work", self.action_fit, "Ctrl+0")
         self._act(v, "Fit the whole bed", lambda: self.stage.fit(), "Ctrl+Shift+0")
+        # The bed toolbar's Centre, for the keyboard.
+        self._act(v, "Centre the job", lambda: self.action_autoplace("auto"),
+                  "Ctrl+B")
         v.addSeparator()
-        self._act(v, "Centre the job on the bed",
-                  lambda: self.action_autoplace("bed"), "Ctrl+B")
-        self._act(v, "Centre the job on the copper",
-                  lambda: self.action_autoplace("copper"), "Ctrl+Shift+B")
-        self._act(v, "Lay the boards side by side", lambda: self.action_arrange())
-        self._act(v, "Butt the boards together",
-                  lambda: self.action_arrange(0.0))
+        # The chip at the top right is the switch; these are the same, for
+        # the keyboard and for the menu-minded.
+        self.tier_group = QActionGroup(self)
+        self.tier_group.setExclusive(True)
+        self.essential_act = self._act(v, "Novice controls",
+                                       lambda: self.set_tier(tier.ESSENTIAL),
+                                       checkable=True)
+        self.full_act = self._act(v, "Pro controls",
+                                  lambda: self.set_tier(tier.FULL),
+                                  checkable=True)
+        for a in (self.essential_act, self.full_act):
+            self.tier_group.addAction(a)
         v.addSeparator()
         self.xray_act = self._act(v, "Design X-ray", self._toggle_xray, "Ctrl+D",
                                   checkable=True)
@@ -768,14 +1032,15 @@ class MainWindow(QMainWindow):
         v.addSeparator()
         self._act(v, "Watch this step in 3D…", self.action_sim3d, "Ctrl+3")
         v.addSeparator()
-        self._act(v, "Lay a photo of the board on the bed…",
+        pm = self.photo_menu
+        self._act(pm, "Lay a photo of the board on the bed…",
                   self.action_load_photo)
-        self._act(v, "Take one with a phone…", self.action_phone_photo)
-        self.photo_clear_act = self._act(v, "Take the photo off",
+        self._act(pm, "Take one with a phone…", self.action_phone_photo)
+        self.photo_clear_act = self._act(pm, "Take the photo off",
                                          self.action_clear_photo)
         self.photo_clear_act.setEnabled(False)
         self.photo_anchor_act = self._act(
-            v, "Choose which holes anchor the photo…", self.action_photo_anchors)
+            pm, "Choose which holes anchor the photo…", self.action_photo_anchors)
         # The photo's strength and the design's fade, as sliders in the menu
         # itself: the menu stays open while one is dragged and the bed
         # updates underneath. Greyed until there is a photo to adjust.
@@ -787,7 +1052,7 @@ class MainWindow(QMainWindow):
         self.photo_controls_act = QWidgetAction(self)
         self.photo_controls_act.setDefaultWidget(self.photo_controls)
         self.photo_controls_act.setEnabled(False)
-        v.addAction(self.photo_controls_act)
+        pm.addAction(self.photo_controls_act)
         # What the setup file keeps about the photo: the file and the anchor
         # pairs it was fitted on (the warp is re-done from them on load),
         # and the holes the operator chose to anchor on, if any.
@@ -839,6 +1104,10 @@ class MainWindow(QMainWindow):
             "Start following the selected step as soon as the bit has been "
             "moving for a moment, so nothing has to be pressed here when "
             "the run starts in VPanel. A jog from this app does not count.")
+        # Following a run is simply on: it starts by itself when the bit
+        # moves. The two switches stay as state, off the menu.
+        for a in (self.track_act, self.autotrack_act):
+            m.removeAction(a)
         m.addSeparator()
         self.align_act = self._act(m, "Align the overlay to the bit",
                                    self.action_align_overlay, checkable=True)
@@ -859,40 +1128,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addSeparator()
         self.mtest_act = self._act(m, "Machine test…", self.action_machine_test)
-        self.stream_act = self._act(m, "Stream this step over the link "
-                                       "(experimental)…", self.action_stream)
         m.addSeparator()
-        self.autorun_act = self._act(
-            m, "Automatic mode (run it all)", self.action_autorun,
-            checkable=True, checked=self._autorun)
-        self.autorun_act.setToolTip(
-            "Adds a step that finds the stock with the probe, levels, sets "
-            "the origin and cuts the whole board - you only flip it. "
-            "Everything else works by hand exactly as before. Also lists the "
-            "simulated SRM-20 among the ports, to try it with the mill off.")
-
-        i = mb.addMenu("&Interface")
-        self.tier_group = QActionGroup(self)
-        self.tier_group.setExclusive(True)
-        self.essential_act = self._act(i, "Novice",
-                                       lambda: self.set_tier(tier.ESSENTIAL),
-                                       checkable=True)
-        self.full_act = self._act(i, "Pro",
-                                  lambda: self.set_tier(tier.FULL),
-                                  checkable=True)
-        for a in (self.essential_act, self.full_act):
-            self.tier_group.addAction(a)
-        i.addSeparator()
-        self._act(i, "What Novice and Pro differ by…",
-                  lambda: dialogs.about_tier(self))
-
-        k = mb.addMenu("&KiCad")
-        self.kicad_act = self._act(k, "Set up the build-area plugin…",
-                                   self.action_setup_kicad_plugin)
-        self.kicad_act.setToolTip("Add a button to KiCad's PCB editor that "
-                                  "draws the SRM-20's build area and says "
-                                  "whether your board fits.")
-
         h = mb.addMenu("&Help")
         self.guide_act = self._act(h, "User guide (web)…", self.action_user_guide,
                                    "F1")
@@ -900,6 +1136,17 @@ class MainWindow(QMainWindow):
         self._act(h, "How this works", self.action_help)
         self.basics_act = self._act(h, "The machine, in five minutes",
                                     self.action_basics)
+        self._act(h, "What Novice and Pro differ by…",
+                  lambda: dialogs.about_tier(self))
+        self.kicad_act = self._act(h, "Add the SRM-CAM buttons to KiCad…",
+                                   self.action_setup_kicad_plugin)
+        self.kicad_act.setToolTip("Adds three buttons to KiCad's PCB editor: "
+                                  "show the build area, set the design rules "
+                                  "for how the board is made, and send it "
+                                  "here.")
+        self._act(h, "Give feedback…",
+                  lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
+        h.addSeparator()
         self.update_act = self._act(h, "Check for updates…",
                                     self.action_check_updates)
         self._act(h, "About SRM-CAM", self.action_about)
@@ -925,20 +1172,177 @@ class MainWindow(QMainWindow):
         self._sync_tier()
         self.refresh_plan()
         self.inspector.setup.sync()
+        if self.laser_view is not None and hasattr(self.laser_view,
+                                                   "apply_tier"):
+            self.laser_view.apply_tier()
         # A step Novice has no row for: back to the start of its three.
         if self._current_step is not None and not tier.is_full() \
-                and self._current_step.key not in NOVICE_RAIL:
+                and self._current_step.key not in self._novice_keys():
             self.select_step("setup")
 
     def automatic(self):
-        """Is the Run it all step in the plan? Always in Novice, which is
-        built around it; chosen in Pro, where it is one way among several."""
-        return not tier.is_full() or self._autorun
+        """Is the run on the rail? Always, in both tiers: Pro runs the same
+        smart run as Novice, and has the steps as well."""
+        return True
+
+    def action_run_step(self, key):
+        """Pro: one step of the plan, sent to the mill by itself - found,
+        probed and cut as Mill it would, without the rest."""
+        if not tier.is_full():
+            return
+        self.autorun_page.start(only=key)
+
+    def _toggle_tier(self):
+        self.set_tier(tier.ESSENTIAL if tier.is_full() else tier.FULL)
+
+    # ------------------------------------------------------------ the method
+    def method_id(self):
+        """How the board's copper is made: ``fab.FLAT``, ``fab.BALL`` or
+        ``fab.LASER``. Until a board has said, the tool profile says."""
+        if self._method in fab.IDS:
+            return self._method
+        return fab.from_profile(self.state.trace.effective_diameter())
+
+    @property
+    def _traces_on_laser(self):
+        """The copper is etched on the laser; the mill drills and cuts out."""
+        return self.method_id() == fab.LASER
+
+    def laser_method(self):
+        return self.method_id() == fab.LASER
+
+    def holes_drilled_first(self):
+        """Does the mill drill this board's holes before the laser? On a
+        laser board it does (Drill and cut out, then the laser); on any
+        other, once a drilling step or the run is ticked off."""
+        if self.state.board is None:
+            return False
+        if self.laser_method():
+            return True
+        done = [s.key for s in (self.plan or []) if s.op == "drill"
+                or s.key == "autorun"]
+        return any(self.traveller.is_done(k) for k in done)
+
+    def check_width(self):
+        """The narrowest gap between two nets this board's method can make:
+        the trace cutter on the mill, the laser's floor on the laser."""
+        if self.laser_method():
+            return fab.FLOOR[fab.LASER]
+        return self.state.trace.effective_diameter()
+
+    def _method_key(self):
+        return "method/" + self._sides_key().split("/", 1)[1]
+
+    def action_method(self, mid, source="chosen", *, quiet=False):
+        """Make the board ``mid``. Chosen here, it is remembered for the
+        board's folder; a mill method brings its tool profile with it."""
+        if mid not in fab.IDS:
+            return
+        old = self.method_id()
+        self._method, self._method_source = mid, source
+        if (source == "chosen" and self.remember_board_choices
+                and self.state.board is not None):
+            workspace.set_setting(self._method_key(), mid)
+        if fab.is_mill(mid) and fab.from_profile(
+                self.state.trace.effective_diameter()) != mid:
+            self._apply_method_profile(mid)
+        self._sync_laser_method(old, mid)
+        self._drc_memo = None
+        self._paths_cache = {}
+        self._after_params()
+        self._sync_method()
+        if not quiet and old != mid:
+            self.say("ok", f"{fab.name(mid)}: "
+                           + ("the mill drills the holes and cuts the board "
+                              "out with tabs; the copper is etched on the "
+                              "laser." if mid == fab.LASER else
+                              "the checks and the tool are this bit's now."))
+
+    def _apply_method_profile(self, mid):
+        """The first tool profile that is this method's, applied."""
+        table = presets_mod.load_presets()
+        for name, preset in table.items():
+            bit = (preset.get("trace") or {}).get("bit_diameter")
+            if fab.from_profile(bit) == mid:
+                presets_mod.apply_preset(self.state, preset)
+                self._apply_auto_depth()
+                combo = self.inspector.setup.preset
+                combo.blockSignals(True)
+                combo.setCurrentText(name)
+                combo.blockSignals(False)
+                return True
+        return False
+
+    def _sync_laser_method(self, old, new):
+        """A laser board is milled as a one-sided job: the holes and the
+        cut-out go through, and both copper faces are the laser's."""
+        page = getattr(self, "autorun_page", None)
+        if new == fab.LASER and old != fab.LASER:
+            if self._double:
+                self._double_before_laser = True
+                self.inspector.setup.double.setChecked(False)
+        elif old == fab.LASER and new != fab.LASER:
+            if self._double_before_laser:
+                self.inspector.setup.double.setChecked(True)
+            self._double_before_laser = None
+        if page is not None:
+            page.sync_method()
+
+    def _detect_method(self):
+        """What a board just opened is made with: what was chosen for it here
+        before, else what KiCad stored, else the guess from its gaps."""
+        st = self.state
+        if st.board is None:
+            return
+        said = (workspace.setting(self._method_key(), "")
+                if self.remember_board_choices else "")
+        from gerber2rml.loader import gerber_stem
+        try:
+            stem = gerber_stem(Path(st.gerber_dir))
+        except Exception:                               # noqa: BLE001
+            stem = None
+        kicad = fab.read_kicad(st.gerber_dir, stem) if st.gerber_dir else None
+        self._method_gap = None
+        if said in fab.IDS:
+            mid, src = said, "chosen"
+        elif kicad:
+            mid, src = kicad, "kicad"
+        else:
+            mid, self._method_gap = fab.guess(st.board)
+            src = "guessed"
+        self.action_method(mid, src, quiet=True)
+        if src == "guessed" and mid != fab.FLAT:
+            self.say("info", f"Made on the {fab.METHODS[mid].short.lower()}, "
+                             f"guessed from the narrowest gap between two "
+                             f"nets ({self._method_gap:.2f} mm). Click the "
+                             f"chip at the top to change it.")
+        elif src == "kicad":
+            self.say("info", f"{fab.name(mid)}, as set in KiCad.")
+
+    def _sync_method(self):
+        chip = getattr(self, "method_chip", None)
+        if chip is None:
+            return
+        if self.state.board is None:
+            chip.set("No board", "idle")
+            chip.setToolTip("How the board is made. Open a board first.")
+        else:
+            mid = self.method_id()
+            words = fab.SOURCE_WORDS.get(self._method_source, "")
+            chip.set(f"{fab.METHODS[mid].short} · {words}",
+                     "live" if mid == fab.LASER else "idle")
+            gap = (f" Narrowest gap between two nets: "
+                   f"{self._method_gap:.2f} mm." if self._method_gap else "")
+            chip.setToolTip(f"{fab.name(mid)}, {words}. {fab.METHODS[mid].about}"
+                            f"{gap}\nClick to choose another way to make it.")
+        for mid, a in self.method_acts.items():
+            a.setChecked(self.state.board is not None and mid == self.method_id())
+        chip.setEnabled(self.state.board is not None)
 
     def _sync_sim_port(self):
         """The simulated mill is for trying things out, in Pro only."""
         from gerber2rml.gui2 import machine as _machine
-        _machine.SHOW_SIM = tier.is_full() and self._autorun
+        _machine.SHOW_SIM = tier.is_full()
         if hasattr(self.bar, "refresh_ports"):
             self.bar.refresh_ports()
 
@@ -952,10 +1356,10 @@ class MainWindow(QMainWindow):
         pinned = tier.pinned_tier() is not None
         self.essential_act.setEnabled(not pinned)
         self.full_act.setEnabled(not pinned)
-        for a in (self.stream_act, self.fixture_act, self.mtest_act,
+        for a in (self.dxf_act, self.fixture_act, self.mtest_act,
                   self.align_act, self.trim_clear_act, self.export_act,
                   self.export_folder_act, self.add_board_act, self.screw_act,
-                  self.track_act, self.autotrack_act, self.autorun_act):
+                  self.track_act, self.autotrack_act):
             a.setVisible(full)
         self.export_act.setEnabled(full)       # and its Ctrl+E with it
         self.traveller.set_novice(not full)
@@ -966,8 +1370,7 @@ class MainWindow(QMainWindow):
         self._sync_sim_port()
         # The fit and the boxes are Full-tier work; a chip saying "Fit —"
         # to someone who cannot reach the fit would be a control to explain.
-        for name in ("fit", "boxes"):
-            self.chips[name].setVisible(full)
+        self.refresh_chips()
 
     # ------------------------------------------------------- the ctl protocol
     def say(self, level, text):
@@ -1078,7 +1481,9 @@ class MainWindow(QMainWindow):
         bx, by = tx1 - tx0, ty1 - ty0
         w, h = x1 - x0, y1 - y0
         # Move so the extent is centred: the gap either side is (target - span)/2.
-        # Every board by the same amount, so a panel keeps its shape.
+        # Every board by the same amount, so a panel keeps its shape. Undoable
+        # like every other move.
+        self.remember()
         self.state.move_all(tx0 + (bx - w) / 2.0 - x0,
                             ty0 + (by - h) / 2.0 - y0)
         self._paths_cache = {}
@@ -1204,9 +1609,8 @@ class MainWindow(QMainWindow):
         job = {"traces": self.state.trace, "top_traces": self.state.trace,
                "drill": self.state.drill, "align": self.state.drill,
                "cutout": self.state.cutout}.get(step.op)
-        if job is None:                        # the dry run has its own feed
-            from gerber2rml.engine.airpass import DEFAULT_FEED
-            return DEFAULT_FEED, DEFAULT_FEED
+        if job is None:
+            job = self.state.trace
         return job.xy_feed, job.plunge_feed
 
     def _arm_tracking(self, silent=False):
@@ -1403,6 +1807,13 @@ class MainWindow(QMainWindow):
         boxes = len(getattr(self.rework_page, "_regions", []) or [])
         chips["boxes"].set(f"Boxes {boxes}" if boxes else "Boxes",
                            "ok" if boxes else "idle")
+        # A chip shows once it has something to say: four dim words were
+        # 330 px of a header that has to fit a laptop.
+        on_mill = self.mode() != "laser"
+        lit = {"mesh": n > 0, "fit": fit is not None, "photo": photo,
+               "boxes": bool(boxes)}
+        for name, chip in chips.items():
+            chip.setVisible(on_mill and lit[name])
 
     def _on_op_done(self, name, _result):
         """A touch just measured where the copper is: the Z-reach check can
@@ -1511,6 +1922,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- the plan
     def refresh_plan(self):
+        old_plan = self.plan
         holes, align = None, None
         if self._double and self.state.board is not None:
             lay = self._ds_layout()
@@ -1521,16 +1933,23 @@ class MainWindow(QMainWindow):
                                   align_holes=align, dowels=self.dowel_spec(),
                                   bed_bite=self._bed_bite,
                                   flip_axis=self.flip_axis(),
-                                  autorun=self.automatic())
+                                  autorun=True, method=self.method_id(),
+                                  laser_jobs=self.laser_jobs())
+        # A time worked out from a toolpath still in hand stays: renaming the
+        # job rebuilt the plan and wiped every estimate on the rail.
+        if old_plan is not None:
+            for st_ in self.plan.steps:
+                was = old_plan.by_key(st_.key)
+                if (st_.seconds is None and was is not None
+                        and was.seconds is not None
+                        and st_.key in self._paths_cache):
+                    st_.seconds = was.seconds
         if self._exported:
             self.plan.apply_estimates(
                 {n: estimate_file_seconds(p) for n, p in self._exported.items()
                  if p.suffix == ".nc"})
-        # Novice sees three rows of the same plan: the run needs all of it.
-        self.traveller.set_plan(
-            self.plan, None if tier.is_full() else
-            [replace(self.plan.by_key(k), title=t, detail=d, note="")
-             for k, (t, d) in NOVICE_RAIL.items()])
+        # Novice sees its few rows of the same plan: the run needs all of it.
+        self.traveller.set_plan(self.plan, self.novice_rail())
         cur = self._current_step
         if cur is not None and self.plan.by_key(cur.key) is None:
             # The step on screen is not in the plan any more - per-diameter
@@ -1544,14 +1963,49 @@ class MainWindow(QMainWindow):
         self._sync_job_header()
         self._sync_window_title()
         # The first rebuild runs before the pages exist.
-        if getattr(self, "laser_page", None) is not None:
-            self.laser_page.sync()
         if getattr(self, "level_page", None) is not None:
             self.level_page.sync_job()      # tier, sidedness, registration
         self.traveller.set_export_enabled(
             self.state.board is not None,
             "" if self.state.board is not None
             else "Load a Gerber folder first.")
+
+    def novice_rail(self):
+        """Novice's rows of the plan, or None in Pro (the whole plan): its
+        board, its check, the run on the mill, and the laser's rows."""
+        if tier.is_full() or self.plan is None:
+            return None
+        rows = []
+        for k, (t, d) in NOVICE_RAIL.items():
+            step = self.plan.by_key(k)
+            if step is not None:
+                rows.append(replace(step, title=t or step.title, detail=d,
+                                    note=""))
+        return rows + [s for s in self.plan if s.group == "laser"]
+
+    def _novice_keys(self):
+        return {s.key for s in (self.novice_rail() or [])}
+
+    def laser_jobs(self):
+        """The laser's rows this board has: the copper on a laser board, and
+        the mask, silkscreen and stencil its folder has layers for."""
+        st = self.state
+        if st.board is None:
+            return ()
+        folder = self._laser_board().gerber_dir
+        memo = getattr(self, "_laser_jobs_memo", None)
+        if memo is None or memo[0] != str(folder):
+            have = []
+            for kind, find in (("mask", soldermask.mask_layer_path),
+                               ("silk", silkscreen.silk_layer_path),
+                               ("stencil", stencil.paste_layer_path)):
+                try:
+                    if any(find(folder, side) for side in ("bottom", "top")):
+                        have.append(kind)
+                except Exception:                       # noqa: BLE001
+                    pass
+            memo = self._laser_jobs_memo = (str(folder), tuple(have))
+        return (("traces",) if self.laser_method() else ()) + memo[1]
 
     def _sync_window_title(self):
         """The job first, then the app. It is what tells two of these windows
@@ -1565,6 +2019,7 @@ class MainWindow(QMainWindow):
         st = self.state
         if st.board is None:
             self.traveller.set_job("No job", "Load a Gerber folder to begin")
+            self._sync_method()
             return
         geom = (st.board.outline if st.board.outline is not None
                 and not st.board.outline.is_empty else st.board.copper)
@@ -1583,6 +2038,7 @@ class MainWindow(QMainWindow):
         if self.level_page.is_active():
             bits.append("levelled")
         self.traveller.set_job(st.name, " · ".join(bits))
+        self._sync_method()
 
     def select_step(self, key):
         if self.plan is None:
@@ -1590,14 +2046,40 @@ class MainWindow(QMainWindow):
         step = self.plan.by_key(key)
         if step is None:
             return
-        self._current_step = step        # what the 3D view and Stream act on
+        if key == "rework" and self.laser_method() and self.state.board:
+            # A laser board's copper was etched, not milled: its spots are
+            # fixed where they were made, with the laser's rework boxes.
+            self.traveller.select(key)
+            self._open_laser_kind("traces")
+            view = self.laser_view
+            if self.mode() == "laser" and view is not None:
+                view.mode.set_current("rework")
+                view._set_mode("rework")
+            return
+        if step.kind == "laser":
+            # A laser row brings up the laser, on that job; the rail stays.
+            self.traveller.select(key)
+            self._open_laser_kind(key.split("_", 1)[1])
+            if self.mode() != "laser":
+                # It could not open (the reason was said): back where it was.
+                cur = self._current_step
+                self.traveller.select(cur.key if cur is not None else "setup")
+            return
+        if self.mode() == "laser":
+            self.show_mode("cnc")
+        # A mode a page put the bed in belongs to that page: leaving Fix
+        # spots with its boxes armed made dragging the board on Your board
+        # draw boxes instead.
+        owners = {"box": ("rework", "autorun"), "pad": ("fitdrill",),
+                  "stock": ("autorun",), "screws": ("setup",)}
+        if key not in owners.get(self.stage.mode, (key,)):
+            self.set_stage_mode("place")
+        self._current_step = step        # what the 3D view acts on
         # Each face has its own measurement; show the one for the face this
         # step cuts.
         QTimer.singleShot(
             0, lambda: self.level_page.follow_step(self.current_side()))
         self.traveller.select(key)
-        if key == "laser" and getattr(self, "laser_page", None) is not None:
-            self.laser_page.sync()
         self.inspector.show_step(step, self.plan)
         self.centre.setCurrentWidget(self.stage)
         self._draw_step(step)
@@ -1641,7 +2123,7 @@ class MainWindow(QMainWindow):
         self._draw_board(step)
         cuts, rapids, far = [], [], []
         width = st.trace.effective_diameter()
-        if step.op in ("traces", "drill", "cutout", "airpass", "align",
+        if step.op in ("traces", "drill", "cutout", "align",
                        "top_traces", "fitdrill"):
             cached = self._paths_cache.get(step.key)
             if cached is not None:
@@ -1650,14 +2132,28 @@ class MainWindow(QMainWindow):
                 # rendered raster. Handing it freshly-built equal lists would
                 # cost a path rebuild and a full re-stroke for no reason.
                 _p, _f, width, cuts, rapids, far = cached
+                if self._iso_worker is None:
+                    self.stage.set_busy("")
                 self.stage.set_toolpaths(cuts, rapids, far=far, cut_width=width)
                 self._draw_shorts(step)
                 self._set_legend(step)
                 return
             self.stage.set_busy("Working out the toolpath…")
             QApplication.processEvents()
+            self._iso_defer = True
             try:
-                paths, far_paths, width = self._toolpaths_for(step)
+                try:
+                    paths, far_paths, width = self._toolpaths_for(step)
+                finally:
+                    self._iso_defer = False
+            except _IsolationDeferred as req:
+                # Built on a worker; the redraw when it lands draws whatever
+                # step is selected then. Nothing is drawn meanwhile: the old
+                # pass is for a board that is no longer where it was.
+                self.stage.set_toolpaths([], [])
+                self._set_legend(step)
+                self._isolate_in_background(req)
+                return
             except Exception as e:
                 self.stage.set_busy("")
                 self.stage.set_toolpaths([], [])
@@ -1668,7 +2164,8 @@ class MainWindow(QMainWindow):
                     "single closed outline and that the copper layer exported "
                     "cleanly.")
                 return
-            self.stage.set_busy("")
+            if self._iso_worker is None:
+                self.stage.set_busy("")
             if (self._stock_turn is not None and step.side != "top"
                     and step.op != "fitdrill"):
                 from gerber2rml.engine.fiducial import apply_to_toolpaths
@@ -1699,11 +2196,9 @@ class MainWindow(QMainWindow):
         job = {"traces": self.state.trace, "top_traces": self.state.trace,
                "drill": self.state.drill, "align": self.state.drill,
                "cutout": self.state.cutout}.get(step.op)
-        if job is None:                       # the dry run has its own feed
-            from gerber2rml.engine.airpass import DEFAULT_FEED
-            secs = estimate_toolpaths_seconds(paths, DEFAULT_FEED, DEFAULT_FEED)
-        else:
-            secs = estimate_toolpaths_seconds(paths, job.xy_feed, job.plunge_feed)
+        if job is None:
+            return
+        secs = estimate_toolpaths_seconds(paths, job.xy_feed, job.plunge_feed)
         step.seconds = secs
         self.traveller.refresh_step(step.key, self.plan)
         if self.inspector.stack.currentWidget() is self.inspector.step:
@@ -1711,15 +2206,11 @@ class MainWindow(QMainWindow):
 
     def _toolpaths_for(self, step):
         """(paths, far_side_paths, cut_width) for one step, in the machine frame."""
-        from gerber2rml.engine.airpass import air_path
-        from gerber2rml.engine.traces import isolate
         from gerber2rml.engine.drill import drill_single_bit, drill_holes
         from gerber2rml.engine.cutout import cut_outline
         st = self.state
         width = st.trace.effective_diameter()
         if not self._double:
-            if step.op == "airpass":
-                return air_path(st.board.outline), None, 0.4
             if step.op == "fitdrill":
                 from gerber2rml.engine.boardfit import warp_holes
                 holes = st.board.holes
@@ -1739,16 +2230,14 @@ class MainWindow(QMainWindow):
                         None, st.cutout.bit_diameter)
             return (self._edge_free(
                         step.key,
-                        isolate(st.board.copper, self.cutting_trace(),
-                                outline=st.board.outline),
+                        self._isolated(st.board.copper, self.cutting_trace(),
+                                       st.board.outline),
                         st.board.outline, st.board.copper,
                         getattr(st.board, "copper_nets", None)),
                     None, width)
         lay = self._ds_layout()
         if lay is None:
             return [], None, width
-        if step.op == "airpass":
-            return air_path(lay.outline), None, 0.4
         if step.op == "align":
             aj = self._align_job()
             return drill_single_bit(lay.align_holes, aj), None, aj.bit_diameter
@@ -1763,18 +2252,120 @@ class MainWindow(QMainWindow):
         tj = self.cutting_trace()
         if step.op == "top_traces":
             top = self._edge_free(
-                step.key, isolate(lay.top_copper, tj, outline=lay.top_outline),
+                step.key, self._isolated(lay.top_copper, tj, lay.top_outline),
                 lay.top_outline, lay.top_copper,
                 self._nets_aligned(getattr(st.board, "copper_top_nets", None),
                                    st.board.copper_top, lay.top_copper))
             return self._fit_paths(top), None, width
         return (self._edge_free(
-                    step.key, isolate(lay.bottom_copper, tj,
-                                      outline=lay.outline),
+                    step.key, self._isolated(lay.bottom_copper, tj,
+                                             lay.outline),
                     lay.outline, lay.bottom_copper,
                     self._nets_aligned(getattr(st.board, "copper_nets", None),
                                        st.board.copper, lay.bottom_copper)),
                 None, width)
+
+    # Copper with more vertices than this is isolated off the GUI thread
+    # when the stage asks for it: a ground-poured board is a second or more
+    # of shapely, and the window froze for all of it. A small board is done
+    # before a "working" note could be read, so it is drawn at once.
+    BACKGROUND_COORDS = 8000
+    ISO_MEMO = 6                   # isolation passes kept
+
+    def _isolated(self, copper, job, outline):
+        """``isolate(copper, job, outline=outline)``, remembered.
+
+        A pure function of the three, so the answer for the same copper
+        object, outline object and an equal job can be handed back - after
+        a drill or cut-out edit, a step switch, or a pass the background
+        built. Asked from the stage (``_iso_defer``) for copper that has not
+        been isolated and is slow to, it raises :class:`_IsolationDeferred`
+        instead, and the stage has it built in the background."""
+        for c, o, j, paths in reversed(self._iso_memo):
+            if c is copper and o is outline and j == job:
+                # A copy, list for list, as a fresh build would be: whatever
+                # the caller does to its lists stays out of the memo. The
+                # moves themselves are frozen.
+                return [list(tp) for tp in paths]
+        failed = self._iso_failed
+        if (self._iso_defer and self._iso_slow(copper)
+                and not (failed is not None and failed[0] is copper
+                         and failed[1] is outline and failed[2] == job)):
+            raise _IsolationDeferred(copper, job, outline)
+        from gerber2rml.engine.traces import isolate
+        paths = isolate(copper, job, outline=outline)
+        self._remember_isolation(copper, job, outline, paths)
+        return paths
+
+    def _iso_slow(self, copper):
+        import shapely
+        try:
+            return shapely.get_num_coordinates(copper) > self.BACKGROUND_COORDS
+        except Exception:                       # noqa: BLE001 - just build it
+            return False
+
+    def _remember_isolation(self, copper, job, outline, paths):
+        import copy
+        self._iso_memo.append((copper, outline, copy.deepcopy(job),
+                               [list(tp) for tp in paths]))
+        del self._iso_memo[:-self.ISO_MEMO]
+
+    def _isolate_in_background(self, request):
+        """Build ``request``'s isolation on a worker; redraw when it lands.
+
+        One worker at a time. When it finishes, its pass is remembered and
+        the stage redraws whatever step is selected by then: if the board
+        moved or a setting changed meanwhile, that redraw misses the memo
+        and starts the next build - the latest wins, and a stale pass is
+        never drawn."""
+        if self._iso_worker is not None:
+            return                  # the redraw after it picks up this one
+        import copy
+        job = copy.deepcopy(request.job)    # the GUI may edit the original
+        worker = _IsolationWorker(request.copper, job, request.outline)
+        # A bound method of this window: the call is queued onto the GUI
+        # thread, never run on the worker's.
+        worker.done.connect(self._isolation_landed)
+        self._iso_worker = worker
+        worker.start()
+
+    def _isolation_landed(self, paths, err):
+        worker = self._iso_worker
+        if worker is None:
+            return
+        worker.wait()
+        _LIVE_WORKERS.discard(worker)
+        self._iso_worker = None
+        copper, job, outline = worker.args
+        self.stage.set_busy("")
+        if err is not None:
+            # Built again on the GUI thread, where the failure is reported
+            # the way every other toolpath failure is.
+            self._iso_failed = (copper, outline, job)
+        else:
+            self._remember_isolation(copper, job, outline, paths)
+        # The step on the stage now - the rail's row on the full tier, and on
+        # the essential tier, whose three rows stand for several steps, the
+        # step that was last asked for.
+        step = self._current_step
+        if (step is not None and self.plan is not None
+                and self.plan.by_key(step.key) is not None):
+            self._draw_step(self.plan.by_key(step.key))
+        else:
+            self._refresh_preview_now()
+
+    def _toolpath_busy(self):
+        """True while an isolation pass is being built in the background."""
+        return self._iso_worker is not None
+
+    def _wait_toolpaths(self, timeout_s=120.0):
+        """Block until the background build (and the redraw it triggers) is
+        done. For tests and for leaving the window; the GUI never needs it."""
+        import time
+        end = time.monotonic() + timeout_s
+        while self._iso_worker is not None and time.monotonic() < end:
+            self._iso_worker.wait(50)
+            QApplication.processEvents()
 
     def _edge_free(self, key, paths, outline, copper, nets):
         """An isolation pass without the part along the board's edge, when
@@ -2042,7 +2633,7 @@ class MainWindow(QMainWindow):
         A key listing colours the current view does not contain teaches the
         reader that the key is decoration, and then they stop reading it.
         """
-        cutting = step.op in ("traces", "drill", "cutout", "airpass", "align",
+        cutting = step.op in ("traces", "drill", "cutout", "align",
                               "top_traces", "fitdrill")
         legend = []
         if cutting:
@@ -2121,31 +2712,8 @@ class MainWindow(QMainWindow):
         # moves the board over to make room for its reference holes, and marks
         # worked out on the unmoved board landed beside it on the stage.
         copper = self._cut_copper()
-        try:
-            self._shorts = isolation_bridges(copper,
-                                             st.trace.effective_diameter(),
-                                             nets=self._cut_nets(copper))
-        except Exception:
-            self._shorts = []           # a DRC that crashes must not block work
-        self._eaten = []
-        if self._shorts and st.trace.cut_pinches:
-            try:
-                from gerber2rml.engine.pinch import pinch_losses
-                self._eaten = pinch_losses(copper, st.trace)
-            except Exception:
-                self._eaten = []        # ...and neither must this one
-        try:
-            from gerber2rml.analysis import find_narrow_gaps
-            from gerber2rml.engine.drc import EXACT_FIT_MM
-            # Less the exact-fit allowance: a gap the cutter's own width is
-            # cut down its middle, not left red.
-            from gerber2rml.analysis import split_narrow_gaps
-            self._gaps, self._corners = split_narrow_gaps(
-                find_narrow_gaps(copper, st.board.outline,
-                                 st.trace.effective_diameter() - EXACT_FIT_MM),
-                copper)
-        except Exception:
-            self._gaps, self._corners = None, None
+        (self._shorts, self._eaten, self._gaps,
+         self._corners) = self._copper_drc(copper)
         dowel_depth = None
         if (self._double and self._registration == "dowel"
                 and self._dowel_mode == "fresh"):
@@ -2176,7 +2744,7 @@ class MainWindow(QMainWindow):
                 surface_z=self.link.surface_z,
                 bit_diameter=st.drill.bit_diameter, trace=st.trace,
                 leveled=self.level_page.is_active(), shorts=self._shorts,
-                eaten=self._eaten,
+                eaten=self._eaten, method=self.method_id(),
                 thickness=self.inspector.setup.thickness.value())
         except Exception as e:
             # The banner is drawn from the shorts, which were worked out above
@@ -2205,6 +2773,56 @@ class MainWindow(QMainWindow):
         self._checks = checks
         self.inspector.checks.set_checks(checks)
         self._sync_banner()
+
+    def _copper_drc(self, copper):
+        """``(shorts, eaten, gaps, corners)`` for ``copper`` as it is cut.
+
+        The copper against itself: a second of shapely on a ground-poured
+        board, and the same answer wherever the board sits. A board that
+        has only MOVED - dragged, nudged, typed, placed by the run page,
+        turned a quarter or mirrored - gets the last answer moved with it;
+        anything else (another bit, another board) works it out again."""
+        st = self.state
+        outline = st.board.outline
+        nets = self._cut_nets(copper)
+        laser = self.laser_method()
+        key = (repr(st.trace), laser)
+        memo = self._drc_memo
+        if memo is not None and memo[0] == key and memo[1] == nets:
+            moved = _moved_by(memo[2], copper, memo[3], outline)
+            if moved is not None:
+                return _translate_drc(memo[4], moved)
+        bit = self.check_width()
+        try:
+            shorts = isolation_bridges(copper, bit, nets=nets)
+        except Exception:
+            shorts = []                 # a DRC that crashes must not block work
+        if laser:
+            # The laser clears round every copper edge, so no gap is too
+            # narrow for it to enter; only one under its floor is a short.
+            found = (shorts, [], None, None)
+            self._drc_memo = (key, nets, copper, outline, found)
+            return found
+        eaten = []
+        if shorts and st.trace.cut_pinches:
+            try:
+                from gerber2rml.engine.pinch import pinch_losses
+                eaten = pinch_losses(copper, st.trace)
+            except Exception:
+                eaten = []              # ...and neither must this one
+        try:
+            from gerber2rml.analysis import find_narrow_gaps
+            from gerber2rml.engine.drc import EXACT_FIT_MM
+            # Less the exact-fit allowance: a gap the cutter's own width is
+            # cut down its middle, not left red.
+            from gerber2rml.analysis import split_narrow_gaps
+            gaps, corners = split_narrow_gaps(
+                find_narrow_gaps(copper, outline, bit - EXACT_FIT_MM), copper)
+        except Exception:
+            gaps, corners = None, None
+        found = (shorts, eaten, gaps, corners)
+        self._drc_memo = (key, nets, copper, outline, found)
+        return found
 
     def _gap_checks(self):
         """Copper gaps too narrow for the cutter to enter.
@@ -2248,7 +2866,7 @@ class MainWindow(QMainWindow):
     # though levelling is done on whichever face is in front of you. Reading
     # it there made opening the levelling page silently switch the height map
     # back to the bottom, and the next probe overwrote a real measurement.
-    _CUTTING_OPS = ("traces", "top_traces", "drill", "cutout", "airpass",
+    _CUTTING_OPS = ("traces", "top_traces", "drill", "cutout",
                     "align")
 
     def current_side(self):
@@ -2868,6 +3486,15 @@ class MainWindow(QMainWindow):
             f"clear of the design.")]
 
     def _sync_banner(self):
+        if self._shorts and self.laser_method():
+            worst = min(s["gap"] for s in self._shorts)
+            self.traveller.show_finding(
+                "fail",
+                f"{len(self._shorts)} spots too close for the laser",
+                f"Worst gap {worst:.2f} mm between two nets; the laser needs "
+                f"at least {self.check_width():.2f} mm to separate them.",
+                action="See the checks")
+            return
         if self._shorts:
             worst = min(s["gap"] for s in self._shorts)
             width = self.state.trace.effective_diameter()
@@ -2910,6 +3537,7 @@ class MainWindow(QMainWindow):
         if d:
             self.load_folder(d)
             self._detect_sides()
+            self._detect_method()
             self.autorun_page.board_opened()
 
     def show_auto_face(self, top):
@@ -3026,6 +3654,7 @@ class MainWindow(QMainWindow):
         else:
             self.load_folder(path)
             self._detect_sides()
+            self._detect_method()
             self.autorun_page.board_opened()
         return True
 
@@ -3041,6 +3670,7 @@ class MainWindow(QMainWindow):
                                   "examples folder to be writable.")
                 return
         self.load_folder(str(DEMO))
+        self._detect_method()
         self.autorun_page.board_opened()
 
     def load_folder(self, folder):
@@ -3066,6 +3696,13 @@ class MainWindow(QMainWindow):
         self._leave_mounting_holes()
         self._no_cutout = False
         self._edge_memo, self._edge_notes = {}, {}
+        # The last board's method is not this one's: the tool says, until
+        # the board does (_detect_method, on an open).
+        if self._method == fab.LASER:
+            self._sync_laser_method(fab.LASER, fab.from_profile(
+                self.state.trace.effective_diameter()))
+        self._method, self._method_source = None, "profile"
+        self._method_gap = None
         from gerber2rml.loader import gerber_stem
         self._custom_name = False
         try:
@@ -3082,6 +3719,9 @@ class MainWindow(QMainWindow):
         self.select_step("setup")
         self.stage.fit_work()
         self.autorun_page.board_loaded()
+        # The last board's moves are not this one's, and where the board
+        # first lands is the start of its history, not a step in it.
+        self.placement_undo.clear()
         self.say("ok", f"Loaded {self.state.name} — "
                        f"{len(self.state.board.holes)} holes.")
 
@@ -3178,10 +3818,34 @@ class MainWindow(QMainWindow):
             self.say("warn", "There is only one board on the sheet.")
             return
         gap = PANEL_GAP_MM if gap is None else float(gap)
-        st.arrange(gap)
+        self.remember()
+        # Rows as wide as the copper from where the first board is, when the
+        # copper is known: a row past the sheet's edge is no layout.
+        width = None
+        if self._stock_set:
+            # Rows from the sheet's corner, as wide as the sheet.
+            sx, sy, sw, _sh = self.stock
+            x0, y0 = st.boards[0].bounds()[:2]
+            st.move_all(sx + 2.0 - x0, sy + 2.0 - y0)
+            width = max(sw - 4.0, 1.0)
+        st.arrange(gap, width)
+        page = getattr(self, "autorun_page", None)
+        if page is not None and page.bracket() and self._stock_set:
+            page.place_in_corner()          # the panel into the bracket
         self._paths_cache = {}
         self._after_params()
         QTimer.singleShot(0, self.stage.fit_work)
+        reach = self.work_extent()
+        if self._stock_set and reach is not None:
+            sx, sy, sw, sh = self.stock
+            if (reach[2] > sx + sw + 1e-6 or reach[3] > sy + sh + 1e-6
+                    or reach[0] < sx - 1e-6 or reach[1] < sy - 1e-6):
+                self.say("warn", f"The {len(st.boards)} boards need "
+                                 f"{reach[2] - reach[0]:.0f} × "
+                                 f"{reach[3] - reach[1]:.0f} mm and do not "
+                                 f"fit on the {sw:.0f} × {sh:.0f} mm sheet. "
+                                 f"Use a bigger sheet or take a board off.")
+                return
         if gap <= 0:
             self.say("ok", f"{len(st.boards)} boards butted together. One cut "
                            f"runs between each pair and separates them; each "
@@ -3229,6 +3893,7 @@ class MainWindow(QMainWindow):
         if name not in table:
             return
         presets_mod.apply_preset(self.state, table[name])
+        self._apply_auto_depth()
         self._after_params()
         self.say("ok", f"Applied “{name}”.")
 
@@ -3262,6 +3927,17 @@ class MainWindow(QMainWindow):
         if table and self.state.board is None:
             presets_mod.apply_preset(self.state, next(iter(table.values())))
 
+    def _apply_auto_depth(self):
+        """Drill and cut-out depth from the board's thickness, when Your
+        board says so: a profile's own depth must not quietly win over the
+        number on the screen."""
+        setup = getattr(getattr(self, "inspector", None), "setup", None)
+        if setup is None or not setup.auto_depth.isChecked():
+            return
+        depth = round(setup.thickness.value() + setup.overshoot.value(), 4)
+        self.state.drill.total_depth = depth
+        self.state.cutout.total_depth = depth
+
     def action_thickness(self, thickness, overshoot, auto):
         if auto:
             depth = thickness + overshoot
@@ -3269,7 +3945,152 @@ class MainWindow(QMainWindow):
             self.state.cutout.total_depth = depth
         self._after_params()
 
+    # -- undo -----------------------------------------------------------
+    def placement_snapshot(self):
+        """Where every board sits, as undo keeps it: the mirror, and each
+        board's name, corner and turn."""
+        st = self.state
+        return (bool(st.mirror),
+                tuple((m.name, round(m.place_x, 6), round(m.place_y, 6),
+                       int(m.rotate) % 360) for m in st.boards))
+
+    def edit_snapshot(self):
+        """Everything put on the mill's bed by hand, as undo keeps it: where
+        the boards sit, the rework boxes, the no-go zones and clamps, the
+        recut boxes of a run, the bracket, the screws chosen and the
+        reference holes. Compared with ``==``, never looked inside."""
+        rw = getattr(self, "rework_page", None)
+        ar = getattr(self, "autorun_page", None)
+
+        def rows(seq):
+            return tuple(tuple(r) for r in seq)
+        return (self.placement_snapshot(),
+                (rows(rw._regions), tuple(rw._follow)) if rw is not None else None,
+                rows(ar._nogo) if ar is not None else None,
+                rows(ar._boxes) if ar is not None else None,
+                ar._bracket if ar is not None else None,
+                None if self._manual_screws is None else rows(self._manual_screws),
+                rows(self._fid_points))
+
+    def remember(self, merge=None):
+        """Record the bed as it is, just ahead of a change, for Undo."""
+        self.placement_undo.push(self.edit_snapshot(), merge=merge)
+
+    def _restore_edit(self, snap):
+        """Put the bed back as ``snap`` has it. False when the sheet holds
+        other boards now - that step cannot be applied."""
+        place, rework, nogo, boxes, bracket, screws, fids = snap
+        now = self.edit_snapshot()
+        if place != now[0] and not self._restore_placement(place):
+            return False
+        self.placement_undo.restoring = True
+        try:
+            rw, ar = self.rework_page, self.autorun_page
+            if rework is not None and rework != now[1]:
+                rw._regions = [tuple(r) for r in rework[0]]
+                rw._follow = list(rework[1])
+                rw._rebuild_table()
+                rw._push()
+            if nogo is not None and nogo != now[2]:
+                ar._nogo = [tuple(z) for z in nogo]
+                ar._show_nogo()
+            if boxes is not None and boxes != now[3]:
+                ar._boxes = [tuple(b) for b in boxes]
+                ar._show_boxes()
+            if bracket is not None and bracket != now[4]:
+                ar.set_bracket(bracket)
+            if screws != now[5]:
+                self._manual_screws = (None if screws is None
+                                       else [tuple(p) for p in screws])
+                self._draw_screws()
+            if fids != now[6]:
+                self._fid_points = [list(p) for p in fids]
+                self._layout_base = None
+                self._layout_key = None
+                self._paths_cache = {}
+                self._after_params()
+                self.refresh_preview()
+            self.refresh_checks()
+        finally:
+            self.placement_undo.restoring = False
+        return True
+
+    def _restore_placement(self, snap):
+        """Put the boards back as ``snap`` has them. False when the sheet
+        holds other boards now - that step cannot be applied."""
+        mirror, boards = snap
+        st = self.state
+        if [m.name for m in st.boards] != [b[0] for b in boards]:
+            return False
+        self.placement_undo.restoring = True
+        try:
+            if bool(st.mirror) != mirror:
+                self.action_mirror(mirror)
+                box = self.inspector.setup.mirror
+                box.blockSignals(True)
+                box.setChecked(mirror)
+                box.blockSignals(False)
+            for m, (_n, x, y, r) in zip(st.boards, boards):
+                m.place_x, m.place_y, m.rotate = x, y, r
+            st._sync()
+            # Put back by hand is placed by hand: centring must not move it.
+            self.autorun_page.board_dragged()
+            self._paths_cache = {}
+            self._after_params()
+        finally:
+            self.placement_undo.restoring = False
+        return True
+
+    def _step_placement(self, back):
+        stack = self.placement_undo
+        while True:
+            now = self.edit_snapshot()
+            snap = stack.undo(now) if back else stack.redo(now)
+            if snap is None:
+                self.say("warn", "Nothing to undo." if back
+                         else "Nothing to redo.")
+                return
+            if self._restore_edit(snap):
+                self.say("ok", "Undone." if back else "Redone.")
+                return
+            # A step from before a board was added or taken off: it no
+            # longer fits the sheet; skip it.
+
+    def action_undo(self):
+        self._step_placement(True)
+
+    def action_redo(self):
+        self._step_placement(False)
+
+    def _sync_undo(self):
+        can_undo = self.placement_undo.can_undo()
+        can_redo = self.placement_undo.can_redo()
+        # On the laser page its own Ctrl+Z is the one: two live actions on
+        # one key and Qt runs neither.
+        laser = getattr(self, "laser_view", None)
+        on_mill = laser is None or self.modes.currentWidget() is not laser
+        for name, on in (("undo_act", can_undo), ("redo_act", can_redo)):
+            act = getattr(self, name, None)
+            if act is not None:
+                act.setEnabled(on and on_mill)
+        btn = getattr(self, "undo_btn", None)
+        if btn is not None:
+            btn.setEnabled(can_undo)
+
+    def action_move_job(self, dx, dy):
+        """Slide the whole job - every board on the sheet - by (dx, dy):
+        how the bracket and the run put it in place, keeping a panel's
+        shape."""
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            return
+        self.remember("place")
+        self.state.move_all(dx, dy)
+        self._paths_cache = {}
+        self._after_params()
+
     def action_place(self, x, y):
+        # A held spin arrow or a row of typed digits is one step.
+        self.remember("place")
         self.state.set_placement(x, y)
         self._paths_cache = {}
         self._after_params()
@@ -3292,7 +4113,59 @@ class MainWindow(QMainWindow):
             self.show_stock = bool(show)
         self._draw_screws()
         self._sync_stock()
+        # One sheet: Your board and the run page show the same size.
+        page = getattr(self, "autorun_page", None)
+        if page is not None:
+            page.show_size(w, h)
+        insp = getattr(self, "inspector", None)
+        if insp is not None and getattr(insp, "setup", None) is not None:
+            setup = insp.setup
+            for spin, val in ((setup.stock_x, self.stock[0]),
+                              (setup.stock_y, self.stock[1]),
+                              (setup.stock_w, w), (setup.stock_h, h)):
+                if abs(spin.value() - val) > 1e-9:
+                    spin.blockSignals(True)
+                    spin.setValue(val)
+                    spin.blockSignals(False)
         self.refresh_checks()
+
+    def action_show_sheet(self):
+        """The run sheet of the last export, again - with any file written
+        since on its own page (rework, a fitted drill, the top traces)."""
+        args = getattr(self, "_sheet_args", None)
+        if args is None or self.plan is None:
+            self.say("warn", "Export the job first: the run sheet is the "
+                             "export's.")
+            return
+        args = dict(args)
+        args["extra"] = list(args.get("extra") or []) + list(
+            getattr(self, "_side_files", []) or [])
+        self.sheet.show_plan(self.plan, **args)
+        self.centre.setCurrentWidget(self.sheet)
+        if self.mode() == "laser":
+            self.show_mode("cnc")
+
+    def record_files(self, paths, heading):
+        """A file written on a page of its own goes forward like the export's:
+        ticked on the rail when it is a step's file, and listed on the run
+        sheet under ``heading``."""
+        paths = [Path(p) for p in (paths or [])]
+        if not paths:
+            return
+        for p in paths:
+            self._exported[p.name] = p
+        if self._export_dir is None:
+            self._export_dir = paths[0].parent
+        if not hasattr(self, "_side_files"):
+            self._side_files = []
+        self._side_files.append((heading, (paths, [])))
+        if self.plan is not None:
+            self.traveller.set_exported(
+                {s.key for s in self.plan if s.file and s.file in self._exported})
+
+    def action_show_stock(self, on):
+        self.show_stock = bool(on)
+        self._sync_stock()
 
     def declared_stock(self):
         """The copper sheet as ``(x0, y0, x1, y1)``, once the operator has set
@@ -3604,10 +4477,16 @@ class MainWindow(QMainWindow):
             self.say("warn", "Load a board first — there is no toolpath to "
                              "watch yet.")
             return
-        # The dry run belongs here too: it is the step people most want to
-        # watch before committing, and it has a real toolpath.
-        if op not in ("airpass", "traces", "top_traces", "drill", "cutout"):
-            self.say("warn", "Pick a step that cuts — the dry run, traces, "
+        if (op not in ("traces", "top_traces", "drill", "cutout")
+                and self.plan is not None and step is not None
+                and step.key in ("autorun", "setup", "checks")):
+            # The run and the board are the whole job: show its first cut.
+            # (Novice has no step rows, and its button lives on the run.)
+            step = next((s for s in self.plan.run_steps
+                         if s.op in ("traces", "drill", "cutout")), step)
+            op = getattr(step, "op", None)
+        if op not in ("traces", "top_traces", "drill", "cutout"):
+            self.say("warn", "Pick a step that cuts — the traces, the "
                              "drill or the cut-out. The hands-on steps have "
                              "no toolpath of their own.")
             return
@@ -3775,10 +4654,15 @@ class MainWindow(QMainWindow):
                        f"sheet now sits {w:.0f} x {h:.0f} mm from there.")
 
     def action_rotate(self, deg):
+        self.remember()
         self.state.set_rotation(deg)
         self._paths_cache = {}
         self._after_params()
         QTimer.singleShot(0, self.stage.fit_work)
+
+    def action_turn(self, delta):
+        """A quarter turn more, either way, from where it is now."""
+        self.action_rotate((self.state.rotate + delta) % 360)
 
     def action_machine(self, name):
         if name in BACKENDS:
@@ -3786,6 +4670,7 @@ class MainWindow(QMainWindow):
             self._after_params()
 
     def action_mirror(self, on):
+        self.remember()
         self.state.mirror = on
         self._mask_result = None
         self._stencil_result = None
@@ -3856,19 +4741,6 @@ class MainWindow(QMainWindow):
 
     def _fit_geom(self, g):
         return self._warp_geom(g, self._top_fit)
-
-    def action_autorun(self, on):
-        """Switch Automatic mode on or off. Off is the app as it always was."""
-        self._autorun = bool(on)
-        workspace.set_setting("autorun", self._autorun)
-        if self.autorun_act.isChecked() != self._autorun:
-            self.autorun_act.setChecked(self._autorun)
-        self._sync_sim_port()
-        self.refresh_plan()
-        if self._autorun and self.plan.by_key("autorun") is not None:
-            self.select_step("autorun")
-            self.say("info", "Automatic mode on: 'Run it all' is in the plan. "
-                             "Everything else still works by hand.")
 
     def set_stock_turn(self, transform):
         """The turn the autonomous run gave the job to match the stock it
@@ -4140,6 +5012,7 @@ class MainWindow(QMainWindow):
                 px, py = rx, h - ry
             else:
                 px, py = w - rx, ry
+        self.remember("pin%d" % index)
         self._fid_points[index] = [px, py]
         self._layout_base = None
         self._layout_key = None
@@ -4304,7 +5177,10 @@ class MainWindow(QMainWindow):
         # Only when they are actually going to be left shorted. With the
         # narrow-gap passes on they are cut, and the price (pad, not nets) is
         # on the checks page and the banner.
+        # A laser board's mill files drill and cut out: no copper is milled,
+        # so there is nothing for a short to spoil in them.
         if (self._shorts and not st.trace.cut_pinches
+                and not self.laser_method()
                 and not dialogs.confirm_shorts(
                     self, self._shorts, st.trace.effective_diameter())):
             self.select_step("checks")
@@ -4316,7 +5192,7 @@ class MainWindow(QMainWindow):
                     "sacrificial bed. Those holes stay in the bed afterwards — "
                     "that is what makes the flip register, and it is also why "
                     "this is the one cut you cannot undo by re-zeroing and "
-                    "trying again.\n\nRun the dry run before it.",
+                    "trying again.",
                     "Write the files"):
                 return
         d = QFileDialog.getExistingDirectory(
@@ -4359,7 +5235,8 @@ class MainWindow(QMainWindow):
                 st.cutout = self.cutting_cutout()
                 try:
                     written = st.export(out_dir, level=level,
-                                        stock=self.declared_stock())
+                                        stock=self.declared_stock(),
+                                        traces=not self.laser_method())
                 finally:
                     st.trace, st.drill, st.cutout = keep
         except Exception as e:
@@ -4376,22 +5253,27 @@ class MainWindow(QMainWindow):
         # are worth having and not worth failing an export over.
         extras = self._write_export_extras(self._export_dir)
         wear = self._note_tool_wear()
+        # The laser's files go with the mill's: one for every laser row the
+        # board has, so the rail and the folder say the same job.
+        kinds = self.laser_jobs()
         ltraces = (self.write_laser_traces_to(self._export_dir)
-                   if self._laser_traces else None)
+                   if self._laser_traces or "traces" in kinds else None)
         mask = (self.write_mask_to(self._export_dir)
-                if self._solder_mask else None)
+                if self._solder_mask or "mask" in kinds else None)
         silk = (self.write_silk_to(self._export_dir)
-                if self._silkscreen else None)
+                if self._silkscreen or "silk" in kinds else None)
         paste = (self.write_stencil_to(self._export_dir)
-                 if self._stencil else None)
+                 if self._stencil or "stencil" in kinds else None)
         self.refresh_plan()
-        self.sheet.show_plan(
-            self.plan, name=st.name, out_dir=self._export_dir,
-            machine=st.machine, leveled=level is not None,
-            double_sided=self._double,
+        self._sheet_args = dict(
+            name=st.name, out_dir=self._export_dir, machine=st.machine,
+            leveled=level is not None, double_sided=self._double,
             panel=st.panel_summary() if st.is_panel else None, mask=mask,
-            silk=silk)
-        self.centre.setCurrentWidget(self.sheet)
+            silk=silk,
+            extra=[("For the laser: copper traces", ltraces),
+                   ("For the laser: paste stencil", paste)])
+        self._side_files = []
+        self.action_show_sheet()
         total = self.plan.total_seconds
         self.say("warn" if "WORN" in wear or (ltraces and ltraces[1])
                  or (mask and mask[1])
@@ -4415,7 +5297,6 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------- the laser file
     def action_solder_mask(self, on):
         self._solder_mask = bool(on)
-        self.inspector.setup.sync_mask()
         level, text = self.mask_status()
         if on and level == "warn":
             self.say("warn", text)
@@ -4423,9 +5304,6 @@ class MainWindow(QMainWindow):
     def action_mask_shrink(self, value):
         self._mask_shrink = float(value)
         self._mask_result = None
-        self.inspector.setup.sync_mask()
-        if getattr(self, "laser_page", None) is not None:
-            self.laser_page.sync()
 
     def mask_status(self):
         """``(level, text)`` for the setup page: what the last write made,
@@ -4486,7 +5364,6 @@ class MainWindow(QMainWindow):
                 self._exported[path.name] = path
                 notes += art.warnings()
         self._mask_result = (paths, notes)
-        self.inspector.setup.sync_mask()
         return paths, notes
 
     def action_write_mask(self):
@@ -4510,7 +5387,6 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------- the silkscreen file
     def action_silkscreen(self, on):
         self._silkscreen = bool(on)
-        self.inspector.setup.sync_silk()
         level, text = self.silk_status()
         if on and level == "warn":
             self.say("warn", text)
@@ -4569,7 +5445,6 @@ class MainWindow(QMainWindow):
                 self._exported[path.name] = path
                 notes += art.warnings()
         self._silk_result = (paths, notes)
-        self.inspector.setup.sync_silk()
         return paths, notes
 
     def action_write_silk(self):
@@ -4592,7 +5467,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------- the solder paste stencil
     def action_stencil(self, on):
         self._stencil = bool(on)
-        self.inspector.setup.sync_stencil()
         level, text = self.stencil_status()
         if on and level == "warn":
             self.say("warn", text)
@@ -4600,9 +5474,6 @@ class MainWindow(QMainWindow):
     def action_stencil_kerf(self, value):
         self._stencil_kerf = float(value)
         self._stencil_result = None
-        self.inspector.setup.sync_stencil()
-        if getattr(self, "laser_page", None) is not None:
-            self.laser_page.sync()
 
     def _stencil_sides(self):
         """The faces that get a stencil: the milled bottom, mirrored like the
@@ -4674,7 +5545,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 notes.append(f"{name}'s stencil file could not be written: {e}")
         self._stencil_result = (paths, notes)
-        self.inspector.setup.sync_stencil()
         return paths, notes
 
     def action_write_stencil(self):
@@ -4697,7 +5567,6 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------- the laser traces
     def action_laser_traces(self, on):
         self._laser_traces = bool(on)
-        self.inspector.setup.sync_laser_traces()
         level, text = self.laser_traces_status()
         if on and level == "warn":
             self.say("warn", text)
@@ -4705,9 +5574,6 @@ class MainWindow(QMainWindow):
     def action_laser_offsets(self, value):
         self._laser_offsets = max(1, int(value))
         self._laser_traces_result = None
-        self.inspector.setup.sync_laser_traces()
-        if getattr(self, "laser_page", None) is not None:
-            self.laser_page.sync()
 
     def _traces_sides(self):
         sides = [("bottom", bool(self.state.mirror) or self._double)]
@@ -4772,7 +5638,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 notes.append(f"{name}'s traces file could not be written: {e}")
         self._laser_traces_result = (paths, notes)
-        self.inspector.setup.sync_laser_traces()
         return paths, notes
 
     def action_write_laser_traces(self):
@@ -4793,11 +5658,177 @@ class MainWindow(QMainWindow):
 
     def _laser_board(self):
         st = self.state
+        k = getattr(self, "_laser_member", None)
+        if k is not None:
+            return st.boards[k]
         return st.boards[st.current] if st.is_panel else st.boards[0]
 
+    def _panel_laser_art(self, kind, *, side=None):
+        """The whole sheet as one laser job: every board's art, where the
+        board sits on the sheet. The sheet comes off the mill in one piece
+        (the boards on their tabs), so it is etched in one piece, lined up on
+        all the holes at once. A job seen from the other face (the
+        silkscreen, from the top) has the layout mirrored with it."""
+        from shapely.affinity import rotate as _rot, translate as _tr
+        from shapely.ops import unary_union
+        st = self.state
+        parts, notes = [], []
+        try:
+            for i, m in enumerate(st.boards):
+                self._laser_member = i
+                try:
+                    art = self._laser_art_for(kind, side=side)
+                except (xtool.TracesError, soldermask.MaskError,
+                        silkscreen.SilkError, stencil.StencilError,
+                        ValueError) as e:
+                    notes.append(f"{m.name}: {e}")
+                    continue
+                parts.append((m, art))
+        finally:
+            self._laser_member = None
+        if not parts:
+            raise ValueError(notes[0] if notes else "No board on the sheet "
+                             "has this layer.")
+        px0 = min(m.bounds()[0] for m in st.boards)
+        py0 = min(m.bounds()[1] for m in st.boards)
+        px1 = max(m.bounds()[2] for m in st.boards)
+        flipped = parts[0][1].mirrored != bool(st.mirror)
+
+        def place(art, m):
+            rot = (m.rotate % 360) * (-1 if flipped else 1)
+            x0, y0, x1, y1 = m.bounds()
+            tx = (px1 - x1) if flipped else (x0 - px0)
+            ty = y0 - py0
+
+            def geom(g):
+                if g is None:
+                    return None
+                g = _rot(g, rot, origin=(0, 0)) if rot else g
+                return g
+
+            out = geom(art.outline)
+            ox, oy = out.bounds[0], out.bounds[1]
+
+            def move(g):
+                g = geom(g)
+                return None if g is None else _tr(g, tx - ox, ty - oy)
+
+            def point(x, y):
+                from shapely.geometry import Point
+                q = move(Point(x, y))
+                return q.x, q.y
+            return dict(
+                apertures=[move(a) for a in (art.apertures or [])],
+                outline=move(art.outline),
+                features=[move(f) for f in (art.features or [])],
+                copper=move(art.copper),
+                drills=[(*point(x, y), d) for x, y, d in (art.drills or [])])
+
+        placed = [place(a, m) for m, a in parts]
+        first = parts[0][1]
+        coppers = [p["copper"] for p in placed if p["copper"] is not None]
+        return xtool.LaserArt(
+            kind=first.kind,
+            apertures=[a for p in placed for a in p["apertures"]],
+            outline=unary_union([p["outline"] for p in placed]),
+            mirrored=first.mirrored, side=first.side, kerf=first.kerf,
+            note=f"{len(parts)} boards on one sheet"
+                 + (f" · {first.note}" if first.note else ""),
+            notes=notes + [n for _m, a in parts for n in (a.notes or [])],
+            features=[f for p in placed for f in p["features"]],
+            copper=unary_union(coppers) if coppers else None,
+            drills=[d for p in placed for d in p["drills"]],
+            flipped=first.flipped)
+
     def _open_laser(self, art, name):
+        """The laser page with ``art`` on it, in this window."""
+        self._laser_page(art, name, jobs=self._laser_art_for)
+        self._laser_token = self._laser_job_token()
+        self.show_mode("laser")
+
+    def _laser_page(self, art=None, name="stencil", jobs=None, dxf=None):
+        """The laser page, made the first time; ``art`` is shown on it."""
         from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-        StencilLaserDialog(art, self, name=name, jobs=self._laser_art_for).exec()
+        if self.laser_view is None:
+            self.laser_view = StencilLaserDialog(art, self, name=name, jobs=jobs,
+                                                 dxf=dxf, embedded=True)
+            self.modes.addWidget(self.laser_view)
+            # The rail follows the page's own job tabs.
+            self.laser_view.kind_changed.connect(self._on_laser_kind)
+        elif art is not None:
+            self.laser_view.show_job(art, name, jobs=jobs, dxf=dxf)
+        return self.laser_view
+
+    def _laser_job_token(self):
+        """What the laser jobs are built from: when it changes, the page
+        needs the jobs again."""
+        st = self.state
+        if st.board is None:
+            return None
+        boards = tuple((str(m.gerber_dir), round(m.place_x, 3),
+                        round(m.place_y, 3), m.rotate) for m in st.boards)
+        # The ring count is the laser page's own (its recipe): not here.
+        return (boards, bool(st.mirror), bool(self._double),
+                self._mask_shrink)
+
+    def show_mode(self, mode):
+        """``"cnc"`` or ``"laser"``: which machine the window is set up for.
+        The laser page follows the board loaded here; a job running on the
+        laser carries on while the mill's page is up."""
+        if mode == "laser":
+            token = self._laser_job_token()
+            page = self.laser_view
+            stale = token is not None and token != self._laser_token
+            if page is None or (stale and not page._worker_running()):
+                prefer = page.kind if page is not None and not page._empty else None
+                if token is None or not self._load_laser_job(prefer):
+                    self._laser_page()      # the page on its own, or as it was
+            page = self.laser_view
+            self.modes.setCurrentWidget(page)
+            page.view.setFocus()
+        else:
+            self.modes.setCurrentWidget(self.cnc_body)
+        on_laser = mode == "laser"
+        self.mode_switch.set_current(mode)
+        for w in self._cnc_header:
+            w.setVisible(not on_laser)
+        # The mill's STOP stays in sight while the mill is running.
+        page = getattr(self, "autorun_page", None)
+        running = (page is not None and getattr(page, "_thread", None) is not None) \
+            or self.link.can_stop_something()
+        self.bar.setVisible(not on_laser or running)
+        self.bar_rule.setVisible(not on_laser or running)
+        self.refresh_chips()                # ...which show only when lit
+        self._sync_undo()                   # one Ctrl+Z at a time
+
+    def _on_laser_kind(self, kind):
+        key = f"laser_{kind}"
+        if self.plan is not None and self.plan.by_key(key) is not None:
+            self.traveller.select(key)
+
+    def mode(self):
+        return "laser" if self.modes.currentWidget() is self.laser_view else "cnc"
+
+    def _load_laser_job(self, prefer=None):
+        """The selected board's laser jobs on the page, ``prefer`` first.
+        False when the board has none (the reason is said)."""
+        st = self.state
+        m = self._laser_board()
+        last_err = None
+        order = ([prefer] if prefer else []) + [
+            k for k in ("traces", "mask", "silk", "stencil") if k != prefer]
+        for kind in order:
+            try:
+                art = self._laser_art_for(kind)
+            except (xtool.TracesError, soldermask.MaskError, silkscreen.SilkError,
+                    stencil.StencilError, ValueError) as e:
+                last_err = str(e)
+                continue
+            self._laser_page(art, st.name, jobs=self._laser_art_for)
+            self._laser_token = self._laser_job_token()
+            return True
+        self.say("warn", last_err or "No laser-ready Gerber layers in this folder.")
+        return False
 
     @staticmethod
     def _raw_outline(folder):
@@ -4810,6 +5841,8 @@ class MainWindow(QMainWindow):
         st = self.state
         if st.board is None:
             raise ValueError("Load a Gerber folder first.")
+        if st.is_panel and getattr(self, "_laser_member", None) is None:
+            return self._panel_laser_art(kind, side=side)
         m = self._laser_board()
         if kind == "traces":
             if side is not None:
@@ -4863,39 +5896,32 @@ class MainWindow(QMainWindow):
                 stencil.StencilError, ValueError) as e:
             self.say("warn", str(e))
             return
-        self._open_laser(art, m.name if st.is_panel else st.name)
+        page = self.laser_view
+        if (page is not None and self._laser_token == self._laser_job_token()
+                and not page._empty):
+            self.show_mode("laser")         # same board: keep the page as it is
+            page.switch_kind(kind)
+            return
+        self._open_laser(art, st.name)
 
     def action_open_laser_hub(self):
-        """Open the xTool F1 Ultra dialog on the first available laser job."""
-        st = self.state
-        if st.board is None:
-            # Nothing loaded: the page opens on its own, to load a Gerber
-            # folder or a DXF there or to calibrate.
-            from gerber2rml.gui2.stencil_laser import StencilLaserDialog
-            StencilLaserDialog(None, self).exec()
-            return
-        m = self._laser_board()
-        last_err = None
-        for kind in ("traces", "mask", "silk", "stencil"):
-            try:
-                art = self._laser_art_for(kind)
-                self._open_laser(art, m.name if st.is_panel else st.name)
-                return
-            except (xtool.TracesError, soldermask.MaskError, silkscreen.SilkError,
-                    stencil.StencilError, ValueError) as e:
-                last_err = str(e)
-        self.say("warn", last_err or "No laser-ready Gerber layers in this folder.")
+        """The laser page, on the job it was last on (traces first)."""
+        self.show_mode("laser")
 
     def action_traces_laser_dxf(self):
         """Copper traces on the xTool from a DXF drawing, no Gerber folder."""
         from gerber2rml.engine import dxf_traces
-        from gerber2rml.gui2.stencil_laser import StencilLaserDialog
         picked, _ = QFileDialog.getOpenFileName(
             self, "Copper traces DXF", workspace.remembered_dir("dxf", ""),
             "DXF drawings (*.dxf);;All files (*)")
         if not picked:
             return
-        path = Path(picked)
+        self.open_laser_dxf(Path(picked))
+
+    def open_laser_dxf(self, path):
+        """Copper traces from a DXF drawing, on the laser page."""
+        from gerber2rml.engine import dxf_traces
+        path = Path(path)
         workspace.remember_dir("dxf", str(path.parent))
         try:
             art = dxf_traces.build_dxf_traces(path)
@@ -4903,7 +5929,9 @@ class MainWindow(QMainWindow):
             self.say("warn", str(e))
             return
         jobs = self._laser_art_for if self.state.board is not None else None
-        StencilLaserDialog(art, self, name=path.name, jobs=jobs, dxf=path).exec()
+        self._laser_page(art, path.name, jobs=jobs, dxf=path)
+        self._laser_token = self._laser_job_token()
+        self.show_mode("laser")
 
     def action_traces_laser(self):
         """The copper traces on the xTool: FlatCAM-style concentric isolation."""
@@ -5071,40 +6099,6 @@ class MainWindow(QMainWindow):
             return
         self.say("ok", "Fixture program written, with the procedure beside it.")
 
-    def action_stream(self):
-        if not self.link.is_connected():
-            self.say("warn", "Streaming needs the machine link. Connect first.")
-            return
-        key = self.traveller.current()
-        step = self.plan.by_key(key) if key else None
-        if step is None or step.kind != "run":
-            self.say("warn", "Pick a numbered step in the plan to stream.")
-            return
-        try:
-            paths, _far, _w = self._toolpaths_for(step)
-        except Exception as e:
-            self.report_error("That step could not be built", e)
-            return
-        moves = sum(len(p) for p in paths)
-        choice = dialogs.stream_dialog(self, move_count=moves)
-        if not choice["go"]:
-            return
-        from gerber2rml.engine import spi_stream
-        self.link.clear_abort()
-
-        def op(ser):
-            # A wet run starts and stops the tool itself, so the operator is
-            # never asked to remember. The RPM is a start/stop token — this
-            # machine ignores the value and runs at VPanel's slider setting.
-            return spi_stream.stream_toolpaths(
-                ser, paths, dry_run=choice["dry"],
-                spindle_rpm=0 if choice["dry"] else 7000,
-                should_abort=self.link.should_abort,
-                should_pause=self.link.should_pause)
-
-        self.link.submit("stream", op)
-        self.say("warn", "Streaming. STOP drops the move in flight.")
-
     # ---------------------------------------------------------- setup files
     def action_save_setup(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -5127,6 +6121,15 @@ class MainWindow(QMainWindow):
             "laser_traces": self._laser_traces, "laser_offsets": self._laser_offsets,
             "solder_mask": self._solder_mask, "mask_shrink": self._mask_shrink,
             "silkscreen": self._silkscreen,
+            "stencil": self._stencil, "stencil_kerf": self._stencil_kerf,
+            # How the board is made, and where that came from; the stock in
+            # the bracket or found anywhere, and whether the board is cut
+            # out. A setup that left these out loaded as "Setup loaded." on
+            # a different job.
+            "method": self._method, "method_source": self._method_source,
+            "stock_where": self.autorun_page.where.currentData(),
+            "centre": self.autorun_page.centre_chk.isChecked(),
+            "no_cutout": self._no_cutout,
             "fid_diameter": self._fid_diameter, "hold": self._hold,
             "flex_auto": self._flex_auto, "flex_mm": self._flex_mm,
             "fid_count": self._fid_count,
@@ -5359,6 +6362,26 @@ class MainWindow(QMainWindow):
         setup.auto_depth.blockSignals(False)
         setup.double.setChecked(self._double)
         setup.screwed.setChecked(self.screwed)
+        self._stencil = bool(data.get("stencil", False))
+        try:
+            self._stencil_kerf = max(0.0, float(
+                data.get("stencil_kerf", stencil.DEFAULT_KERF)))
+        except (TypeError, ValueError):
+            self._stencil_kerf = stencil.DEFAULT_KERF
+        page = self.autorun_page
+        where = data.get("stock_where")
+        i = page.where.findData(where) if where else -1
+        if i >= 0 and tier.is_full():
+            page.where.setCurrentIndex(i)
+        if "centre" in data:
+            page.centre_chk.setChecked(bool(data["centre"]))
+        if "no_cutout" in data:
+            self.set_no_cutout(bool(data["no_cutout"]))
+            page._sync_nocut()
+        if data.get("method") in fab.IDS:
+            self.action_method(data["method"],
+                               data.get("method_source") or "chosen",
+                               quiet=True)
         setup.sync()
         # The measuring page reads the flip and the scale flag on show; a
         # setup loaded while it is hidden must not leave it saying the old
@@ -5483,6 +6506,7 @@ class MainWindow(QMainWindow):
         """The drag landed. This is the one expensive moment, and it is once."""
         # Dragged somewhere is where it should go: centring would undo it.
         self.autorun_page.board_dragged()
+        self.remember()
         self.state.set_placement(self.state.place_x + dx,
                                  self.state.place_y + dy)
         self._paths_cache = {}
@@ -5532,6 +6556,7 @@ class MainWindow(QMainWindow):
         else:
             self.say("info", "Screw at X%.1f Y%.1f removed. %d left."
                      % (best[0], best[1], len(kept)))
+        self.remember()
         self._manual_screws = kept
         self._draw_screws()
         self.refresh_checks()
@@ -5553,6 +6578,7 @@ class MainWindow(QMainWindow):
                              "Click one again to drop it.")
 
     def action_reset_screws(self):
+        self.remember()
         self._manual_screws = None
         self._draw_screws()
         self.refresh_checks()
@@ -5647,11 +6673,6 @@ class MainWindow(QMainWindow):
         d.say("Work down it: set up the job, look at the checks, then export. "
               "The machine bar at the bottom is always there, and so is STOP — "
               "Escape does the same thing from anywhere.")
-        d.say("Step 0 is a dry run. The spindle never starts and the bit is "
-              "held 5 mm up, so it cannot cut; it traces where the board is "
-              "about to be machined. It is twenty seconds and it is the "
-              "cheapest way there is to find out the stock is in the wrong "
-              "place.")
         d.say("The cut-out runs last. It is what frees the board from the "
               "sheet it is registered in.")
         d.act("Close", kind="primary", on=d.accept, default=True)
@@ -5711,6 +6732,20 @@ class MainWindow(QMainWindow):
         d.exec()
 
     def closeEvent(self, e):
+        if self.laser_view is not None and self.laser_view._worker_running():
+            self.show_mode("laser")
+            self.laser_view._say("The laser is still running: press STOP first.",
+                                 warn=True)
+            e.ignore()
+            return
+        page = getattr(self, "autorun_page", None)
+        if page is not None and getattr(page, "_thread", None) is not None:
+            # The same rule as the laser: a running mill is stopped first,
+            # not left to finish a job nobody is watching.
+            self.select_step("autorun")
+            self.say("warn", "The mill is still running: press STOP first.")
+            e.ignore()
+            return
         try:
             self.link.disconnect_from("closing")
         except Exception:
@@ -5721,4 +6756,14 @@ class MainWindow(QMainWindow):
             QApplication.instance().removeEventFilter(self)
         except Exception:
             pass
+        worker = self._iso_worker
+        if worker is not None:
+            # A QThread destroyed while it runs takes the process with it.
+            try:
+                worker.done.disconnect()
+            except Exception:
+                pass
+            worker.wait()
+            _LIVE_WORKERS.discard(worker)
+            self._iso_worker = None
         super().closeEvent(e)

@@ -149,7 +149,7 @@ class WindowSource(ar.JobSource):
 
     def _plan_steps(self):
         steps = [s for s in self.w.plan.steps
-                 if s.kind == "run" and s.op != "airpass"]
+                 if s.kind == "run"]
         if getattr(self.w, "_no_cutout", False):
             # The board stays in the sheet: there is no cut-out to run.
             steps = [s for s in steps if s.op != "cutout"]
@@ -193,11 +193,20 @@ class WindowSource(ar.JobSource):
             on = (self.keep_placement
                   and r[0] >= sx - 1e-6 and r[1] >= sy - 1e-6
                   and r[2] <= sx + sw + 1e-6 and r[3] <= sy + sh + 1e-6)
+            # Found by its edges, the stock is where the probe says; a board
+            # put down on it is cut where it was put.
+            found_on = (not self.keep_placement
+                        and r[0] >= pose.x + margin_mm - 1e-6
+                        and r[1] >= pose.y + margin_mm - 1e-6
+                        and r[2] <= pose.x + pose.w - margin_mm + 1e-6
+                        and r[3] <= pose.y + pose.h - margin_mm + 1e-6)
             if self.centre:
                 ox = (pose.w - (b[2] - b[0])) / 2.0
                 oy = (pose.h - (b[3] - b[1])) / 2.0
             elif on:
                 ox, oy = b[0] - sx, b[1] - sy
+            elif found_on:
+                ox, oy = b[0] - pose.x, b[1] - pose.y
             else:
                 ox = oy = margin_mm
             # A board as big as the stock one way, or bigger, has one edge on
@@ -207,8 +216,7 @@ class WindowSource(ar.JobSource):
                 ox = 0.0 if fx == "min" else pose.w - (b[2] - b[0])
             if fy is not None:
                 oy = 0.0 if fy == "min" else pose.h - (b[3] - b[1])
-            w.action_place(st.place_x + pose.x + ox - b[0],
-                           st.place_y + pose.y + oy - b[1])
+            w.action_move_job(pose.x + ox - b[0], pose.y + oy - b[1])
             w.action_stock(pose.w, pose.h, pose.x, pose.y, show=True)
             w.set_stock_turn(ar.about(pose.x, pose.y, pose.angle))
         self.gui(go)
@@ -357,14 +365,14 @@ class AutoRunPage(inspector.Page):
     def __init__(self, ctl, parent=None):
         super().__init__(parent)
         self.ctl = ctl
-        self.set_head("Run it all", "Automatically, start to finish")
+        self.set_head("On the mill", "Mill it, start to finish")
         self._click = None
         self._thread = None
         self._events = None
         self._gui = _OnGui()
         self._rows = {}
 
-        intro = widgets.hint(
+        intro = self.intro = widgets.hint(
             "Stock in the bracket, under its probe tongue, size typed - "
             "then Start.")
         intro.setToolTip(
@@ -386,13 +394,15 @@ class AutoRunPage(inspector.Page):
         stock.add(row)
         self.where = QComboBox()
         self.where.addItem("In the corner bracket", "bracket")
-        self.where.addItem("Anywhere - click it", "click")
+        self.where.addItem("Anywhere - the probe finds its corner", "click")
         self.where.setToolTip(
             "In the bracket: push the stock into the corner bracket. Its "
             "outline is that corner and the size typed, so the run only "
             "touches the copper once for its height - any size of stock.\n"
-            "Anywhere: click on the stock and the probe walks to its edges "
-            "(slow, and every edge it crosses must be clear of clamps).")
+            "Anywhere: no bracket. Put the board on the bed where the copper "
+            "is; the probe starts in the middle of the board and walks out to "
+            "the copper's edges to find its corner and how it is turned. "
+            "Every edge it crosses must be clear of clamps.")
         stock.add(self.where)
         # The bracket is drawn on the bed as the part it is, and dragged
         # there hole to hole; no coordinates to type. Its corner is what the
@@ -457,16 +467,19 @@ class AutoRunPage(inspector.Page):
         # goes into the corner when this page opens.
         self._auto_place = True
         self.pick_btn = widgets.button(
-            "Click where it is",
-            tip="Then click on the stage, anywhere on the stock. The probe "
-                "goes there first and finds the edges from it. Click it "
-                "again to cancel.")
+            "Start the probe somewhere else",
+            tip="Only if the middle of the board is not over the copper: "
+                "click this, then click on the stage anywhere on the stock. "
+                "The probe goes there first and finds the edges from it. "
+                "Click it again to cancel.")
         # A toggle, so it shows when the next click on the stage is for the
         # stock - and that click can be taken back by clicking it again.
         self.pick_btn.setCheckable(True)
         self.pick_btn.toggled.connect(self._arm_pick)
         stock.add(self.pick_btn)
-        self.click_lbl = widgets.hint("No spot clicked yet.")
+        self.click_lbl = widgets.hint(
+            "Drag the board on the bed to where the copper is. The probe "
+            "starts in its middle and finds the copper's corner by itself.")
         stock.add(self.click_lbl)
         self.sim_lbl = widgets.hint("")
         stock.add(self.sim_lbl)
@@ -575,25 +588,9 @@ class AutoRunPage(inspector.Page):
             "the same height map. Once it is cut free it cannot be re-cut "
             "where it lay.")
         stock.add(self.check_chk)
-        self.laser_chk = QCheckBox("Traces on the laser: only drill and "
-                                   "cut out")
-        self.laser_chk.setToolTip(
-            "For a board whose copper is etched on the xTool afterwards. The "
-            "run drills the holes and cuts the board out, and leaves the "
-            "copper alone. The surface is not probed: holes and the cut-out "
-            "go right through, so they do not need it.\n"
-            "With 'Leave the board in the sheet' as well, only the holes are "
-            "drilled, and the sheet round the board is there for the laser's "
-            "proof marks.\n"
-            "A board with copper on both faces is milled as a single-sided "
-            "job: the holes go through, and nothing has to be flipped on the "
-            "mill. Both faces are still on the laser page.")
-        # Off every time the app starts: a run that silently cuts no traces
-        # because of a tick left from last week would be a bad surprise.
+        # A laser board is drilled and cut out here and etched on the laser:
+        # the board's method says so (the chip at the top), not a tick.
         self._level_before_laser = None
-        self.ctl._traces_on_laser = False
-        self.laser_chk.toggled.connect(self._laser_changed)
-        stock.add(self.laser_chk)
         srow = QWidget()
         h = QHBoxLayout(srow)
         h.setContentsMargins(0, 0, 0, 0)
@@ -605,13 +602,6 @@ class AutoRunPage(inspector.Page):
             "one are skipped. The stock must not have moved.")
         h.addWidget(self.start_box, 1)
         stock.add(srow)
-        self.dry_chk = QCheckBox("Dry run: spindle off, every cut 5 mm "
-                                 "above the copper")
-        self.dry_chk.setToolTip(
-            "Everything a real run does - finding the stock, probing, every "
-            "job start to finish - with the bit kept in the air. For "
-            "watching a new setup before it cuts.")
-        stock.add(self.dry_chk)
 
         # What holds the stock down. The bracket is drawn because the app
         # knows its shape; a clamp is known only if somebody says where it
@@ -810,6 +800,61 @@ class AutoRunPage(inspector.Page):
     def bracket(self):
         return self.where.currentData() == "bracket"
 
+    def _double_changes(self):
+        """What a double-sided run needs that the job does not say yet, as
+        ``(label, apply)`` pairs: reference holes the probe finds, the board
+        turned left to right, and holes wide enough for the bit to drop in."""
+        ctl = self.ctl
+        out = []
+        if ctl._registration != "fiducial":
+            out.append(("Registration: dowels → reference holes found by "
+                        "the probe",
+                        lambda: setattr(ctl, "_registration", "fiducial")))
+        if ctl._fid_flip != "vertical":
+            out.append(("Flip: top-bottom → left-right",
+                        lambda: setattr(ctl, "_fid_flip", "vertical")))
+        want = round(ctl.state.drill.bit_diameter + 0.8, 2)
+        if not ctl._fid_mounting and ctl._fid_diameter < want - 1e-6:
+            out.append(("Reference holes: %.2f → %.2f mm, wide enough for "
+                        "the probe bit" % (ctl._fid_diameter, want),
+                        lambda: setattr(ctl, "_fid_diameter", want)))
+        return out
+
+    def _bit_in(self, step):
+        """A job with more than one bit: is this step's in the collet? The
+        stock is found and the surface probed with whatever is in it."""
+        from gerber2rml.gui2 import dialogs
+        from gerber2rml.gui2.runplan import tool_label
+        return dialogs.confirm(
+            self, "Is the right bit in?",
+            f"{step.title} cuts with the {tool_label(step.tool)}. Put it in "
+            f"the collet before you start: the probe finds the stock and the "
+            f"copper's height with the bit that is in.",
+            "It is in - start")
+
+    def _double_settings_ok(self):
+        """In Pro the job's own choices are never changed in silence: Start
+        says what the run needs and asks."""
+        from gerber2rml.gui2 import tier, dialogs
+        changes = self._double_changes()
+        if not changes or not tier.is_full():
+            return True
+        return dialogs.confirm(
+            self, "The run needs these changed",
+            "A double-sided run finds the board again after the flip with the "
+            "probe, so it needs:\n\n    "
+            + "\n    ".join(label for label, _f in changes)
+            + "\n\nThey are changed on Your board as well.",
+            "Change them and start")
+
+    def _apply_double_settings(self):
+        changes = self._double_changes()
+        for _label, apply in changes:
+            apply()
+        if changes:
+            self.ctl.refresh_plan()
+            self.ctl.inspector.setup.sync()
+
     def _sync_offline(self, *_):
         self.offline_box.setVisible(not self.ctl.link.is_connected()
                                     and self._thread is None)
@@ -819,10 +864,8 @@ class AutoRunPage(inspector.Page):
         from gerber2rml.gui2 import tier
         full = tier.is_full()
         self.where.setVisible(full)
-        self.dry_chk.setVisible(full)
         if not full:
             self.where.setCurrentIndex(self.where.findData("bracket"))
-            self.dry_chk.setChecked(False)
         # The bracket is on every step in Novice and only here in Pro.
         if getattr(self.ctl, "inspector", None) is not None:
             if self._everywhere():
@@ -832,6 +875,11 @@ class AutoRunPage(inspector.Page):
 
     def _where_changed(self, *_):
         on = self.bracket()
+        self.intro.setText(
+            "Stock in the bracket, under its probe tongue, size typed - "
+            "then Start." if on else
+            "The board on the bed where the copper is, the copper's size "
+            "typed - then Start. The probe finds its corner.")
         self.datum_box.setVisible(on)
         self.pick_btn.setVisible(not on)
         self.click_lbl.setVisible(not on)
@@ -877,7 +925,8 @@ class AutoRunPage(inspector.Page):
     def on_bracket_moved(self, x, y):
         b = br.snap(x, y, self._bracket.corner, bed=self._bed(),
                     tongue=self._bracket.tongue)
-        if b is not None:
+        if b is not None and b != self._bracket:
+            self._remember("bracket")
             self.set_bracket(b)
 
     def _corner_changed(self, *_):
@@ -970,10 +1019,10 @@ class AutoRunPage(inspector.Page):
         self._sync_outline()
 
     def _everywhere(self):
-        """Is the bracket part of the picture on every step? In Novice, where
-        there is no other way to hold the stock, once there is a board."""
-        from gerber2rml.gui2 import tier
-        return (not tier.is_full() and self.bracket()
+        """Is the bracket part of the picture on every step? Whenever the
+        stock is in it and there is a board, in both tiers: it is where the
+        stock is."""
+        return (self.bracket()
                 and getattr(self.ctl.state, "board", None) is not None)
 
     def _on_this_page(self):
@@ -1004,22 +1053,17 @@ class AutoRunPage(inspector.Page):
     def traces_on_laser(self):
         return bool(getattr(self.ctl, "_traces_on_laser", False))
 
-    def _laser_changed(self, on):
-        """The copper goes to the laser, or the mill cuts it as usual."""
-        ctl = self.ctl
-        ctl._traces_on_laser = bool(on)
-        if on:
-            # Holes and a cut-out go through: no height map to follow.
+    def sync_method(self):
+        """The board's method changed. On the laser the mill only drills and
+        cuts out: holes and an outline go through, so the surface is not
+        probed, and there are no traces to stop and look at."""
+        on = self.traces_on_laser()
+        self.set_head("On the mill", "Drill and cut out, on tabs" if on
+                      else "Mill it, start to finish")
+        if on and self._level_before_laser is None:
             self._level_before_laser = self.level_chk.isChecked()
             self.level_chk.setChecked(False)
-            if ctl._double:
-                # Nothing to flip for on the mill: the holes go through, and
-                # the laser page has both faces whatever this says.
-                ctl.inspector.setup.double.setChecked(False)
-                ctl.say("info", "Traces on the laser: the board is milled as "
-                                "a single-sided job, with no flip. Both "
-                                "copper faces are still on the laser page.")
-        elif self._level_before_laser is not None:
+        elif not on and self._level_before_laser is not None:
             self.level_chk.setChecked(self._level_before_laser)
             self._level_before_laser = None
         self.check_chk.setEnabled(not on and not self.no_cutout())
@@ -1065,7 +1109,8 @@ class AutoRunPage(inspector.Page):
             nx, ny = br.corner_place(extent=b, **args)
             need = br.stock_needed(extent=b, **args)
         if abs(nx - b[0]) > 1e-6 or abs(ny - b[1]) > 1e-6:
-            ctl.action_place(st.place_x + nx - b[0], st.place_y + ny - b[1])
+            # The whole job: a panel goes into the corner as one.
+            ctl.action_move_job(nx - b[0], ny - b[1])
         _sx, _sy, sw, sh = args["stock"]
         short = need[0] > sw + 1e-6 or need[1] > sh + 1e-6
         # Said once per sheet and board, not on every digit typed.
@@ -1159,11 +1204,13 @@ class AutoRunPage(inspector.Page):
             self.centre_chk.setChecked(False)
             self.ctl.say("info", "Centring is off: the board stays where you "
                                  "dragged it.")
+        if not self.bracket():
+            self._sync_outline()         # the copper goes where the board is
 
     def _board_onto_outline(self):
-        """Novice: what is on the screen is where it will be cut, so a board
-        off the outline is brought onto it now, not surprisingly at Start. Pro
-        decides for itself, and Start says so if it hangs off.
+        """What is on the screen is where it will be cut, so a board off the
+        outline is brought onto it now, not surprisingly at Start - in both
+        tiers.
 
         Centring is what is on the screen in both: the board goes to the
         middle of the outline as it is typed, and the run centres it again on
@@ -1176,10 +1223,8 @@ class AutoRunPage(inspector.Page):
         sx, sy, sw, sh = ctl.stock
         st = ctl.state
         if self.centre_chk.isChecked():
-            ctl.action_place(st.place_x + sx + (sw - (b[2] - b[0])) / 2 - b[0],
-                             st.place_y + sy + (sh - (b[3] - b[1])) / 2 - b[1])
-            return
-        if tier.is_full():
+            ctl.action_move_job(sx + (sw - (b[2] - b[0])) / 2 - b[0],
+                                sy + (sh - (b[3] - b[1])) / 2 - b[1])
             return
         off = b[0] < sx or b[1] < sy or b[2] > sx + sw or b[3] > sy + sh
         if self.bracket():
@@ -1189,8 +1234,8 @@ class AutoRunPage(inspector.Page):
                 self.place_in_corner()
             return
         if off:
-            ctl.action_place(st.place_x + sx + ar.PLACE_MARGIN_MM - b[0],
-                             st.place_y + sy + ar.PLACE_MARGIN_MM - b[1])
+            ctl.action_move_job(sx + ar.PLACE_MARGIN_MM - b[0],
+                                sy + ar.PLACE_MARGIN_MM - b[1])
 
     def _sync_outline(self, *_):
         # Only while this page is the one open: it must not move the sheet
@@ -1211,7 +1256,15 @@ class AutoRunPage(inspector.Page):
             self.ctl.action_stock(w, h, x0, y0, show=True)
             self._board_onto_outline()
         else:
-            self.ctl.action_stock(w, h, show=True)
+            # No bracket: the board was put where the copper is, so the
+            # copper is drawn round it, and the probe finds it from there.
+            b = self.ctl.work_extent()
+            if b is not None and not self.centre_chk.isChecked():
+                cx, cy = (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0
+                self.ctl.action_stock(w, h, cx - w / 2.0, cy - h / 2.0,
+                                      show=True)
+            else:
+                self.ctl.action_stock(w, h, show=True)
             if self.centre_chk.isChecked():
                 self._board_onto_outline()
 
@@ -1223,11 +1276,14 @@ class AutoRunPage(inspector.Page):
             self.click_lbl.setText("Click anywhere on the stock, on the "
                                    "stage. Not near an edge.")
         else:
-            self.pick_btn.setText("Click where it is")
+            self.pick_btn.setText("Start the probe somewhere else")
             if self.ctl.stage.mode == "stock":
                 self.ctl.set_stage_mode("place")
             if self._click is None:
-                self.click_lbl.setText("No spot clicked yet.")
+                self.click_lbl.setText(
+                    "Drag the board on the bed to where the copper is. The "
+                    "probe starts in its middle and finds the copper's "
+                    "corner by itself.")
 
     def on_stock_click(self, x, y):
         self._click = (x, y)
@@ -1303,7 +1359,13 @@ class AutoRunPage(inspector.Page):
                  "level": 150.0 if self.level_chk.isChecked() else 2.0,
                  "level_top": 150.0 if self.level_chk.isChecked() else 2.0}
         out = []
+        only = getattr(self, "_only", None)
+        top = {k for k, _l in src.top_steps()} if only else set()
         for key, label in self._plan_rows():
+            if only and key != only and key not in (
+                    ("stock", "stock_top", "fiducials", "level_top")
+                    if only in top else ("stock", "level")):
+                continue
             if key in fixed:
                 out.append((key, label, fixed[key]))
                 continue
@@ -1418,7 +1480,9 @@ class AutoRunPage(inspector.Page):
         if self.pick_btn.isChecked():
             self.pick_btn.setChecked(False)      # leaving the page disarms it
 
-    def start(self):
+    def start(self, only=None):
+        """Start the run; ``only`` a run step's key sends that one job
+        alone (Pro's steps, each from its own page)."""
         ctl = self.ctl
         if self._thread is not None:
             ctl.say("warn", "Already running. STOP stops it.")
@@ -1431,9 +1495,33 @@ class AutoRunPage(inspector.Page):
         if ctl.state.board is None:
             ctl.say("warn", "Load a board first.")
             return
+        one = ctl.plan.by_key(only) if (only and ctl.plan) else None
+        if only and (one is None or one.kind != "run"):
+            ctl.say("warn", "There is no step to run there.")
+            return
+        if one is None and ctl.plan is not None and len(ctl.plan.tools) > 1:
+            # The run never stops for a bit change: one bit cuts it all.
+            ctl.say("fail", "This tool profile needs %d different bits, and "
+                            "the run uses the one in the collet for "
+                            "everything. Pick a one-bit profile on Your "
+                            "board, or export the files and run them in "
+                            "VPanel." % len(ctl.plan.tools))
+            return
         datum = self.datum() if self.bracket() else None
         if datum is None and self._click is None:
-            ctl.say("warn", "Click where the stock is first.")
+            # Anywhere: the probe starts in the middle of the board, which
+            # was put where the copper is.
+            b = ctl.work_extent()
+            if b is None:
+                ctl.say("warn", "Put the board where the copper is first.")
+                return
+            start_click = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+        else:
+            start_click = self._click
+        if ctl._double and not self._double_settings_ok():
+            return
+        if one is not None and ctl.plan is not None \
+                and len(ctl.plan.tools) > 1 and not self._bit_in(one):
             return
         sim = simmachine.is_sim(port)
         if sim:
@@ -1463,15 +1551,9 @@ class AutoRunPage(inspector.Page):
                 if not millsettings.preflight(self.window(), say=ctl.say):
                     return
         if ctl._double:
-            # Fiducials are the alignment, flipped left to right, and wide
-            # enough for the probe bit to drop into.
-            ctl._registration = "fiducial"
-            ctl._fid_flip = "vertical"
-            if not ctl._fid_mounting:      # those have the size they have
-                ctl._fid_diameter = round(ctl.state.drill.bit_diameter + 0.8,
-                                          2)
-            ctl.refresh_plan()
+            self._apply_double_settings()
         ctl.show_auto_face(False)
+        self._only = one.key if one is not None else None
         size = (self.w_spin.value(), self.h_spin.value())
         ctl.action_stock(size[0], size[1])
         self._fill_rows()
@@ -1500,19 +1582,24 @@ class AutoRunPage(inspector.Page):
         # In the run's folder with its programs: Novice has no export to carry
         # it, and a file that did not get made must not stop the run. The
         # setup page keeps what it has to say.
-        if ctl._laser_traces and self.run_dir is not None:
+        kinds = (ctl.laser_jobs() if hasattr(ctl, "laser_jobs")
+                 and one is None else ())
+        if (one is None and (ctl._laser_traces or "traces" in kinds)
+                and self.run_dir is not None):
             paths, notes = ctl.write_laser_traces_to(self.run_dir)
             for p in paths:
                 self._log(f"Laser traces file: {p.name}")
             for n in notes:
                 self._log(f"Laser traces: {n}")
-        if ctl._solder_mask and self.run_dir is not None:
+        if (one is None and (ctl._solder_mask or "mask" in kinds)
+                and self.run_dir is not None):
             paths, notes = ctl.write_mask_to(self.run_dir)
             for p in paths:
                 self._log(f"Solder mask file: {p.name}")
             for n in notes:
                 self._log(f"Solder mask: {n}")
-        if ctl._silkscreen and self.run_dir is not None:
+        if (one is None and (ctl._silkscreen or "silk" in kinds)
+                and self.run_dir is not None):
             paths, notes = ctl.write_silk_to(self.run_dir)
             for p in paths:
                 self._log(f"Silkscreen file: {p.name}")
@@ -1524,13 +1611,21 @@ class AutoRunPage(inspector.Page):
         self.start_btn.setEnabled(False)
         self._last_port = port
         self._measured = None
-        click = self._click or (0.0, 0.0)
-        bit = ctl.state.drill.bit_diameter
+        click = start_click or (0.0, 0.0)
+        # The probe touches with the bit in the collet: for one step that
+        # is the step's own bit.
+        bit = (one.bit if one is not None and one.bit
+               else ctl.state.drill.bit_diameter)
         level = self.level_chk.isChecked()
-        dry = self.dry_chk.isChecked()
+        dry = False
         check_cut = self.check_chk.isChecked()
         no_cut = self.no_cutout() and datum is not None
-        start_at = self.start_box.currentData()
+        start_at = None if one is not None else self.start_box.currentData()
+        if one is not None:
+            check_cut = False
+        only_keys = [one.key] if one is not None else None
+        done_msg = (f"Done: {one.title}." if one is not None
+                    else "The board is done.")
         nogo = self.nogo()
         level_margin = self.level_margin_spin.value()
         from gerber2rml.gui2 import workspace
@@ -1560,7 +1655,8 @@ class AutoRunPage(inspector.Page):
                                             else ar.PLACE_MARGIN_MM),
                                  check_cut=check_cut and not no_cut,
                                  start_at=start_at, nogo=nogo,
-                                 level_margin=level_margin)
+                                 level_margin=level_margin,
+                                 only=only_keys)
                 try:
                     ok = run.run()
                 finally:
@@ -1570,7 +1666,7 @@ class AutoRunPage(inspector.Page):
                         # the top.
                         workspace.set_setting("autorun/surface_z",
                                               "%.3f" % run.pose.z)
-                msg = "The board is done."
+                msg = done_msg
             except Exception as e:
                 msg = str(e) or e.__class__.__name__
                 self._measured = getattr(e, "measured", None)
@@ -1590,7 +1686,8 @@ class AutoRunPage(inspector.Page):
         self._sync_offline()
         if sim:
             self._sim_timer.start()
-        ctl.say("info", "Running. STOP on the bar stops it.")
+        ctl.say("info", (f"Running one step: {one.title}. " if one is not None
+                         else "Running. ") + "STOP on the bar stops it.")
 
     def _on_note(self, text):
         self.status.setText(text)
@@ -1602,7 +1699,12 @@ class AutoRunPage(inspector.Page):
         from pathlib import Path
         from gerber2rml import platform as plat
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        self.run_dir = (Path(plat.documents_dir()) / "SRM-CAM" / "runs"
+        import os
+        # SRM_CAM_HOME moves the whole workspace; the runs go with it.
+        home = os.environ.get("SRM_CAM_HOME")
+        base = (Path(home) if home
+                else Path(plat.documents_dir()) / "SRM-CAM")
+        self.run_dir = (base / "runs"
                         / ("%s_%s" % (self.ctl.state.name or "board", stamp)))
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -1773,11 +1875,18 @@ class AutoRunPage(inspector.Page):
         """The no-go zones, ``[(x0, y0, x1, y1)]`` in machine mm."""
         return list(self._nogo)
 
+    def _remember(self, merge=None):
+        """Undo: the bed as it is, before a zone, a box or the bracket moves."""
+        remember = getattr(self.ctl, "remember", None)
+        if remember is not None:
+            remember(merge)
+
     def add_nogo(self, x0, y0, x1, y1):
         from gerber2rml.engine.nogo import normal
         z = normal((x0, y0, x1, y1))
         if z[2] - z[0] < 0.5 or z[3] - z[1] < 0.5:
             return                  # a click, not a drag: no zone of nothing
+        self._remember()
         self._nogo.append(z)
         self._save_nogo()
 
@@ -1794,10 +1903,13 @@ class AutoRunPage(inspector.Page):
         # bracket screw may use: a clamp goes in the outer ring too.
         g = spoilboard.measured_grid()
         holes = [g.centre(i, j) for j in range(g.ny) for i in range(g.nx)]
+        self._remember()
         self._nogo.extend(clamp_at(x, y, stock, holes))
         self._save_nogo()
 
     def _clear_nogo(self):
+        if self._nogo:
+            self._remember()
         self._nogo = []
         self._save_nogo()
 
@@ -1805,6 +1917,7 @@ class AutoRunPage(inspector.Page):
         """Delete one zone. Out of range does nothing: the menu that asked
         may be older than the list."""
         if 0 <= index < len(self._nogo):
+            self._remember()
             del self._nogo[index]
             self._save_nogo()
 
@@ -1844,11 +1957,14 @@ class AutoRunPage(inspector.Page):
             refresh()
 
     def add_box(self, x0, y0, x1, y1):
+        self._remember()
         self._boxes.append((min(x0, x1), min(y0, y1),
                             max(x0, x1), max(y0, y1)))
         self._show_boxes()
 
     def _clear_boxes(self):
+        if self._boxes:
+            self._remember()
         self._boxes = []
         self._show_boxes()
 
@@ -1917,6 +2033,9 @@ class AutoRunPage(inspector.Page):
             self.h_spin.setValue(round(self._measured[1], 1))
         self.ctl.say("ok" if ok else "fail",
                      msg if ok else "The run stopped: " + msg)
+        one, self._only = getattr(self, "_only", None), None
+        if ok and one and hasattr(self.ctl, "traveller"):
+            self.ctl.traveller.set_done(one, True)
         link = self.ctl.link
         link.mark_external(False)
         port = getattr(self, "_last_port", None)

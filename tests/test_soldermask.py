@@ -360,16 +360,18 @@ def win(qt_app, monkeypatch):
     w.close()
 
 
-def test_off_by_default_and_the_export_is_what_it_was(win, tmp_path):
-    assert not win.inspector.setup.solder_mask.isChecked()
-    assert win.inspector.setup.mask_shrink.value() == sm.DEFAULT_SHRINK
+def test_a_board_with_mask_has_its_row_and_its_file(win, tmp_path):
+    """No tick to find: a board with a mask layer has a Solder mask row on
+    the rail, and the export writes its file."""
+    assert win._mask_shrink == sm.DEFAULT_SHRINK
+    assert win.plan.by_key("laser_mask") is not None
     win.export_to(tmp_path)
-    assert not list(tmp_path.glob("*.dxf"))
-    assert win.sheet.text().count("solder mask") == 0
+    assert (tmp_path / "buck_mask_mirrored.dxf").exists()
+    assert "solder mask" in win.sheet.text()
 
 
 def test_ticked_the_export_writes_it_beside_the_machine_files(win, tmp_path):
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     written = win.export_to(tmp_path)
     assert written and all(Path(p).exists() for p in written)
     path = tmp_path / "buck_mask_mirrored.dxf"
@@ -382,9 +384,9 @@ def test_ticked_the_export_writes_it_beside_the_machine_files(win, tmp_path):
 def test_the_machine_files_do_not_change_with_it(win, tmp_path):
     a, b = tmp_path / "off", tmp_path / "on"
     win.export_to(a)
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     win.export_to(b)
-    names = {p.name for p in b.iterdir()} - {"buck_mask_mirrored.dxf"}
+    names = {p.name for p in b.iterdir()}
     assert names == {p.name for p in a.iterdir()}
     for n in names:
         if n.endswith(".nc"):
@@ -393,8 +395,8 @@ def test_the_machine_files_do_not_change_with_it(win, tmp_path):
 
 def test_the_shrink_box_reaches_the_file(win, tmp_path):
     setup = win.inspector.setup
-    setup.solder_mask.setChecked(True)
-    setup.mask_shrink.setValue(0.2)
+    setup.ctl.action_solder_mask(True)
+    setup.ctl.action_mask_shrink(0.2)
     paths, _notes = win.write_mask_to(tmp_path)
     fine = sm.build_mask(BUCK, shrink=0.2)
     got = loops(paths[0], sm.LAYER_OPENINGS)
@@ -403,7 +405,7 @@ def test_the_shrink_box_reaches_the_file(win, tmp_path):
 
 
 def test_mirror_off_writes_an_unmirrored_file(win, tmp_path):
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     win.inspector.setup.mirror.setChecked(False)
     assert "Not mirrored" in win.mask_status()[1]
     paths, _notes = win.write_mask_to(tmp_path)
@@ -423,15 +425,14 @@ def test_a_folder_with_no_mask_says_so_and_the_machine_files_still_come(
     try:
         w.load_folder(str(src))
         setup = w.inspector.setup
-        setup.solder_mask.setChecked(True)
+        setup.ctl.action_solder_mask(True)
         level, text = w.mask_status()
         assert level == "warn" and "B.Mask" in text
-        assert "B.Mask" in setup.mask_note.text()
         out = tmp_path / "out"
         written = w.export_to(out)
         assert written and any(p.suffix == ".nc" for p in map(Path, written))
-        assert not list(out.glob("*.dxf"))
-        assert "No B.Mask" in w.sheet.text()
+        assert not list(out.glob("*mask*.dxf"))
+        assert w.plan.by_key("laser_mask") is None     # no row without it
     finally:
         w.close()
 
@@ -442,8 +443,8 @@ def test_a_pad_lost_to_the_shrink_reaches_the_operator(qt_app, monkeypatch, tmp_
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        w.inspector.setup.solder_mask.setChecked(True)
-        w.inspector.setup.mask_shrink.setValue(sm.MAX_SHRINK)
+        w.action_solder_mask(True)
+        w.action_mask_shrink(sm.MAX_SHRINK)
         real = sm.write_mask_files
 
         def lost(folder, out_dir, name, **kw):
@@ -463,12 +464,7 @@ def test_novice_has_the_box_too(qt_app, monkeypatch):
     w = MainWindow()
     try:
         w.load_folder(str(BUCK))
-        setup = w.inspector.setup
-        setup.sync()
-        assert not setup.mask_section.isHidden()
-        assert setup.mask_write_btn.isHidden()      # not until it is asked for
-        setup.solder_mask.setChecked(True)
-        assert not setup.mask_write_btn.isHidden()
+        assert "laser_mask" in [s.key for s in w.novice_rail()]
     finally:
         w.close()
 
@@ -476,7 +472,7 @@ def test_novice_has_the_box_too(qt_app, monkeypatch):
 def test_a_panel_gets_one_file_per_board_and_one_for_a_repeat(win, tmp_path):
     win.add_folder(str(BUCK))                       # the same board again
     win.add_folder(str(SHAPES))
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     paths, _notes = win.write_mask_to(tmp_path)
     assert [p.name for p in paths] == ["buck_mask_mirrored.dxf",
                                        "shapes_mask_mirrored.dxf"]
@@ -484,16 +480,16 @@ def test_a_panel_gets_one_file_per_board_and_one_for_a_repeat(win, tmp_path):
 
 def test_the_write_it_now_button_asks_where_and_writes(win, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory",
                         lambda *a, **k: str(tmp_path))
-    win.inspector.setup.mask_write_btn.click()
+    win.action_write_mask()
     assert (tmp_path / "buck_mask_mirrored.dxf").exists()
     assert not list(tmp_path.glob("*.nc"))          # the laser file and nothing else
 
 
 def test_changing_the_mirror_forgets_what_was_written(win, tmp_path):
-    win.inspector.setup.solder_mask.setChecked(True)
+    win.action_solder_mask(True)
     win.write_mask_to(tmp_path)
     assert "buck_mask_mirrored.dxf" in win.mask_status()[1]
     win.inspector.setup.mirror.setChecked(False)
@@ -504,16 +500,16 @@ def test_changing_the_mirror_forgets_what_was_written(win, tmp_path):
 def test_the_setup_file_keeps_it(win, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     setup = win.inspector.setup
-    setup.solder_mask.setChecked(True)
-    setup.mask_shrink.setValue(0.15)
+    setup.ctl.action_solder_mask(True)
+    setup.ctl.action_mask_shrink(0.15)
     path = tmp_path / "job.srmcam"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         lambda *a, **k: (str(path), ""))
     monkeypatch.setattr(QFileDialog, "getOpenFileName",
                         lambda *a, **k: (str(path), ""))
     win.action_save_setup()
-    setup.solder_mask.setChecked(False)
-    setup.mask_shrink.setValue(0.1)
+    setup.ctl.action_solder_mask(False)
+    setup.ctl.action_mask_shrink(0.1)
     win.action_load_setup()
-    assert setup.solder_mask.isChecked()
-    assert setup.mask_shrink.value() == pytest.approx(0.15)
+    assert setup.ctl._solder_mask
+    assert setup.ctl._mask_shrink == pytest.approx(0.15)

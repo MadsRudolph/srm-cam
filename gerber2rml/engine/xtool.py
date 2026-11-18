@@ -70,6 +70,31 @@ def to_bed(ring_coords, origin, height):
     return [(ox + x, oy + (height - y)) for x, y in ring_coords]
 
 
+def outline_rings(outline):
+    """Every ring of a board outline: a Polygon, or a MultiPolygon with one
+    polygon per board when a panel goes to the laser as one job."""
+    for poly in getattr(outline, "geoms", [outline]):
+        yield poly.exterior
+        yield from poly.interiors
+
+
+def _outline_on_bed(art, origin, h):
+    """The outline's area on the bed: each board's, joined."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    return unary_union([Polygon(to_bed(list(p.exterior.coords), origin, h)).buffer(0)
+                        for p in getattr(art.outline, "geoms", [art.outline])])
+
+
+def _exteriors(area):
+    """The outside edge of an area: one ring, or one per board of a panel."""
+    from shapely.geometry import MultiLineString
+    parts = list(getattr(area, "geoms", [area]))
+    if len(parts) == 1:
+        return parts[0].exterior
+    return MultiLineString([list(p.exterior.coords) for p in parts])
+
+
 def stencil_paths(art, origin, only=None):
     """(holes, outline) as closed point lists on the bed. ``only``, a set of
     indices into ``art.apertures``, keeps just those holes: a re-cut."""
@@ -81,7 +106,7 @@ def stencil_paths(art, origin, only=None):
         for ring in (poly.exterior, *poly.interiors):
             holes.append(to_bed(list(ring.coords), origin, h))
     outline = [to_bed(list(r.coords), origin, h)
-               for r in (art.outline.exterior, *art.outline.interiors)]
+               for r in outline_rings(art.outline)]
     return holes, outline
 
 
@@ -301,9 +326,10 @@ class Job:
         return None
 
 
-def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
+def stencil_job(holes, outline, recipe=DEFAULT_RECIPE, *, write=True):
     """One GS002 file: every zone ``recipe.rounds`` times with rests, then the
-    outline marked."""
+    outline marked. ``write=False``: the same Job, seconds and timeline, with
+    no file text - the estimate, without building megabytes of G-code."""
     check_on_bed(holes + outline)
     zs = zones(holes, recipe.zones)
     park = min(((x, y) for p in outline for x, y in p), key=lambda q: q[0] + q[1])
@@ -313,20 +339,24 @@ def stencil_job(holes, outline, recipe=DEFAULT_RECIPE):
         z = zs[k]
         n = min(recipe.passes_per_burst,
                 recipe.total_passes - r * recipe.passes_per_burst)
-        body += _passes(z, recipe.power, recipe.speed, n)
+        if write:
+            body += _passes(z, recipe.power, recipe.speed, n)
         dt = n * _draw_seconds(z, recipe.speed)
         timeline.append((secs, secs + dt, k, r))
         secs += dt
         if i < len(bursts) - 1 and recipe.rest_s > 0:
-            body += _rest(park, recipe.rest_s)
+            if write:
+                body += _rest(park, recipe.rest_s)
             secs += recipe.rest_s
     if outline and recipe.mark_passes:
-        body += _passes(outline, recipe.mark_power, recipe.speed, recipe.mark_passes)
+        if write:
+            body += _passes(outline, recipe.mark_power, recipe.speed,
+                            recipe.mark_passes)
         dt = recipe.mark_passes * _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.rounds))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
-    return Job(text="\r\n".join(lines), zones=[len(z) for z in zs],
+    return Job(text="\r\n".join(lines) if write else "", zones=[len(z) for z in zs],
                seconds=secs, passes=recipe.total_passes, zone_paths=zs,
                timeline=timeline)
 
@@ -674,10 +704,12 @@ def hatch(polys, interval, angle_deg=0.0, one_way=True):
     return [(back(a), back(b)) for a, b in segs]
 
 
-def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
+def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0, *,
+             write=True):
     """One GS002 file that fills every shape (shapely Polygons, bed mm) with
     ``recipe.passes`` hatch passes, each at right angles to the last when
-    ``cross_hatch``; then, if asked, the outline marked once."""
+    ``cross_hatch``; then, if asked, the outline marked once. ``write=False``:
+    the seconds and timeline only, no file text."""
     check_on_bed([list(p.exterior.coords) for p in shapes] + outline)
     s_val, feed = round(recipe.power * 10), round(recipe.speed * 60)
     body, secs, timeline = [], 0.0, []
@@ -688,7 +720,7 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
             segs = hatch(shapes, recipe.interval, ang, recipe.one_way)
             dt = _draw_seconds([[a, b] for a, b in segs], recipe.speed)
             lines_k = []
-            for a, b in segs:
+            for a, b in (segs if write else ()):
                 lines_k.append(f"G0X{a[0]:.3f}Y{a[1]:.3f}")
                 lines_k.append(f"G1X{b[0]:.3f}Y{b[1]:.3f}S{s_val}F{feed}")
             cached[ang] = (lines_k, dt)
@@ -697,12 +729,13 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0):
         timeline.append((secs, secs + dt, 0, k))
         secs += dt
     if outline and recipe.mark_outline:
-        body += _passes(outline, recipe.mark_power, recipe.speed, 1)
+        if write:
+            body += _passes(outline, recipe.mark_power, recipe.speed, 1)
         dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
-    return Job(text="\r\n".join(lines), zones=[len(shapes)], seconds=secs,
+    return Job(text="\r\n".join(lines) if write else "", zones=[len(shapes)], seconds=secs,
                passes=recipe.passes, zone_paths=[shapes], timeline=timeline)
 
 
@@ -938,6 +971,8 @@ def traces_art(copper, outline_raw, raw_drills, *, side="bottom", mirror=True,
 
 
 POUR_SHARE = 0.25       # of the board: a copper piece this big is a pour
+RELIEF_GAP_MM = 1.0     # a bare gap in a pour this narrow, or narrower, is a
+                        # thermal relief's gap, not a clearance round a hole
 
 
 def needless_trenches(art, *, eps=0.02):
@@ -947,8 +982,13 @@ def needless_trenches(art, *, eps=0.02):
     ring round a mounting hole's clearance are such; skipping them only makes
     the pour bigger. A via or pad on any other net is never among them.
 
+    A thermal relief is never among them: a pad joined to the pour by spokes is
+    the same copper as the pour, so the narrow gaps between its spokes border
+    only the pour too, but they are what makes the relief and are etched.
+
     Taken one by one, merging what each skipped trench joins (stock regions
     included), so no set of skips can connect two nets."""
+    from shapely.geometry import Polygon
     from shapely.strtree import STRtree
     from shapely.ops import unary_union
     from gerber2rml.engine import soldermask
@@ -964,6 +1004,15 @@ def needless_trenches(art, *, eps=0.02):
         if g.area > 1e-4]
     nodes = pieces + stock
     tree = STRtree(nodes)
+    # The narrow bare gaps inside a pour: between a pad and the pour it is
+    # joined to by spokes. A trench in one of them is a relief's, and stays.
+    gaps = []
+    for i in pours:
+        for ring in pieces[i].interiors:
+            for c in soldermask._polygons(Polygon(ring).difference(art.copper)):
+                if c.area > 1e-4 and c.buffer(-RELIEF_GAP_MM / 2).is_empty:
+                    gaps.append(c)
+    gap_tree = STRtree(gaps) if gaps else None
     parent = list(range(len(nodes)))
     nets = [{i} if i < len(pieces) else set() for i in range(len(nodes))]
 
@@ -975,6 +1024,9 @@ def needless_trenches(art, *, eps=0.02):
     out = set()
     for k, ap in enumerate(art.apertures):
         g = ap.buffer(eps)
+        if gap_tree is not None and any(
+                gaps[int(j)].intersects(g) for j in gap_tree.query(g)):
+            continue                            # a thermal relief's gap
         roots = {find(int(j)) for j in tree.query(g) if nodes[int(j)].intersects(g)}
         joined = set().union(*(nets[r] for r in roots)) if roots else set()
         if len(joined) != 1 or not joined <= pours:
@@ -1117,13 +1169,15 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     _, h = art.size
     bed_groups = [[to_bed(rg, origin, h) for rg in grp] for grp in cache[key]]
     outline = [to_bed(list(r.coords), origin, h)
-               for r in (art.outline.exterior, *art.outline.interiors)]
+               for r in outline_rings(art.outline)]
     return bed_groups, outline
 
 
 def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
-               boxes=None):
+               boxes=None, *, write=True):
     """One GS002 file to etch PCB copper traces on the F1 Ultra.
+    ``write=False``: the seconds and timeline only, no file text; the window's
+    estimate, which would otherwise build the whole job (tens of MB) per edit.
 
     ``boxes`` (bed mm): a rework. Only the passes inside the boxes are run,
     as the CNC's rework clips its pass, and the outline is not scored again."""
@@ -1159,7 +1213,7 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
             passes=recipe.passes, lines_per_cm=recipe.lines_per_cm,
             cross_hatch=recipe.cross_hatch, one_way=recipe.one_way,
             mark_outline=recipe.mark_outline, mark_power=recipe.mark_power)
-        return fill_job(shapes, outline, fill_r)
+        return fill_job(shapes, outline, fill_r, write=write)
 
     groups, outline = traces_rings(art, origin, recipe, only=only, boxes=boxes)
     all_rings = [rg for grp in groups for rg in grp]
@@ -1172,22 +1226,25 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     for rnd in range(recipe.passes):
         order = groups if rnd % 2 == 0 else list(reversed(groups))
         round_rings = [rg for grp in order for rg in grp]
-        body += _passes(round_rings, recipe.power, recipe.speed, 1)
+        if write:
+            body += _passes(round_rings, recipe.power, recipe.speed, 1)
         if round_s is None:                 # every round draws the same rings
             round_s = _draw_seconds(round_rings, recipe.speed)
         dt = round_s
         timeline.append((secs, secs + dt, 0, rnd))
         secs += dt
         if rnd < recipe.passes - 1 and recipe.rest_s > 0:
-            body += _rest(park, recipe.rest_s)
+            if write:
+                body += _rest(park, recipe.rest_s)
             secs += recipe.rest_s
     if outline and recipe.mark_outline:
-        body += _passes(outline, recipe.mark_power, recipe.speed, 1)
+        if write:
+            body += _passes(outline, recipe.mark_power, recipe.speed, 1)
         dt = _draw_seconds(outline, recipe.speed)
         timeline.append((secs, secs + dt, -1, recipe.passes))
         secs += dt
     lines = _head("fiber", recipe.frequency, recipe.power / 100) + body + _TAIL
-    return Job(text="\r\n".join(lines), zones=[len(all_rings)], seconds=secs,
+    return Job(text="\r\n".join(lines) if write else "", zones=[len(all_rings)], seconds=secs,
                passes=recipe.passes, zone_paths=[all_rings], timeline=timeline)
 
 
@@ -1300,14 +1357,14 @@ def proof_in_waste(art, origin, recipe=None, *, margin=PROOF_WASTE_MARGIN,
     from shapely.geometry import Point, Polygon, box
     recipe = recipe or DEFAULT_TRACES_RECIPE
     _, h = art.size
-    outline = Polygon(to_bed(list(art.outline.exterior.coords), origin, h)).buffer(0)
+    outline = _outline_on_bed(art, origin, h)
     near = _drills_on_bed(art, origin)
     if len(near) < 2:
         x0, y0, x1, y1 = outline.bounds
         near = [(x0, y0), (x1, y1), (x0, y1), (x1, y0)]
     near = [near[k] for k in spread(near, n)]
-    lane = outline.buffer(margin + size / 2).exterior
-    edge = outline.exterior
+    lane = _exteriors(outline.buffer(margin + size / 2))
+    edge = _exteriors(outline)
     marks, inside, paths = [], [], []
     step = max(recipe.stepover, 0.02)
     for c in near:
@@ -1353,7 +1410,7 @@ def proof_in_area(art, origin, recipe=None, *, inset=PROOF_AREA_INSET,
     from shapely.geometry import Polygon, box
     recipe = recipe or DEFAULT_TRACES_RECIPE
     _, h = art.size
-    outline = Polygon(to_bed(list(art.outline.exterior.coords), origin, h)).buffer(0)
+    outline = _outline_on_bed(art, origin, h)
     x0, y0, x1, y1 = outline.bounds
     d = inset + size / 2
     corners = [(x0 + d, y0 + d), (x1 - d, y1 - d), (x0 + d, y1 - d), (x1 - d, y0 + d)]

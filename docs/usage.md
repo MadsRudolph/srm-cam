@@ -32,6 +32,33 @@ A height map is a file, so you do not lose levelling — only measuring.
 A bed does not move between sessions, so one probe run serves every job on that
 sheet.
 
+## How the board is made
+
+Every board has one **method**: the **flat mill** (0.8 mm endmill), the **ball
+mill** (0.44 mm channel, for fine pitch) or **laser copper**. It is shown as the
+chip at the top left and on *Your board*, and it decides:
+
+- **the checks**: a mill board is checked against the cutter; a laser board
+  against the laser's 0.20 mm floor. A laser board with 0.25 mm gaps is no
+  longer "shorted";
+- **the tool profile** on the mill: flat or ball;
+- **the rail**: a laser board is *Drill and cut out* on the mill, then *Etch
+  the traces* (and the mask, silkscreen and stencil the folder has layers for)
+  on the laser.
+
+Where it comes from, best first: what you chose for this board before; what
+KiCad's *Set design rules for SRM-CAM* stored (`srm-cam/method.json`, in the
+folder *Send to SRM-CAM* plots into); a guess from the narrowest gap between
+two nets (at least 0.8 mm: flat; at least 0.44 mm: ball; narrower: laser).
+Click the chip to choose another method at any time. Every mill feature stays
+available for a board you mill.
+
+**The laser order.** On the mill the run drills the holes and cuts the outline
+on its tabs, so the board stays in the sheet. The whole sheet then goes to the
+laser, which lines the copper, the mask and the silkscreen up on those holes.
+Break the tabs at the end. Several boards on one sheet go to the laser as one
+job.
+
 ## Operations
 
 Three operations, each exported as its own job:
@@ -71,7 +98,10 @@ Two or more Gerber folders, cut from one piece of copper in one run.
   them up 4 mm apart.
 - **Files:** one set, named after every board (`buck+buck_2_traces.nc`) unless
   you type a job name. One trace pass, one drill file, one cut-out that frees
-  each board in turn. The dry run traces every outline.
+  each board in turn. On the laser the whole sheet is one job.
+- **Arrange:** *Lay them side by side* starts a new row when the next board
+  would run past the copper sheet's edge, and says so if they still do not
+  fit.
 - **Butted boards:** boards closer than the cut-out bit share one cut, centred
   in the gap, so the panel needs no waste between them; each loses half of
   what the cutter takes beyond the gap (0.4 mm a side for touching boards and
@@ -249,21 +279,13 @@ in a shared bed.
 Re-zero **Z** after every bit change. Never XY. The fixture makes this practical:
 there is no reason to touch XY once the pins are in.
 
-### 3 · Prove it before you cut — the dry run
-
-Every export writes **`<name>_airpass.nc`**, and it is step 0 in the run plan.
-Spindle **off**, bit held 5 mm up, tracing the board outline at a feed slow
-enough to watch. If the stock is misplaced you see the bit leave the copper and
-you stop — having spent seconds instead of a board.
-
-This is the part that actually answers *"is it aligned?"*, it needs no hardware
-at all, and it is worth running before **every** job, fixture or not.
+### 3 · Keep the origin
 
 > **One thing to check on your machine:** whether the SRM-20 keeps its user
 > origin across a power cycle. If it does, set XY zero once per term against the
 > fixture and never again. If it does not, the daily ritual is "seat the bit in
-> pin hole 1, set origin" — still far better than finding a sheared stock corner
-> by eye, because a drilled hole is a crisp feature you can drop a bit into.
+> pin hole 1, set origin", because a drilled hole is a crisp feature you can
+> drop a bit into.
 
 ### 4 · Bolt it down — the spoilboard screw grid
 
@@ -378,12 +400,20 @@ Safety, all enforced in firmware so they survive the app crashing:
 The **Spindle** button follows the machine, so it shows a spindle you started
 from VPanel too — and disconnecting never stops a spindle SRM-CAM did not start.
 
-### Streaming a job without VPanel
+### Running a job from SRM-CAM
 
-**Stream (exp.)** sends a job move-by-move over the link. A **wet run** now
-starts and stops the spindle itself, holds on **Pause**, and aborts if the lid
-opens mid-job. It still needs the speed set in VPanel first, and it is still
-experimental: always do the dry run on a new job.
+Both Novice and Pro send the job to the mill themselves: the run on the rail
+(*Mill it*, or *Drill and cut out* for a laser board) finds the stock, levels,
+cuts, asks for the flip and stops before the cut-out. Pro also has every step
+on the rail, *Start at* to finish a run that stopped, and *Export the files for
+VPanel* to run them from another PC.
+
+**Where the stock is.** In the corner bracket (drawn on the bed; the board goes
+into its corner), or, in Pro, **anywhere**: put the board on the bed where the
+copper is and the probe starts in the middle of the board and walks out to the
+copper's edges to find its corner and how it is turned. A board that lies on
+the copper it finds is cut where you put it. Start says before it changes any
+Pro setting (registration, flip, reference-hole size) a double-sided run needs.
 
 ## Machine test — what this machine can actually do
 
@@ -482,7 +512,8 @@ laser preview. Proven on a 90 × 72 mm board, 120 holes, worst pad 0.034 mm.
    is, and **Worst pad** says how far the pads disagree (good < 0.10 mm, too far
    out ≥ 0.25 mm).
 5. **Write the drill file** writes `<name>_drill_fitted.nc`: every hole moved onto
-   the measured board. Zero Z with the drill bit and run it. Do not move the
+   the measured board. Set the Z origin on the copper with the drill bit and run
+   it. Do not move the
    board or reset XY after measuring.
 
 Three pads are required because two fit a mirrored board just as well as the
@@ -576,9 +607,23 @@ and the clipped area is reported. Engine: `engine/silkscreen.py`.
 ## Copper traces, solder mask, and silkscreen on the xTool
 
 The Setup page lets you send any laser job directly to the xTool F1 Ultra (no
-XCS required), and the laser window has a **Traces | Mask | Silk | Stencil**
-switcher at the top of the right panel so you can step through all four jobs
-without losing board placement, focus, or camera alignment:
+XCS required). The laser is a page of the main window, not a window of its own:
+**CNC | Laser** in the header (Ctrl+1 / Ctrl+2) swaps between the
+mill and the laser, and each page stays as you left it. The laser page has a
+**Traces | Mask | Silk | Stencil** switcher at the top of the right panel so you
+can step through all four jobs without losing board placement, focus, or camera
+alignment. It follows the board loaded on the mill's page.
+
+**Undo** (Ctrl+Z, or the Undo button above the bed) puts the job back where it
+was before the last drag, typed position, arrow nudge, right-click centring or
+turn; **Redo** is Ctrl+Shift+Z or Ctrl+Y. A drag is one step, and arrow nudges
+in a row are one step.
+
+The page works out the trenches and the run time in the background, once an
+edit has rested for a moment, so typing a ring count or turning the board never
+freezes the window. The old trenches stay up until the new ones are in, and the
+Estimate shows **…** while it is being worked out. A run started meanwhile waits
+for them, so what is cut is always what is shown.
 
 - **Etch the traces on the xTool…** isolates every net on `B.Cu` (or `F.Cu`
   when `B.Cu` is absent/empty) directly from the Gerber folder. Use **Copper face**

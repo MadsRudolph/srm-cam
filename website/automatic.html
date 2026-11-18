@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mill a board — SRM-CAM guide</title>
-<meta name="description" content="SRM-CAM's Automatic mode: push the stock into the bracket, press Start, and it touches the copper, levels, drills, cuts the traces and waits for you before the cut-out.">
+<meta name="description" content="Mill a board with SRM-CAM: push the stock into the bracket, press Start, and it touches the copper, levels, drills, cuts the traces and waits for you before the cut-out. A laser board is drilled and cut out on the mill, then etched on the laser.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -86,7 +86,7 @@
 
 <h2 id="export">Export from KiCad</h2>
 <ol class="steps">
-  <li><span class="st">Set the clearance before you route</span><span class="menu-path">Board Setup › Design Rules › Net Classes</span>: at least 0.8&nbsp;mm, the width of the bit. For finer boards, use the <a href="#small">ball mill profile</a>.</li>
+  <li><span class="st">Set the rules before you route</span>Easiest: SRM-CAM's KiCad button <span class="ui">Set design rules for SRM-CAM</span>. Choose flat mill, ball mill or fiber laser, and it sets the rules for that. By hand: <span class="menu-path">Board Setup › Design Rules › Net Classes</span>, clearance at least 0.8&nbsp;mm, the width of the bit. See <a href="#method">How it is made</a>.</li>
   <li><span class="st">Plot the Gerbers</span><span class="menu-path">File › Fabrication Outputs › Gerbers</span>: <strong>B.Cu</strong> and <strong>Edge.Cuts</strong>, plus <strong>F.Cu</strong> for double-sided, into one folder. If KiCad asks to refill the zones, say yes.</li>
   <li><span class="st">Generate the drill files</span>Same dialog, <span class="ui">Generate Drill Files…</span>: Excellon, millimetres, into the same folder. Keep both files if KiCad writes two.</li>
 </ol>
@@ -100,7 +100,21 @@
     <figcaption>Drill files: Excellon, millimetres, into the same folder.</figcaption>
   </figure>
 </div>
-<p>That folder is all SRM-CAM needs. The build-area plugin and more are on <a href="getting-started.html#kicad">Install &amp; KiCad</a>.</p>
+<p>That folder is all SRM-CAM needs. Or press <span class="ui">Send to SRM-CAM</span> in KiCad: it plots every layer, writes the drill files and opens the board in SRM-CAM. The KiCad buttons are on <a href="getting-started.html#kicad">Install &amp; KiCad</a>.</p>
+
+<h2 id="method">How it is made</h2>
+<p>Every board has one way it is made. The chip at the top left of the window says which, and so does <span class="ui">How it is made</span> on <span class="ui">Your board</span>.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Method</th><th>Gaps between nets</th><th>What happens</th></tr>
+<tr><td><strong>Flat mill</strong> (0.8&nbsp;mm endmill)</td><td>0.8&nbsp;mm or more</td><td>The everyday board. The mill does it all.</td></tr>
+<tr><td><strong>Ball mill</strong> (0.44&nbsp;mm channel)</td><td>0.44&nbsp;mm or more</td><td>Fine SMD. The mill does it all. See <a href="#small">How small can it go?</a></td></tr>
+<tr><td><strong>Laser copper</strong></td><td>Down to 0.20&nbsp;mm</td><td>The mill drills and cuts out; the laser etches the copper. See <a href="#laser">A laser board</a>.</td></tr>
+</table></div>
+<ul>
+  <li><strong>Where it comes from:</strong> what you chose in KiCad with <span class="ui">Set design rules for SRM-CAM</span>. Without that, SRM-CAM guesses from the narrowest gap between two nets.</li>
+  <li><strong>Change it:</strong> click the chip and pick another, at any time.</li>
+  <li><strong>What it decides:</strong> the checks (a laser board is checked against the laser's 0.20&nbsp;mm, not against the 0.8&nbsp;mm bit), the mill's tool profile, and the rows on the rail.</li>
+</ul>
 
 <h2 id="steps">The steps</h2>
 <div class="warn"><span class="t">First time on this PC?</span>
@@ -108,13 +122,13 @@
 <ol class="steps">
   <li><span class="st">Plug in</span>Both USB cables: black (Arduino) and white (mill). Put the 0.8&nbsp;mm flat bit in the collet.</li>
   <li><span class="st">Copper in the corner</span>Slide the sheet under the tongue and into the bracket. Hold it down: see <a href="#hold">holding the copper</a>.</li>
-  <li><span class="st">Your board</span>Open the <a href="#export">Gerber folder from KiCad</a>. A board with copper on both layers is set up as <a href="#double">double-sided</a> by itself.</li>
-  <li><span class="st">Check it</span>Red means something won't mill as drawn. See <a href="troubleshooting.html#narrow">spots that will be shorted</a>.</li>
-  <li><span class="st">Run it</span>Type the sheet's measured <strong>W</strong> and <strong>H</strong>, and drag the board where you want it. Press <span class="ui">Connect</span>, close the lid, press <span class="ui">Start</span>.</li>
+  <li><span class="st">Your board</span>Open the <a href="#export">Gerber folder from KiCad</a>. Check the chip at the top left says <a href="#method">how it is made</a>. A board with copper on both layers is set up as <a href="#double">double-sided</a> by itself. Then <span class="ui">Next: Check it →</span>.</li>
+  <li><span class="st">Check it</span>Red means something won't come out as drawn. See <a href="troubleshooting.html#narrow">spots that will be shorted</a>. Then <span class="ui">Next: Run it →</span>.</li>
+  <li><span class="st">Mill it</span>Type the sheet's measured <strong>W</strong> and <strong>H</strong>. The board goes into the bracket's corner by itself; drag it if you want it somewhere else. Press <span class="ui">Connect</span>, close the lid, press <span class="ui">Start</span>.</li>
   <li><span class="st">Check, then cut out</span>The board comes forward and the run waits for you. <a href="#check">Check it</a>, close the lid and press <span class="ui">Cut it out</span>.</li>
 </ol>
 <figure class="fig">
-  <img src="img/automatic_run.png" alt="The Run it page: stock size, options and Start on the right, and the board on the sheet's outline next to the bracket" loading="lazy">
+  <img src="img/automatic_run.png" alt="The run page: stock size, options and Start on the right, and the board on the sheet's outline next to the bracket" loading="lazy">
   <figcaption>What you see is where it cuts. The outline is your sheet, drawn from the bracket corner and the size you typed.</figcaption>
 </figure>
 <div class="tip"><span class="t">VPanel</span>
@@ -140,6 +154,7 @@
   <li><span class="st">Waits for your check</span>The board comes to the view position.</li>
   <li><span class="st">Cuts the board out</span>Then the board comes forward again.</li>
 </ol>
+<p>The run lives on the rail under <em>On the mill</em>, with a <strong>MILL</strong> tag. It is the same run in Novice and Pro.</p>
 
 <h2 id="check">The check before the cut-out</h2>
 <p>Once it's cut free, a board can't be recut in place. A good channel shows dark substrate; bright copper in the groove isn't through. If you're unsure, use a multimeter.</p>
@@ -181,6 +196,24 @@
 <div class="warn"><span class="t">Newer than one side</span>
 <p>Double-sided has made one good board on the mill so far, with fixes along the way. Keep a hand near <span class="ui">STOP</span>.</p></div>
 
+<h2 id="laser">A laser board</h2>
+<p>With the method on <strong>Laser copper</strong>, the mill only drills and cuts out, and the laser makes the copper. Both machines are on the same rail. Rows that run on a machine carry a <strong>MILL</strong> or <strong>LASER</strong> tag, and picking a laser row opens the laser page beside the rail.</p>
+<ol class="steps">
+  <li><span class="st">MILL · Drill and cut out</span>The holes and the outline, cut on tabs so the board stays in the sheet. The bracket and <span class="ui">Start</span> work as above.</li>
+  <li><span class="st">The whole sheet to the laser</span>Don't break the tabs yet.</li>
+  <li><span class="st">LASER · Etch the traces</span>The copper, lined up on the drilled holes.</li>
+  <li><span class="st">LASER · Solder mask, Silkscreen</span>And <span class="ui">Paste stencil</span>. Each is lined up on the same holes.</li>
+  <li><span class="st">Break the tabs</span>The board is done.</li>
+</ol>
+<ul>
+  <li><strong>Mask, silkscreen and stencil rows</strong> appear for any board, milled or laser, whose Gerber folder has those layers. Plot them in KiCad (<span class="ui">Send to SRM-CAM</span> does).</li>
+  <li><strong>Nothing to tick:</strong> the laser's files are written with the mill's.</li>
+  <li><strong>Several boards on one sheet</strong> go to the laser as one job: the whole sheet.</li>
+  <li><strong>Focus:</strong> <span class="ui">Autofocus</span> on the laser page measures the height at one spot. New, and still being finished: <span class="ui">Measure focus</span> measures it with the blue dot at a grid of points over the job: the corners, the edges and the middle. If the board is not within the laser's depth of focus everywhere, the run is split into bands, and the head is refocused for each band.</li>
+  <li><strong>Spots that didn't etch:</strong> <span class="ui">Fix spots</span> on a laser board opens the laser's rework boxes.</li>
+</ul>
+<p>More on the laser page: <a href="smd.html#laser-page">SMD: fine traces &amp; stencil</a>.</p>
+
 <h2 id="stop">Stopping</h2>
 <ul>
   <li><span class="ui">STOP</span> or <kbd>Esc</kbd> stops the run at any point. If the bit is still low, raise it with <kbd>Page Up</kbd>.</li>
@@ -196,13 +229,14 @@
 </table></div>
 
 <h2 id="small">How small can it go?</h2>
-<p>It depends on the bit. Pick the profile on <span class="menu-path">Set up the job › The tool</span>.</p>
+<p>It depends on the bit, and the <a href="#method">method</a> picks the tool profile for it.</p>
 <div class="tbl-wrap"><table>
-<tr><th>Use</th><th>When</th><th>Why</th></tr>
-<tr><td><strong>SRM-20 0.8&nbsp;mm flat</strong></td><td>Every gap is 0.8&nbsp;mm or more: through-hole parts and larger SMD.</td><td>The everyday profile, and the faster one.</td></tr>
-<tr><td><strong>SRM-20 0.8&nbsp;mm ball mill</strong></td><td>Gaps under 0.8&nbsp;mm: IC pins and small SMD.</td><td>The rounded tip cuts narrower when it only goes in 0.08&nbsp;mm.</td></tr>
+<tr><th>Method</th><th>Profile</th><th>When</th><th>Why</th></tr>
+<tr><td><strong>Flat mill</strong></td><td>SRM-20 0.8&nbsp;mm flat</td><td>Every gap is 0.8&nbsp;mm or more: through-hole parts and larger SMD.</td><td>The everyday profile, and the faster one.</td></tr>
+<tr><td><strong>Ball mill</strong></td><td>SRM-20 0.8&nbsp;mm ball mill</td><td>Gaps under 0.8&nbsp;mm: IC pins and small SMD.</td><td>The rounded tip cuts narrower when it only goes in 0.08&nbsp;mm.</td></tr>
+<tr><td><strong>Laser copper</strong></td><td>The mill only drills and cuts out</td><td>Gaps under 0.44&nbsp;mm.</td><td>The laser etches gaps down to 0.20&nbsp;mm. See <a href="#laser">A laser board</a>.</td></tr>
 </table></div>
-<p>Fit the same bit the profile names for the whole job. Neither profile stops to change bits.</p>
+<p>Fit the bit the profile names for the whole job. Neither profile stops to change bits.</p>
 
 <h3 id="ballmill">What the ball mill can cut</h3>
 <p>Its channel is about 0.44&nbsp;mm wide at the top of the copper. Tested on <code>examples/torture_60x30</code>, these all metered good. They're the finest on that board, so the real limit may be lower:</p>
@@ -220,7 +254,7 @@
 </table></div>
 <ul>
   <li><strong>Keep levelling on:</strong> a ball's cut gets wider the deeper it goes.</li>
-  <li><strong>Holes and outline:</strong> the same bit does them, 1.9&nbsp;mm deep. The drill starts straight after the traces without stopping, so stay at the machine.</li>
+  <li><strong>Holes and outline:</strong> the same bit does them, about 2&nbsp;mm deep. The drill starts straight after the traces without stopping, so stay at the machine.</li>
   <li><strong>Not proven yet:</strong> how long a bit lasts, and pad widths measured in numbers at this setting. The flat bit hasn't been through the same test.</li>
 </ul>
 
@@ -230,7 +264,16 @@
   <li><strong>Clamps and thumbscrews:</strong> the app doesn't know where they are. Keep the board clear of them, and raise the bit before jogging near them.</li>
   <li><strong>After changing to a longer bit:</strong> jog down close to the copper before a run or Probe Z, because the last height no longer holds.</li>
   <li id="after"><strong>Each run's files:</strong> <code>Documents\SRM-CAM\runs</code> keeps its jobs, log and height map. <span class="ui">What the run made</span> opens them.</li>
-  <li id="pro"><strong>Pro:</strong> <span class="menu-path">Interface › Pro</span> has everything by hand, and Automatic with extras such as a dry run: <span class="menu-path">Machine › Automatic mode</span>.</li>
+  <li><strong>Milling on another PC:</strong> <span class="ui">Save the files for the lab PC…</span> at the foot of the rail writes the job's files to a folder you choose.</li>
+</ul>
+
+<h2 id="pro">In Pro</h2>
+<p>Click the tier chip at the top right of the window to switch between Novice and Pro (or <span class="menu-path">View › Pro controls</span>). Pro runs the same run, from the same row, and adds:</p>
+<ul>
+  <li><strong>The stock anywhere:</strong> on the run page, set the stock to <span class="ui">Anywhere - the probe finds its corner</span>. Drag the board on the bed to where the copper is and press <span class="ui">Start</span>. The probe starts in the middle of the board and walks out to the copper's edges, to find its corner and how it is turned. A board that lies on the copper it finds is cut where you put it. Keep clamps off the edges it crosses.</li>
+  <li><strong>Double-sided settings:</strong> if the run needs a setting changed (registration, which way it flips, the reference-hole size), <span class="ui">Start</span> says which and asks first.</li>
+  <li><strong>Every step on the rail</strong>, under <em>One step at a time</em>, and <span class="ui">Start at</span> to finish a board that stopped.</li>
+  <li><strong>Files for VPanel:</strong> <span class="ui">Export the files for VPanel…</span> at the foot of the rail. See <a href="milling-a-board.html">Milling a board by hand</a>.</li>
 </ul>
 
 <h2 id="tidy">Leave it as you found it</h2>

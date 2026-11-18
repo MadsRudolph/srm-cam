@@ -166,6 +166,28 @@ def arrange_row(members, gap=PANEL_GAP_MM):
         prev = m
 
 
+def arrange_rows(members, gap=PANEL_GAP_MM, width=None):
+    """Like :func:`arrange_row`, but a board that would end more than
+    ``width`` mm from the first one's left edge starts a new row behind the
+    last, so the boards stay on a sheet that wide. ``width`` None is one
+    row, as before."""
+    if width is None or not members:
+        return arrange_row(members, gap)
+    x0, y0, _x1, _y1 = members[0].bounds()
+    row_x, row_y, row_top = x0, y0, y0
+    first = True
+    for m in members:
+        mx0, my0, mx1, my1 = m.bounds()
+        w, h = mx1 - mx0, my1 - my0
+        if not first and row_x + w > x0 + width + 1e-6:
+            row_x, row_y = x0, row_top + gap        # the next row, behind
+        m.place_x += row_x - mx0
+        m.place_y += row_y - my0
+        row_x += w + gap
+        row_top = max(row_top, row_y + h)
+        first = False
+
+
 def clearances(members):
     """How close every pair of boards is.
 

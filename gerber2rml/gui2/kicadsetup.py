@@ -17,6 +17,7 @@ from gerber2rml.gui2 import dialogs, tier
 DECLINED_KEY = "kicad/declined_plugin_version"
 MENU_LOCATION = "Tools → External Plugins → Show SRM-20 build area"
 SEND_LOCATION = "Tools → External Plugins → Send to SRM-CAM"
+RULES_LOCATION = "Tools → External Plugins → Set design rules for SRM-CAM"
 
 
 def _launch_info(parent):
@@ -97,9 +98,12 @@ def setup(parent, settings=None):
     d.say(f"Restart KiCad, then find it in the PCB editor under "
           f"{MENU_LOCATION}. It draws the build area on User.Drawings and "
           "says whether the board fits.")
-    d.say(f"Beside it is {SEND_LOCATION}: it plots the board and opens it "
+    d.say(f"Beside it are {RULES_LOCATION}, which sets the design rules "
+          "for how the board is made (flat endmill, ball mill or fiber "
+          f"laser), and {SEND_LOCATION}: it plots the board and opens it "
           "here, ready to run. It first checks that the board's design "
-          "rules suit the cutter, and offers to set them.")
+          "rules suit its method, and offers to set them. All three are on "
+          "the toolbar too.")
     d.say("Installed to:\n" + "\n".join(f"    {p}" for p in done),
           small=True, mono=True)
     if failed:
@@ -135,11 +139,12 @@ def maybe_offer(parent, settings=None):
         pass
     if not should_offer(settings):
         return False
-    d = dialogs.Sheet(parent, "Add the SRM-20 button to KiCad?", width=560)
-    d.say("KiCad is installed on this PC. SRM-CAM can add two buttons to its "
-          "PCB editor: one draws the mill's build area and says whether "
+    d = dialogs.Sheet(parent, "Add the SRM-20 buttons to KiCad?", width=560)
+    d.say("KiCad is installed on this PC. SRM-CAM can add three buttons to "
+          "its PCB editor: one draws the mill's build area and says whether "
           "your board fits, while there is still time to change it rather "
-          "than at the machine; the other sends the board straight here.")
+          "than at the machine; one sets the design rules for how the board "
+          "is made; the third sends the board straight here.")
     d.say("You can do this later from the KiCad menu.", small=True)
     d.setObjectName("kicadOffer")
     out = {"go": False}

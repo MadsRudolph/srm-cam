@@ -40,6 +40,8 @@ Step by step: [Getting started](https://madsrudolph.github.io/srm-cam/getting-st
 
 ![The Run it page: stock and board on the bed, the machine bar](website/img/automatic_run.png)
 
+- **One method per board:** flat mill, ball mill or laser copper, read from KiCad or guessed from the board's gaps, and yours to change. It decides the checks, the tool and the jobs on the rail.
+- **One rail for both machines.** A laser board is drilled and cut out on its tabs on the mill, then the whole sheet goes to the laser for the copper, the mask and the silkscreen, lined up on the drilled holes.
 - **Automatic runs.** Put the stock in the corner bracket and press Start: it finds the copper, levels the bed, drills, cuts the traces, and stops for a check before the cut-out. [Mill a board](https://madsrudolph.github.io/srm-cam/automatic.html)
 - **[Double-sided boards](https://madsrudolph.github.io/srm-cam/double-sided.html)**, registered on dowel pins or reference holes (drilled ones, or the board's own mounting holes).
 - **[Bed levelling](https://madsrudolph.github.io/srm-cam/bed-leveling.html).** The surface is probed and the cut depth follows it.
@@ -48,9 +50,9 @@ Step by step: [Getting started](https://madsrudolph.github.io/srm-cam/getting-st
 - **Checks** before anything is cut: fits the bed, Z reach, shorts, copper, screws.
 - **[Panels](https://madsrudolph.github.io/srm-cam/panels.html), [rework](https://madsrudolph.github.io/srm-cam/photo-and-rework.html) and [export](https://madsrudolph.github.io/srm-cam/reference.html)** to G-code (`.nc`) or RML for VPanel, in *Pro* mode.
 - **xTool F1 Ultra laser page** for solder paste stencils, solder mask and silkscreen from the same Gerbers.
-- **KiCad plugin.** Shows the SRM-20's build area in the PCB editor, sets design rules for the cutter, and sends the board to SRM-CAM.
+- **KiCad plugin.** Shows the SRM-20's build area in the PCB editor, sets design rules for the way the board is made (flat mill, ball mill or laser), and sends the board to SRM-CAM.
 
-**Novice** (the default) is the automatic run. **Pro** has every control and exports files by hand.
+**Novice** (the default) is the automatic run. **Pro** is the same run with every control open: the stock anywhere (the probe finds its corner), every step on the rail, and export for VPanel. Click the tier chip at the top right to switch.
 Automatic runs need an Arduino on the mill's SPI header ([Hardware & firmware](https://madsrudolph.github.io/srm-cam/hardware.html));
 without it, SRM-CAM exports files for VPanel like any other CAM tool.
 

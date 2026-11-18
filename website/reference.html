@@ -11,7 +11,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/site.css?v=20260930a">
 <script defer src="js/anim/core.js?v=20260930b"></script>
-<script defer src="js/anim/rf-files.js?v=20260930b"></script>
+<script defer src="js/anim/rf-files.js?v=20261118a"></script>
 <script defer src="js/anim/rf-feeds.js?v=20260930b"></script>
 <style>
 /* rf-files: the exported-file explorer (this page only) */
@@ -103,31 +103,31 @@
 <h2>What goes in</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Type</th><th>Files</th><th>Notes</th></tr>
-<tr><td>Gerber</td><td><code>*-B_Cu.gbr</code>, <code>*-Edge_Cuts.gbr</code> (or <code>.gbl</code>, <code>.gm1</code>)</td><td>KiCad's plot: <span class="menu-path">File › Fabrication Outputs › Gerbers</span>. B.Cu and Edge.Cuts at least; F.Cu (<code>.gtl</code>) for double-sided.</td></tr>
+<tr><td>Gerber</td><td><code>*-B_Cu.gbr</code>, <code>*-Edge_Cuts.gbr</code> (or <code>.gbl</code>, <code>.gm1</code>)</td><td>KiCad's plot: <span class="menu-path">File › Fabrication Outputs › Gerbers</span>, or <span class="ui">Send to SRM-CAM</span>. B.Cu and Edge.Cuts at least; F.Cu (<code>.gtl</code>) for double-sided. Mask, silkscreen and paste layers each add a row for the laser.</td></tr>
+<tr><td>Method</td><td><code>srm-cam/method.json</code></td><td>How the board is made, written by KiCad's <span class="ui">Set design rules for SRM-CAM</span> in the folder <span class="ui">Send to SRM-CAM</span> plots into. See <a href="automatic.html#method">How it is made</a>.</td></tr>
 <tr><td>Excellon drill</td><td><code>.drl</code></td><td><span class="menu-path">Generate Drill Files…</span>, millimetres, into the same folder. Split PTH and NPTH files are merged, and a stale combined file beside them is ignored.</td></tr>
 <tr><td>Setup</td><td><code>.srmcam</code></td><td>The whole job, from <span class="menu-path">File › Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>); back with <span class="menu-path">File › Load a setup…</span>. The first interface's <code>.json</code> setups load too.</td></tr>
 <tr><td>Height map</td><td><code>.csv</code></td><td><code>x_mm, y_mm, dz_mm</code>, with a <code>#&nbsp;face:</code> line saying which face it was probed on. <span class="ui">Save…</span> and <span class="ui">Load…</span> on <span class="menu-path">Level the bed</span>.</td></tr>
-<tr><td>Photo</td><td><code>.png</code> / <code>.jpg</code></td><td>For the overlay: <span class="menu-path">View › Lay a photo of the board on the bed…</span></td></tr>
+<tr><td>Photo</td><td><code>.png</code> / <code>.jpg</code></td><td>For the overlay: <span class="menu-path">Photo ▾ › Lay a photo of the board on the bed…</span> on the bed's toolbar</td></tr>
 </table></div>
 
 <h2>What comes out</h2>
-<p><a href="automatic.html#after">Mill a board</a> keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>. Below is what <span class="ui">Export the job</span> writes, in Pro.</p>
-<p><span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one program per step, in the machine's format, and the run plan beside them. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>dry run, drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
+<p><a href="automatic.html#after">Mill a board</a> keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>. Below is what the export writes: <span class="ui">Export the files for VPanel…</span> at the foot of the rail in Pro, <span class="ui">Save the files for the lab PC…</span> in Novice.</p>
+<p><span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one program per step, in the machine's format, the run plan beside them, and the laser's files for every laser row the board has. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
 <figure class="anim" data-anim="rf-files">
   <figcaption><span class="k">Inside the files</span>Click a file, then a line, to see what it does. The lines are real output from the test board. Switch to <em>As VPanel lists them</em> to see why the cut-out has to be moved down.</figcaption>
 </figure>
 
 <div class="tbl-wrap"><table>
 <tr><th>File</th><th>Contents</th></tr>
-<tr><td><code>&lt;name&gt;_airpass.nc</code></td><td>Step 0, the dry run: spindle off, bit 5&nbsp;mm up, tracing the outline. Single-sided jobs.</td></tr>
 <tr><td><code>&lt;name&gt;_drill.nc</code> or <code>&lt;name&gt;_drill_&lt;dia&gt;mm.nc</code></td><td>One bit for every hole (the ones that fit are plunged, larger ones milled as circles), or one file per diameter.</td></tr>
 <tr><td><code>&lt;name&gt;_traces.nc</code></td><td>Isolation, mirrored for the bottom copper; warped to the height map when one is applied.</td></tr>
 <tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>The outline with four tabs. Always last.</td></tr>
 <tr><td><code>&lt;name&gt;_runplan.txt</code></td><td>The run sheet as text: order, bit per step, depths, times, where each board of a panel sits.</td></tr>
-<tr><td><code>&lt;name&gt;_mask_mirrored.dxf</code></td><td>For the laser, not the mill, and only when <span class="menu-path">Solder mask › Also make the laser file (DXF)</span> is ticked: the pad openings and the outline. See <a href="solder-mask.html">Solder mask</a>.</td></tr>
+<tr><td><code>&lt;name&gt;_traces_…dxf</code>, <code>_mask_…dxf</code>, <code>_silk_…dxf</code>, <code>_stencil_…dxf</code></td><td>For the laser, not the mill: one file for each laser row the board has (the copper on a laser board; the mask, silkscreen and stencil when the folder has those layers). The end of the name says the face and whether it is mirrored, e.g. <code>&lt;name&gt;_mask_mirrored.dxf</code>. See <a href="automatic.html#laser">A laser board</a> and <a href="solder-mask.html">Solder mask</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_align.nc</code>, <code>_bottom_drill.nc</code>, <code>_bottom_traces.nc</code>, <code>_top_traces.nc</code></td><td>Double-sided, in that order, with the cut-out after the top traces. See <a href="double-sided.html">Double-sided boards</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_top_drill.nc</code></td><td>The blind holes finished from the top, on the measured flip.</td></tr>
-<tr><td><code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code></td><td>A rework program: the pass clipped to your boxes, each at its own depth. <a href="photo-and-rework.html">Rework</a>.</td></tr>
+<tr><td><code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code></td><td>A rework program: the pass clipped to your boxes, each at its own depth. <a href="photo-and-rework.html#rework">Fix spots</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_screws.nc</code> + <code>.txt</code></td><td>The hold-down clearance holes and the procedure: <span class="menu-path">Machine › Export the hold-down screw file…</span></td></tr>
 <tr><td><code>bed_fixture.nc</code> + <code>.txt</code></td><td>The three dowel-pin holes in the spoilboard, cut once per spoilboard: <span class="menu-path">Machine › Export the bed fixture (pin holes)…</span></td></tr>
 </table></div>
@@ -146,15 +146,15 @@
 <p>The G-code uses only words on the SRM-20's NC list: plain <code>G0</code>/<code>G1</code> moves, no arcs or canned cycles, <code>M3</code>/<code>M5</code> for the spindle and a 2&nbsp;s <code>G04</code> pause after <code>M3</code> so the spindle is up to speed before the bit touches copper. The spindle speed is set in VPanel: the SRM-20 has no <code>S</code> word.</p>
 
 <h2>Tool profiles</h2>
-<p>A profile is the whole set of numbers for all three operations; <span class="ui">Apply profile</span> on <span class="menu-path">Set up the job › The tool</span> replaces them all. Built in:</p>
+<p>A profile is the whole set of numbers for all three operations; <span class="ui">Apply profile</span> on <span class="menu-path">Set up the job › The tool</span> replaces them all. The board's <a href="automatic.html#method">method</a> picks the flat or the ball mill profile. Built in:</p>
 <ul>
-  <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (1.9&nbsp;mm deep, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
-  <li><strong>SRM-20 0.8&nbsp;mm ball mill</strong>: fine SMD work with one 0.8&nbsp;mm ball mill for the whole job. Traces are told 0.44&nbsp;mm and cut 0.08&nbsp;mm deep, with <span class="ui">Cut gaps too narrow for the bit (trims pads)</span> on. Holes and outline go 1.9&nbsp;mm deep, with four 1.5&nbsp;mm tabs. Keep levelling on: the cut's width depends on its depth.</li>
+  <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (2.0&nbsp;mm deep, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
+  <li><strong>SRM-20 0.8&nbsp;mm ball mill</strong>: fine SMD work with one 0.8&nbsp;mm ball mill for the whole job. Traces are told 0.44&nbsp;mm and cut 0.08&nbsp;mm deep, with <span class="ui">Cut gaps too narrow for the bit (trims pads)</span> on. Holes go 2.0&nbsp;mm deep and the outline 1.9&nbsp;mm, with four 1.5&nbsp;mm tabs. Keep levelling on: the cut's width depends on its depth.</li>
 </ul>
 <p><span class="ui">Save as…</span> (Pro) keeps your own in <code>~/.gerber2rml/presets.json</code>. A lab can share profiles in a <code>presets.json</code> beside the installed program (in a source checkout, <code>examples/presets.json</code>).</p>
 
 <h2>Cutting parameters</h2>
-<p>On each step's page under <span class="menu-path">Cutting parameters</span>, in Pro (<span class="menu-path">Interface › Pro</span>). In Novice, the profile sets them.</p>
+<p>On each step's page under <span class="menu-path">Cutting parameters</span>, in Pro. In Novice, the profile sets them.</p>
 <div class="tbl-wrap"><table>
 <tr><th>Parameter</th><th>Applies to</th><th>Meaning</th></tr>
 <tr><td>Bit diameter</td><td>all</td><td>The cutter's width, and what the shorts check measures against.</td></tr>
@@ -162,7 +162,7 @@
 <tr><td>Isolation passes, pass overlap</td><td>traces</td><td>Channels per track (<code>-1</code> clears all the background copper); how far each extra pass steps across.</td></tr>
 <tr><td>Cut gaps too narrow for the bit</td><td>traces</td><td>Send the cutter down gaps narrower than the bit anyway, trimming both pads, instead of leaving them shorted. Each gap is cut as part of the outline that passes it, with no extra lift or plunge.</td></tr>
 <tr><td>Tip width, included angle, cut width</td><td>traces</td><td>A V-bit's depth is worked out from the width asked for.</td></tr>
-<tr><td>Depth through, bite per peck</td><td>drill, cut-out</td><td>Through the board plus the overshoot into the spoilboard; how much per plunge.</td></tr>
+<tr><td>Depth through, bite per peck</td><td>drill, cut-out</td><td>Through the board plus the overshoot into the spoilboard; how much per plunge. With <span class="ui">Cut through by</span> on (<span class="menu-path">Set up the job › The copper</span>), the depth is the board thickness plus 0.40&nbsp;mm by default: 1.6 + 0.4 = 2.0&nbsp;mm, the lab profiles' depth.</td></tr>
 <tr><td>One bit for every hole size</td><td>drill</td><td>Plunge the holes that fit, mill the larger ones as circles. Off: one file per diameter.</td></tr>
 <tr><td>Holding tabs, tab width</td><td>cut-out</td><td>What holds the board in the sheet until the end.</td></tr>
 <tr><td><span class="menu-path">Feeds and lift height</span>: across the copper, straight down, lift between cuts</td><td>all</td><td>Cutting and plunge speed in mm/s; how high the bit lifts between cuts.</td></tr>
@@ -192,7 +192,9 @@ python -m gerber2rml.doctor                           # fix dependencies after a
 <tr><td>Arrow keys, <span class="ui">Click to jog</span> on</td><td>Jog the head 1&nbsp;mm; <kbd>Shift</kbd> 10&nbsp;mm; <kbd>Ctrl</kbd> 0.1&nbsp;mm</td></tr>
 <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Open a Gerber folder / add another board to the sheet</td></tr>
 <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>E</kbd> / <kbd>Ctrl</kbd>+<kbd>Q</kbd></td><td>Save the setup / export the job / quit</td></tr>
-<tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Fit the work / fit the whole bed / centre the job on the bed</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>0</kbd></td><td>Fit the work / fit the whole bed</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo / redo a change on the bed: a move, a turn, a mirror, Centre</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> / <kbd>Ctrl</kbd>+<kbd>2</kbd></td><td>The mill's page / the laser's page</td></tr>
 <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>3</kbd> / <kbd>Ctrl</kbd>+<kbd>M</kbd></td><td>Design X-ray / spoilboard screw grid / watch this step in 3D / measure</td></tr>
 <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Connect / disconnect the machine link</td></tr>
 <tr><td>Scroll / right-drag on the stage</td><td>Zoom / pan</td></tr>

@@ -95,7 +95,7 @@ def test_the_run_sheet_replaces_the_board_after_an_export(loaded, tmp_path):
     text = loaded.sheet.text()
     assert "buck_traces.nc" in text
     assert "NEVER re-zero XY" in text
-    assert "Dry run" in text
+    assert "Dry run" not in text
 
 
 def test_the_run_sheet_asks_for_feedback_once_the_board_is_out(loaded, tmp_path):

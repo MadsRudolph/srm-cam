@@ -86,6 +86,9 @@ def _line(pts, z=-0.15):
            [Move(x, y, z) for (x, y) in pts]
 
 
+
+from uiscale import ui_scale as _dpi_scale
+
 @pytest.fixture
 def with_link(monkeypatch):
     """The bar with its live controls, whatever platform the tests run on."""
@@ -251,7 +254,7 @@ def test_the_bar_stays_one_row_with_stop_last_and_whole(bar, qt_app):
     # and sets the bar in its fallbacks (Avenir Next Condensed, Helvetica
     # Neue), which run about 2 % wider: 1308. There the budget is the one the
     # header is held to below - what fits the 1400 px window the app opens at.
-    budget = 1333 if sys.platform == "darwin" else 1280
+    budget = (1333 if sys.platform == "darwin" else 1280) * _dpi_scale()
     assert bar.minimumSizeHint().width() <= budget, \
         bar.minimumSizeHint().width()
     assert bar.live.sizeHint().height() <= theme.BAR_H
@@ -518,23 +521,26 @@ def test_the_chips_answer_for_mesh_fit_photo_and_boxes(loaded):
     assert chips["mesh"].dot._state in ("warn", "ok")
 
 
-def test_the_chips_hide_full_tier_facts_in_essential(win, monkeypatch):
-    monkeypatch.delenv("SRM_CAM_MODE")
-    tier.set_tier(tier.ESSENTIAL)
-    win._sync_tier()
-    assert win.chips["fit"].isHidden() and win.chips["boxes"].isHidden()
-    assert not win.chips["mesh"].isHidden()
-    tier.set_tier(tier.FULL)
-    win._sync_tier()
-    assert not win.chips["fit"].isHidden()
+def test_the_chips_show_only_when_lit(win):
+    win.refresh_chips()
+    assert all(c.isHidden() for c in win.chips.values())
 
 
 def test_the_chips_do_not_widen_the_window(win, qt_app):
     """The header was the widest row before the chips; it must not become
-    the reason the window cannot be narrowed to the A/B's 1400 px."""
+    the reason the window cannot be narrowed to the A/B's 1400 px - lit or
+    not. (The status chips show only when lit.)"""
+    for chip in win.chips.values():
+        chip.set(chip.label.text() + " 999", "ok")
+        chip.show()
     qt_app.processEvents()
-    head = win.frame_switch.parentWidget()
-    assert head.minimumSizeHint().width() <= 1333
+    assert win.header.minimumSizeHint().width() <= 1333 * _dpi_scale()
+
+
+def test_the_bed_toolbar_fits_beside_the_rail_and_the_inspector(win, qt_app):
+    qt_app.processEvents()
+    bar = win.frame_switch.parentWidget()
+    assert bar.minimumSizeHint().width() <= 700 * _dpi_scale()
 
 
 def test_nothing_new_offers_to_zero_the_xy_origin(bar):

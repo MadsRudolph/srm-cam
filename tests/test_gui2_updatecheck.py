@@ -83,8 +83,46 @@ def test_a_failed_check_is_information_not_an_error_dump(win):
     assert "Open the releases page" in _buttons(d)
 
 
+def _answered(ask, qt_app):
+    ask.thread.join(10)
+    for _ in range(20):
+        qt_app.processEvents()
+        if ask.result is not None:
+            break
+    return ask.result
+
+
 def test_check_now_shows_a_sheet_and_restores_the_cursor(win, no_exec, qt_app):
-    result = updatecheck.check_now(win, fetch=lambda u, t: _release(_newer()))
+    ask = updatecheck.check_now(win, fetch=lambda u, t: _release(_newer()))
+    result = _answered(ask, qt_app)
+    assert result.status == updates.UPDATE
+    assert len(no_exec) == 1
+    assert qt_app.overrideCursor() is None
+
+
+def test_check_now_asks_off_the_gui_thread_and_does_not_freeze(win, no_exec,
+                                                               qt_app):
+    import threading
+    release = threading.Event()
+    asked_on = []
+
+    def slow(u, t):
+        asked_on.append(threading.current_thread())
+        release.wait(10)
+        return _release(_newer())
+
+    ask = updatecheck.check_now(win, fetch=slow)
+    # check_now is back while the request is still out: the window runs on
+    try:
+        assert ask.busy()
+        assert no_exec == []
+        assert qt_app.overrideCursor() is not None
+        # a second click does not start a second request
+        assert updatecheck.check_now(win, fetch=slow) is ask
+    finally:
+        release.set()
+    result = _answered(ask, qt_app)
+    assert asked_on and asked_on[0] is not threading.main_thread()
     assert result.status == updates.UPDATE
     assert len(no_exec) == 1
     assert qt_app.overrideCursor() is None

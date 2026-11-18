@@ -16,11 +16,7 @@ def test_build_jobs_writes_rml(tmp_path):
         if p.suffix != ".rml":
             continue
         text = p.read_text()
-        if p.name.endswith("_airpass.rml"):
-            # the dry run traces the outline in the air and must NOT spin up
-            assert text.startswith("^IN;!MC0;")
-        else:
-            assert text.startswith("^IN;!MC1;")   # spindle on
+        assert text.startswith("^IN;!MC1;")       # spindle on
         assert text.rstrip().endswith("!MC0;^IN;")
 
 

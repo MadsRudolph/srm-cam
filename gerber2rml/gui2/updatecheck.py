@@ -3,9 +3,10 @@
 The engine (:mod:`gerber2rml.engine.updates`) asks GitHub and compares
 versions; this is what the setup sheet does with the answer.
 
-* **Help → Check for updates…** asks now, with the cursor busy, and says
-  what it found either way — up to date, an update, or that it could not
-  find out.
+* **Help → Check for updates…** asks now, on a worker thread with the
+  cursor busy, and says what it found either way — up to date, an update,
+  or that it could not find out. Asked on the GUI thread, a slow network
+  froze the window for as long as the request took.
 * **At launch**, a probe runs in a thread so a lab PC behind a captive
   portal never holds the window, and speaks only if there is genuinely a
   newer release the person has not already been told about. Once per
@@ -16,7 +17,9 @@ while it is running, and the install on a lab PC is often not the student's
 to replace. It finds out and points at the download; the install is their
 click.
 """
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
+import threading
+
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication
 
@@ -139,15 +142,66 @@ def result_sheet(parent, result, checkout=None):
     return d
 
 
-def check_now(parent, fetch=None):
-    """Help → Check for updates…: ask, then say what was found."""
-    QApplication.setOverrideCursor(Qt.WaitCursor)
-    try:
-        result = updates.check(__version__, fetch=fetch)
-    finally:
+class _Ask(QObject):
+    """One Help → Check for updates…: the request on a worker thread, the
+    answer shown on the GUI thread (this object lives there).
+
+    A plain daemon thread rather than a QThread: quitting while GitHub is
+    slow to answer must neither wait for it nor destroy a running QThread.
+    """
+
+    answered = Signal(object)        # emitted from the worker
+    done = Signal(object)            # the Result, once its sheet has closed
+
+    def __init__(self, parent, fetch=None):
+        super().__init__(parent)
+        self._fetch = fetch
+        self.result = None
+        self.answered.connect(self._show)
+        self.thread = threading.Thread(target=self._ask, daemon=True,
+                                       name="srm-cam update check")
+
+    def start(self):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.thread.start()
+        return self
+
+    def busy(self):
+        return self.thread.is_alive() or self.result is None
+
+    def _ask(self):                  # worker thread: no widgets here
+        result = updates.check(__version__, fetch=self._fetch)   # never raises
+        try:
+            self.answered.emit(result)
+        except RuntimeError:         # the window has gone: nobody to tell
+            pass
+
+    @Slot(object)
+    def _show(self, result):
         QApplication.restoreOverrideCursor()
-    result_sheet(parent, result, mac_checkout()).exec()
-    return result
+        self.result = result
+        try:
+            result_sheet(self.parent(), result, mac_checkout()).exec()
+        finally:
+            self.done.emit(result)
+
+
+def check_now(parent, fetch=None):
+    """Help → Check for updates…: ask on a worker thread, then say what was
+    found. Returns at once with the :class:`_Ask` doing it; its ``done``
+    signal carries the engine's Result. A second click while one is out
+    gets the one already asking."""
+    asking = getattr(parent, "_update_ask", None)
+    if asking is not None:
+        if asking.busy():
+            return asking
+        try:
+            asking.deleteLater()
+        except RuntimeError:
+            pass
+    ask = _Ask(parent, fetch)
+    parent._update_ask = ask
+    return ask.start()
 
 
 def dismissed_version(settings=None):

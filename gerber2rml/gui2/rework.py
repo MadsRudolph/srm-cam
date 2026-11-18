@@ -338,6 +338,7 @@ class ReworkPage(inspector.Page):
             depth = self.depth.value()
         if follow is None:
             follow = self._height_map() is not None
+        self._remember()
         self._regions.append((min(x0, x1), min(y0, y1), max(x0, x1),
                               max(y0, y1), float(depth)))
         self._follow.append(bool(follow))
@@ -372,6 +373,7 @@ class ReworkPage(inspector.Page):
     def _on_edit(self, item):
         r = item.row()
         if item.column() == 5:
+            self._remember()
             self._follow[r] = item.checkState() == Qt.Checked
             return
         if item.column() != 4:
@@ -382,11 +384,14 @@ class ReworkPage(inspector.Page):
             self._rebuild_table()
             return
         x0, y0, x1, y1, _d = self._regions[r]
+        self._remember()
         self._regions[r] = (x0, y0, x1, y1, depth)
 
     def _remove(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()},
                       reverse=True)
+        if rows:
+            self._remember()
         for r in rows:
             del self._regions[r]
             del self._follow[r]
@@ -394,10 +399,18 @@ class ReworkPage(inspector.Page):
         self._push()
 
     def _clear(self):
+        if self._regions:
+            self._remember()
         self._regions = []
         self._follow = []
         self._rebuild_table()
         self._push()
+
+    def _remember(self):
+        """Undo: the bed as it is, before a box changes."""
+        remember = getattr(self.ctl, "remember", None)
+        if remember is not None:
+            remember()
 
     def _push(self):
         self.ctl.stage.set_regions(
@@ -550,6 +563,8 @@ class ReworkPage(inspector.Page):
             self.ctl.report_error("The rework program could not be written", e)
             return
         workspace.remember_dir("out", path)
+        if hasattr(self.ctl, "record_files"):
+            self.ctl.record_files([path], "Fix spots: the rework program")
         self.status.setText(f"{len(clipped)} cut runs written"
                             + (f", {levelled} box{'' if levelled == 1 else 'es'}"
                                " following the height map." if levelled

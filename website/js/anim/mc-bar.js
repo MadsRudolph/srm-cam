@@ -2,12 +2,12 @@
 
    The controls under the drawing are the bar's own (gui2/machine.py MachineBar): the link
    chip and Connect, the X Y Z readout (machine coordinates, Z red and "Touch" while the
-   probe reads contact), Z jog with its step, Probe Z, Zero Z, Spindle and STOP. What each
-   one changes is spelled out on the right, because the two touches differ in exactly
-   that: Probe Z tells the APP where the copper is; Zero Z writes the MACHINE's G54 Z
-   origin at the surface and lifts 2 mm. Jogging down is refused while touching; the
-   spindle refuses with the lid open (firmware: E S COVER); STOP drops the move and stops
-   the spindle but leaves the bit where it is. Copper at machine Z −38.00, as elsewhere. */
+   probe reads contact), Z jog with its step, Probe Z and STOP. What each one changes is
+   spelled out on the right: Probe Z tells the APP where the copper is and leaves the
+   MACHINE's G54 Z origin alone. The bar has no Zero Z and no spindle button any more
+   (2026-11-17): runs take their own touches and start the spindle themselves. Jogging
+   down is refused while touching; STOP drops the move and stops the spindle but leaves
+   the bit where it is. Copper at machine Z −38.00, as elsewhere. */
 (function () {
   "use strict";
   var A = window.SRMAnim, C = A.C;
@@ -113,25 +113,10 @@
         say("Probe Z: stepped down to the copper and stopped on it. SRM-CAM now knows the surface (machine Z −38.00) for the Z-reach check and the level page. VPanel's origin is unchanged.", "ok");
       });
     });
-    A.button(row, "Zero Z", function () {
-      if (!need() || refusedIfTouching()) return;
-      moveTo(SURF, function () {
-        s.appZ = SURF; s.g54 = SURF;
-        moveTo(SURF + 2, function () {
-          say("Zero Z: touched the copper, the firmware wrote VPanel's G54 Z origin there, and lifted 2 mm. Only Z: X and Y are never moved. Check VPanel's G54 Z once before a job.", "ok");
-        });
-      });
-    });
-    A.button(row, "Spindle", function () {
-      if (!s.linked) { say("Not connected.", "caution"); return; }
-      if (!s.spindle && s.lidOpen) { say("Refused with the lid open (the firmware answers E S COVER). Close it first.", "bad"); return; }
-      s.spindle = !s.spindle;
-      say(s.spindle ? "Spindle on, at whatever speed VPanel's slider says: the link cannot set the speed. It stops by itself if the app goes quiet for 10 s." : "Spindle off.");
-    });
     A.button(row, "Open / close the lid", function () {
       s.lidOpen = !s.lidOpen;
       if (s.lidOpen && s.spindle) { s.spindle = false; }
-      say(s.lidOpen ? "Lid open: the chip says so, and the spindle will not run." : "Lid closed.");
+      say(s.lidOpen ? "Lid open: the chip says so, and a run will not start the spindle." : "Lid closed.");
     });
     A.button(row, "STOP", function () { doStop(); }, null, "Esc");
     st = A.status(row);

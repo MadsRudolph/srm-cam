@@ -276,10 +276,127 @@ def test_the_plugin_is_told_which_cutter_srm_cam_isolates_with(qt_app):
     w.close()
 
 
-def test_the_rules_action_is_registered_and_never_a_toolbar_button():
+def test_the_rules_action_is_registered_and_asks_before_it_changes_anything():
+    # A toolbar button now: it opens the design-rules window, and only Apply
+    # there changes the board, so a stray click costs nothing.
     src = (kicadplugin.bundled_source()
            / "action_send_to_srmcam.py").read_text("utf-8")
     assert "class SRM20RulesAction" in src
-    assert "self.show_toolbar_button = False" in src
+    run = src[src.index("class SRM20RulesAction"):]
+    run = run[run.index("def Run"):run.index("class SendToSRMCAMAction")]
+    assert "choose_rules(board, info)" in run
+    assert "rules_dialog.ask(" in src
     init = (kicadplugin.bundled_source() / "__init__.py").read_text("utf-8")
     assert "SRM20RulesAction().register()" in init
+
+
+def test_the_paste_layers_are_plotted_for_the_stencil_job():
+    s = _sendto()
+    assert {"F.Paste", "B.Paste"} <= set(s.LAYERS)
+    src = (kicadplugin.bundled_source() / "srm20area" / "plot.py").read_text(
+        "utf-8")
+    assert '(pcbnew.F_Paste, "F_Paste")' in src
+    assert '(pcbnew.B_Paste, "B_Paste")' in src
+
+
+def test_a_new_send_clears_the_old_paste_but_keeps_the_method(tmp_path):
+    s = _sendto()
+    out = tmp_path / "srm-cam"
+    out.mkdir()
+    for name in ("board-F_Paste.gtp", "board-B_Paste.gbp",
+                 "board-B_Cu.gbl", "method.json", "launch.json", "notes.txt"):
+        (out / name).write_text("x")
+    s.clear_plotted(str(out))
+    left = sorted(p.name for p in out.iterdir())
+    assert left == ["launch.json", "method.json", "notes.txt"]
+
+
+# ------------------------------------------ the action, with KiCad stubbed out
+@pytest.fixture
+def action(monkeypatch):
+    """action_send_to_srmcam.py loaded with stand-ins for pcbnew and wx, so
+    its pure decisions can be tested without KiCad."""
+    import sys
+    pcbnew = types.ModuleType("pcbnew")
+    pcbnew.ActionPlugin = type("ActionPlugin", (), {})
+    monkeypatch.setitem(sys.modules, "pcbnew", pcbnew)
+    monkeypatch.setitem(sys.modules, "wx", types.ModuleType("wx"))
+    before = set(sys.modules)
+    monkeypatch.syspath_prepend(str(kicadplugin.bundled_source()))
+    path = kicadplugin.bundled_source() / "action_send_to_srmcam.py"
+    spec = importlib.util.spec_from_file_location("_action_send", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    from srm20area import rules
+    monkeypatch.setattr(rules, "holes_too_small", lambda board, drill: [])
+    yield mod, rules
+    for name in set(sys.modules) - before:
+        if name.startswith("srm20area"):
+            del sys.modules[name]
+
+
+class _Board:
+    def __init__(self, path):
+        self.path = path
+
+    def GetFileName(self):
+        return self.path
+
+
+def _rules(clearance, floor, pour):
+    return {"board": {"floor": floor, "edge": 0.5, "drill": 0.8},
+            "classes": {"Default": {"clearance": clearance, "track": 0.3,
+                                    "via_drill": 0.8, "via_dia": 1.8}},
+            "zones": [{"name": "GND", "clearance": pour, "thermal_gap": pour,
+                       "pour_min": 0.25}]}
+
+
+def test_an_unset_laser_board_is_checked_as_a_laser_board(action, tmp_path,
+                                                          monkeypatch):
+    mod, rules = action
+    monkeypatch.setattr(rules, "read_current",
+                        lambda board: _rules(0.25, 0.2, 0.25))
+    board = _Board(str(tmp_path / "b.kicad_pcb"))
+    found, against = mod.board_check(board, {"cutter_mm": 0.8})
+    assert found == []                       # not warned on every send
+    assert against.startswith("Fiber laser copper")
+    assert "(guessed — set it with Set design rules for SRM-CAM)" in against
+    # and Set the rules... opens on the laser, not on the mill's 0.8 mm gaps
+    assert mod._guess_method({"cutter_mm": 0.8},
+                             rules.read_current(board)) == "laser"
+
+
+def test_an_unset_board_too_fine_for_the_laser_is_still_warned(
+        action, tmp_path, monkeypatch):
+    mod, rules = action
+    monkeypatch.setattr(rules, "read_current",
+                        lambda board: _rules(0.15, 0.1, 0.25))
+    found, against = mod.board_check(_Board(str(tmp_path / "b.kicad_pcb")),
+                                     {"cutter_mm": 0.8})
+    assert "Net class Default clearance: 0.15 mm" in found
+    assert "guessed" in against
+
+
+def test_a_board_with_its_method_set_is_checked_for_that_not_guessed(
+        action, tmp_path, monkeypatch):
+    mod, rules = action
+    from srm20area import methods
+    board_file = str(tmp_path / "b.kicad_pcb")
+    methods.write_method(board_file, "mill_flat",
+                         methods.defaults("mill_flat", 0.8))
+    monkeypatch.setattr(rules, "read_current",
+                        lambda board: _rules(0.25, 0.2, 0.25))
+    found, against = mod.board_check(_Board(board_file), {"cutter_mm": 0.8})
+    assert found and against == methods.method("mill_flat")["name"]
+
+
+def test_an_unset_board_on_kicad_defaults_is_checked_for_the_bit(
+        action, tmp_path, monkeypatch):
+    mod, rules = action
+    monkeypatch.setattr(rules, "read_current",
+                        lambda board: _rules(0.2, 0.0, 0.5))
+    found, against = mod.board_check(_Board(str(tmp_path / "b.kicad_pcb")),
+                                     {"cutter_mm": 0.8})
+    assert against.startswith("Mill: 0.8 mm flat endmill")
+    assert "guessed" in against
+    assert "Net class Default clearance: 0.20 mm" in found

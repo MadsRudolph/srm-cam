@@ -39,15 +39,13 @@ def test_single_sided_plan_matches_what_the_engine_writes(state, tmp_path):
     assert plan.files == _toolpath_files(written)
 
 
-def test_single_sided_plan_starts_with_the_dry_run(state):
-    """Step 0 is the airpass, and it is first because it is meant to be run
-    first — it is the cheapest board-saving check in the product."""
+def test_single_sided_plan_starts_with_the_first_cut(state):
+    """No dry run: the first numbered step is the first cut."""
     plan = runplan.build(state)
     first = plan.run_steps[0]
-    assert first.ordinal == 0
-    assert first.op == "airpass"
-    assert "airpass" in first.file
-    assert first.bit is None            # spindle off: no bit is engaged
+    assert first.ordinal == 1
+    assert first.op in ("drill", "traces")
+    assert not any(s.op == "airpass" for s in plan)
 
 
 def test_the_cut_out_is_last_and_says_why(state):
@@ -183,13 +181,13 @@ def test_a_v_bit_is_never_confused_with_a_flat_of_the_same_number(state):
         != runplan.tool_id(state.drill)
 
 
-def test_the_origin_step_comes_before_the_dry_run(state):
-    """The dry run holds the bit 5 mm above the WORK Z ZERO, so it means
-    nothing until that zero exists — and VPanel will not output a file without
-    an origin either."""
+def test_the_origin_step_comes_before_the_first_cut(state):
+    """VPanel will not output a file without an origin, and every depth is
+    measured from it."""
     plan = runplan.build(state)
     keys = [s.key for s in plan]
-    assert keys.index("origin") < keys.index("airpass")
+    first = plan.run_steps[0].key
+    assert keys.index("origin") < keys.index(first)
     origin = plan.by_key("origin")
     assert origin.tool is not None, "it has to say which bit goes in"
     assert "origin" in origin.title.lower()
