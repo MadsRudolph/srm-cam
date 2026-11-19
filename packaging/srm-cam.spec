@@ -61,6 +61,10 @@ hiddenimports += ["qrcode"]                        # phone photo QR (function-le
 # Without Homebrew's libusb the app still builds; the Machine menu then says
 # what is missing instead of reading the mill.
 binaries = []
+if sys.platform.startswith("linux"):
+    # Linux: libusb is part of every desktop install (udev depends on it), so
+    # only the Python side is bundled and the system's libusb is loaded.
+    hiddenimports += ["usb", "usb.core", "usb.backend.libusb1"]
 if sys.platform == "darwin":
     hiddenimports += ["usb", "usb.core", "usb.backend.libusb1"]
     for _lib in (Path("/opt/homebrew/lib/libusb-1.0.0.dylib"),

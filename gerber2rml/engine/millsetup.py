@@ -358,7 +358,9 @@ def set_spindle_percent(dev, percent, **timing):
 
 USB_HINT = (
     "Reading the mill's settings needs direct USB access: the pyusb package "
-    "and libusb. From source, `pip install pyusb` and `brew install libusb`; "
+    "and libusb. From source, `pip install pyusb` and `brew install libusb` "
+    "(macOS) - Linux has libusb already, and needs Machine \u25b8 Set up USB "
+    "access\u2026 once; "
     "the packaged app carries both. See docs/vpanel-settings.md.")
 
 

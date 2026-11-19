@@ -1076,6 +1076,10 @@ class MainWindow(QMainWindow):
             from gerber2rml.gui2 import macmill
             self._act(m, "Set up the mill on this Mac…",
                       lambda: macmill.setup_sheet(self))
+        if rmlspool.LINUX:
+            from gerber2rml.gui2 import linuxmill
+            self._act(m, "Set up USB access…",
+                      lambda: linuxmill.setup_sheet(self))
         if not rmlspool.WINDOWS:
             # Command Set and the spindle speed, which otherwise need VPanel
             # on a Windows PC. Not offered on Windows: the Roland driver owns

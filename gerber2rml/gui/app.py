@@ -965,7 +965,8 @@ class MainWindow(QMainWindow):
         self.level_port_combo.setEditable(True)
         try:
             import serial.tools.list_ports
-            ports = [p.device for p in serial.tools.list_ports.comports()]
+            ports = [p.device for p in serial.tools.list_ports.comports()
+                     if not plat.phantom_serial_port(p.device, p.hwid)]
             if ports:
                 self.level_port_combo.addItems(ports)
             else:

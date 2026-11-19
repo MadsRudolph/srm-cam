@@ -276,11 +276,11 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 <p><span class="k">Cause</span>STOP drops the move in flight and stops the spindle; the bit stays where it is.</p>
 <p><span class="k">Fix</span>Raise the bit with <kbd>Page Up</kbd> before the next move.</p>
 </div></details>
-<details class="ts-item" id="linux" data-cat="probe" data-q="linux no machine bar link windows only sentence laptop">
-<summary>No machine bar, just a sentence</summary>
+<details class="ts-item" id="linux" data-cat="probe" data-q="linux permission denied ttyUSB lp0 usb access port refused">
+<summary>Linux: “permission denied” on the port or the mill</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span>The machine link runs on Windows only.</p>
-<p><span class="k">Fix</span>Export on Linux and send the files from a Windows PC. Your own laptop at the mill works for the link and for VPanel only if it runs Windows.</p>
+<p><span class="k">Cause</span>Linux lets only root open the Arduino's port and the mill's USB until a rule says otherwise.</p>
+<p><span class="k">Fix</span><span class="menu-path">Machine &rsaquo; Set up USB access…</span> once, with your password. If a cable was in while it ran and still refuses, unplug it and plug it back in.</p>
 </div></details>
 
 <h2 data-cat-title="panels" data-short="Panels">Panels</h2>

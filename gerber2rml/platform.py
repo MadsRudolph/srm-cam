@@ -49,18 +49,93 @@ def capabilities(platform=None):
     """What this OS supports.
 
     ``machine_link`` is the Arduino serial link - connect, DRO, jog, bed
-    probing, firmware flashing. Windows and macOS. Windows because the CNC PC
-    is Windows and the link was built there. macOS because a lab runs its
-    SRM-20 from a Mac: pyserial and the Arduino's USB VID ranking are the same
-    code there, and the mill itself is reached through a raw CUPS queue (see
-    ``engine/rmlspool.py``) in place of the Windows spooler. Linux stays off,
-    deliberately: the link has never been run there, and shipping an
-    unverified motion path to someone standing next to a spinning tool is not
-    a trade worth making. Losing it costs less than it looks, because a
-    height map is a file: measure the bed once on the CNC PC and carry the CSV.
+    probing, firmware flashing - and sending jobs to the mill. All three
+    systems. Windows because the CNC PC is Windows and the link was built
+    there. macOS because a lab runs its SRM-20 from a Mac, through a raw CUPS
+    queue. Linux since 2026-11-19, proven on the lab mill: pyserial is the same
+    code everywhere, and the mill's USB is a plain printer-class device, which
+    the kernel's ``usblp`` driver makes ``/dev/usb/lp0`` - the same port the
+    Windows spooler writes to as ``USB001`` (``engine/rmlspool.py``).
     """
-    return Capabilities(
-        machine_link=_is_windows(platform) or _is_macos(platform))
+    return Capabilities(machine_link=True)
+
+
+def _is_linux(platform=None):
+    return _plat(platform).startswith("linux")
+
+
+# --- Linux: who may open the mill's USB and the Arduino -------------------
+#
+# Both are root-owned nodes with group access (lp and uucp on Arch, lp and
+# dialout on Debian). A udev rule tagging them ``uaccess`` hands them to
+# whoever is logged in at the screen, at the next plug-in, with no group to
+# join and no logging out. It has to sort before systemd's 73-seat-late.rules,
+# hence the 60.
+ROLAND_USB_VID = "0b75"
+SRM20_USB_PID = "039f"
+UDEV_RULES_PATH = "/etc/udev/rules.d/60-srm-cam.rules"
+# Arduino (2341, 2a03), CH340 (the lab's Uno), FTDI, CP210x - spi_probe's
+# BOARD_VIDS, as udev spells them.
+_SERIAL_MATCHES = (("2341", None), ("2a03", None), ("1a86", "7523"),
+                   ("0403", "6001"), ("10c4", "ea60"))
+# ID_MM_DEVICE_IGNORE keeps ModemManager off the Arduino: it probes new serial
+# ports with AT commands, and on this link every letter is a command to a
+# board that can move a spindle.
+UDEV_RULES = (
+    "# SRM-CAM: the Arduino on the SRM-20's SPI header, and the mill's own USB\n"
+    "# (the printer node jobs go to, and the settings channel).\n"
+    "# Written by Machine > Set up USB access, or by\n"
+    "#   python -m gerber2rml.doctor --setup-mill\n"
+    + "".join(
+        'SUBSYSTEM=="tty", ATTRS{idVendor}=="%s", %sTAG+="uaccess", '
+        'ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1"\n'
+        % (vid, 'ATTRS{idProduct}=="%s", ' % pid if pid else "")
+        for vid, pid in _SERIAL_MATCHES)
+    + 'SUBSYSTEM=="usbmisc", KERNEL=="lp[0-9]*", ATTRS{idVendor}=="%s", '
+      'TAG+="uaccess"\n' % ROLAND_USB_VID
+    + 'SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="%s", '
+      'ATTR{idProduct}=="%s", TAG+="uaccess"\n'
+      % (ROLAND_USB_VID, SRM20_USB_PID))
+
+
+def udev_rules(platform=None):
+    """The udev rules this app wants, or None where there is no udev."""
+    return UDEV_RULES if _is_linux(platform) else None
+
+
+def udev_install_script(rules_file):
+    """Shell that installs ``rules_file`` and applies it to what is plugged in.
+
+    One string, for ``pkexec sh -c``, so the password is asked once. The
+    trigger re-runs the rules on the devices already there, so nothing has to
+    be unplugged.
+    """
+    import shlex
+    return ("install -m 0644 %s %s && udevadm control --reload && "
+            "udevadm trigger --action=change --subsystem-match=tty "
+            "--subsystem-match=usbmisc --subsystem-match=usb && "
+            "udevadm settle"
+            % (shlex.quote(str(rules_file)), UDEV_RULES_PATH))
+
+
+def udev_rules_installed(path=UDEV_RULES_PATH):
+    """Whether the rule file is there with this version's contents."""
+    try:
+        return Path(path).read_text(encoding="utf-8") == UDEV_RULES
+    except OSError:
+        return False
+
+
+def phantom_serial_port(device, hwid, platform=None):
+    """Whether a listed serial port is one that is never really there.
+
+    Linux lists every 8250 UART slot the kernel reserved - ``/dev/ttyS0`` to
+    ``ttyS31`` - with an hwid of ``n/a``, whether or not a chip sits behind
+    it. Thirty-two dead entries above the one Arduino is how a beginner picks
+    the wrong port. A real onboard UART has an hwid other than ``n/a``.
+    """
+    return (_is_linux(platform) and (hwid or "n/a") == "n/a"
+            and os.path.basename(device).startswith("ttyS"))
 
 
 # What to put on screen where the machine controls would have been.
@@ -72,9 +147,9 @@ def capabilities(platform=None):
 # that still works, because "probe once on the CNC PC and carry the CSV" is the
 # whole Linux levelling workflow and nobody would guess it.
 NO_MACHINE_LINK_NOTE = (
-    "The machine link runs on Windows and macOS only, so there is no "
-    "Connect here. Prepare the job, export, and send the files "
-    "from VPanel on the CNC PC — or load a height map "
+    "The machine link is not available here, so there is no "
+    "Connect. Prepare the job, export, and send the files "
+    "from VPanel on a Windows PC — or load a height map "
     "measured there to export levelled toolpaths.")
 
 
@@ -176,8 +251,8 @@ def serial_permission_hint(device, platform=None, stat_fn=None, group_fn=None):
         # No hint is better than a wrong one.
         return None
     return (f"{device} is owned by the '{group}' group and you are not in it. "
-            f"Run  sudo usermod -aG {group} $USER  then log out and back in "
-            f"for the change to take effect.")
+            f"Use Machine ▸ Set up USB access… (once, asks for your password), "
+            f"or run  sudo usermod -aG {group} $USER  and log out and back in.")
 
 
 def documents_dir(home=None, platform=None):

@@ -1531,6 +1531,14 @@ class AutoRunPage(inspector.Page):
             if rmlspool.MACOS:
                 from gerber2rml.gui2 import macmill
                 name = macmill.find_or_setup(self.window())
+            elif rmlspool.LINUX:
+                from gerber2rml.gui2 import linuxmill
+                name = linuxmill.find_or_setup(self.window())
+                if name is None:
+                    ctl.say("fail", "The SRM-20's USB is not reachable, so "
+                                    "there is nothing to send jobs to. "
+                            + rmlspool.LINUX_SETUP_HINT)
+                    return
             else:
                 name = rmlspool.find_mill()
             if name is None:
@@ -1543,7 +1551,7 @@ class AutoRunPage(inspector.Page):
             if rmlspool.MACOS and not macmill.preflight(self.window(),
                                                         printer):
                 return
-            if rmlspool.MACOS:
+            if not rmlspool.WINDOWS:
                 # The mill's own settings, which used to need VPanel on a
                 # Windows PC: the command set is put right and said in the
                 # log; a run that would stop at the frame check asks first.

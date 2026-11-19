@@ -24,7 +24,7 @@ levelling, from a single program.
 |---|---|---|
 | Windows | `SRM-CAM-Setup.exe` | Unsigned: on the first run, SmartScreen needs *More info ▸ Run anyway*. |
 | macOS (Apple Silicon) | `SRM-CAM-macOS-arm64.dmg` | Not notarised: right-click ▸ Open the first time. See [docs/macos.md](docs/macos.md). |
-| Linux | `SRM-CAM-x86_64.AppImage` | `chmod +x` and run. No machine link: prepare and export only. |
+| Linux | `SRM-CAM-x86_64.AppImage` | `chmod +x` and run. Drives the mill too: once, *Machine ▸ Set up USB access…* (asks for your password). No VPanel or driver needed. |
 
 All from the [latest release](https://github.com/MadsRudolph/srm-cam/releases/latest).
 

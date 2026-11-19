@@ -10,9 +10,9 @@ from pathlib import Path
 from gerber2rml import platform as plat
 
 
-def test_machine_link_is_windows_and_macos_only():
+def test_machine_link_is_on_every_platform():
     assert plat.capabilities("win32").machine_link is True
-    assert plat.capabilities("linux").machine_link is False
+    assert plat.capabilities("linux").machine_link is True
     assert plat.capabilities("darwin").machine_link is True
 
 
@@ -50,8 +50,7 @@ def test_reveal_has_no_command_off_windows():
 @pytest.mark.host_capabilities
 def test_capabilities_defaults_to_the_running_host():
     import sys
-    assert plat.capabilities().machine_link == (
-        sys.platform.startswith("win") or sys.platform == "darwin")
+    assert plat.capabilities().machine_link is True
 
 
 def test_permission_hint_names_the_group_the_device_actually_has():
@@ -66,6 +65,7 @@ def test_permission_hint_names_the_group_the_device_actually_has():
     assert "dialout" not in hint
     assert "sudo usermod -aG uucp" in hint
     assert "log out" in hint.lower()
+    assert "Set up USB access" in hint
 
 
 def test_permission_hint_says_dialout_when_that_is_the_group():
@@ -218,3 +218,36 @@ def test_platform_module_imports_no_qt_and_no_third_party():
                if line.strip().startswith(("import ", "from "))]
     for banned in ("PySide6", "serial", "shapely", "gerbonara", "numpy"):
         assert not any(banned in line for line in imports), banned
+
+
+def test_udev_rules_cover_the_mill_and_the_arduino_on_linux_only():
+    rules = plat.udev_rules("linux")
+    assert plat.udev_rules("win32") is None
+    assert plat.udev_rules("darwin") is None
+    assert 'SUBSYSTEM=="usbmisc"' in rules and 'ATTRS{idVendor}=="0b75"' in rules
+    assert 'ATTR{idProduct}=="039f"' in rules        # the settings channel
+    assert 'ATTRS{idProduct}=="7523"' in rules       # the lab's CH340 Uno
+    assert all('TAG+="uaccess"' in ln for ln in rules.splitlines()
+               if ln and not ln.startswith("#"))
+
+
+def test_udev_install_script_quotes_the_temp_path():
+    script = plat.udev_install_script("/tmp/a b/x.rules")
+    assert "'/tmp/a b/x.rules'" in script
+    assert plat.UDEV_RULES_PATH in script and "udevadm trigger" in script
+
+
+def test_udev_rules_installed_reads_the_file(tmp_path):
+    f = tmp_path / "60-srm-cam.rules"
+    assert not plat.udev_rules_installed(f)
+    f.write_text(plat.UDEV_RULES, encoding="utf-8")
+    assert plat.udev_rules_installed(f)
+
+
+def test_phantom_serial_ports_are_the_empty_linux_uart_slots():
+    assert plat.phantom_serial_port("/dev/ttyS31", "n/a", "linux")
+    assert plat.phantom_serial_port("/dev/ttyS0", None, "linux")
+    assert not plat.phantom_serial_port("/dev/ttyS0", "PNP0501", "linux")
+    assert not plat.phantom_serial_port(
+        "/dev/ttyUSB0", "USB VID:PID=1A86:7523", "linux")
+    assert not plat.phantom_serial_port("COM1", "n/a", "win32")
