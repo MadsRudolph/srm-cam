@@ -295,6 +295,18 @@ class WindowSource(ar.JobSource):
                     nominal_top_fiducials(lay))
         return self.gui(go)
 
+    def realign_holes(self):
+        """The board's mounting holes, where its drill toolpaths put them."""
+        def go():
+            from gerber2rml.engine import mountfid
+            st = self.w.state
+            if st.board is None or st.board.outline is None:
+                return []
+            return [tuple(h[:3]) for h in mountfid.pick(
+                st.board.holes, st.board.outline.bounds,
+                bit_mm=st.drill.bit_diameter)]
+        return self.gui(go)
+
     def fiducial_clearance_um(self):
         w = self.w
         return int(max(0.15, (w._fid_diameter - w.state.drill.bit_diameter)
@@ -601,6 +613,20 @@ class AutoRunPage(inspector.Page):
             "one are skipped. The stock must not have moved.")
         h.addWidget(self.start_box, 1)
         stock.add(srow)
+        # A board taken off and put back - to drill holes that did not go
+        # through, say - is a few tenths off where the stock corner puts it.
+        # Both tiers: it is the way to go back to a board, not a setting.
+        self.realign_chk = QCheckBox("The sheet was moved: line up with the "
+                                     "board's holes")
+        self.realign_chk.setChecked(False)
+        self.realign_chk.setToolTip(
+            "For a board that is already drilled and was taken off the bed "
+            "and put back. Before anything is cut, the probe finds the "
+            "board's mounting holes and every step is lined up with where "
+            "they really are, so holes drilled again land in the holes that "
+            "are there. Use it with Start at, or Run this step.")
+        self.realign_chk.toggled.connect(lambda _on: self._fill_rows())
+        stock.add(self.realign_chk)
 
         # What holds the stock down. The bracket is drawn because the app
         # knows its shape; a clamp is known only if somebody says where it
@@ -1294,7 +1320,11 @@ class AutoRunPage(inspector.Page):
     # -- the checklist -------------------------------------------------------
     def _plan_rows(self):
         src = WindowSource(self.ctl, self._gui)
-        rows = [("stock", "Find the stock"), ("level", "Probe the surface")]
+        rows = [("stock", "Find the stock")]
+        if getattr(self, "realign_chk", None) is not None \
+                and self.realign_chk.isChecked():
+            rows.append(("realign", "Line up with the board's holes"))
+        rows.append(("level", "Probe the surface"))
         rows += src.bottom_steps()
         if self.ctl._double:
             rows += [("flip", "Turn it over"),
@@ -1623,6 +1653,7 @@ class AutoRunPage(inspector.Page):
         bit = (one.bit if one is not None and one.bit
                else ctl.state.drill.bit_diameter)
         level = self.level_chk.isChecked()
+        realign = self.realign_chk.isChecked()
         dry = False
         check_cut = self.check_chk.isChecked()
         no_cut = self.no_cutout() and datum is not None
@@ -1662,7 +1693,7 @@ class AutoRunPage(inspector.Page):
                                  check_cut=check_cut and not no_cut,
                                  start_at=start_at, nogo=nogo,
                                  level_margin=level_margin,
-                                 only=only_keys)
+                                 only=only_keys, realign=realign)
                 try:
                     ok = run.run()
                 finally:

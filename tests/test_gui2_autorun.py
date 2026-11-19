@@ -987,3 +987,18 @@ def test_the_steps_are_folded_away_under_the_run_in_pro(win, qt_app):
     trav._folds["steps"][0].set_open(True, clicked=True)
     assert workspace.setting("rail/steps_open") == "true"
     workspace.set_setting("rail/steps_open", "false")
+
+
+@pytest.mark.parametrize("mode", ["novice", "pro"])
+def test_the_line_up_tick_is_on_the_run_page_in_both_tiers(win, monkeypatch,
+                                                           mode):
+    """A re-seated sheet is lined up with the board's holes in Novice too."""
+    monkeypatch.setenv("SRM_CAM_MODE", mode)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page.sync_tier()
+    assert not page.realign_chk.isHidden()
+    assert "realign" not in [k for k, _t in page._plan_rows()]
+    page.realign_chk.setChecked(True)
+    keys = [k for k, _t in page._plan_rows()]
+    assert keys.index("stock") < keys.index("realign") < keys.index("level")

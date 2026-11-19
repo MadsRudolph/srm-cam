@@ -201,6 +201,12 @@ class JobSource:
     def fiducial_clearance_um(self):
         return 400
 
+    def realign_holes(self):
+        """``[(x, y, d)]``: holes already drilled in this board, nominal
+        frame, that a moved sheet can be found again by - its mounting
+        holes. [] when it has none that will do."""
+        return []
+
     def set_top_fit(self, t):
         pass
 
@@ -321,7 +327,7 @@ class AutoRun:
                  runner_opts=None, level=True, surface_hint=None,
                  datum=None, check_cut=True, start_at=None, keepout=None,
                  arms=None, leave_under=False, nogo=None, level_margin=2.0,
-                 only=None):
+                 only=None, realign=False):
         self.ser, self.printer = ser, printer
         self.src, self.ev = source, events
         self.click, self.size = click_mm, stock_mm
@@ -370,6 +376,10 @@ class AutoRun:
         # is set anywhere, so that is what puts the step where the rest of
         # the board is. No check before a cut-out, and no flip.
         self.only = set(only) if only else None
+        # The sheet was taken off and put back with its holes already
+        # drilled: find them and fit the job onto where they really are,
+        # before anything is cut (:meth:`_realign`).
+        self.realign = bool(realign)
         self.pose = self.pose_top = None
         self.rotation = None
         self.fit = None
@@ -463,6 +473,8 @@ class AutoRun:
             self._clear_of_keepout(mid - x1, y0, mid - x0, y1,
                                    " once the board is flipped")
         bottom, top = self.src.bottom_steps(), self.src.top_steps()
+        if self.realign:
+            self._realign()
         if self.only is not None:
             return self._only(bottom, top)
         from_fiducials = self.start_at == START_AT_FIDUCIALS and top
@@ -1363,11 +1375,88 @@ class AutoRun:
             return t
         return self._guard("fiducials", go)
 
-    def _locate(self, x_mm, y_mm, search_um=None):
+    def _realign(self):
+        """Find the board's own holes and fit the job onto them.
+
+        For a sheet that was taken off and put back - to re-drill holes that
+        did not go through, say - where the stock corner alone puts the job
+        a few tenths off its own holes. Each hole is looked for where the
+        placement says it is; from two found on, the fit says where the next
+        one is. Every job after this goes through the fit in place of the
+        placement, so a re-drilled hole lands in the hole that is there.
+        """
+        def go():
+            holes = self.src.realign_holes()
+            if len(holes) < 2:
+                raise RunFailed(
+                    "the board has no holes to line it up with: it takes at "
+                    "least two of one size, wide enough for the bit to drop "
+                    "into, at opposite ends of the board (its mounting "
+                    "holes). Nothing was cut.")
+            bit_um = int(self.bit * 1000)
+            nominal = [(x, y) for x, y, _d in holes]
+            measured = []
+            off_x = off_y = 0.0
+            for i, (x, y, d) in enumerate(holes):
+                px, py = self.rotation.apply(x, y)
+                got = [(n, m) for n, m in zip(nominal, measured) if m]
+                if len(got) >= 2:
+                    guess = fit_transform([g[0] for g in got],
+                                          [g[1] for g in got],
+                                          allow_scale=False).apply(x, y)
+                    radius = FITTED_SEARCH_UM
+                else:
+                    guess, radius = (px + off_x, py + off_y), HOLE_SEARCH_UM
+                if self._zones() and self._hole_blocked(*guess):
+                    self.ev.note("Hole %d is under the bracket and is not "
+                                 "used." % (i + 1))
+                    measured.append(None)
+                    continue
+                self.ev.note("Finding the board's hole %d of %d…"
+                             % (i + 1, len(holes)))
+                clear = max(150, (int(d * 1000) - bit_um) // 2)
+                try:
+                    found = self._locate(guess[0], guess[1], radius,
+                                         pose=self.pose, clearance_um=clear)
+                except (RunFailed, ProbeError) as e:
+                    if self.should_abort():
+                        raise
+                    self.ev.note("Hole %d skipped: %s." % (i + 1, e))
+                    measured.append(None)
+                    continue
+                measured.append(found)
+                off_x, off_y = found[0] - px, found[1] - py
+                self.ev.note("Hole %d at X %.2f, Y %.2f: %+.2f, %+.2f from "
+                             "where the placement put it."
+                             % (i + 1, found[0], found[1], off_x, off_y))
+            got = [(n, m) for n, m in zip(nominal, measured) if m]
+            need = min(3, len(holes))
+            if len(got) < need:
+                raise RunFailed(
+                    "only %d of the board's %d holes were found, and it takes "
+                    "%d to trust where the board is. Check the holes are open "
+                    "at the top and the sheet is seated. Nothing was cut."
+                    % (len(got), len(holes), need))
+            nom, seen = [g[0] for g in got], [g[1] for g in got]
+            t = fit_transform(nom, seen, allow_scale=False)
+            worst = max(residuals(t, nom, seen))
+            if worst > FIT_WORST_MM:
+                raise RunFailed("the board's holes disagree by %.2f mm - one "
+                                "was misread. Nothing was cut." % worst)
+            self.rotation = t
+            self.ev.note("Lined up with the board's holes: %d of %d found, "
+                         "within %.3f mm, turned %+.2f°."
+                         % (len(got), len(holes), worst,
+                            math.degrees(t.theta)))
+            return t
+        return self._guard("realign", go)
+
+    def _locate(self, x_mm, y_mm, search_um=None, pose=None,
+                clearance_um=None):
         """The centre of the hole near (x, y), mm."""
         search_um = search_um or HOLE_SEARCH_UM
         x0, y0 = int(x_mm * 1000), int(y_mm * 1000)
-        ref = int(self.pose_top.z * 1000)
+        ref = int((pose or self.pose_top).z * 1000)
         self._nogo_point(x_mm, y_mm, "a reference hole")
         for ox, oy in ((2500, 0), (-2500, 0), (0, 2500), (0, -2500)):
             if self.nogo and self._in_nogo(x_mm + ox / 1000.0,
@@ -1386,7 +1475,8 @@ class AutoRun:
                             % (x_mm, y_mm))
         # The bit drops in only near the middle, and a milled hole comes out a
         # little under size: rings closer than the nominal clearance, not gaps.
-        step = max(200, int(self.src.fiducial_clearance_um() * 0.75))
+        step = max(200, int((clearance_um or self.src.fiducial_clearance_um())
+                            * 0.75))
         start = None
         for ring in range(0, search_um // step + 1):
             r = ring * step
