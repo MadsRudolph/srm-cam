@@ -34,18 +34,82 @@ DEFAULT_INSET_MM = 3.0
 # field lens holds about this; a band is at most twice it deep.
 DEFAULT_TOLERANCE_MM = 0.15
 MIN_POINTS = 3            # a map from fewer is not a map: say so instead
+# Where the blue dot may land. In a hole it does not fail: it reads the hole's
+# depth as the surface, and the whole map goes off (seen on a student's PC,
+# 2026-11-19, a point in a mounting hole). So a point keeps this far from any
+# hole's edge, and this far inside the board's outline - clear of the mill's
+# cut-out channel and its tabs.
+HOLE_CLEAR_MM = 1.5
+EDGE_CLEAR_MM = 2.0
 
 
 def _snap(v, step=GRID_MM, lo=0.0, hi=220.0):
     return min(max(round(v / step) * step, lo), hi)
 
 
+def safe_area(outlines, holes, hole_clear=HOLE_CLEAR_MM,
+              edge_clear=EDGE_CLEAR_MM):
+    """Where on the bed the blue dot may measure: inside the board outlines
+    (bed rings), ``edge_clear`` in from them, and ``hole_clear`` from every
+    hole (bed rings). A shapely geometry; empty when nothing is left."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    inside = unary_union([Polygon(r).buffer(0) for r in outlines if len(r) >= 3])
+    area = inside.buffer(-edge_clear)
+    holes = [Polygon(r).buffer(0) for r in holes if len(r) >= 3]
+    if holes:
+        area = area.difference(unary_union(holes).buffer(hole_clear))
+    return area
+
+
+def keep_out(outlines, holes, hole_clear=HOLE_CLEAR_MM,
+             edge_clear=EDGE_CLEAR_MM):
+    """Where the blue dot must never measure, anywhere on the bed: in or by a
+    hole, and on the board's cut-out line (the mill's channel and tabs)."""
+    from shapely.geometry import LinearRing, Polygon
+    from shapely.ops import unary_union
+    parts = [LinearRing(r).buffer(edge_clear) for r in outlines if len(r) >= 3]
+    parts += [Polygon(r).buffer(0).buffer(hole_clear)
+              for r in holes if len(r) >= 3]
+    return unary_union(parts)
+
+
+def clear_point(x, y, safe, search=None, extent=220.0):
+    """The factory grid point nearest (x, y) that lies in ``safe``, or None
+    when there is none within ``search`` mm (any distance by default)."""
+    from shapely.geometry import Point
+    if safe is None:
+        return (_snap(x, hi=extent), _snap(y, hi=extent))
+    if safe.is_empty:
+        return None
+    reach = search if search is not None else extent
+    best = None
+    n = int(math.ceil(reach / GRID_MM)) + 1
+    cx, cy = _snap(x, hi=extent), _snap(y, hi=extent)
+    for i in range(-n, n + 1):
+        for j in range(-n, n + 1):
+            gx, gy = cx + i * GRID_MM, cy + j * GRID_MM
+            if not (0.0 <= gx <= extent and 0.0 <= gy <= extent):
+                continue
+            d = math.hypot(gx - x, gy - y)
+            if d > reach + 1e-9 or (best is not None and d >= best[0]):
+                continue
+            if safe.contains(Point(gx, gy)):
+                best = (d, (gx, gy))
+    return None if best is None else best[1]
+
+
 def grid_points(bounds, spacing=DEFAULT_SPACING_MM, inset=DEFAULT_INSET_MM,
-                extent=220.0):
+                extent=220.0, safe=None, moved=None):
     """Where to measure over a job whose bed bounds are ``bounds`` (x0, y0,
     x1, y1, mm): a grid at most ``spacing`` apart, ``inset`` in from the
     edges, every point on the factory's 10 mm grid and inside the job. The
-    four corners and the middle at least; a point is never measured twice."""
+    four corners and the middle at least; a point is never measured twice.
+
+    With ``safe`` (:func:`safe_area`) a point that would land outside it - in
+    a hole, on the cut-out - goes to the nearest grid point inside it within
+    half a spacing, or is left out; ``moved`` (a list) gets ``(was, now)``
+    for each, ``now`` None for one left out."""
     x0, y0, x1, y1 = bounds
     ax0, ay0 = x0 + inset, y0 + inset
     ax1, ay1 = max(x1 - inset, ax0), max(y1 - inset, ay0)
@@ -70,6 +134,17 @@ def grid_points(bounds, spacing=DEFAULT_SPACING_MM, inset=DEFAULT_INSET_MM,
     pts.append(mid)
     out = []
     for p in pts:
+        if safe is not None:
+            from shapely.geometry import Point
+            if not safe.contains(Point(*p)):
+                now = clear_point(p[0], p[1], safe,
+                                  search=max(spacing / 2.0, GRID_MM),
+                                  extent=extent)
+                if moved is not None:
+                    moved.append((p, now))
+                if now is None:
+                    continue
+                p = now
         if p not in out:
             out.append(p)
     return out

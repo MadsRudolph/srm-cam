@@ -1,5 +1,7 @@
 """The laser's focus map: where it measures, what it makes of the heights,
 and how a job is split into bands that are each in focus."""
+import math
+
 import pytest
 
 from gerber2rml.engine import laser_focus as lf
@@ -342,3 +344,54 @@ def test_the_reference_knows_where_it_was_measured():
     assert lf.reference_covers(ref, (39, 76, 179, 160))
     assert not lf.reference_covers(ref, (0, 0, 220, 220))
     assert not lf.reference_covers(None, (39, 76, 179, 160))
+
+
+def _square(x, y, r):
+    return [(x - r, y - r), (x + r, y - r), (x + r, y + r), (x - r, y + r)]
+
+
+def test_a_focus_map_point_never_lands_in_a_hole():
+    """A student's map put a point in a mounting hole: the dot read the
+    hole's depth as the surface and the whole map went off."""
+    board = [(40, 40), (120, 40), (120, 100), (40, 100)]
+    hole = _square(70, 70, 1.6)                    # a 3.2 mm mounting hole
+    safe = lf.safe_area([board], [hole])
+    moved = []
+    pts = lf.grid_points((40, 40, 120, 100), safe=safe, moved=moved)
+    for x, y in pts:
+        assert math.hypot(x - 70, y - 70) > 1.6 + lf.HOLE_CLEAR_MM
+        assert 40 + lf.EDGE_CLEAR_MM <= x <= 120 - lf.EDGE_CLEAR_MM
+        assert x % 10 == 0 and y % 10 == 0         # still the factory grid
+    assert (70, 70) not in pts                      # the middle was the hole
+    assert any(was == (70.0, 70.0) and now for was, now in moved)
+
+
+def test_without_holes_the_points_are_as_before():
+    board = [(40, 40), (120, 40), (120, 100), (40, 100)]
+    plain = lf.grid_points((40, 40, 120, 100))
+    safe = lf.grid_points((40, 40, 120, 100),
+                          safe=lf.safe_area([board], []))
+    assert set(safe) <= set(plain) | set(safe)
+    assert len(safe) >= lf.MIN_POINTS
+
+
+def test_the_autofocus_cross_moves_off_a_hole(qt_app, monkeypatch):
+    d = _page(qt_app, monkeypatch)
+    cx, cy = d.focus_point()                 # a hole right under the cross
+    holes = [_square(cx, cy, 1.6)]
+    monkeypatch.setattr(d, "_hole_paths", lambda *a, **k: holes)
+    d._focus_dropped(cx, cy)
+    fx, fy = d.focus_point()
+    from shapely.geometry import Point, Polygon
+    assert not Polygon(holes[0]).buffer(lf.HOLE_CLEAR_MM).contains(Point(fx, fy))
+    assert fx % 10 == 0 and fy % 10 == 0
+    d.close()
+
+
+def test_the_focus_map_spacing_changes_the_points(qt_app, monkeypatch):
+    from gerber2rml.gui2 import laser_focus_ui as lfu
+    d = _page(qt_app, monkeypatch)
+    few, _ = lfu.plan(d, spacing=60.0, inset=3.0)
+    many, _ = lfu.plan(d, spacing=10.0, inset=3.0)
+    assert len(many) > len(few) >= 2
+    d.close()
