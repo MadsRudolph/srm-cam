@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
 
 from gerber2rml.engine import xtool
 from gerber2rml.gui2 import background, theme, widgets
+from gerber2rml.gui2 import laser_focus_ui as _lfu
 from gerber2rml.gui2.undo import PlacementUndo, install as install_undo
 
 _SETTINGS = ("SRM-CAM", "stencil-laser")
@@ -1062,6 +1063,28 @@ class StencilLaserDialog(QDialog):
             "Forget", kind="ghost", on=lambda: _lfu.forget_reference(self))
         ref_more.body.addWidget(_row(self.focus_ref_btn, self.focus_ref_forget))
         s.add(ref_more)
+        # How many points the focus map measures, and how far in from the
+        # board's edge. Drawn on the bed as they are changed.
+        map_more = widgets.Disclosure("Focus map points", key="laser-focus-map")
+        spacing, inset = _lfu.map_settings()
+        self.map_spacing = _spin(spacing, 10.0, 100.0, 10.0, 0, suffix=" mm")
+        self.map_inset = _spin(inset, 2.0, 40.0, 1.0, 1, suffix=" mm")
+        map_more.body.addWidget(widgets.Field(
+            "Points every", self.map_spacing,
+            help="Closer gives more points: a better map of a bowed board, "
+                 "and a longer measurement."))
+        map_more.body.addWidget(widgets.Field(
+            "In from the edge", self.map_inset,
+            help="How far in from the board's outline the outer points sit. "
+                 "Every point also keeps clear of the holes and the cut-out."))
+        self.map_plan_note = widgets.hint("")
+        map_more.body.addWidget(self.map_plan_note)
+        self.map_spacing.valueChanged.connect(self._map_settings_changed)
+        self.map_inset.valueChanged.connect(self._map_settings_changed)
+        map_more._btn.clicked.connect(
+            lambda: self._show_map_plan(map_more._expanded))
+        self.map_more = map_more
+        s.add(map_more)
         pv.addWidget(s)
 
         s = widgets.Section("Camera")
@@ -1332,6 +1355,25 @@ class StencilLaserDialog(QDialog):
                     lbl.setPos(x, y)
                     self.scene.addItem(lbl)
 
+    def _map_settings_changed(self, *_):
+        _lfu.set_map_settings(self.map_spacing.value(), self.map_inset.value())
+        self._show_map_plan(True)
+
+    def _show_map_plan(self, on=True):
+        """The points the next focus map will measure, on the bed - unless a
+        measured map is up, which keeps its own."""
+        if getattr(self, "_focus_map", None) is not None:
+            return
+        if not on:
+            self.show_focus_points([])
+            self.map_plan_note.setText("")
+            return
+        pts, moved = _lfu.plan(self)
+        self.show_focus_points([(x, y, None) for x, y in pts])
+        self.map_plan_note.setText(
+            f"{len(pts)} points." + _lfu._moved_words(moved)
+            if pts else "Nothing loaded.")
+
     def show_focus_points(self, points):
         """The focus map on the bed: each measured point, and how far it was
         from focus (mm, + above)."""
@@ -1341,6 +1383,13 @@ class StencilLaserDialog(QDialog):
         for x, y, dz in points:
             path = QPainterPath()
             path.addEllipse(QPointF(x, y), 1.2, 1.2)
+            if dz is None:              # planned, not measured yet
+                marker = self.scene.addPath(path, _pen(theme.PROBE, 1.2))
+                marker.setZValue(26)
+                marker.setAcceptedMouseButtons(Qt.NoButton)
+                marker.setToolTip("The focus map will measure here")
+                self._focus_marks.append(marker)
+                continue
             colour = theme.CAUTION if abs(dz) > 0.15 else theme.VERIFIED
             marker = self.scene.addPath(path, _pen(colour, 1.6))
             label = self.scene.addSimpleText(f"{dz:+.2f}")
@@ -2016,9 +2065,23 @@ class StencilLaserDialog(QDialog):
             self.redo_btn.setEnabled(self.undo.can_redo())
 
     def focus_point(self):
+        """Where Autofocus measures: the cross, on the factory's 10 mm grid -
+        and never in a hole or on the cut-out, where the dot reads the hole's
+        depth as the surface. A cross that lands there goes to the nearest
+        grid point clear of them."""
         cx, cy = self.centre()
         dx, dy = self._focus_offset or (0.0, 0.0)
-        return xtool.snap_to_grid((cx + dx, cy + dy))
+        at = xtool.snap_to_grid((cx + dx, cy + dy))
+        try:
+            from gerber2rml.engine import laser_focus as lf
+            safe = _lfu.cross_safe(self)
+            if safe is not None and not safe.is_empty:
+                from shapely.geometry import Point
+                if not safe.contains(Point(*at)):
+                    at = lf.clear_point(cx + dx, cy + dy, safe) or at
+        except Exception:                   # noqa: BLE001 - keep the cross
+            pass
+        return at
 
     def _place_focus_mark(self):
         self._focus_mark.setPos(*self.focus_point())

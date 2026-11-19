@@ -23,6 +23,88 @@ def job_bounds(page):
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _outline_rings(page):
+    art = page.art
+    _w, h = art.size
+    return [xtool.to_bed(list(poly.exterior.coords), page.origin(), h)
+            for poly in getattr(art.outline, "geoms", [art.outline])]
+
+
+def safe_area(page):
+    """Where the blue dot may measure on this job: on the board, clear of its
+    holes and of the cut-out (:func:`engine.laser_focus.safe_area`). None
+    when nothing is loaded."""
+    art = getattr(page, "art", None)
+    if art is None or getattr(page, "_empty", False):
+        return None
+    holes = [list(r) for r in page._hole_paths()] if hasattr(
+        page, "_hole_paths") else []
+    return lf.safe_area(_outline_rings(page), holes)
+
+
+def cross_safe(page):
+    """Where Autofocus's cross may measure: anywhere on the bed but in or by
+    a hole or on the cut-out line - on the waste beside the board too."""
+    art = getattr(page, "art", None)
+    if art is None or getattr(page, "_empty", False):
+        return None
+    from shapely.geometry import box
+    holes = [list(r) for r in page._hole_paths()] if hasattr(
+        page, "_hole_paths") else []
+    return box(0, 0, 220, 220).difference(
+        lf.keep_out(_outline_rings(page), holes))
+
+
+# The map's points: how far apart, and how far in from the board's edge.
+# Kept with the page's settings; changed under Focus ▸ Focus map points.
+SPACING_KEY, INSET_KEY = "focus_map_spacing", "focus_map_inset"
+
+
+def map_settings():
+    cfg = _settings()
+    try:
+        spacing = float(cfg.value(SPACING_KEY, lf.DEFAULT_SPACING_MM))
+        inset = float(cfg.value(INSET_KEY, lf.DEFAULT_INSET_MM))
+    except (TypeError, ValueError):
+        spacing, inset = lf.DEFAULT_SPACING_MM, lf.DEFAULT_INSET_MM
+    return spacing, inset
+
+
+def set_map_settings(spacing, inset):
+    cfg = _settings()
+    cfg.setValue(SPACING_KEY, float(spacing))
+    cfg.setValue(INSET_KEY, float(inset))
+
+
+def plan(page, spacing=None, inset=None):
+    """``(points, moved)``: where the map will measure on this job, and the
+    points that were moved off a hole or the edge (``(was, now)``, ``now``
+    None for one left out). ``([], [])`` with nothing loaded."""
+    bounds = job_bounds(page)
+    if bounds is None:
+        return [], []
+    s, i = map_settings()
+    spacing = s if spacing is None else spacing
+    inset = i if inset is None else inset
+    moved = []
+    pts = lf.grid_points(bounds, spacing=spacing, inset=inset,
+                         safe=safe_area(page), moved=moved)
+    return pts, moved
+
+
+def _moved_words(moved):
+    if not moved:
+        return ""
+    off = [m for m in moved if m[1] is not None]
+    gone = [m for m in moved if m[1] is None]
+    words = []
+    if off:
+        words.append(f"{len(off)} moved off a hole or the board's edge")
+    if gone:
+        words.append(f"{len(gone)} left out (no clear spot near)")
+    return " Points: " + " and ".join(words) + "."
+
+
 def shape_centres(page, indices):
     """The middle of each of ``art.apertures[i]`` on the bed."""
     art = page.art
@@ -93,7 +175,8 @@ def calibrate(page):
     if bounds is None:
         return page._say("Load a job as big as the flat sheet first: the "
                          "correction is measured over its area.", warn=True)
-    points = lf.grid_points(bounds, spacing=REFERENCE_SPACING_MM)
+    points = lf.grid_points(bounds, spacing=REFERENCE_SPACING_MM,
+                            safe=safe_area(page))
     centre = lf.REFERENCE_CENTRE
     if not (bounds[0] <= centre[0] <= bounds[2] and bounds[1] <= centre[1] <= bounds[3]):
         return page._say(f"The job must cover the middle of the bed (X {centre[0]:g} "
@@ -132,7 +215,11 @@ def measure(page):
     bounds = job_bounds(page)
     if bounds is None:
         return page._say("Nothing loaded to measure over.", warn=True)
-    points = lf.grid_points(bounds)
+    points, moved = plan(page)
+    if len(points) < lf.MIN_POINTS:
+        return page._say("There is not room for a focus map clear of the "
+                         "holes and the board's edge: make the points closer "
+                         "together under Focus ▸ Focus map points.", warn=True)
     ref = load_reference()
 
     def work(progress):
@@ -148,7 +235,7 @@ def measure(page):
         else:
             zones = lf.plan_zones([[c] for c in shape_centres(
                 page, range(len(page.art.apertures)))], fmap)
-        words = "Focus map: " + lf.describe(fmap, zones)
+        words = "Focus map: " + lf.describe(fmap, zones) + _moved_words(moved)
         if ref is None:
             return words + (" Not corrected for the machine's own error: "
                             "measure the correction on a flat sheet first.")
