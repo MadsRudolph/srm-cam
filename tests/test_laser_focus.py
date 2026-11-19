@@ -191,7 +191,7 @@ def test_run_zoned_without_a_map_just_runs():
 
 
 def test_the_laser_page_runs_a_tilted_board_in_bands(qt_app, monkeypatch):
-    """A mask job over a board tilted 0.6 mm across: the page runs it in
+    """A mask job over a board tilted 1.2 mm across: the page runs it in
     bands, each at its own height, and every shape once."""
     import time
     from shapely.geometry import box
@@ -227,8 +227,8 @@ def test_the_laser_page_runs_a_tilted_board_in_bands(qt_app, monkeypatch):
     d.photo_after.setChecked(False)
     x0, y0, x1, y1 = __import__(
         "gerber2rml.gui2.laser_focus_ui", fromlist=["x"]).job_bounds(d)
-    d._focus_map = lf.FocusMap([(x0, y0, 0.0), (x1, y0, 0.6),
-                                (x0, y1, 0.0), (x1, y1, 0.6)], z=10.0)
+    d._focus_map = lf.FocusMap([(x0, y0, 0.0), (x1, y0, 1.2),
+                                (x0, y1, 0.0), (x1, y1, 1.2)], z=10.0)
     d._fill()
     t0 = time.time()
     while d._worker_running() and time.time() - t0 < 20:
@@ -238,7 +238,7 @@ def test_the_laser_page_runs_a_tilted_board_in_bands(qt_app, monkeypatch):
     zs = [e[1] for e in log if e[0] == "z"]
     assert len(runs) >= 2, log
     assert zs[-1] == 10.0                       # back where it was measured
-    assert min(zs[:-1]) < 10.2 and max(zs[:-1]) > 10.4
+    assert min(zs[:-1]) < 10.4 and max(zs[:-1]) > 10.8
     d.close()
 
 
@@ -305,15 +305,15 @@ def test_bands_follow_the_surface_not_each_regions_middle():
     """A board tilted up the bed: the isolation round its edge is one region
     centred in the middle, but its front and back must run at their own
     heights. The bands split the area by height and cover it once."""
-    m = lf.FocusMap([(0, 0, -0.6), (100, 0, -0.6), (0, 100, 0.6),
-                     (100, 100, 0.6), (50, 50, 0.0)])
+    m = lf.FocusMap([(0, 0, -1.2), (100, 0, -1.2), (0, 100, 1.2),
+                     (100, 100, 1.2), (50, 50, 0.0)])
     bands = lf.band_boxes(m, (0, 0, 100, 100))
     assert len(bands) >= 4
     dzs = [dz for dz, _b in bands]
-    assert dzs == sorted(dzs) and dzs[0] < -0.4 and dzs[-1] > 0.4
+    assert dzs == sorted(dzs) and dzs[0] < -0.8 and dzs[-1] > 0.8
     area = sum((x1 - x0) * (y1 - y0) for _dz, bx in bands for x0, y0, x1, y1 in bx)
     assert area == pytest.approx(102 * 102)
-    front = [b for dz, bx in bands if dz < -0.4 for b in bx]
+    front = [b for dz, bx in bands if dz < -0.8 for b in bx]
     assert max(b[3] for b in front) < 50
 
 
