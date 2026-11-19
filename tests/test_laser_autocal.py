@@ -71,7 +71,7 @@ def test_calibrate_runs_every_step_and_says_ready(qt_app, page, monkeypatch):
     r = _wait(qt_app, page)
     assert r["ok"] and r["complete"]
     assert r["verdict"].startswith("Ready to cut")
-    assert [l[:3] for l in r["lines"]] == ["✓ F", "✓ A", "✓ C", "✓ F"]
+    assert [l[:3] for l in r["lines"]] == ["✓ F", "✓ A", "✓ C"]
     assert "Ready to cut" in page.proof_note.text()
     assert page.cut_btn.isEnabled()
 
@@ -91,12 +91,14 @@ def test_a_failed_step_stops_the_run_and_cuts_nothing(qt_app, page, monkeypatch)
     assert mapped == [] and cut == []
 
 
-def test_a_bowed_sheet_is_called_out(qt_app, page, monkeypatch):
-    _all_good(page, monkeypatch, fmap_spread=1.6)
+def test_calibrate_does_not_map_the_focus(qt_app, page, monkeypatch):
+    """Flat stock does not need it (field test, 2026-11-19)."""
+    _all_good(page, monkeypatch)
+    mapped = []
+    monkeypatch.setattr(ac._lfu, "measure", lambda p: mapped.append(1))
     ac.start(page)
     r = _wait(qt_app, page)
-    assert r["complete"] and not r["ok"]
-    assert any("out of flat" in w for w in r["warnings"])
+    assert r["ok"] and mapped == []
 
 
 def test_calibrate_is_only_for_a_loaded_traces_job(qt_app, monkeypatch):

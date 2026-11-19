@@ -30,9 +30,10 @@ from dataclasses import dataclass, field
 GRID_MM = 10.0            # the factory calibration's grid
 DEFAULT_SPACING_MM = 30.0
 DEFAULT_INSET_MM = 3.0
-# How far off focus still etches cleanly, mm either way. The F1 Ultra's
-# field lens holds about this; a band is at most twice it deep.
-DEFAULT_TOLERANCE_MM = 0.15
+# How far off focus still etches cleanly, mm either way; a band is at most
+# twice it deep. The field test (2026-11-19) cleared the same at -0.3 and
+# +0.3 mm as at focus, so a sheet is banded only past that.
+DEFAULT_TOLERANCE_MM = 0.3
 MIN_POINTS = 3            # a map from fewer is not a map: say so instead
 # Where the blue dot may land. In a hole it does not fail: it reads the hole's
 # depth as the surface, and the whole map goes off (seen on a student's PC,

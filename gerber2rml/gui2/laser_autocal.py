@@ -12,9 +12,7 @@ exactly as a person would press them:
    cut-out (``StencilLaserDialog.focus_point``).
 3. **Calibrate and lock onto the holes**: the proof marks correct the camera,
    then the holes in the same photo put the job exactly on them.
-4. **Focus map** over the board, its points clear of the holes, so a bowed or
-   tilted sheet is cut in focus.
-5. **The report**: every step with its numbers and a verdict. Cut stays the
+4. **The report**: every step with its numbers and a verdict. Cut stays the
    person's to press.
 
 A step that fails stops the run there and says which and why; nothing is cut
@@ -99,8 +97,11 @@ class AutoCalibration:
             ("Find the board", lambda: find_board(page), self._found),
             ("Autofocus", lambda: page.autofocus(), self._ok),
             ("Camera and holes", page.proof, self._proof),
-            ("Focus map", lambda: _lfu.measure(page), self._mapped),
         ]
+        # No focus map: on stock lying flat, +-0.3 mm from the middle's
+        # focus made no difference in the field test (2026-11-19), and the
+        # map's points are one more thing to go wrong. Focus map stays a
+        # button for a sheet that is not flat.
         self.results = []          # (name, ok, message)
         self.i = -1
 
@@ -117,9 +118,6 @@ class AutoCalibration:
             return False
         has_holes = len(self.page.base_art.drills or []) >= 2
         return "holes" in lp if has_holes else True
-
-    def _mapped(self, msg, warn):
-        return not warn and getattr(self.page, "_focus_map", None) is not None
 
     # -- the run -------------------------------------------------------------
     def start(self):

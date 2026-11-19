@@ -543,7 +543,8 @@ def test_concentric_traces_job_beats_rubout_and_clears_drills():
     lines = con_job.text.split("\r\n")
     assert "G22" in lines and "G0Q30" in lines and "G21" not in lines
     assert any(l.endswith("S1000F36000") for l in lines)
-    assert len(con_job.timeline) == 10
+    # 10 passes, then the edge of the field's 5 more (xtool.EDGE_PASSES).
+    assert len(con_job.timeline) == 10 + xtool.EDGE_PASSES
     # Alternating offset sweep order between round 0 and round 1
     groups, _ = xtool.traces_rings(art, (40.0, 40.0), xtool.DEFAULT_TRACES_RECIPE)
     assert len(groups) == 6
