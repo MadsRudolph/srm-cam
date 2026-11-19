@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
 from gerber2rml.engine import xtool
 from gerber2rml.gui2 import background, theme, widgets
 from gerber2rml.gui2 import laser_focus_ui as _lfu
+from gerber2rml.gui2 import laser_autocal as _autocal
 from gerber2rml.gui2.undo import PlacementUndo, install as install_undo
 
 _SETTINGS = ("SRM-CAM", "stencil-laser")
@@ -1252,13 +1253,20 @@ class StencilLaserDialog(QDialog):
         self.trace_btn = widgets.button(
             "Show where", on=self.trace,
             tip="The blue diode round the outline, faint enough not to mark steel")
+        # The whole set-up of a traces job, one press (gui2/laser_autocal.py).
+        self.autocal_btn = widgets.button(
+            "Calibrate", kind="primary", on=lambda: _autocal.start(self),
+            tip="Finds the board on the bed, autofocuses, corrects the camera "
+                "and locks onto the drilled holes, then maps the focus - and "
+                "says whether it is ready to cut. Cut is still yours to press.")
         self.cut_btn = widgets.button("Cut", kind="primary", on=self.cut)
-        self.cut_btn.setMinimumWidth(150)
+        self.cut_btn.setMinimumWidth(130)
         self.stop_btn = widgets.button("STOP", kind="stop", on=self.stop)
         self.stop_btn.setMinimumWidth(112)
         readouts = _group(self.cursor_read, self.sel_read, self.time_read,
                           gap=theme.GAP_M)
-        runs = _group(self.photo_after, self.trace_btn, self.cut_btn,
+        runs = _group(self.photo_after, self.trace_btn, self.autocal_btn,
+                      self.cut_btn,
                       self.stop_btn, gap=theme.GAP_M)
         foot = _Reflow(readouts, mid, runs, move_first=True, stretch=1, room=240,
                        joint=widgets.vrule(),
@@ -3052,6 +3060,8 @@ class StencilLaserDialog(QDialog):
                "marks go beside it or on copper the job removes anyway."))
         for w in (self.proof_hint, self.proof_btn):
             w.setVisible(on)
+        if hasattr(self, "autocal_btn"):
+            self.autocal_btn.setVisible(on)
         self.proof_more.setVisible(on and self._pro())
         if not on:
             self.proof_note.setVisible(False)
@@ -3506,12 +3516,14 @@ class StencilLaserDialog(QDialog):
                           if "answer" in msg else "warn")
         self._paint()
         self._say(msg, warn=warn)
+        _autocal.after_step(self, msg, warn)
 
     def _busy(self, on):
         for b in (self.photo_btn, self.focus_btn, self.focus_map_btn, self.align_btn, self.set_focus_btn,
                   self.focus_ref_btn, self.focus_ref_forget,
                   self.learn_btn, self.reset_off_btn,
-                  self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
+                  self.trace_btn, self.cut_btn, self.autocal_btn,
+                  self.rot_l, self.rot_r,
                   self.mode, self.job_switch, self.strategy,
                   self.rework_btn, self.rework_clear_btn, self.rework_passes,
                   self.all_btn, self.none_btn, self.x, self.y,
