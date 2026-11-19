@@ -1440,6 +1440,26 @@ class AutoRun:
             nom, seen = [g[0] for g in got], [g[1] for g in got]
             t = fit_transform(nom, seen, allow_scale=False)
             worst = max(residuals(t, nom, seen))
+            if worst > FIT_WORST_MM and len(got) >= 4:
+                # One hole misread - the finder caught the edge of a hole
+                # milled out of round (drums2, 2026-11-19: three agreed to
+                # 0.02 mm, the fourth was 0.2 off). Three still check each
+                # other, so the one the others disagree with is left out.
+                best = None
+                for drop in range(len(got)):
+                    n = nom[:drop] + nom[drop + 1:]
+                    m = seen[:drop] + seen[drop + 1:]
+                    tt = fit_transform(n, m, allow_scale=False)
+                    w = max(residuals(tt, n, m))
+                    if best is None or w < best[0]:
+                        best = (w, drop, tt)
+                if best[0] <= FIT_WORST_MM:
+                    w, drop, t = best
+                    which = nominal.index(nom[drop]) + 1
+                    self.ev.note("Hole %d disagrees with the others by "
+                                 "%.2f mm and is left out." % (which, worst))
+                    worst = w
+                    got = got[:drop] + got[drop + 1:]
             if worst > FIT_WORST_MM:
                 raise RunFailed("the board's holes disagree by %.2f mm - one "
                                 "was misread. Nothing was cut." % worst)

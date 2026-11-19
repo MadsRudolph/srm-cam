@@ -596,3 +596,37 @@ def test_realign_refuses_a_board_without_holes_to_find():
     with pytest.raises(RunFailed, match="no holes to line it up with"):
         run.run()
     assert sent == []
+
+
+def test_one_misread_hole_of_four_is_left_out(monkeypatch):
+    """drums2, 2026-11-19: holes 1, 3 and 4 agreed to 0.02 mm, hole 2 was
+    read 0.2 mm off; the run refused. Three still check each other."""
+    m, ser, board, log, run = _run(False)
+    run.pose = stockfind.StockPose(30.0, 20.0, 0.0, 100.0, 80.0, -40.0)
+    run.rotation = about(30.0, 20.0, 0.0)
+    holes = [(6.0, 6.0, 3.2), (122.46, 6.0, 3.2), (122.46, 84.36, 3.2),
+             (6.0, 84.36, 3.2)]
+    board.realign_holes = lambda: holes
+    seen = iter([(53.21, 39.93), (169.67, 39.12), (170.02, 117.75),
+                 (53.53, 118.27)])
+    monkeypatch.setattr(run, "_locate", lambda *a, **k: next(seen))
+    notes = []
+    log.note = notes.append
+    t = run._realign()
+    assert any("Hole 2 disagrees" in n for n in notes)
+    assert any("3 of 4 found" in n for n in notes)
+    assert math.hypot(*(a - b for a, b in zip(t.apply(6.0, 84.36),
+                                              (53.53, 118.27)))) < 0.03
+
+
+def test_two_bad_holes_of_four_still_stop_the_run(monkeypatch):
+    m, ser, board, log, run = _run(False)
+    run.pose = stockfind.StockPose(30.0, 20.0, 0.0, 100.0, 80.0, -40.0)
+    run.rotation = about(30.0, 20.0, 0.0)
+    board.realign_holes = lambda: [(6.0, 6.0, 3.2), (122.46, 6.0, 3.2),
+                                   (122.46, 84.36, 3.2), (6.0, 84.36, 3.2)]
+    seen = iter([(53.21, 39.93), (169.67, 38.6), (170.6, 117.75),
+                 (53.53, 118.27)])
+    monkeypatch.setattr(run, "_locate", lambda *a, **k: next(seen))
+    with pytest.raises(RunFailed, match="disagree"):
+        run._realign()
