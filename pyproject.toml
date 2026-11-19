@@ -48,6 +48,9 @@ srm-cam-classic = "gerber2rml.gui.app:main"
 [tool.setuptools.packages.find]
 include = ["gerber2rml*"]
 
+[tool.setuptools.package-data]
+gerber2rml = ["data/*.json"]
+
 [tool.pytest.ini_options]
 markers = [
     "exact_pads: load oval and macro pads as their true shapes, as the app does, opting out of the conftest fixture that keeps the bounding boxes the fixtures were made with",
