@@ -50,7 +50,10 @@ def test_passing_over_a_box_scrolls_the_panel_not_the_value(qt_app):
 
 def test_a_box_clicked_into_still_takes_the_wheel(qt_app):
     area, spin, combo = _panel(qt_app)
-    spin.setFocus()
+    from PySide6.QtTest import QTest
+    area.activateWindow()
+    qt_app.processEvents()
+    QTest.mouseClick(spin.lineEdit(), Qt.LeftButton)   # clicked into
     qt_app.processEvents()
     _wheel(spin, down=False)
     assert spin.value() == 51
@@ -73,3 +76,12 @@ def test_scroll_bars_are_left_alone(qt_app):
     _wheel(bar)
     assert bar.value() > 0
     bar.close()
+
+
+def test_focus_a_window_gave_on_opening_does_not_arm_a_box(qt_app):
+    area, spin, combo = _panel(qt_app)
+    spin.setFocus(Qt.ActiveWindowFocusReason)
+    qt_app.processEvents()
+    _wheel(spin)
+    assert spin.value() == 50
+    area.close()
