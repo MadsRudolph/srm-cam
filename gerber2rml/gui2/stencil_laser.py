@@ -381,6 +381,9 @@ class _BedView(QGraphicsView):
         self._last_band = QRectF()
         self._pan = None
         self.pick_reference = False
+        # While the laser runs: still zoom, pan and fit to look round the
+        # bed, but nothing that changes the job.
+        self.locked = False
 
     def fit(self):
         self._fitted = True
@@ -408,6 +411,9 @@ class _BedView(QGraphicsView):
         self.fit()
 
     def mousePressEvent(self, e):
+        if self.locked and e.button() != Qt.MiddleButton:
+            e.accept()
+            return
         if self.pick_reference and e.button() == Qt.LeftButton:
             self.reference_clicked.emit(self.mapToScene(e.position().toPoint()))
             e.accept()
@@ -430,6 +436,9 @@ class _BedView(QGraphicsView):
         super().mouseMoveEvent(e)
 
     def keyPressEvent(self, e):
+        if self.locked:
+            e.ignore()
+            return
         step = 0.1
         if e.modifiers() & Qt.ShiftModifier:
             step = 1.0
@@ -446,6 +455,8 @@ class _BedView(QGraphicsView):
         super().keyPressEvent(e)
 
     def contextMenuEvent(self, e):
+        if self.locked:
+            return
         self.context.emit(self.mapToScene(e.pos()), e.globalPos())
 
     def set_select_mode(self, on):
@@ -463,6 +474,9 @@ class _BedView(QGraphicsView):
         if self._pan is not None and e.button() == Qt.MiddleButton:
             self._pan = None
             self.unsetCursor()
+            return
+        if self.locked:
+            e.accept()
             return
         band = self._last_band
         self._last_band = QRectF()
@@ -3608,7 +3622,9 @@ class StencilLaserDialog(QDialog):
         if self.item is not None:
             self.item.setFlag(QGraphicsItem.ItemIsMovable,
                               not on and not self.view.select_mode and not self.view.pick_reference)
-        self.view.setEnabled(not on)
+        # Not disabled: the bed can still be zoomed and panned while the
+        # laser runs; only what would change the job is locked.
+        self.view.locked = on
 
     def _say(self, text, warn=False):
         self.status.setText(text)
