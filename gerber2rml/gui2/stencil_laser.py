@@ -1047,6 +1047,21 @@ class StencilLaserDialog(QDialog):
         focus_more.body.addWidget(
             _row((widgets.Field("By hand", self.thickness), 1), self.set_focus_btn))
         s.add(focus_more)
+        # The focus map's correction for the machine's own error
+        # (gui2/laser_focus_ui.py), measured once on a flat sheet.
+        ref_more = widgets.Disclosure("Focus map correction", key="laser-focus-ref")
+        self.focus_ref_note = widgets.hint(_lfu.reference_status())
+        ref_more.body.addWidget(self.focus_ref_note)
+        self.focus_ref_btn = widgets.button(
+            "Measure on a flat sheet", on=lambda: _lfu.calibrate(self),
+            tip="Fresh copper-clad lying flat on the bed, a job loaded as big "
+                "as the sheet and covering the middle of the bed, Autofocus "
+                "first. Every later focus map has what the dot reads here "
+                "taken off.")
+        self.focus_ref_forget = widgets.button(
+            "Forget", kind="ghost", on=lambda: _lfu.forget_reference(self))
+        ref_more.body.addWidget(_row(self.focus_ref_btn, self.focus_ref_forget))
+        s.add(ref_more)
         pv.addWidget(s)
 
         s = widgets.Section("Camera")
@@ -3181,7 +3196,9 @@ class StencilLaserDialog(QDialog):
         at = at or self.focus_point()
 
         def work(_p):
-            z = self.laser.autofocus(self._calibration(), at)
+            from gerber2rml.gui2 import laser_focus_ui as _lfu
+            z = self.laser.autofocus(self._calibration(), at,
+                                     bias=_lfu.bias_at(at))
             return z, self._photo()
 
         def done(result):
@@ -3308,11 +3325,23 @@ class StencilLaserDialog(QDialog):
             from gerber2rml.gui2 import laser_focus_ui as _lfu
             recipe = self._run_recipe()
             if self.kind == "traces":
-                zones = _lfu.zones_for(self, sorted(picked))
+                # Banded by where the paths lie, not by each region's middle:
+                # the isolation round the edge is one region centred on the
+                # board, and the edge is what the map is for.
                 origin = self.origin()
+                only = self._traces_only()
+                zones = []
+                for dz, boxes in _lf.band_boxes(fmap, _lfu.job_bounds(self)):
+                    try:
+                        xtool.traces_job(self.art, origin, recipe, only=only,
+                                         boxes=boxes, write=False)
+                    except ValueError:      # nothing of this job in that band
+                        continue
+                    zones.append((dz, boxes))
 
-                def build(idx):
-                    return xtool.traces_job(self.art, origin, recipe, only=idx)
+                def build(boxes):
+                    return xtool.traces_job(self.art, origin, recipe, only=only,
+                                            boxes=sorted(boxes))
             else:
                 shapes = self._shapes()
                 _, outline = xtool.stencil_paths(self.art, self.origin())
@@ -3417,6 +3446,7 @@ class StencilLaserDialog(QDialog):
 
     def _busy(self, on):
         for b in (self.photo_btn, self.focus_btn, self.focus_map_btn, self.align_btn, self.set_focus_btn,
+                  self.focus_ref_btn, self.focus_ref_forget,
                   self.learn_btn, self.reset_off_btn,
                   self.trace_btn, self.cut_btn, self.rot_l, self.rot_r,
                   self.mode, self.job_switch, self.strategy,

@@ -1,0 +1,15 @@
+%TF.FileFunction,Profile,NP*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Laser focus map test board, 140 x 84 mm*
+%MOMM*%
+%LPD*%
+G01*
+%ADD10C,0.100*%
+D10*
+X0Y0D02*
+X140000000Y0D01*
+X140000000Y84000000D01*
+X0Y84000000D01*
+X0Y0D01*
+M02*
