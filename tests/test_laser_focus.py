@@ -83,6 +83,48 @@ def test_measure_map_walks_the_points_and_ends_idle():
     assert calls == ["P_AUTOFOCUS", "P_IDLE"]
 
 
+def test_a_point_without_a_dot_is_left_out_not_the_whole_map():
+    from gerber2rml.engine.xtool_camera import CameraError
+    calls = []
+
+    class Laser:
+        def _json(self, method, path, body=None):
+            calls.append(body["state"])
+
+        def z(self):
+            return 12.0
+
+        def measure(self, cal, at):
+            if at == (20, 10):
+                raise CameraError("No dot in the photo")
+            return 0.1
+
+    m = lf.measure_map(Laser(), None, [(10, 10), (20, 10), (30, 10), (40, 10)])
+    assert [p[:2] for p in m.points] == [(10, 10), (30, 10), (40, 10)]
+    assert m.skipped == [(20.0, 10.0)] and calls == ["P_AUTOFOCUS", "P_IDLE"]
+    assert "1 left out" in lf.describe(m, lf.plan_zones([[(10, 10)]], m))
+
+
+def test_a_map_with_too_few_points_read_fails():
+    import pytest
+    from gerber2rml.engine.xtool_camera import CameraError
+
+    class Laser:
+        def _json(self, method, path, body=None):
+            pass
+
+        def z(self):
+            return 12.0
+
+        def measure(self, cal, at):
+            if at != (10, 10):
+                raise CameraError("No dot in the photo")
+            return 0.0
+
+    with pytest.raises(CameraError, match="Only 1 of 3"):
+        lf.measure_map(Laser(), None, [(10, 10), (20, 10), (30, 10)])
+
+
 def test_zone_indices_keep_every_shape_once():
     m = lf.FocusMap([(0, 0, 0.0), (200, 0, 0.8)])
     centres = [(x, 0) for x in range(0, 201, 20)]
@@ -255,3 +297,48 @@ def test_the_focus_moves_with_the_design(qt_app, monkeypatch):
     d.rotate(1)                           # a quarter turn clockwise
     assert d.focus_point() == (80, 110)   # right of the middle -> below it
     d.close()
+
+
+def test_bands_follow_the_surface_not_each_regions_middle():
+    """A board tilted up the bed: the isolation round its edge is one region
+    centred in the middle, but its front and back must run at their own
+    heights. The bands split the area by height and cover it once."""
+    m = lf.FocusMap([(0, 0, -0.6), (100, 0, -0.6), (0, 100, 0.6),
+                     (100, 100, 0.6), (50, 50, 0.0)])
+    bands = lf.band_boxes(m, (0, 0, 100, 100))
+    assert len(bands) >= 4
+    dzs = [dz for dz, _b in bands]
+    assert dzs == sorted(dzs) and dzs[0] < -0.4 and dzs[-1] > 0.4
+    area = sum((x1 - x0) * (y1 - y0) for _dz, bx in bands for x0, y0, x1, y1 in bx)
+    assert area == pytest.approx(102 * 102)
+    front = [b for dz, bx in bands if dz < -0.4 for b in bx]
+    assert max(b[3] for b in front) < 50
+
+
+def test_a_flat_map_is_one_band():
+    m = lf.FocusMap([(0, 0, 0.05), (100, 100, -0.05)])
+    assert len(lf.band_boxes(m, (0, 0, 100, 100))) == 1
+
+
+def test_the_machines_slope_is_taken_off_and_a_real_tilt_kept():
+    """On a flat sheet the dot read a slope up the bed; measured once as the
+    reference, it comes off later maps, and only what is really there stays."""
+    slope = lambda y: (y - 110) * 0.014
+    flat = lf.FocusMap([(x, y, slope(y) + 0.3) for x in (40, 110, 180)
+                        for y in (80, 110, 160)], z=19.0)
+    ref = lf.reference_from(flat)
+    assert ref.at(110, 110) == pytest.approx(0.0)
+    tilted = lf.FocusMap([(x, y, slope(y) + 0.005 * (x - 110)) for x in (40, 110, 180)
+                          for y in (80, 110, 160)], z=19.0, skipped=[(1.0, 2.0)])
+    got = lf.corrected(tilted, ref)
+    for x, y, dz in got.points:
+        assert dz == pytest.approx(0.005 * (x - 110), abs=1e-9)
+    assert got.skipped == [(1.0, 2.0)] and got.z == 19.0
+    assert lf.corrected(tilted, None) is tilted
+
+
+def test_the_reference_knows_where_it_was_measured():
+    ref = lf.FocusMap([(40, 80, 0.0), (180, 160, 0.0), (110, 110, 0.0)])
+    assert lf.reference_covers(ref, (39, 76, 179, 160))
+    assert not lf.reference_covers(ref, (0, 0, 220, 220))
+    assert not lf.reference_covers(None, (39, 76, 179, 160))

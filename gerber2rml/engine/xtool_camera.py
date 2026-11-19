@@ -38,6 +38,8 @@ import numpy as np
 GRID_N = 23
 GRID_MM = 10.0
 DOT_AT = (110.0, 110.0)          # mm; the grid point (11, 11)
+DOT_MIN = 150                    # the dot's score (blue + mean), at least
+DOT_CONTRAST = 120               # and this far above the dark around it
 
 
 class CameraError(RuntimeError):
@@ -121,7 +123,12 @@ class Calibration:
             raise CameraError("The dot's search window is off the photo.")
         score = win[..., 2] + win.sum(axis=2) // 3        # blue, and bright
         top = score.max()
-        if top < 300:
+        # The lights are off, so the window is near black (median ~1) and
+        # the dot stands far above it. A dot on a cut line or the edge of a
+        # hole scatters less back: at the machine one read 282-290 where the
+        # rest read 350-510, and a fixed 300 threw away the whole focus map.
+        # So: well above the window's own background, and above a floor.
+        if top < max(DOT_MIN, np.median(score) + DOT_CONTRAST):
             raise CameraError("No dot in the photo: is the lid closed and the "
                               "material under the head?")
         ys, xs = np.nonzero(score > top - 40)
