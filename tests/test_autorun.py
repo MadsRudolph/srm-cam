@@ -630,3 +630,31 @@ def test_two_bad_holes_of_four_still_stop_the_run(monkeypatch):
     monkeypatch.setattr(run, "_locate", lambda *a, **k: next(seen))
     with pytest.raises(RunFailed, match="disagree"):
         run._realign()
+
+
+def test_holes_barely_wider_than_the_bit_are_found_too():
+    """1.0 mm holes round a 0.8 mm bit: 0.1 mm to spare either way."""
+    m, ser, board, log, run = _run(False)
+    small = lambda x, y, r=0.1, z=-1.9: ring(x, y, r, z)   # 2*(0.1+0.4) = 1.0
+    drill = board.toolpaths
+    board.toolpaths = lambda key: (
+        ([small(*board._p(15, 15)), small(*board._p(25, 15)),
+          small(*board._p(5, 25))], 4.0, 1.0) if key == "drill"
+        else drill(key))
+    assert run.run() is True
+    real = [run.rotation.apply(*board._p(x, y))
+            for x, y in ((15, 15), (25, 15), (5, 25))]
+    placed = board.place
+    board.place = lambda pose, margin_mm, flush=None: (
+        placed(pose, margin_mm),
+        setattr(board, "off", (board.off[0] + 0.3, board.off[1] + 0.2)))
+    board.realign_holes = lambda: [(*board._p(15, 15), 1.0),
+                                   (*board._p(25, 15), 1.0),
+                                   (*board._p(5, 25), 1.0)]
+    again = AutoRun(ser, sm.printer(), board, Log(), click_mm=(90, 70),
+                    stock_mm=(100, 80), double=False, runner_opts=FAST,
+                    level=False, only=["drill"], realign=True)
+    assert again.run() is True
+    for (x, y), want in zip(((15, 15), (25, 15), (5, 25)), real):
+        got = again.rotation.apply(*board._p(x, y))
+        assert math.hypot(got[0] - want[0], got[1] - want[1]) < 0.08

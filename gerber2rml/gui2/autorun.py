@@ -296,15 +296,18 @@ class WindowSource(ar.JobSource):
         return self.gui(go)
 
     def realign_holes(self):
-        """The board's mounting holes, where its drill toolpaths put them."""
+        """The board's mounting holes - or, with none, its widest drill
+        holes - where its drill toolpaths put them."""
         def go():
             from gerber2rml.engine import mountfid
             st = self.w.state
             if st.board is None or st.board.outline is None:
                 return []
-            return [tuple(h[:3]) for h in mountfid.pick(
-                st.board.holes, st.board.outline.bounds,
-                bit_mm=st.drill.bit_diameter)]
+            box, bit = st.board.outline.bounds, st.drill.bit_diameter
+            # Its mounting holes; failing those, its widest drill holes.
+            got = (mountfid.pick(st.board.holes, box, bit_mm=bit)
+                   or mountfid.pick_any(st.board.holes, box, bit_mm=bit))
+            return [tuple(h[:3]) for h in got]
         return self.gui(go)
 
     def fiducial_clearance_um(self):
