@@ -1030,3 +1030,33 @@ def test_the_window_says_which_holes_it_lines_up_with(win):
     src = WindowSource(win, lambda f: f())
     holes = src.realign_holes()
     assert src.realign_kind.startswith("%d drill holes (" % len(holes))
+
+
+def test_only_the_oval_holes_drills_just_the_slots(win, qt_app, tmp_path):
+    """Boards milled before SRM-CAM cut slots get their oval holes alone:
+    the drill step, on the slots, lined up on the board (2026-11-19)."""
+    import shutil
+    from gerber2rml.engine.mountfid import _in_slot
+    from gerber2rml.loader import slot_hits
+    page = win.autorun_page
+    # A board with a slot added to its drill data.
+    b = win.state.board
+    b.holes = list(b.holes) + slot_hits(30.0, 30.0, 30.3, 30.0, 1.8)
+    page._sync_slots()
+    assert not page.slots_chk.isHidden()
+    page.slots_chk.setChecked(True)
+    from gerber2rml.gui2.autorun import WindowSource
+    src = WindowSource(win, lambda f: f())
+    src.slots_only = True
+    key = next(s.key for s in win.plan.steps if s.op == "drill")
+    paths, _xy, _pl = src.toolpaths(key)
+    pts = [(m.x, m.y) for p in paths for m in p if m.z < 0]
+    assert pts and all(abs(x - 30.15) < 1.2 and abs(y - 30.0) < 1.2
+                       for x, y in pts)        # only round the slot
+    src.slots_only = False
+    assert len(src.toolpaths(key)[0]) > len(paths)
+
+
+def test_the_oval_holes_tick_is_hidden_without_slots(win):
+    win.autorun_page._sync_slots()
+    assert win.autorun_page.slots_chk.isHidden()

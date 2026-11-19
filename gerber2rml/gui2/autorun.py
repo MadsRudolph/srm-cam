@@ -108,6 +108,7 @@ class WindowSource(ar.JobSource):
         self.w, self.gui = win, gui
         self.keep_placement = False      # the outline is real: keep the board
         self.centre = False              # centre it on the stock found
+        self.slots_only = False          # drill only the oval holes
 
     def copper_nets(self, side="bottom", fitted=True):
         """One face's copper where it is cut, and its nets, for the run's
@@ -251,6 +252,13 @@ class WindowSource(ar.JobSource):
                 lay = w._ds_layout()
                 paths = w._fit_paths(cut_outline(lay.top_outline,
                                                  w.cutting_cutout()))
+            elif getattr(self, "slots_only", False) and step.op == "drill":
+                # Only the oval holes: the slot pieces among the holes.
+                from gerber2rml.engine.drill import drill_single_bit
+                from gerber2rml.engine.mountfid import _in_slot
+                holes = w.state.board.holes
+                paths = drill_single_bit(
+                    [h for h in holes if _in_slot(h, holes)], w.cutting_drill())
             else:
                 paths = w._toolpaths_for(step)[0]
             job = {"drill": w.cutting_drill(), "align": w.cutting_drill(),
@@ -642,6 +650,18 @@ class AutoRunPage(inspector.Page):
             "are there. Use it with Start at, or Run this step.")
         self.realign_chk.toggled.connect(lambda _on: self._fill_rows())
         stock.add(self.realign_chk)
+        # Oval holes (KiCad's slots) were never drilled before SRM-CAM read
+        # them (2026-11-19): a board already made gets just those, lined up
+        # on its own holes, and nothing else - no traces, no cut-out.
+        self.slots_chk = QCheckBox("Only the oval holes: drill just those")
+        self.slots_chk.setChecked(False)
+        self.slots_chk.setToolTip(
+            "For a board already drilled and cut out before SRM-CAM cut "
+            "oval holes. Start then runs the drill step only, on the oval "
+            "holes only. Tick the line-up above too, so they land where "
+            "the board really is.")
+        self.slots_chk.toggled.connect(lambda _on: self._fill_rows())
+        stock.add(self.slots_chk)
         # The last line-up: which holes, where the board was, the fit.
         self.realign_lbl = QLabel()
         self.realign_lbl.setWordWrap(True)
@@ -1051,9 +1071,21 @@ class AutoRunPage(inspector.Page):
             spin.setValue(v)
             spin.blockSignals(False)
 
+    def _sync_slots(self):
+        """The oval-holes tick shows only for a board that has some."""
+        b = getattr(self.ctl.state, "board", None)
+        has = False
+        if b is not None and b.holes:
+            from gerber2rml.engine.mountfid import _in_slot
+            has = any(_in_slot(h, b.holes) for h in b.holes)
+        self.slots_chk.setVisible(has)
+        if not has:
+            self.slots_chk.setChecked(False)
+
     def board_loaded(self):
         """A new board: it goes into the corner when this page next opens."""
         self._auto_place = True
+        self._sync_slots()
 
     def board_opened(self):
         """The operator opened a board - from KiCad, the dialog, the demo.
@@ -1549,6 +1581,15 @@ class AutoRunPage(inspector.Page):
         if ctl.state.board is None:
             ctl.say("warn", "Load a board first.")
             return
+        slots_only = self.slots_chk.isChecked() and not self.slots_chk.isHidden()
+        if slots_only and only is None and ctl.plan is not None:
+            # The oval holes alone: the drill step, nothing after it.
+            drill = next((st for st in ctl.plan.steps
+                          if st.kind == "run" and st.op == "drill"), None)
+            if drill is None:
+                ctl.say("warn", "This board has no drill step to run.")
+                return
+            only = drill.key
         one = ctl.plan.by_key(only) if (only and ctl.plan) else None
         if only and (one is None or one.kind != "run"):
             ctl.say("warn", "There is no step to run there.")
@@ -1671,6 +1712,7 @@ class AutoRunPage(inspector.Page):
         src = WindowSource(ctl, self._gui)
         src.keep_placement = datum is not None
         src.centre = self.centre_chk.isChecked()
+        src.slots_only = slots_only
         self.start_btn.setEnabled(False)
         self._last_port = port
         self._measured = None
