@@ -590,7 +590,6 @@ class AutoRunPage(inspector.Page):
         stock.add(self.check_chk)
         # A laser board is drilled and cut out here and etched on the laser:
         # the board's method says so (the chip at the top), not a tick.
-        self._level_before_laser = None
         srow = QWidget()
         h = QHBoxLayout(srow)
         h.setContentsMargins(0, 0, 0, 0)
@@ -1055,17 +1054,16 @@ class AutoRunPage(inspector.Page):
 
     def sync_method(self):
         """The board's method changed. On the laser the mill only drills and
-        cuts out: holes and an outline go through, so the surface is not
-        probed, and there are no traces to stop and look at."""
+        cuts out, and there are no traces to stop and look at.
+
+        The surface is still probed. Holes and an outline 2.0 mm deep in a
+        1.6 mm board have 0.4 mm to spare, and a 124 mm sheet bows more than
+        that: drums1 (2026-11-19), zeroed at one spot and not levelled, came
+        out with only its left- and right-most holes through and the
+        cut-out partly through. The levelling tick is left as it was set."""
         on = self.traces_on_laser()
         self.set_head("On the mill", "Drill and cut out, on tabs" if on
                       else "Mill it, start to finish")
-        if on and self._level_before_laser is None:
-            self._level_before_laser = self.level_chk.isChecked()
-            self.level_chk.setChecked(False)
-        elif not on and self._level_before_laser is not None:
-            self.level_chk.setChecked(self._level_before_laser)
-            self._level_before_laser = None
         self.check_chk.setEnabled(not on and not self.no_cutout())
         if self._thread is None:
             self._fill_rows()
