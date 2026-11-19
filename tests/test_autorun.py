@@ -614,7 +614,8 @@ def test_one_misread_hole_of_four_is_left_out(monkeypatch):
     log.note = notes.append
     t = run._realign()
     assert any("Hole 2 disagrees" in n for n in notes)
-    assert any("3 of 4 found" in n for n in notes)
+    assert any("4 of 4 found, 3 used" in n for n in notes)
+    assert any("hole 2 (3.20 mm)" in n and "left out" in n for n in notes)
     assert math.hypot(*(a - b for a, b in zip(t.apply(6.0, 84.36),
                                               (53.53, 118.27)))) < 0.03
 
@@ -658,3 +659,31 @@ def test_holes_barely_wider_than_the_bit_are_found_too():
     for (x, y), want in zip(((15, 15), (25, 15), (5, 25)), real):
         got = again.rotation.apply(*board._p(x, y))
         assert math.hypot(got[0] - want[0], got[1] - want[1]) < 0.08
+
+
+def test_the_line_up_says_where_the_board_was_and_how_well_it_fits():
+    m, ser, board, log, run = _run(False)
+    assert run.run() is True
+    placed = board.place
+    board.place = lambda pose, margin_mm, flush=None: (
+        placed(pose, margin_mm),
+        setattr(board, "off", (board.off[0] + 0.6, board.off[1] - 0.4)))
+    board.realign_holes = lambda: [(*board._p(15, 15), 1.6),
+                                   (*board._p(25, 15), 1.6)]
+    board.realign_kind = "the board's 2 mounting holes (1.6 mm)"
+    log2, reports, notes = Log(), [], []
+    log2.realigned = reports.append
+    log2.note = notes.append
+    again = AutoRun(ser, sm.printer(), board, log2, click_mm=(90, 70),
+                    stock_mm=(100, 80), double=False, runner_opts=FAST,
+                    level=False, only=["drill"], realign=True)
+    assert again.run() is True
+    (r,) = reports
+    assert r["kind"] == "the board's 2 mounting holes (1.6 mm)"
+    # The job thought the board 0.6, -0.4 mm off where it really is.
+    assert r["shift"][0] == pytest.approx(-0.6, abs=0.08)
+    assert r["shift"][1] == pytest.approx(0.4, abs=0.08)
+    assert r["worst"] < 0.08 and r["used"] == 2
+    assert [h["n"] for h in r["holes"]] == [1, 2]
+    said = [n for n in notes if n.startswith("Lined up with the board's 2")]
+    assert said and "X -0.6" in said[0] and "Fit: worst" in said[0]

@@ -1009,3 +1009,24 @@ def test_a_board_without_mounting_holes_lines_up_by_its_drill_holes(win):
     holes = WindowSource(win, lambda f: f()).realign_holes()
     assert len(holes) >= 2
     assert all(d > win.state.drill.bit_diameter for _x, _y, d in holes)
+
+
+def test_the_line_up_result_is_shown_under_the_tick(win):
+    page = win.autorun_page
+    report = {"kind": "the board's 4 mounting holes (3.2 mm)",
+              "shift": (-0.21, 0.35), "turn": -0.26, "worst": 0.021,
+              "mean": 0.012, "found": 4, "used": 3,
+              "holes": [{"n": i} for i in range(1, 5)]}
+    page._on_realigned(report)
+    text = page.realign_lbl.text()
+    assert not page.realign_lbl.isHidden()
+    assert "4 mounting holes (3.2 mm)" in text and "4 of 4 found, 3 used" in text
+    assert "X -0.21, Y +0.35" in text and "-0.26°" in text
+    assert "worst 0.021" in text
+
+
+def test_the_window_says_which_holes_it_lines_up_with(win):
+    from gerber2rml.gui2.autorun import WindowSource
+    src = WindowSource(win, lambda f: f())
+    holes = src.realign_holes()
+    assert src.realign_kind.startswith("%d drill holes (" % len(holes))

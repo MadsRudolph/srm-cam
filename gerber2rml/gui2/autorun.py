@@ -305,8 +305,16 @@ class WindowSource(ar.JobSource):
                 return []
             box, bit = st.board.outline.bounds, st.drill.bit_diameter
             # Its mounting holes; failing those, its widest drill holes.
-            got = (mountfid.pick(st.board.holes, box, bit_mm=bit)
-                   or mountfid.pick_any(st.board.holes, box, bit_mm=bit))
+            got = mountfid.pick(st.board.holes, box, bit_mm=bit)
+            if got:
+                self.realign_kind = ("the board's %d mounting holes (%.1f mm)"
+                                     % (len(got), got[0][2]))
+            else:
+                got = mountfid.pick_any(st.board.holes, box, bit_mm=bit)
+                ds = sorted({round(h[2], 2) for h in got})
+                self.realign_kind = (
+                    "%d drill holes (%s mm)" % (len(got), " / ".join(
+                        "%g" % d for d in ds)) if got else "")
             return [tuple(h[:3]) for h in got]
         return self.gui(go)
 
@@ -327,6 +335,7 @@ class _Events(QObject, ar.Events):
     check_sig = Signal(str, float)
     level_sig = Signal(str, object, int, int)
     fit_sig = Signal(object, object, object)
+    realigned_sig = Signal(object)
     job_sig = Signal(str, str, str)
 
     def __init__(self):
@@ -350,6 +359,9 @@ class _Events(QObject, ar.Events):
 
     def fit(self, nominal, measured, t):
         self.fit_sig.emit(list(nominal), list(measured), t)
+
+    def realigned(self, report):
+        self.realigned_sig.emit(report)
 
     def job(self, key, label, program):
         self.job_sig.emit(key, label, program)
@@ -630,6 +642,12 @@ class AutoRunPage(inspector.Page):
             "are there. Use it with Start at, or Run this step.")
         self.realign_chk.toggled.connect(lambda _on: self._fill_rows())
         stock.add(self.realign_chk)
+        # The last line-up: which holes, where the board was, the fit.
+        self.realign_lbl = QLabel()
+        self.realign_lbl.setWordWrap(True)
+        self.realign_lbl.setObjectName("realignResult")
+        self.realign_lbl.setVisible(False)
+        stock.add(self.realign_lbl)
 
         # What holds the stock down. The bracket is drawn because the app
         # knows its shape; a clamp is known only if somebody says where it
@@ -1616,6 +1634,7 @@ class AutoRunPage(inspector.Page):
         ev.check_sig.connect(self._on_check)
         ev.level_sig.connect(self._on_level)
         ev.fit_sig.connect(self._on_fit)
+        ev.realigned_sig.connect(self._on_realigned)
         ev.job_sig.connect(self._on_job)
         self._new_run_dir()
         # In the run's folder with its programs: Novice has no export to carry
@@ -1791,6 +1810,13 @@ class AutoRunPage(inspector.Page):
                 continue
             self._log("fiducial %d at %.3f, %.3f - off by %.3f mm"
                       % (i, m[0], m[1], next(res)))
+
+    def _on_realigned(self, report):
+        """Say the line-up where it is seen, and keep it under the tick."""
+        text = ar.realign_summary(report)
+        self.realign_lbl.setText(text)
+        self.realign_lbl.setVisible(True)
+        self.ctl.say("ok", text)
 
     def _on_job(self, key, label, rml):
         if getattr(self, "run_dir", None) is None:
