@@ -129,14 +129,14 @@ def test_the_edge_of_the_field_gets_more_passes():
     boosted = xtool.TracesRecipe(passes=20)
     a = xtool.traces_job(art, origin, plain)
     b = xtool.traces_job(art, origin, boosted)
-    assert boosted.edge_passes == xtool.EDGE_PASSES == 5
+    assert boosted.edge_passes == xtool.EDGE_PASSES == 10
     assert b.seconds > a.seconds
     # Only the far coupon's trenches get the extra passes.
     groups, _o = xtool.traces_rings(art, origin, boosted)
     rings = [rg for g in groups for rg in g]
     edge = xtool.edge_rings(rings, boosted.edge_radius)
     import math
-    assert edge and all(math.hypot(x - 110, y - 110) >= 50 - 1e-6
+    assert edge and all(math.hypot(x - 110, y - 110) >= xtool.EDGE_RADIUS_MM - 1e-6
                         for rg in edge for x, y in rg)
     near = xtool.edge_rings(rings, 200.0)
     assert near == []

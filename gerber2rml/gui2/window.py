@@ -695,6 +695,11 @@ class MainWindow(QMainWindow):
         self.modes.addWidget(self.cnc_body)
         self.laser_view = None
         self._laser_token = None
+        # A project of many boards, each ticked off (gui2/projectpage.py).
+        from gerber2rml.gui2 import projectpage
+        self.project_ctl = projectpage.ProjectController(self)
+        self.modes.addWidget(self.project_ctl.page)
+        self.traveller.on_done = self.project_ctl.on_done
         bh.addWidget(self.modes, 1)
         v.addWidget(body, 1)
 
@@ -838,7 +843,9 @@ class MainWindow(QMainWindow):
             ("cnc", "CNC", "The Roland SRM-20 mill: mill the copper, drill and "
                            "cut the board out (Ctrl+1)"),
             ("laser", "Laser", "The xTool F1 Ultra fiber laser: copper traces, "
-                               "solder mask, silkscreen and stencil (Ctrl+2)")],
+                               "solder mask, silkscreen and stencil (Ctrl+2)"),
+            ("project", "Project", "Many boards, each ticked off step by "
+                                   "step as it is made (Ctrl+3)")],
             "cnc")
         self.mode_switch.changed.connect(self.show_mode)
         h.addWidget(self.mode_switch)
@@ -998,6 +1005,7 @@ class MainWindow(QMainWindow):
         v = self.view_menu = mb.addMenu("&View")
         self._act(v, "The CNC mill", lambda: self.show_mode("cnc"), "Ctrl+1")
         self._act(v, "The xTool laser", lambda: self.show_mode("laser"), "Ctrl+2")
+        self._act(v, "The project", lambda: self.show_mode("project"), "Ctrl+3")
         v.addSeparator()
         self._act(v, "Fit the work", self.action_fit, "Ctrl+0")
         self._act(v, "Fit the whole bed", lambda: self.stage.fit(), "Ctrl+Shift+0")
@@ -1353,6 +1361,11 @@ class MainWindow(QMainWindow):
             self.bar.refresh_ports()
 
     def _sync_tier(self):
+        # A project of many boards is Pro's; Novice makes one board.
+        if hasattr(self, "mode_switch"):
+            self.mode_switch.set_option_visible("project", tier.is_full())
+            if not tier.is_full() and self.mode() == "project":
+                self.show_mode("cnc")
         from gerber2rml.gui2 import machine as _machine
         full = tier.is_full()
         self.tier_chip.set("Pro" if full else "Novice",
@@ -3725,6 +3738,8 @@ class MainWindow(QMainWindow):
         self.select_step("setup")
         self.stage.fit_work()
         self.autorun_page.board_loaded()
+        # Not opened from the project: it lets go of the board it had.
+        self.project_ctl.board_loaded_elsewhere()
         # The last board's moves are not this one's, and where the board
         # first lands is the start of its history, not a step in it.
         self.placement_undo.clear()
@@ -5781,6 +5796,8 @@ class MainWindow(QMainWindow):
         """``"cnc"`` or ``"laser"``: which machine the window is set up for.
         The laser page follows the board loaded here; a job running on the
         laser carries on while the mill's page is up."""
+        if mode == "project" and not tier.is_full():
+            return                          # Pro's page
         if mode == "laser":
             token = self._laser_job_token()
             page = self.laser_view
@@ -5792,9 +5809,12 @@ class MainWindow(QMainWindow):
             page = self.laser_view
             self.modes.setCurrentWidget(page)
             page.view.setFocus()
+        elif mode == "project":
+            self.project_ctl.page.refresh()
+            self.modes.setCurrentWidget(self.project_ctl.page)
         else:
             self.modes.setCurrentWidget(self.cnc_body)
-        on_laser = mode == "laser"
+        on_laser = mode in ("laser", "project")
         self.mode_switch.set_current(mode)
         for w in self._cnc_header:
             w.setVisible(not on_laser)
@@ -5813,7 +5833,12 @@ class MainWindow(QMainWindow):
             self.traveller.select(key)
 
     def mode(self):
-        return "laser" if self.modes.currentWidget() is self.laser_view else "cnc"
+        cur = self.modes.currentWidget()
+        if cur is self.laser_view:
+            return "laser"
+        if cur is self.project_ctl.page:
+            return "project"
+        return "cnc"
 
     def _load_laser_job(self, prefer=None):
         """The selected board's laser jobs on the page, ``prefer`` first.
@@ -6113,6 +6138,17 @@ class MainWindow(QMainWindow):
             + f"/{self.state.name}.srmcam", "SRM-CAM setup (*.srmcam)")
         if not path:
             return
+        try:
+            self.write_setup(path)
+        except OSError as e:
+            self.report_error("The setup could not be saved", e,
+                              "Pick a folder you can write to.")
+            return
+        workspace.remember_dir("session", path)
+        self.say("ok", "Setup saved.")
+
+    def write_setup(self, path):
+        """Write this job's setup to ``path`` (.srmcam). Raises OSError."""
         from dataclasses import asdict
         data = {
             "version": 1, "name": self.state.name,
@@ -6177,14 +6213,8 @@ class MainWindow(QMainWindow):
                        for m in self.state.boards],
             "current": self.state.current,
         }
-        try:
-            Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except OSError as e:
-            self.report_error("The setup could not be saved", e,
-                              "Pick a folder you can write to.")
-            return
-        workspace.remember_dir("session", path)
-        self.say("ok", "Setup saved.")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def action_load_setup(self):
         path, _ = QFileDialog.getOpenFileName(

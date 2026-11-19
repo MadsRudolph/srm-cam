@@ -119,6 +119,7 @@ def main(argv=None, *, start_on=None, start_dxf=None):
     try:
         w = MainWindow()
         w.remember_board_choices = True
+        w.project_ctl.restore_last()       # the project left open last time
         w.show()
         w.raise_()
         w.activateWindow()

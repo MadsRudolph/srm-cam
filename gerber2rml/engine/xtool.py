@@ -763,11 +763,12 @@ class TracesError(ValueError):
 # (2026-11-19, 20 passes at 100 % / 1000 mm/s, concentric) cleared every
 # coupon within about 57 mm of the middle of the bed and none from 58 mm out,
 # at any height from -0.6 to +0.6 mm - the field, not focus; and drums1's
-# edges, about 62 mm out, cleared with 5 more passes. So traces jobs give
-# the trenches beyond 50 mm 5 passes more, by default.
+# edges, about 62 mm out, cleared with 5 more passes. The second face of
+# drums1 with +5 beyond 50 mm still left spots towards the edges, so traces
+# jobs give the trenches beyond 45 mm 10 passes more, by default.
 FIELD_CENTRE = (110.0, 110.0)
-EDGE_PASSES = 5
-EDGE_RADIUS_MM = 50.0
+EDGE_PASSES = 10
+EDGE_RADIUS_MM = 45.0
 
 
 @dataclass(frozen=True)

@@ -2615,6 +2615,16 @@ class StencilLaserDialog(QDialog):
         d = presets.get(name) or presets[next(iter(TRACES_PRESETS))]
         return int(d.get("offsets", xtool.DEFAULT_TRACE_OFFSETS))
 
+    def _tell_host_done(self):
+        """The whole job ran: its row on the main window's rail is done
+        (and so in the project)."""
+        host = self._host
+        plan = getattr(host, "plan", None)
+        key = f"laser_{self.kind}"
+        if plan is not None and plan.by_key(key) is not None \
+                and hasattr(host, "traveller"):
+            host.traveller.set_done(key, True)
+
     def _tell_host_rings(self):
         """The recipe is the one place the ring count is set: the main window
         gets it, so the traces files it writes match what this page etches."""
@@ -3395,9 +3405,13 @@ class StencilLaserDialog(QDialog):
                 a = None
             return z, self._photo(_PX_PER_MM, raw), a
 
+        whole = not self.selected
+
         def done(res):
             z, rgb, a = res
             self._last_cut_paths = holes
+            if whole:
+                self._tell_host_done()
             if rgb is not None:
                 self.show_bed(rgb)
             n = sum(job.zones)
@@ -3514,10 +3528,14 @@ class StencilLaserDialog(QDialog):
                 self.laser.wait(job.seconds * 2 + 120, progress=progress)
             return z, (self._photo_after_job(before) if take_photo else None)
 
+        whole = not self.selected and not field
+
         def done(res):
             z, rgb = res
             if rgb is not None:
                 self.show_bed(rgb)
+            if whole:
+                self._tell_host_done()
             n = len(picked)
             return (f"Done at Z {z:.2f}: {n} {self._noun(n)}, "
                     f"{job.passes} passes. Switch to Outlines to check them on the "

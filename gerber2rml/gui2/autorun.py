@@ -1463,6 +1463,11 @@ class AutoRunPage(inspector.Page):
             self._tick()
 
     def _set_row(self, key, state):
+        if state == "done":
+            # Every step that finished is done on the rail, and in the
+            # project - even when a later one stops the run.
+            self._finished_steps = getattr(self, "_finished_steps", set())
+            self._finished_steps.add(key)
         if self._clock is not None:
             self._clock.step(key, state)
             self._tick()
@@ -2102,6 +2107,14 @@ class AutoRunPage(inspector.Page):
         one, self._only = getattr(self, "_only", None), None
         if ok and one and hasattr(self.ctl, "traveller"):
             self.ctl.traveller.set_done(one, True)
+        finished, self._finished_steps = getattr(self, "_finished_steps",
+                                                 set()), set()
+        plan = getattr(self.ctl, "plan", None)
+        if plan is not None and hasattr(self.ctl, "traveller"):
+            for key in finished:
+                step = plan.by_key(key)
+                if step is not None and step.kind == "run":
+                    self.ctl.traveller.set_done(key, True)
         link = self.ctl.link
         link.mark_external(False)
         port = getattr(self, "_last_port", None)
