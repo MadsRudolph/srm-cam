@@ -193,7 +193,7 @@ class ProjectController:
             self._take_steps(b)
         (b.done.add if on else b.done.discard)(key)
         self.save()
-        self.page.refresh()
+        self.page.refresh_soon()
 
     def set_tick(self, board, key, on):
         """A tick changed on the Project page."""
@@ -201,7 +201,9 @@ class ProjectController:
         if board is self.current:
             self.win.traveller.set_done(key, on)      # the rail follows
         self.save()
-        self.page.refresh()
+        # Not now: this runs inside the tick's own itemChanged, and a refresh
+        # deletes that item under Qt (an access violation on Windows CI).
+        self.page.refresh_soon()
 
     def board_loaded_elsewhere(self):
         """The window loaded a board by other means (File > Open...): if it
@@ -280,6 +282,11 @@ class ProjectPage(QWidget):
         self.refresh()
 
     # -- what is shown ---------------------------------------------------
+    def refresh_soon(self):
+        """Refresh once the event in hand is done with the tree's items."""
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self, self.refresh)
+
     def refresh(self):
         proj = self.ctl.project
         self._filling = True

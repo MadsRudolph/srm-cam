@@ -121,6 +121,7 @@ def test_ticks_on_the_page_reach_the_rail(win, tmp_path, qt_app):
     child = next(top.child(i) for i in range(top.childCount())
                  if top.child(i).data(0, Qt.UserRole) == key)
     child.setCheckState(2, Qt.Checked)
+    qt_app.processEvents()                  # the list refreshes after the click
     assert key in a.done and win.traveller.is_done(key)
 
 

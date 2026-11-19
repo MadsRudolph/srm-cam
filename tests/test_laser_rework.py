@@ -177,7 +177,10 @@ def test_the_align_test_board_is_estimated_as_it_ran():
     from gerber2rml.gui2.laser_app import job_builder
     board = Path(__file__).resolve().parent.parent / "examples" / "laser_align_test"
     art = job_builder(board)("traces", side="top")
-    job = xtool.traces_job(art, (60.0, 60.0), xtool.FR4_TRACES_RECIPE)
+    # As it ran then: before the edge of the field got passes of its own.
+    from dataclasses import replace
+    job = xtool.traces_job(art, (60.0, 60.0),
+                           replace(xtool.FR4_TRACES_RECIPE, edge_passes=0))
     assert job.seconds == pytest.approx(48, abs=4)
 
 
