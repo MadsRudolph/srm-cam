@@ -1002,3 +1002,10 @@ def test_the_line_up_tick_is_on_the_run_page_in_both_tiers(win, monkeypatch,
     page.realign_chk.setChecked(True)
     keys = [k for k, _t in page._plan_rows()]
     assert keys.index("stock") < keys.index("realign") < keys.index("level")
+
+
+def test_a_board_without_mounting_holes_lines_up_by_its_drill_holes(win):
+    from gerber2rml.gui2.autorun import WindowSource
+    holes = WindowSource(win, lambda f: f()).realign_holes()
+    assert len(holes) >= 2
+    assert all(d > win.state.drill.bit_diameter for _x, _y, d in holes)

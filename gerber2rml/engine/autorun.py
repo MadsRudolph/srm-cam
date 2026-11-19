@@ -1390,9 +1390,8 @@ class AutoRun:
             if len(holes) < 2:
                 raise RunFailed(
                     "the board has no holes to line it up with: it takes at "
-                    "least two of one size, wide enough for the bit to drop "
-                    "into, at opposite ends of the board (its mounting "
-                    "holes). Nothing was cut.")
+                    "least two drill holes wider than the bit, far apart on "
+                    "the board. Nothing was cut.")
             bit_um = int(self.bit * 1000)
             nominal = [(x, y) for x, y, _d in holes]
             measured = []
@@ -1495,7 +1494,9 @@ class AutoRun:
                             % (x_mm, y_mm))
         # The bit drops in only near the middle, and a milled hole comes out a
         # little under size: rings closer than the nominal clearance, not gaps.
-        step = max(200, int((clearance_um or self.src.fiducial_clearance_um())
+        # 100 um at the least: a 1.0 mm hole round a 0.8 mm bit gives the
+        # bit 100 um either way, and rings 200 um apart can step over it.
+        step = max(100, int((clearance_um or self.src.fiducial_clearance_um())
                             * 0.75))
         start = None
         for ring in range(0, search_um // step + 1):

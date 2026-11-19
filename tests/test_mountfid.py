@@ -41,3 +41,21 @@ def test_sizes_are_not_mixed_and_more_corners_win():
 
 def test_a_board_without_holes_has_none():
     assert mountfid.pick([], BOX) == []
+
+
+def test_pick_any_takes_a_hole_near_each_corner():
+    box = (0.0, 0.0, 100.0, 60.0)
+    holes = [(5, 5, 1.0), (7, 7, 1.4), (95, 5, 0.8), (90, 6, 1.0),
+             (95, 55, 1.1), (5, 55, 0.8), (50, 30, 3.0)]
+    got = mountfid.pick_any(holes, box, bit_mm=0.8)
+    assert (7, 7, 1.4) in got                  # a little further, much wider
+    assert (90, 6, 1.0) in got                 # the 0.8 one has no room
+    assert (95, 55, 1.1) in got                # not the wide one mid-board
+    assert len(got) == 3                       # no usable hole bottom-left
+
+
+def test_pick_any_needs_two_holes_far_apart():
+    box = (0.0, 0.0, 100.0, 60.0)
+    assert mountfid.pick_any([(5, 5, 1.0), (45, 25, 1.0)], box) == []
+    assert mountfid.pick_any([(5, 5, 0.8), (95, 55, 0.8)], box) == []
+    assert len(mountfid.pick_any([(5, 5, 1.0), (95, 55, 1.0)], box)) == 2
