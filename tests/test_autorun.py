@@ -561,3 +561,38 @@ def test_one_step_that_is_not_in_the_job_is_refused():
     m, ser, board, log, run = _run(False, level=False, only=["nope"])
     with pytest.raises(RunFailed):
         run.run()
+
+
+def test_a_moved_sheet_is_lined_up_with_its_own_holes():
+    """drums2 (2026-11-19): holes not through, the sheet re-seated, the drill
+    run again. The stock corner alone puts the job a few tenths off; the
+    board's own holes say where it really is."""
+    m, ser, board, log, run = _run(False)
+    assert run.run() is True
+    real = [run.rotation.apply(*board._p(x, y)) for x, y in ((15, 15), (25, 15))]
+
+    # The placement is now 0.6, -0.4 mm off the holes that are there.
+    placed = board.place
+    board.place = lambda pose, margin_mm, flush=None: (
+        placed(pose, margin_mm),
+        setattr(board, "off", (board.off[0] + 0.6, board.off[1] - 0.4)))
+    board.realign_holes = lambda: [(*board._p(15, 15), 1.6),
+                                   (*board._p(25, 15), 1.6)]
+    log2 = Log()
+    again = AutoRun(ser, sm.printer(), board, log2, click_mm=(90, 70),
+                    stock_mm=(100, 80), double=False, runner_opts=FAST,
+                    level=False, only=["drill"], realign=True)
+    assert again.run() is True
+    assert ("realign", "done") in log2.steps
+    for (x, y), want in zip(((15, 15), (25, 15)), real):
+        got = again.rotation.apply(*board._p(x, y))
+        assert math.hypot(got[0] - want[0], got[1] - want[1]) < 0.08
+
+
+def test_realign_refuses_a_board_without_holes_to_find():
+    m, ser, board, log, run = _run(False, level=False, realign=True)
+    sent = []
+    log.job = lambda key, label, prog: sent.append(key)
+    with pytest.raises(RunFailed, match="no holes to line it up with"):
+        run.run()
+    assert sent == []
