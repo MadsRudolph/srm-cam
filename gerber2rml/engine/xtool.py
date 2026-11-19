@@ -555,13 +555,15 @@ class F1Ultra:
         dot, _n = cal.find_dot(decode_jpeg(photo), at)
         return cal.height(dot, at)
 
-    def autofocus(self, cal, at=None, tolerance=0.1, tries=4):
+    def autofocus(self, cal, at=None, tolerance=0.1, tries=4, bias=0.0):
         """Move the head until the surface under ``at`` is in focus. Returns
-        the Z reached; the XCS thickness is that minus 8."""
+        the Z reached; the XCS thickness is that minus 8. ``bias``: what the
+        dot reads there on a flat sheet in focus (engine/laser_focus.py's
+        reference), taken off each reading."""
         self._json("POST", "/device/modeSwitch", {"state": "P_AUTOFOCUS"})
         try:
             for _ in range(tries):
-                dz = self.measure(cal, at)
+                dz = self.measure(cal, at) - bias
                 if abs(dz) <= tolerance:
                     return self.z()
                 self._goto_z(self.z() + dz)

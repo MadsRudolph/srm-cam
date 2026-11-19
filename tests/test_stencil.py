@@ -284,6 +284,18 @@ def test_the_dot_gives_the_height():
         assert cal.height(dot) == pytest.approx(dz, abs=0.3)
 
 
+def test_a_dim_dot_on_a_cut_line_is_still_found():
+    """At the machine a dot on the stencil's cut outline scored 282-290 over a
+    black background; a fixed 300 called that no dot at all."""
+    import numpy as np
+    cal = _fake_calibration()
+    rgb = np.zeros((1000, 1000, 3), np.uint8)
+    px, py = 50 + 4 * 110, 30 + 4 * 110
+    rgb[py - 2:py + 3, px - 2:px + 3] = (20, 20, 200)     # 200 + 80 = 280
+    dot, _n = cal.find_dot(rgb)
+    assert cal.height(dot) == pytest.approx(0.0, abs=0.3)
+
+
 def test_no_dot_is_a_sentence():
     import numpy as np
     from gerber2rml.engine.xtool_camera import CameraError
