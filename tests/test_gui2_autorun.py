@@ -1030,3 +1030,19 @@ def test_the_window_says_which_holes_it_lines_up_with(win):
     src = WindowSource(win, lambda f: f())
     holes = src.realign_holes()
     assert src.realign_kind.startswith("%d drill holes (" % len(holes))
+
+
+def test_the_simulators_stock_leaves_the_bed_with_the_simulator(win, qt_app):
+    """Its stock is turned 1.2 degrees on purpose; drawn on after the
+    simulator was left, it sat skewed over the real mill's board."""
+    win.link.connect_to("SIM")
+    assert _wait(qt_app, win.link.is_connected, 10)
+    win.select_step("autorun")
+    page = win.autorun_page
+    page._draw_sim()
+    assert win.stage._sim_view
+    win.link.disconnect_from("test")
+    assert _wait(qt_app, lambda: not win.link.is_connected(), 10)
+    page._draw_sim()
+    assert not win.stage._sim_view
+    assert not page._sim_timer.isActive()

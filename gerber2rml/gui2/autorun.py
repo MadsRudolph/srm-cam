@@ -1743,6 +1743,7 @@ class AutoRunPage(inspector.Page):
         # The link let go of the port before the run took it: "not connected"
         # would be the wrong thing to say for as long as the run has it.
         self._sync_offline()
+        self._run_is_sim = sim
         if sim:
             self._sim_timer.start()
         ctl.say("info", (f"Running one step: {one.title}. " if one is not None
@@ -2108,7 +2109,22 @@ class AutoRunPage(inspector.Page):
         if port:
             link.connect_to(port)
 
+    def _sim_live(self):
+        """Whether the simulator is what the bed shows: connected to it, or a
+        run on it still going."""
+        if self._thread is not None:
+            return bool(getattr(self, "_run_is_sim", False))
+        port = self._port()
+        return bool(port) and simmachine.is_sim(port)
+
     def _draw_sim(self):
+        if not self._sim_live():
+            # Left on, its stock - turned 1.2 degrees on purpose - stayed on
+            # the bed over a real mill's board (2026-11-19, seen as a skewed
+            # dotted outline after using the laser page).
+            self._sim_timer.stop()
+            self.ctl.stage.set_sim(None)
+            return
         m = simmachine.machine()
         self.ctl.stage.set_sim(m.view())
         if self._thread is not None:
