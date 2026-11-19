@@ -116,14 +116,14 @@
   <li><span class="st">Set it up</span>In VPanel, <span class="menu-path">Setup &rsaquo; Command Set</span> must be <span class="ui">NC Code</span> and the G54 X/Y origin must be machine 0,&nbsp;0. The run stops before it cuts if either is wrong; see <a href="automatic.html#steps">Mill a board</a>.</li>
 </ol>
 
-<div class="warn"><span class="t">Windows only</span>
-<p>These steps are for Windows. On Linux you can prepare and export, then send the files from VPanel on a Windows PC.</p></div>
+<div class="warn"><span class="t">On Linux</span>
+<p>No driver and no VPanel: the kernel already knows the mill. Plug in both USB cables (the mill's and the Arduino's), then use <span class="menu-path">Machine &rsaquo; Set up USB access…</span> once; it asks for your password. SRM-CAM sets the Command Set itself before a run.</p></div>
 
 <h2 id="install">Install SRM-CAM</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
 <tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive.</td></tr>
-<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. <strong>The machine link is Windows-only</strong>: prepare and export on Linux, send the files from VPanel on a Windows PC, and carry a probed height map over as a CSV.</td></tr>
+<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. Runs the mill too, with no driver: once, <span class="menu-path">Machine &rsaquo; Set up USB access…</span>.</td></tr>
 <tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
 </table></div>
 
@@ -157,7 +157,7 @@
 </figure>
 <figure class="fig">
   <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected" loading="lazy">
-  <figcaption>The real window, on the setup step (a Linux screenshot, so the machine bar is a sentence: the link is Windows-only).</figcaption>
+  <figcaption>The real window, on the setup step (a Linux screenshot from before the link ran on Linux, so the machine bar is a sentence).</figcaption>
 </figure>
 <ul>
   <li><strong>The header</strong> (top): the chip at the left says <a href="automatic.html#method">how the board is made</a> (click it to choose another), <span class="ui">CNC</span> / <span class="ui">Laser</span> switches between the mill's page and the laser's, and the tier chip at the right switches <a href="#tiers">Novice and Pro</a>. The status chips (<span class="ui">Mesh</span>, <span class="ui">Fit</span>, <span class="ui">Photo</span>, <span class="ui">Boxes</span>) only show once they are lit.</li>

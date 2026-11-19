@@ -20,17 +20,29 @@ On macOS the same API runs over CUPS instead (:class:`CupsPrinter`, at the
 end of this module): the mill is a raw queue named ``SRM-20`` on its
 ``usb://Roland%20DG/...`` URI, made once with :func:`setup_mill_queue`
 (``python -m gerber2rml.doctor --setup-mill``). See docs/macos.md.
+
+On Linux the kernel's own printer-class driver, ``usblp``, makes the mill
+``/dev/usb/lp0`` - the same port the Windows spooler calls ``USB001``. Jobs
+are written there (:class:`UsbLpPrinter`); no CUPS queue, no driver, nothing
+to set up but who may open the node (``platform.UDEV_RULES``).
 """
 import ctypes
+import errno
 import os
 import re
+import select
 import subprocess
+import threading
+from collections import deque
 from ctypes import wintypes
+from pathlib import Path
 
-from gerber2rml.platform import _is_macos, _is_windows
+from gerber2rml import platform as plat
+from gerber2rml.platform import _is_linux, _is_macos, _is_windows
 
 WINDOWS = _is_windows()
 MACOS = _is_macos()
+LINUX = _is_linux()
 
 PRINTER_ENUM_LOCAL = 0x2
 PRINTER_ENUM_CONNECTIONS = 0x4
@@ -82,9 +94,15 @@ def _err(what):
 
 
 def list_printers():
-    """Names of the printers this user can see, or [] off Windows/macOS."""
+    """Names of the printers this user can see.
+
+    On Linux these are the mill's printer nodes (``/dev/usb/lp0``) rather
+    than names: the node is what :class:`UsbLpPrinter` is made with.
+    """
     if MACOS:
         return cups_list_printers()
+    if LINUX:
+        return [dev for dev, _text in usblp_nodes()]
     if not WINDOWS:
         return []
     flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
@@ -103,6 +121,9 @@ def list_printers():
 
 def find_mill(names=None):
     """The SRM-20's printer name, or None when the driver is not installed."""
+    if names is None and LINUX:
+        nodes = list_printers()        # already matched by vendor id
+        return nodes[0] if nodes else None
     for n in (names if names is not None else list_printers()):
         if "srm-20" in n.lower() or "srm20" in n.lower():
             return n
@@ -366,5 +387,189 @@ def resume_queue(queue=CUPS_QUEUE, run=None, admin="sudo"):
               admin=admin)
 
 
+# --- Linux: the mill as a usblp printer node ------------------------------
+
+USBMISC_ROOT = "/sys/class/usbmisc"
+USB_DEV_DIR = "/dev/usb"
+LINUX_SETUP_HINT = (
+    "On Linux the mill is the printer node /dev/usb/lp0 that the kernel makes "
+    "when the mill's own USB cable is plugged in and the mill is on. Use "
+    "Machine \u25b8 Set up USB access\u2026 once so SRM-CAM may open it.")
+
+
+def _sys_read(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def usblp_nodes(sys_root=USBMISC_ROOT, dev_dir=USB_DEV_DIR):
+    """``[(device, description)]`` for every SRM-20 the kernel has a printer
+    node for, read from sysfs. Nothing is opened.
+
+    Matched by the SRM-20's name or Roland's USB vendor id - never by being
+    the only printer there: ``lp0`` may well be somebody's laser printer, and
+    what is sent is NC code.
+    """
+    found = []
+    try:
+        names = sorted(d.name for d in Path(sys_root).iterdir()
+                       if d.name.startswith("lp"))
+    except OSError:
+        return found
+    for name in names:
+        intf = (Path(sys_root) / name / "device").resolve()
+        usb = intf.parent
+        text = " ".join(t for t in (_sys_read(f) for f in (
+            intf / "ieee1284_id", usb / "manufacturer", usb / "product")) if t)
+        vendor = _sys_read(usb / "idVendor").lower()
+        if vendor == plat.ROLAND_USB_VID or "srm-20" in text.lower() \
+                or "srm20" in text.lower():
+            found.append((f"{dev_dir}/{name}", text))
+    return found
+
+
+class UsbLpPrinter:
+    """The mill as Linux sees it: a USB printer node.
+
+    Jobs queue here and one thread feeds them to the node, because a write
+    takes as long as the mill takes to accept the bytes and the caller is the
+    loop that has to keep watching the machine. So ``pending()`` means what it
+    means on Windows: jobs not yet entirely handed over.
+
+    The node is opened non-blocking and fed in small chunks, for STOP: a
+    blocking ``write`` to usblp cannot be interrupted from another thread,
+    while this feeder is never more than one poll from noticing a purge, and
+    closing the node then kills the transfer in flight (``usblp_release``).
+    The poll after the last chunk is not optional - that close would kill the
+    last transfer of a job that went well just the same. POLLOUT is the
+    driver's "the last transfer completed", so the poll waits for it.
+    """
+    CHUNK = 4096
+    POLL_MS = 50
+
+    @staticmethod
+    def _flags():
+        # Not a class attribute: this module imports on Windows, which has
+        # no O_NONBLOCK.
+        return os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC
+
+    def __init__(self, device):
+        self.name = device
+        self.device = device
+        self._lock = threading.Lock()
+        self._jobs = deque()
+        self._next_id = 1
+        self._feeder = None
+        self._cancel = threading.Event()
+        self._failure = None
+
+    def problem(self):
+        """Why jobs cannot be sent, or None. The node is opened and shut,
+        which sends nothing, so a run finds out before it probes the bed."""
+        try:
+            os.close(self._open())
+        except SpoolError as e:
+            return str(e)
+        return None
+
+    def _open(self):
+        try:
+            return os.open(self.device, self._flags())
+        except PermissionError as e:
+            raise SpoolError(f"{self.device} refused to open: permission "
+                             f"denied. " + LINUX_SETUP_HINT) from e
+        except OSError as e:
+            raise SpoolError(f"{self.device} would not open: "
+                             f"{os.strerror(e.errno)}.") from e
+
+    def send(self, data, name="SRM-CAM job"):
+        """Queue ``data`` (bytes or str). Returns a job id."""
+        if isinstance(data, str):
+            data = data.encode("ascii")
+        os.close(self._open())           # refused here, not on the thread
+        with self._lock:
+            if self._failure is not None:
+                raise SpoolError(self._failure)
+            job = self._next_id
+            self._next_id += 1
+            self._jobs.append((job, data))
+            if self._feeder is None or not self._feeder.is_alive():
+                self._cancel.clear()
+                self._feeder = threading.Thread(target=self._feed,
+                                                daemon=True, name="srm-usblp")
+                self._feeder.start()
+        return job
+
+    def _feed(self):
+        while True:
+            with self._lock:
+                if not self._jobs:
+                    self._feeder = None
+                    return
+                _job, data = self._jobs[0]
+            try:
+                self._write_job(data)
+            except OSError as e:
+                with self._lock:
+                    self._failure = (f"the mill's USB cable failed "
+                                     f"({self.device}: {os.strerror(e.errno)})")
+                    self._jobs.clear()
+                    self._feeder = None
+                return
+            with self._lock:
+                if self._jobs:
+                    self._jobs.popleft()
+                self._cancel.clear()
+
+    def _write_job(self, data):
+        fd = os.open(self.device, self._flags())
+        try:
+            ready = select.poll()
+            ready.register(fd, select.POLLOUT)
+            done = 0
+            while done < len(data):
+                if self._cancel.is_set():
+                    return
+                if not ready.poll(self.POLL_MS):
+                    continue
+                try:
+                    done += os.write(fd, data[done:done + self.CHUNK])
+                except OSError as e:
+                    if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                        raise
+            while not self._cancel.is_set():
+                for _fd, event in ready.poll(self.POLL_MS):
+                    if event & (select.POLLERR | select.POLLHUP):
+                        raise OSError(errno.ENODEV, os.strerror(errno.ENODEV))
+                    return
+        finally:
+            os.close(fd)
+
+    def pending(self):
+        """How many jobs are not fully handed over. A cable that failed
+        raises: a job that will now never finish looks just like a long one
+        from out here."""
+        with self._lock:
+            if self._failure is not None:
+                raise SpoolError(self._failure)
+            return len(self._jobs)
+
+    def purge(self):
+        """Throw away everything not yet sent, and the transfer in flight.
+        Bytes already in the mill's own buffer are beyond this - that is the
+        Arduino abort's job, as on Windows."""
+        with self._lock:
+            while len(self._jobs) > 1:
+                self._jobs.pop()
+            if self._jobs:
+                self._cancel.set()
+            self._failure = None
+        return True
+
+
 if MACOS:
     SpoolPrinter = CupsPrinter      # noqa: F811 - the macOS mill
+elif LINUX:
+    SpoolPrinter = UsbLpPrinter     # noqa: F811 - the Linux mill

@@ -25,7 +25,14 @@ def _open_serial(port, baud, timeout):
     # write_timeout: the bar's STOP writes from the GUI thread, and a
     # blocking write on a wedged port would hang the one control that must
     # never hang.
-    return serial.Serial(port, baud, timeout=timeout, write_timeout=0.5)
+    #
+    # exclusive: on Linux and macOS two programs can otherwise open the same
+    # port at once, and two programs sending commands to a board that moves
+    # a spindle is the one race not worth having. Windows is exclusive anyway.
+    import os
+    extra = {} if os.name == "nt" else {"exclusive": True}
+    return serial.Serial(port, baud, timeout=timeout, write_timeout=0.5,
+                         **extra)
 
 
 def _read_line(ser, deadline, should_abort=None):
@@ -742,11 +749,15 @@ def rank_ports(ports):
     be an Arduino, and nothing on screen tells a beginner that.
 
     Ordering only. The caller still decides, and a human can always override:
-    a board behind an unrecognised chip must stay selectable, so nothing is
-    filtered out.
+    a board behind an unrecognised chip must stay selectable. The one thing
+    dropped is a port that is never there: Linux lists 32 empty ``ttyS``
+    UART slots (:func:`gerber2rml.platform.phantom_serial_port`).
     """
+    from gerber2rml import platform as plat
     known, unknown = [], []
     for device, hwid in ports:
+        if plat.phantom_serial_port(device, hwid):
+            continue
         text = (hwid or "").upper()
         for vid, chip in BOARD_VIDS.items():
             if f"VID:PID={vid}:" in text or f"VID_{vid}" in text:

@@ -6,7 +6,8 @@ Run it after pulling::
     python -m gerber2rml.doctor          # check, then install anything missing
     python -m gerber2rml.doctor --check  # only report, don't install
     python -m gerber2rml.doctor --dev    # also include the test (dev) extras
-    python -m gerber2rml.doctor --setup-mill  # macOS: the SRM-20 CUPS queue
+    python -m gerber2rml.doctor --setup-mill  # macOS: the SRM-20 CUPS queue;
+                                              # Linux: the USB access rule
 
 This module imports ONLY the standard library, so it works on a fresh checkout
 where none of the third-party packages are installed yet. The required packages
@@ -117,8 +118,29 @@ def main(argv=None):
                     help="also include the dev (pytest) extras")
     ap.add_argument("--setup-mill", action="store_true",
                     help="macOS: make the raw CUPS queue SRM-20 that jobs "
-                         "are sent to (mill on, USB in; asks for sudo)")
+                         "are sent to (mill on, USB in; asks for sudo). "
+                         "Linux: install the udev rule that lets you open "
+                         "the mill's and the Arduino's USB (asks for sudo)")
     args = ap.parse_args(argv)
+
+    from gerber2rml import platform as plat
+    if args.setup_mill and plat._is_linux():
+        import os
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".rules",
+                                         delete=False) as f:
+            f.write(plat.UDEV_RULES)
+        try:
+            sudo = [] if os.geteuid() == 0 else ["sudo"]
+            r = subprocess.run(sudo + ["sh", "-c",
+                                       plat.udev_install_script(f.name)])
+        finally:
+            os.unlink(f.name)
+        if r.returncode:
+            print("Installing the USB rule failed.")
+            return 1
+        print(f"USB access rule installed at {plat.UDEV_RULES_PATH}.")
+        return 0
 
     if args.setup_mill:
         from gerber2rml.engine import rmlspool
