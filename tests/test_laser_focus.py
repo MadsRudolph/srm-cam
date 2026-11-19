@@ -395,3 +395,35 @@ def test_the_focus_map_spacing_changes_the_points(qt_app, monkeypatch):
     many, _ = lfu.plan(d, spacing=10.0, inset=3.0)
     assert len(many) > len(few) >= 2
     d.close()
+
+
+def test_the_bed_can_be_looked_round_while_the_laser_runs(qt_app, monkeypatch):
+    """While a job runs the bed zooms and pans; nothing changes the job."""
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtTest import QTest
+    d = _page(qt_app, monkeypatch)
+    d.resize(1400, 900)
+    d.show()
+    qt_app.processEvents()
+    d._busy(True)
+    v = d.view
+    assert v.isEnabled() and v.locked
+    before = v.transform().m11()
+    e = QWheelEvent(QPointF(50, 50), QPointF(v.mapToGlobal(QPoint(50, 50))),
+                    QPoint(0, 0), QPoint(0, 120), Qt.NoButton, Qt.NoModifier,
+                    Qt.NoScrollPhase, False)
+    QApplication.sendEvent(v.viewport(), e)
+    assert v.transform().m11() > before          # zoomed
+    nudged, menus = [], []
+    v.nudge.connect(lambda *a: nudged.append(a))
+    v.context.connect(lambda *a: menus.append(a))
+    x = d.x.value()
+    QTest.keyClick(v, Qt.Key_Left)
+    assert nudged == [] and d.x.value() == x     # the job stays put
+    d._busy(False)
+    assert not v.locked
+    QTest.keyClick(v, Qt.Key_Left)
+    assert nudged                                # and moves again after
+    d.close()
