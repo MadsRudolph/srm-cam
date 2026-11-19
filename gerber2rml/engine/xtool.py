@@ -758,6 +758,18 @@ class TracesError(ValueError):
     """Why this folder cannot give a laser traces job, in words for the operator."""
 
 
+# The galvo's field is weaker towards its edges: the beam meets the copper at
+# an angle, over a bigger spot. The field test on the lab's F1 Ultra
+# (2026-11-19, 20 passes at 100 % / 1000 mm/s, concentric) cleared every
+# coupon within about 57 mm of the middle of the bed and none from 58 mm out,
+# at any height from -0.6 to +0.6 mm - the field, not focus; and drums1's
+# edges, about 62 mm out, cleared with 5 more passes. So traces jobs give
+# the trenches beyond 50 mm 5 passes more, by default.
+FIELD_CENTRE = (110.0, 110.0)
+EDGE_PASSES = 5
+EDGE_RADIUS_MM = 50.0
+
+
 @dataclass(frozen=True)
 class TracesRecipe:
     """How to isolate or clear PCB copper on the F1 Ultra.
@@ -783,6 +795,10 @@ class TracesRecipe:
     one_way: bool = True
     mark_outline: bool = False
     mark_power: float = 10.0
+    # More passes where the field is weak: on the trenches further than
+    # ``edge_radius`` mm from the middle of the bed (``edge_rings``).
+    edge_passes: int = EDGE_PASSES
+    edge_radius: float = EDGE_RADIUS_MM
 
     @property
     def stepover(self):
@@ -1175,6 +1191,17 @@ def traces_rings(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
     return bed_groups, outline
 
 
+def edge_rings(rings, radius, centre=FIELD_CENTRE):
+    """The parts of ``rings`` (bed mm) further than ``radius`` from the
+    middle of the field: where :attr:`TracesRecipe.edge_passes` go."""
+    from shapely.geometry import Point, box
+    far = box(-50, -50, 300, 300).difference(Point(centre).buffer(radius, 256))
+    out = []
+    for rg in rings:
+        out += _clip_ring_to(rg, far)
+    return [r for r in out if len(r) >= 2]
+
+
 def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
                boxes=None, *, write=True):
     """One GS002 file to etch PCB copper traces on the F1 Ultra.
@@ -1239,6 +1266,18 @@ def traces_job(art, origin, recipe=DEFAULT_TRACES_RECIPE, only=None,
             if write:
                 body += _rest(park, recipe.rest_s)
             secs += recipe.rest_s
+    # The edge of the field gets more: not on a rework, which has its own.
+    edge = (edge_rings([rg for grp in groups for rg in grp], recipe.edge_radius)
+            if recipe.edge_passes > 0 and region is None else [])
+    if edge:
+        edge = _nearest_order(edge)
+        edge_s = _draw_seconds(edge, recipe.speed)
+        for rnd in range(recipe.edge_passes):
+            ring_order = edge if rnd % 2 == 0 else list(reversed(edge))
+            if write:
+                body += _passes(ring_order, recipe.power, recipe.speed, 1)
+            timeline.append((secs, secs + edge_s, 0, recipe.passes + rnd))
+            secs += edge_s
     if outline and recipe.mark_outline:
         if write:
             body += _passes(outline, recipe.mark_power, recipe.speed, 1)

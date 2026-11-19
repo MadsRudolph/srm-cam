@@ -51,6 +51,10 @@ def page(qt_app, monkeypatch):
                          apertures=[box(5, 5, 9, 9)], mirrored=False)
     d = sl.StencilLaserDialog(art)
     yield d
+    # A job's thread says it is finished just before it ends: let it end
+    # before the page goes, or deleting the page under it can crash.
+    if d._worker is not None:
+        d._worker.wait(10000)
     d.close()
 
 
@@ -105,3 +109,38 @@ def test_another_job_is_not_the_field_test(qt_app, page):
     page.show_job(xtool.LaserArt(kind="traces", outline=box(0, 0, 50, 50),
                                  apertures=[box(5, 5, 9, 9)]), "board")
     assert not ftu.active(page)
+
+
+def test_the_edge_of_the_field_gets_more_passes():
+    """Field test, 2026-11-19: within ~57 mm of the bed's middle 20 passes
+    cleared, from 58 mm out none did; 5 more cleared drums1's edges."""
+    from shapely.geometry import box
+    from gerber2rml.engine import xtool
+    art = xtool.LaserArt(kind="traces", outline=box(0, 0, 150, 90),
+                         apertures=[box(5, 40, 8, 43),        # far left
+                                    box(73, 43, 76, 46)],     # the middle
+                         mirrored=False, copper=None)
+    from shapely.ops import unary_union
+    art = xtool.LaserArt(kind="traces", outline=art.outline,
+                         apertures=art.apertures, mirrored=False,
+                         copper=unary_union(art.apertures))
+    origin = (35.0, 65.0)                       # the test's middle at ~(110, 110)
+    plain = xtool.TracesRecipe(passes=20, edge_passes=0)
+    boosted = xtool.TracesRecipe(passes=20)
+    a = xtool.traces_job(art, origin, plain)
+    b = xtool.traces_job(art, origin, boosted)
+    assert boosted.edge_passes == xtool.EDGE_PASSES == 5
+    assert b.seconds > a.seconds
+    # Only the far coupon's trenches get the extra passes.
+    groups, _o = xtool.traces_rings(art, origin, boosted)
+    rings = [rg for g in groups for rg in g]
+    edge = xtool.edge_rings(rings, boosted.edge_radius)
+    import math
+    assert edge and all(math.hypot(x - 110, y - 110) >= 50 - 1e-6
+                        for rg in edge for x, y in rg)
+    near = xtool.edge_rings(rings, 200.0)
+    assert near == []
+    # A rework already has its own passes: no boost on top.
+    r = xtool.traces_job(art, origin, boosted, boxes=[(30, 100, 50, 120)])
+    r0 = xtool.traces_job(art, origin, plain, boxes=[(30, 100, 50, 120)])
+    assert r.seconds == r0.seconds

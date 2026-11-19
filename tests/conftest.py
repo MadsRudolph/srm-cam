@@ -118,6 +118,13 @@ def _let_closed_windows_die():
             w.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     app.processEvents()
+    # What the test left in reference cycles is collected here, on the main
+    # thread. Left to chance, the collector runs on whichever thread is
+    # allocating - a laser page's worker - and a Qt object destroyed there
+    # leaves the main thread's timers and filters pointing at freed memory
+    # (an intermittent segfault, 2026-11-19).
+    import gc
+    gc.collect()
 
 
 @pytest.fixture(scope="session")
