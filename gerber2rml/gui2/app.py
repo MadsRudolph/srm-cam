@@ -85,6 +85,9 @@ def main(argv=None, *, start_on=None, start_dxf=None):
         glconfig.configure()
 
     app = QApplication.instance() or QApplication(list(argv or sys.argv))
+    # The wheel scrolls the page; it never changes a value by accident.
+    from gerber2rml.gui2 import wheelguard
+    wheelguard.install(app)
     app.setApplicationName("SRM-CAM")
     app.setApplicationDisplayName("SRM-CAM")
     app.setOrganizationName("SRM-CAM")

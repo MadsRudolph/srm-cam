@@ -441,6 +441,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from gerber2rml.gui2 import wheelguard
+        wheelguard.install()                # however the window was made
         self.state = ProjectState()
         self.link = MachineLink(self)
         # Run tracking off the position poll, for the step the rail is on.
