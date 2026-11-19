@@ -25,13 +25,29 @@ from gerber2rml.gui2 import theme, widgets
 _KEY_ROLE = Qt.UserRole
 
 
-def checklist_steps(plan):
+TOP_TRACES = "laser_traces_top"
+
+
+def checklist_steps(plan, board=None):
     """``[(key, title, machine)]``: the steps of a board's plan worth ticking
-    off - the mill's runs and the laser's jobs, not hand-offs."""
+    off - the mill's runs and the laser's jobs, not hand-offs. A board with
+    copper on both faces has its traces etched twice on the laser, one face
+    at a time (the laser page's copper face): a tick for each."""
     if plan is None:
         return []
-    return [(s.key, s.title, s.machine or ("laser" if s.kind == "laser" else "mill"))
-            for s in plan.steps if s.kind in ("run", "laser")]
+    two = board is not None and getattr(board, "copper_top", None) is not None \
+        and not board.copper_top.is_empty
+    out = []
+    for s in plan.steps:
+        if s.kind not in ("run", "laser"):
+            continue
+        machine = s.machine or ("laser" if s.kind == "laser" else "mill")
+        if s.key == "laser_traces" and two:
+            out.append((s.key, s.title + " · B.Cu (bottom)", machine))
+            out.append((TOP_TRACES, s.title + " · F.Cu (top)", machine))
+        else:
+            out.append((s.key, s.title, machine))
+    return out
 
 
 class ProjectController:
@@ -138,7 +154,7 @@ class ProjectController:
         self.current = board
         trav = self.win.traveller
         trav.clear_done()
-        plan_keys = {k for k, _t, _m in checklist_steps(self.win.plan)}
+        plan_keys = {k for k, _t, _m in checklist_steps(self.win.plan, self.win.state.board)}
         for key in board.done:
             if key in plan_keys:
                 trav.set_done(key, True)
@@ -160,7 +176,7 @@ class ProjectController:
         return self.open_board(b)
 
     def _take_steps(self, board):
-        steps = checklist_steps(self.win.plan)
+        steps = checklist_steps(self.win.plan, self.win.state.board)
         if steps:
             board.steps = steps
             keys = {k for k, _t, _m in steps}

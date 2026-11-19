@@ -2623,6 +2623,11 @@ class StencilLaserDialog(QDialog):
         key = f"laser_{self.kind}"
         if plan is not None and plan.by_key(key) is not None \
                 and hasattr(host, "traveller"):
+            if self.kind == "traces" and getattr(self, "_trace_side", None) == "top":
+                # The second face of a two-sided board: its own tick in a
+                # project (gui2/projectpage.py); the rail has one row.
+                from gerber2rml.gui2.projectpage import TOP_TRACES
+                key = TOP_TRACES
             host.traveller.set_done(key, True)
 
     def _tell_host_rings(self):
