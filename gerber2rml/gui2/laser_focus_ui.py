@@ -128,13 +128,34 @@ def _settings():
     return QSettings(*_SETTINGS)
 
 
+# The machine's error is the machine's, not the PC's: the lab's F1 Ultra's,
+# measured on its bare bed (2026-11-19), ships with the app, so a new PC
+# starts with it. Measuring again on a PC overrides it there (another laser).
+BUILTIN_REFERENCE = "f1ultra_focus_reference.json"
+
+
+def builtin_reference():
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[1] / "data" / BUILTIN_REFERENCE
+    try:
+        return lf.FocusMap.from_dict(json.loads(p.read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def load_reference():
+    """This PC's own measurement, else the one built in."""
     import json
     try:
         data = json.loads(_settings().value(REFERENCE_KEY, "") or "null")
     except (TypeError, ValueError):
-        return None
-    return lf.FocusMap.from_dict(data) if data else None
+        data = None
+    return lf.FocusMap.from_dict(data) if data else builtin_reference()
+
+
+def reference_is_builtin():
+    return not (_settings().value(REFERENCE_KEY, "") or "")
 
 
 def save_reference(ref):
@@ -154,6 +175,10 @@ def reference_status():
                 "trusted until this is measured.")
     xs = [p[0] for p in ref.points]
     ys = [p[1] for p in ref.points]
+    if reference_is_builtin():
+        return (f"Built in: the lab F1 Ultra's, measured on its bare bed at "
+                f"{len(ref.points)} points; up to {ref.spread:.2f} mm taken "
+                f"off. Measure again only for another laser.")
     return (f"Measured at {len(ref.points)} points, X {min(xs):g}-{max(xs):g}, "
             f"Y {min(ys):g}-{max(ys):g} mm; up to {ref.spread:.2f} mm taken "
             f"off the map's readings.")
@@ -206,7 +231,8 @@ def forget_reference(page):
     note = getattr(page, "focus_ref_note", None)
     if note is not None:
         note.setText(reference_status())
-    page._say("Focus map correction forgotten.")
+    page._say("This PC's focus map correction forgotten: the built-in one "
+              "(the lab F1 Ultra's) is used again.")
 
 
 def measure(page):

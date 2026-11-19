@@ -23,6 +23,9 @@ KICAD_PLUGIN = ROOT / "kicad-plugin"
 datas = []
 datas += collect_data_files("pyqtgraph")           # icons, shaders, colormaps
 datas += collect_data_files("gerbonara")           # any packaged resources
+# The lab F1 Ultra's focus correction (gerber2rml/data), loaded by path.
+datas += [(str(p), "gerber2rml/data")
+          for p in (ROOT / "gerber2rml" / "data").glob("*.json")]
 # the preload demo board, so a fresh install opens with something on screen
 if DEMO.is_dir():
     for f in DEMO.iterdir():

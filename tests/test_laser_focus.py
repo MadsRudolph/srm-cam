@@ -427,3 +427,22 @@ def test_the_bed_can_be_looked_round_while_the_laser_runs(qt_app, monkeypatch):
     QTest.keyClick(v, Qt.Key_Left)
     assert nudged                                # and moves again after
     d.close()
+
+
+def test_the_machines_correction_is_built_in(qt_app, monkeypatch):
+    """The lab F1 Ultra's own error ships with the app: a new PC need not
+    measure it (2026-11-19)."""
+    from gerber2rml.gui2 import laser_focus_ui as lfu
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "laser-builtin-ref"))
+    lfu.save_reference(None)
+    ref = lfu.load_reference()
+    assert ref is not None and len(ref.points) >= 20
+    assert lfu.reference_is_builtin()
+    assert lfu.reference_status().startswith("Built in")
+    assert abs(ref.at(*lf.REFERENCE_CENTRE)) < 0.05      # 0 at the middle
+    mine = lf.FocusMap([(100, 100, 0.0), (120, 100, 0.2), (100, 120, 0.1)], 18.0)
+    lfu.save_reference(mine)
+    assert not lfu.reference_is_builtin()
+    assert len(lfu.load_reference().points) == 3          # this PC's wins
+    lfu.save_reference(None)
