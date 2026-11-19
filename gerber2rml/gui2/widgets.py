@@ -454,6 +454,12 @@ class Segmented(QWidget):
             if k == key:
                 b.setChecked(True)
 
+    def set_option_visible(self, key, on):
+        """Show or hide one choice - for a view a tier does not have."""
+        for b, k in self._keys.items():
+            if k == key:
+                b.setVisible(bool(on))
+
     def set_option_enabled(self, key, on):
         """Grey one choice out - for a view that means nothing on this job."""
         for b, k in self._keys.items():

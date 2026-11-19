@@ -515,10 +515,15 @@ class Traveller(QWidget):
         row.update()
         self._update_total(plan)
 
+    # Told of every change to a done mark: the window's project keeps them.
+    on_done = None
+
     def set_done(self, key, on=True):
         (self._done.add if on else self._done.discard)(key)
         if key in self._rows:
             self._rows[key].set_done(on)
+        if self.on_done is not None:
+            self.on_done(key, on)
 
     def is_done(self, key):
         return key in self._done
