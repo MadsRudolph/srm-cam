@@ -241,6 +241,15 @@ class Events:
     def fit(self, nominal, measured, t):
         """The fiducials were found and fitted."""
 
+    def realigned(self, report):
+        """A moved sheet was lined up with its own holes. ``report`` is a
+        dict: ``kind`` (which holes, in words), ``shift`` (dx, dy) mm and
+        ``turn`` degrees - where the board really is against where the
+        placement put it, at the middle of the holes - ``worst`` and
+        ``mean`` mm the fit leaves, and ``holes``: one dict per hole with
+        ``n``, ``nominal``, ``found`` (None: not found), ``residual`` and
+        ``left_out``."""
+
     def job(self, key, label, rml):
         """A job is about to be sent: its program, exactly as sent."""
 
@@ -288,6 +297,17 @@ def strip_damage(geoms, strip):
             if left.is_empty or len(parts(left)) > 1:
                 hurt += 1
     return hurt
+
+
+def realign_summary(report):
+    """One paragraph: what the line-up used, where the board was, the fit."""
+    dx, dy = report["shift"]
+    return ("Lined up with %s: %d of %d found, %d used. The board is "
+            "X %+.2f, Y %+.2f mm (%.2f mm) from where the placement put it, "
+            "turned %+.2f°. Fit: worst %.3f mm, mean %.3f mm."
+            % (report["kind"], report["found"], len(report["holes"]),
+               report["used"], dx, dy, math.hypot(dx, dy),
+               report["turn"], report["worst"], report["mean"]))
 
 
 def about(cx, cy, deg):
@@ -1428,6 +1448,7 @@ class AutoRun:
                 self.ev.note("Hole %d at X %.2f, Y %.2f: %+.2f, %+.2f from "
                              "where the placement put it."
                              % (i + 1, found[0], found[1], off_x, off_y))
+            placed = self.rotation
             got = [(n, m) for n, m in zip(nominal, measured) if m]
             need = min(3, len(holes))
             if len(got) < need:
@@ -1463,12 +1484,43 @@ class AutoRun:
                 raise RunFailed("the board's holes disagree by %.2f mm - one "
                                 "was misread. Nothing was cut." % worst)
             self.rotation = t
-            self.ev.note("Lined up with the board's holes: %d of %d found, "
-                         "within %.3f mm, turned %+.2f°."
-                         % (len(got), len(holes), worst,
-                            math.degrees(t.theta)))
+            self._report_realign(holes, measured, got, placed, t)
             return t
         return self._guard("realign", go)
+
+    def _report_realign(self, holes, measured, used, placed, t):
+        """Say where the board turned out to be and how well its holes fit."""
+        kind = getattr(self.src, "realign_kind", "") or "the board's holes"
+        used_nom = {g[0] for g in used}
+        rows = []
+        for i, ((x, y, d), m) in enumerate(zip(holes, measured), 1):
+            r = None
+            if m is not None:
+                fx, fy = t.apply(x, y)
+                r = math.hypot(fx - m[0], fy - m[1])
+            rows.append({"n": i, "nominal": (x, y), "diameter": d,
+                         "found": m, "residual": r,
+                         "left_out": m is not None and (x, y) not in used_nom})
+        fit_r = [h["residual"] for h in rows
+                 if h["residual"] is not None and not h["left_out"]]
+        cx = sum(x for x, _y, _d in holes) / len(holes)
+        cy = sum(y for _x, y, _d in holes) / len(holes)
+        (px, py), (qx, qy) = placed.apply(cx, cy), t.apply(cx, cy)
+        report = {"kind": kind, "shift": (qx - px, qy - py),
+                  "turn": math.degrees(t.theta - placed.theta),
+                  "worst": max(fit_r), "mean": sum(fit_r) / len(fit_r),
+                  "found": sum(1 for h in rows if h["found"] is not None),
+                  "used": len(fit_r), "holes": rows}
+        for h in rows:
+            if h["found"] is None:
+                self.ev.note("  hole %d (%.2f mm): not found" % (
+                    h["n"], h["diameter"]))
+            else:
+                self.ev.note("  hole %d (%.2f mm): %.3f mm from the fit%s" % (
+                    h["n"], h["diameter"], h["residual"],
+                    " - left out" if h["left_out"] else ""))
+        self.ev.note(realign_summary(report))
+        self.ev.realigned(report)
 
     def _locate(self, x_mm, y_mm, search_um=None, pose=None,
                 clearance_um=None):
