@@ -18,6 +18,10 @@ def page(qt_app, monkeypatch):
                          apertures=[box(5, 5, 9, 9)], mirrored=False)
     d = sl.StencilLaserDialog(art)
     yield d
+    # A job's thread says it is finished just before it ends: let it end
+    # before the page goes, or deleting the page under it can crash.
+    if d._worker is not None:
+        d._worker.wait(10000)
     d.close()
 
 
@@ -160,4 +164,6 @@ def test_the_board_is_found_anywhere_on_the_bed(qt_app, monkeypatch):
     got = d._middle(d._hole_paths())
     want = d._middle(real)
     assert np.hypot(*(got - want)) < 0.5         # the lock refines the rest
+    if d._worker is not None:
+        d._worker.wait(10000)
     d.close()

@@ -1157,6 +1157,10 @@ class StencilLaserDialog(QDialog):
         self.burst = _ispin(r.passes_per_burst, 1, 50)
         self.rest = _spin(r.rest_s, 0, 120, 1, 0)
         self.zones = _ispin(r.zones, 1, 12)
+        # The field is weaker at its edges (xtool.EDGE_PASSES): more passes
+        # on the trenches further than this from the middle of the bed.
+        self.edge_passes = _ispin(xtool.EDGE_PASSES, 0, 100)
+        self.edge_radius = _spin(xtool.EDGE_RADIUS_MM, 10, 160, 5, 0)
         self.spot_drills = QCheckBox("Etch drill hole centres inside pads")
         self.spot_drills.setChecked(True)
         # A mark to drill by, so only worth etching while the holes are not
@@ -1180,6 +1184,13 @@ class StencilLaserDialog(QDialog):
         self.burst_field = widgets.Field("Per burst", self.burst, unit="passes")
         self.rest_field = widgets.Field("Rest", self.rest, unit="s")
         self.zones_field = widgets.Field("Zones", self.zones)
+        self.edge_passes_field = widgets.Field(
+            "Edge passes", self.edge_passes, unit="more",
+            help="The laser is weaker towards the edges of its field. These "
+                 "passes go only on the trenches further out than below, "
+                 "after the others. The field test measures where.")
+        self.edge_radius_field = widgets.Field(
+            "Beyond", self.edge_radius, unit="mm from the bed's middle")
 
         for field_w, wdg in (
             (self.power_field, self.power),
@@ -1192,6 +1203,8 @@ class StencilLaserDialog(QDialog):
             (self.burst_field, self.burst),
             (self.rest_field, self.rest),
             (self.zones_field, self.zones),
+            (self.edge_passes_field, self.edge_passes),
+            (self.edge_radius_field, self.edge_radius),
         ):
             self.recipe_more.body.addWidget(field_w)
             if wdg in (self.offsets, self.trace_kerf, self.density):
@@ -1553,6 +1566,8 @@ class StencilLaserDialog(QDialog):
         self.burst_field.setVisible(is_stencil)
         self.rest_field.setVisible(is_stencil or (is_traces and strat == "concentric"))
         self.zones_field.setVisible(is_stencil)
+        for f in (self.edge_passes_field, self.edge_radius_field):
+            f.setVisible(is_traces and strat == "concentric")
         self.spot_drills.setVisible(is_traces and bool(self.base_art.drills))
         self._sync_spot_drills()
         self.cross.setVisible(self.kind in ("mask", "silk") or is_hatch)
@@ -2440,6 +2455,9 @@ class StencilLaserDialog(QDialog):
             self.trace_kerf.setValue(d.get("kerf", xtool.DEFAULT_TRACE_KERF))
             self.density.setValue(d["lines_per_cm"])
             self.rest.setValue(d.get("rest_s", 0.0))
+            self.edge_passes.setValue(int(d.get("edge_passes", xtool.EDGE_PASSES)))
+            self.edge_radius.setValue(float(d.get("edge_radius",
+                                                  xtool.EDGE_RADIUS_MM)))
             self._spot_auto = True
             try:
                 self.spot_drills.setChecked(bool(d.get("spot_drills", True)))
@@ -2549,7 +2567,9 @@ class StencilLaserDialog(QDialog):
             if r.strategy == "concentric":
                 what = (f"Concentric · {r.offsets} ring{'' if r.offsets == 1 else 's'} "
                         f"({r.isolation_mm:.2f} mm gap) · {r.passes} depth passes · "
-                        f"{r.power:g} % @ {r.speed:g} mm/s")
+                        f"{r.power:g} % @ {r.speed:g} mm/s"
+                        + (f" · +{r.edge_passes} beyond {r.edge_radius:g} mm"
+                           if r.edge_passes else ""))
             else:
                 mode = "Moat hatch" if r.strategy == "moat" else "Full rubout"
                 what = (f"{mode} · {r.power:g} % · {r.speed:g} mm/s · {r.passes} passes · "
@@ -2641,7 +2661,9 @@ class StencilLaserDialog(QDialog):
                 spot_drills=self.spot_drills.isChecked(),
                 cross_hatch=self.cross.isChecked(),
                 one_way=self.one_way.isChecked(),
-                mark_outline=self.mark.isChecked())
+                mark_outline=self.mark.isChecked(),
+                edge_passes=self.edge_passes.value(),
+                edge_radius=self.edge_radius.value())
         if self.kind != "stencil":
             return xtool.FillRecipe(power=self.power.value(), speed=self.speed.value(),
                                     frequency=self.freq.value(),
