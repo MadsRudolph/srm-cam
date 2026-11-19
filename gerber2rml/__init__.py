@@ -1,3 +1,3 @@
 """gerber2rml — Gerber/Excellon to RML CAM tool for the Roland SRM-20."""
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
