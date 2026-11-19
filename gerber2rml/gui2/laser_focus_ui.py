@@ -227,8 +227,16 @@ def measure(page):
                               progress=lambda i, n: progress(i))
 
     def done(fmap):
+        raw = fmap
         fmap = lf.corrected(fmap, ref)
         page._focus_map = fmap
+        from gerber2rml.gui2 import laserlog
+        laserlog.write("focus map", head_z=fmap.z, bounds=bounds,
+                       raw=laserlog.points(raw),
+                       corrected=laserlog.points(fmap),
+                       correction=None if ref is None else laserlog.points(ref),
+                       skipped=list(raw.skipped or []),
+                       moved_off_holes=moved)
         _draw(page)
         if getattr(page, "kind", None) == "traces":
             zones = lf.band_boxes(fmap, bounds)

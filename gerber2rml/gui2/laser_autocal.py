@@ -195,6 +195,8 @@ def build_report(page, results, total):
 
 
 def show_report(page, report):
+    from gerber2rml.gui2 import laserlog
+    laserlog.write("calibrate report", **report)
     text = "\n".join([report["verdict"], ""] + report["lines"]
                      + ([""] + ["⚠ " + w for w in report["warnings"]]
                         if report["warnings"] else []))

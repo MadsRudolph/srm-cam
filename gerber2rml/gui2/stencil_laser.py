@@ -52,6 +52,8 @@ from gerber2rml.engine import xtool
 from gerber2rml.gui2 import background, theme, widgets
 from gerber2rml.gui2 import laser_focus_ui as _lfu
 from gerber2rml.gui2 import laser_autocal as _autocal
+from gerber2rml.gui2 import laser_fieldtest_ui as _ftu
+from gerber2rml.gui2 import laserlog as _laserlog
 from gerber2rml.gui2.undo import PlacementUndo, install as install_undo
 
 _SETTINGS = ("SRM-CAM", "stencil-laser")
@@ -1086,6 +1088,15 @@ class StencilLaserDialog(QDialog):
             lambda: self._show_map_plan(map_more._expanded))
         self.map_more = map_more
         s.add(map_more)
+        # Focus or the field? One etch on a spare sheet tells which leaves a
+        # board's edges unfinished (engine/laser_fieldtest.py).
+        self.field_test_btn = widgets.button(
+            "Field test…", kind="ghost", on=lambda: _ftu.load(self),
+            tip="Loads a 150 x 90 mm test in place of the job: coupons over "
+                "the whole sheet at focus, and ladders above and below it, "
+                "cut with this recipe. It shows whether unfinished edges are "
+                "focus or the laser's field.")
+        s.add(self.field_test_btn)
         pv.addWidget(s)
 
         s = widgets.Section("Camera")
@@ -3425,11 +3436,30 @@ class StencilLaserDialog(QDialog):
                     return xtool.fill_job([shapes[i] for i in sorted(idx)],
                                           outline, recipe)
 
+        # The field test: each ladder height its own band, every coupon cut
+        # (no auto-skip: a coupon's moat isolates nothing by design).
+        field = self.kind == "traces" and _ftu.active(self)
+        if field:
+            origin, recipe = self.origin(), self._run_recipe()
+            zones = _ftu.zones(self, set(self.selected) or None)
+            every = sorted(set().union(*[i for _dz, i in zones]))
+            job = xtool.traces_job(self.art, origin, recipe, only=every)
+            self._job = job
+            picked = set(every)
+
+            def build(idx):
+                return xtool.traces_job(self.art, origin, recipe,
+                                        only=sorted(idx))
+
         def work(progress):
             z = self.laser.z()
+            run_map = fmap
+            if field:
+                from gerber2rml.engine import laser_focus as _lf
+                run_map = _lf.FocusMap([], z, [])     # heights from here
             if zones is not None and len(zones) > 1:
                 from gerber2rml.gui2 import laser_focus_ui as _lfu
-                z = _lfu.run_zoned(self.laser, fmap, zones, build,
+                z = _lfu.run_zoned(self.laser, run_map, zones, build,
                                    progress=progress,
                                    timeout_for=lambda j: j.seconds * 2 + 120)
             else:
@@ -3458,6 +3488,16 @@ class StencilLaserDialog(QDialog):
                     f"photo; select any that need more and run those again.")
         what = (f"{len(self.selected)} selected" if self.selected
                 else f"{len(picked)} {self._noun(len(picked))}")
+        _laserlog.write(
+            "etch", job=self.name_lbl.text(), kind=self.kind,
+            field_test=field, origin=self.origin(),
+            turns=self.turns, fine=self.fine,
+            recipe=self.recipe_lbl.text() if hasattr(self, "recipe_lbl") else None,
+            preset=self.preset.currentText(), passes=job.passes,
+            seconds=round(job.seconds), pieces=len(picked),
+            focus_map_z=getattr(fmap, "z", None),
+            focus_map=_laserlog.points(fmap),
+            bands=[[round(dz, 3), len(b)] for dz, b in (zones or [])])
         self._start(work, f"{self.k['busy']}: {what}, {job.passes} passes…", done)
 
     def stop(self):
@@ -3516,6 +3556,8 @@ class StencilLaserDialog(QDialog):
                           if "answer" in msg else "warn")
         self._paint()
         self._say(msg, warn=warn)
+        _laserlog.write("problem" if warn else "done", message=msg,
+                        job=self.name_lbl.text(), kind=self.kind)
         _autocal.after_step(self, msg, warn)
 
     def _busy(self, on):
