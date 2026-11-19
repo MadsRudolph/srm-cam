@@ -1,6 +1,7 @@
 """Projects: many boards, each ticked off as it is made (2026-11-19, the
 analog synth's dozen boards on the mill and the laser)."""
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -11,10 +12,14 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 def test_a_project_keeps_its_boards_and_ticks(tmp_path):
+    # The boards sit beside the project file: on Windows CI the checkout is
+    # on D: and tmp_path on C:, and no path is relative across drives.
+    for n in ("mosfet_test", "curtain_drive"):
+        shutil.copytree(FIX / n, tmp_path / n)
     p = pj.Project("synth")
-    a = p.add(FIX / "mosfet_test")
-    b = p.add(FIX / "curtain_drive")
-    assert p.add(FIX / "mosfet_test") is a           # once
+    a = p.add(tmp_path / "mosfet_test")
+    b = p.add(tmp_path / "curtain_drive")
+    assert p.add(tmp_path / "mosfet_test") is a      # once
     a.steps = [("drill", "Drill", "mill"), ("laser_traces", "Traces", "laser")]
     a.done = {"drill"}
     p.save(tmp_path / "synth.srmproj")
