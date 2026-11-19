@@ -10,7 +10,8 @@ So, for the whole application at once (:func:`install`):
 
 * those controls no longer take keyboard focus from the wheel - a click or
   Tab does it (``Qt.StrongFocus`` in place of ``Qt.WheelFocus``);
-* the wheel changes one only while it has focus - after a click into it;
+* the wheel changes one only after it was clicked into or tabbed to - not
+  because a window gave it focus when it opened;
 * otherwise the wheel goes on to whatever holds the control, so the panel
   under the pointer scrolls as if the control were not there.
 
@@ -35,6 +36,9 @@ def _guarded(w):
     return None
 
 
+_ARMED = "_wheelguard_armed"
+
+
 class WheelGuard(QObject):
     def eventFilter(self, obj, event):
         t = event.type()
@@ -43,10 +47,26 @@ class WheelGuard(QObject):
             if w is obj and w.focusPolicy() == Qt.WheelFocus:
                 w.setFocusPolicy(Qt.StrongFocus)
             return False
+        if t in (QEvent.FocusIn, QEvent.FocusOut) and obj.isWidgetType():
+            # Armed only by the person: a click into it or Tab to it. Focus
+            # a window hands its first box when it opens is not that.
+            w = _guarded(obj)
+            if w is not None:
+                w.setProperty(_ARMED, t == QEvent.FocusIn and event.reason() in (
+                    Qt.MouseFocusReason, Qt.TabFocusReason,
+                    Qt.BacktabFocusReason, Qt.ShortcutFocusReason))
+            return False
+        if t == QEvent.MouseButtonPress and obj.isWidgetType():
+            # A click into a box arms it even when it already had focus -
+            # the focus a window handed it, which raised no FocusIn now.
+            w = _guarded(obj)
+            if w is not None:
+                w.setProperty(_ARMED, True)
+            return False
         if t != QEvent.Wheel or not obj.isWidgetType():
             return False
         w = _guarded(obj)
-        if w is None or w.hasFocus():
+        if w is None or (w.hasFocus() and w.property(_ARMED)):
             return False
         # Not this control's: to the scroll area holding it, which scrolls.
         # Sent straight there - an event sent on from a filter does not
