@@ -890,7 +890,9 @@ def test_a_laser_board_is_drilled_and_cut_out_only(win, qt_app):
     keys = [k for k, _t in page._plan_rows()]
     assert not any("traces" in k for k in keys)
     assert any("drill" in k for k in keys) and any("cutout" in k for k in keys)
-    assert not page.level_chk.isChecked() and not page.check_chk.isEnabled()
+    # Levelling stays on: the drill and the cut-out need the copper's real
+    # height as much as traces do (drums1, 2026-11-19).
+    assert page.level_chk.isChecked() and not page.check_chk.isEnabled()
     assert all("traces" not in str(page.start_box.itemData(i))
                for i in range(page.start_box.count()))
     done = []
