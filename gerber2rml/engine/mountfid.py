@@ -20,6 +20,16 @@ usable is what the finder needs (:mod:`gerber2rml.engine.fidfind`, and
 """
 import math
 
+
+def _in_slot(h, holes):
+    """Whether hole ``h`` is one piece of a slot: another hit of its width
+    overlaps it (``loader.slot_hits``). The probe finds a slot's middle,
+    not any one piece, so slot pieces are never reference holes."""
+    x, y, d = h[:3]
+    return any(o is not h and abs(o[2] - d) < 1e-6
+               and math.hypot(o[0] - x, o[1] - y) < d - 1e-6
+               for o in holes)
+
 MAX_D = 4.0            # mm; see the module docstring
 ROOM_FOR_BIT = 0.8     # mm the hole must be wider than the bit
 MIN_SPREAD = 0.5       # of the board's longer side, between the two furthest
@@ -41,7 +51,7 @@ def pick(holes, box, bit_mm=0.8, max_d=MAX_D, count=4):
     corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]      # FL FR BR BL
     lo = min_diameter(bit_mm)
     by_size = {}
-    for x, y, d in holes:
+    for x, y, d in (h[:3] for h in holes if not _in_slot(h, holes)):
         if lo - 1e-6 <= d <= max_d + 1e-6:
             by_size.setdefault(round(d, 2), []).append((x, y, d))
     need = MIN_SPREAD * max(x1 - x0, y1 - y0)
@@ -86,7 +96,8 @@ def pick_any(holes, box, bit_mm=0.8, max_d=MAX_D, count=4):
     mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
     corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]      # FL FR BR BL
     lo = bit_mm + ANY_ROOM_FOR_BIT
-    usable = [h[:3] for h in holes if lo - 1e-6 <= h[2] <= max_d + 1e-6]
+    usable = [h[:3] for h in holes if lo - 1e-6 <= h[2] <= max_d + 1e-6
+              and not _in_slot(h, holes)]
     picked = []
     for cx, cy in corners:
         quarter = [h for h in usable

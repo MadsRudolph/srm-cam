@@ -426,6 +426,33 @@ def _outline_to_shapely(outline_layer) -> object:
 # Public API
 # ---------------------------------------------------------------------------
 
+# Hits along a slot are this fraction of its width apart: a 0.9 mm slot gets
+# one every 0.225 mm, and the scallops between them stand 0.014 mm proud.
+SLOT_HIT_SPACING = 0.25
+
+
+def slot_hits(x1, y1, x2, y2, width):
+    """A routed slot (an oval hole) as overlapping drill hits along its line.
+
+    KiCad writes an oval pad's hole as an Excellon slot - ``X..Y..G85X..Y..``,
+    a line routed with the tool - and everything downstream knows round hits
+    only. A row of hits of the slot's width, close enough to overlap, cuts
+    the same oval with the same one bit, and needs nothing else to know
+    about slots: preview, turn, mirror and both sides all take it as holes.
+    Hits of one width that overlap are how :mod:`engine.mountfid` tells a
+    slot's pieces from a hole the probe could drop into.
+    """
+    import math
+    length = math.hypot(x2 - x1, y2 - y1)
+    if width <= 0:
+        return []
+    if length < 1e-6:
+        return [(x1, y1, width)]
+    n = max(1, math.ceil(length / (SLOT_HIT_SPACING * width)))
+    return [(x1 + (x2 - x1) * k / n, y1 + (y2 - y1) * k / n, width)
+            for k in range(n + 1)]
+
+
 def select_drill_holes(
     folder: Path | str,
     outline=None,
@@ -456,6 +483,11 @@ def select_drill_holes(
         for o in ex.objects:
             if type(o).__name__ == "Flash":
                 holes.append((o.x, o.y, getattr(o.aperture, "diameter", 0) or 0))
+            elif type(o).__name__ == "Line":
+                # A routed slot (KiCad writes oval holes as G85): a row of
+                # overlapping hits along its line, which cut the oval.
+                holes.extend(slot_hits(o.x1, o.y1, o.x2, o.y2,
+                                       getattr(o.aperture, "diameter", 0) or 0))
 
     # Deduplicate
     seen: set = set()
