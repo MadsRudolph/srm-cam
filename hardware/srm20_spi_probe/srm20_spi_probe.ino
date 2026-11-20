@@ -105,7 +105,9 @@
  *   board -> host:
  *     E <id|cmd> <reason>   error (NOTOUCH / UNSTABLE / LOW / NODATUM / ABORT /
  *                           RUNAWAY / COVER / NOPATCH / NOSESSION / CMDERR /
- *                           DEADMAN)
+ *                           DEADMAN / ARGS / LONG). ARGS: a number missing or
+ *                           not a number - refused, nothing moves. LONG: the
+ *                           line overran the 47-character buffer - refused.
  *     # ...                 human-readable log (host ignores)
  */
 #include <SPI.h>
@@ -208,6 +210,21 @@ bool readPos(long &x, long &y, long &z) {
   return false;
 }
 
+// The work origin, read until two reads agree - the same rule as readPos. A
+// single read can be garbage, and 'W' writes what it read back with
+// setOrigin: one bad read moved the work origin's X/Y.
+bool readOrigin(long &x, long &y, long &z) {
+  long ax, ay, az, bx, by, bz;
+  srm20.getOrigin(ax, ay, az);
+  for (int i = 0; i < 8; i++) {
+    delay(30);
+    srm20.getOrigin(bx, by, bz);
+    if (ax == bx && ay == by && az == bz) { x = bx; y = by; z = bz; return true; }
+    ax = bx; ay = by; az = bz;
+  }
+  return false;
+}
+
 // Debounced contact read: stepper EMI can flash the probe line LOW for a
 // moment. Real contact holds — require 3 consecutive LOW reads 1 ms apart.
 bool probeTouched() {
@@ -278,6 +295,7 @@ void abortLift() {
 bool checkAbort() {
   while (Serial.available()) {
     char c = Serial.read();
+    lastCmdMs = millis();       // the host is talking: feed the spindle deadman
     if (c == '!') {
       gAbort = true;
       gLiftPending = true;      // retract at the exit, not from in here
@@ -293,6 +311,13 @@ bool checkAbort() {
       srm20.resumeJob();
       gPauseRequested = false;
       Serial.println(F("^ ok"));
+    } else if (c == 'K') {                       // cancelJob (VPanel Stop)
+      // Documented as job control with ~ ^ %, but it used to be eaten here
+      // mid-move like any other byte: the Stop that matters most did nothing.
+      srm20.cancelJob();
+      gPauseRequested = false;
+      gAbort = true;
+      Serial.println(F("K ok"));
     }
   }
   if (gAbort) spindleOff();       // v3: an abort also kills the spindle
@@ -377,6 +402,11 @@ bool waitForMotorStop() {
         // reporting PAUSE right now), until '^' resumes or the cap expires.
         if (!pause0) pause0 = millis();
         if (millis() - pause0 > PAUSE_MAX_MS) {
+          // Release the hold before giving up on it: still suspended, the
+          // machine would not run the lift the caller does next, and the
+          // flag would hold that lift for another five minutes.
+          srm20.resumeJob();
+          gPauseRequested = false;
           gAbort = true; spindleOff(); haltMotion();
           Serial.println(F("E ~ PAUSETIMEOUT"));
           return false;
@@ -405,15 +435,56 @@ bool waitForMotorStop() {
   return true;
 }
 
-// Move straight up (or to z) at (mx, my) and wait, whatever abort is latched.
-// The abort state is kept: the sequence that called this must still stop.
+// Move straight up to z and wait, whatever abort is latched. The abort state
+// is kept: the sequence that called this must still stop.
+//
+// A retract NEVER goes down, and never goes sideways. safeZ is whatever the
+// last 'D' latched - possibly at another spot on the bed, possibly lower than
+// where the head is now (jogged up since) - and "lift to safe Z" used to drive
+// the head DOWN to it on STOP. And (mx, my) is where the caller sent the head,
+// which after a move halted half-way is not where it is: going there on the
+// way up was the rest of the halted travel. So: up from where the head really
+// is, to the higher of z and where it already is. If the position cannot be
+// read, all the way up to Z 0 (machine top) - the one target that is above
+// any head.
 void retractTo(long mx, long my, long z) {
   bool was = gAbort;
   gRetracting = true;
+  long cx, cy, cz;
+  if (readPos(cx, cy, cz)) {
+    mx = cx; my = cy;
+    if (z < cz) z = cz;
+  } else {
+    z = 0;
+  }
+  if (z > 0) z = 0;
   srm20.jumpTo(mx, my, z, MOVE_SPEED);
   waitForMotorStop();
   gRetracting = false;
   gAbort = gAbort || was;
+}
+
+// Go to (mx, my, z) the way a bit has to: straight up first when z is higher
+// than the head, across at the higher of the two, straight down last. A single
+// jumpTo is a straight line in 3D, so from a head left ON the copper (after
+// 'T', or a touch) it dragged the bit sideways over the copper on its way up,
+// and going down to a lower plane it cut the corner over whatever lay
+// between. If the position cannot be read, the old straight move.
+// Returns false (motion halted) like waitForMotorStop.
+bool travelTo(long mx, long my, long z) {
+  long cx, cy, cz;
+  if (readPos(cx, cy, cz)) {
+    bool across = labs(cx - mx) > 3 || labs(cy - my) > 3;
+    if (z > cz + 3) {
+      srm20.jumpTo(cx, cy, z, MOVE_SPEED);             // up, in place
+      if (!waitForMotorStop()) return false;
+    } else if (across && z < cz - 3) {
+      srm20.jumpTo(mx, my, cz, MOVE_SPEED);            // across, at this height
+      if (!waitForMotorStop()) return false;
+    }
+  }
+  srm20.jumpTo(mx, my, z, MOVE_SPEED);
+  return waitForMotorStop();
 }
 
 // Best-effort lift to safe Z (used on abort / after a probe). Never descends.
@@ -442,7 +513,10 @@ void liftToApproach(long mx, long my) {
 int descendUntilTouch(long mx, long my, long &z, long step, long floorZ) {
   while (z > floorZ) {
     if (checkAbort()) return -1;
-    z -= step;
+    // The last step lands on the floor, never past it: a floor that is not a
+    // whole number of steps below the start used to be overshot by up to a
+    // step.
+    z -= (z - step < floorZ) ? (z - floorZ) : step;
     srm20.jumpTo(mx, my, z, MOVE_SPEED);       // X,Y fixed — Z only
     if (!waitForMotorStop()) return -1;
     if (probeTouched()) return 1;
@@ -472,7 +546,12 @@ int descendUntilTouch(long mx, long my, long &z, long step, long floorZ) {
 // contract as descendUntilTouch.
 int descendFast(long mx, long my, long &z, long floorZ, long expectZ,
                 long fineStep) {
-  long handover = (haveRef ? expectZ + COARSE_KEEP_UM : floorZ);
+  // No surface known yet (the first touch after a 'D'): the copper could be
+  // anywhere below, so there is no "above any copper" to step coarsely
+  // through - fine steps from the start. This used to be floorZ, which made
+  // the first touch of every run the COARSE one: 150 um steps, pressing a
+  // still bit up to 0.15 mm into the copper before it read contact.
+  long handover = (haveRef ? expectZ + COARSE_KEEP_UM : z);
   if (handover < floorZ) handover = floorZ;
   while (z > handover) {
     if (checkAbort()) return -1;
@@ -512,17 +591,21 @@ int verifyTouch(long mx, long my, long coarseZ, long &fineZ) {
 
 // Probe at absolute machine (mx,my). Returns 1 + touchZ on verified contact,
 // 0 on no contact (lifted), -1 if aborted, -2 if it ran away past the known
-// surface, -3 if the two touches wouldn't agree.
+// surface, -3 if the two touches wouldn't agree, -4 if the probe reads contact
+// even at safe Z.
 int probeAt(long mx, long my, long &touchZ) {
   long startZ = approachZ();
-  srm20.jumpTo(mx, my, startZ, MOVE_SPEED);
-  if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
+  if (!travelTo(mx, my, startZ)) { liftSafe(mx, my); return -1; }
   if (probeTouched()) {
     // Copper higher than the approach plane (surface rose > clearance). Back off
     // to full safe Z and fine-step from there — never plunge from a low rapid.
     srm20.jumpTo(mx, my, safeZ, MOVE_SPEED);
     if (!waitForMotorStop()) { liftSafe(mx, my); return -1; }
-    if (probeTouched()) return 0;              // touching even at safe Z: safe Z too low
+    // Touching even at safe Z: the clip is on the bit, or safe Z is in the
+    // copper. That is NOT "no copper here" - a host that hears NOTOUCH may go
+    // lower, which is the one wrong thing to do with the probe reading
+    // contact. Said as what it is.
+    if (probeTouched()) return -4;
     startZ = safeZ;
   }
   long floorZ = safeZ - PROBE_MAX_DROP_UM;
@@ -533,8 +616,12 @@ int probeAt(long mx, long my, long &touchZ) {
   }
   long z = startZ;
   // The grid goes anywhere on the board, so the only safe expectation is the
-  // highest copper seen so far.
-  int r = descendFast(mx, my, z, floorZ, maxSurfaceZ, PROBE_STEP_UM);
+  // highest copper seen so far - unless the copper here has just been found
+  // ABOVE the approach plane, i.e. above that "highest": then nothing is
+  // known about where it is, and every step down from safe Z is a fine one.
+  int r = (startZ == safeZ && haveRef)
+      ? descendUntilTouch(mx, my, z, PROBE_STEP_UM, floorZ)
+      : descendFast(mx, my, z, floorZ, maxSurfaceZ, PROBE_STEP_UM);
   if (r == -1) { liftSafe(mx, my); return -1; }
   if (r == 0)  { liftSafe(mx, my); return refLimited ? -2 : 0; }
   long cx, cy, cz;
@@ -578,6 +665,31 @@ int touchOffHere(long &tx, long &ty, long &tz) {
 // ---- tiny line reader -----------------------------------------------------
 char line[48];
 int  lineLen = 0;
+bool lineTooLong = false;   // the line overran the buffer: refuse it, whole
+
+// Read exactly n whitespace-separated integers from s. False if one is missing
+// or is not a number, or if anything but spaces follows them.
+//
+// strtol on a missing number quietly gives 0, and 0 is a real place on this
+// machine: a line cut short ('O' with no numbers, 'M 12000' with no Y, Z or
+// speed) set the work origin to machine 0,0,0, or moved the bit to work Z 0 -
+// the copper surface - across the board. A command with the wrong arguments
+// is refused instead: 'E <cmd> ARGS', and nothing moves.
+bool readLongs(const char *s, long *out, int n) {
+  char *p = (char *)s;
+  for (int i = 0; i < n; i++) {
+    char *e;
+    out[i] = strtol(p, &e, 10);
+    if (e == p) return false;
+    p = e;
+  }
+  while (*p == ' ' || *p == '\t') p++;
+  return *p == 0;
+}
+
+void argsError(char cmd) {
+  Serial.print(F("E ")); Serial.print(cmd); Serial.println(F(" ARGS"));
+}
 
 void handleLine(char *s) {
   if (s[0] == 'D') {
@@ -588,7 +700,9 @@ void handleLine(char *s) {
     Serial.print(F("D ")); Serial.print(datX); Serial.print(' ');
     Serial.print(datY); Serial.print(' '); Serial.println(safeZ);
   } else if (s[0] == 'Z') {
-    safeZ = atol(s + 1);
+    long v[1];
+    if (!readLongs(s + 1, v, 1)) { argsError('Z'); return; }
+    safeZ = (v[0] > 0) ? 0 : v[0];       // no higher than machine Z home
     Serial.print(F("# safeZ=")); Serial.println(safeZ);
   } else if (s[0] == 'L') {
     long x, y, z;
@@ -596,16 +710,28 @@ void handleLine(char *s) {
     if (readPos(x, y, z)) retractTo(x, y, safeZ);
     Serial.println(F("# lifted"));
   } else if (s[0] == 'J') {        // jog to absolute (x,y): lift ~5 mm, then travel XY
+    long v[2];
+    if (!readLongs(s + 1, v, 2)) { argsError('J'); return; }
+    long x = v[0], y = v[1];
     clearHold();                   // v4: after a STOP every jog was halted at once
-    char *p = s + 1;
-    long x = strtol(p, &p, 10);
-    long y = strtol(p, &p, 10);
     long cx, cy, cz;
     if (!readPos(cx, cy, cz)) { Serial.println(F("E J UNSTABLE")); }
     else {
       long jz = cz + 5000; if (jz > 0) jz = 0;   // 5 mm toward the top, capped at Z0
-      srm20.jumpTo(cx, cy, jz, MOVE_SPEED); waitForMotorStop();   // lift in place
-      srm20.jumpTo(x, y, jz, MOVE_SPEED); waitForMotorStop();     // travel XY lifted
+      // Each leg is checked. A STOP (or the lid) during the lift used to be
+      // answered with the travel all the same - commanded from wherever the
+      // lift had been halted - and then with 'J x y', "arrived".
+      srm20.jumpTo(cx, cy, jz, MOVE_SPEED);                    // lift in place
+      bool ok = waitForMotorStop();
+      if (ok) {
+        srm20.jumpTo(x, y, jz, MOVE_SPEED);                    // travel XY lifted
+        ok = waitForMotorStop();
+      }
+      if (!ok) {
+        if (gLiftPending) abortLift();
+        Serial.println(F("E J ABORT"));
+        return;
+      }
       Serial.print(F("J ")); Serial.print(x); Serial.print(' '); Serial.println(y);
     }
   } else if (s[0] == 'T') {        // touch-off: descend from HERE, STOP at surface
@@ -638,7 +764,12 @@ void handleLine(char *s) {
       return;
     }
     long ox, oy, oz;
-    srm20.getOrigin(ox, oy, oz);
+    if (!readOrigin(ox, oy, oz)) {
+      srm20.jumpTo(tx, ty, tz + 2000, MOVE_SPEED);  // off the copper, unchanged
+      waitForMotorStop();
+      Serial.println(F("E W UNSTABLE"));
+      return;
+    }
     srm20.setOrigin(ox, oy, tz);             // origin Z = the copper surface
     delay(150);
     long nox, noy, noz;
@@ -658,6 +789,7 @@ void handleLine(char *s) {
     else if (r == -1) Serial.println(F("E B ABORT"));
     else if (r == -2) Serial.println(F("E B RUNAWAY"));
     else if (r == -3) Serial.println(F("E B UNSTABLE"));
+    else if (r == -4) Serial.println(F("E B LOW"));
     else              Serial.println(F("E B NOTOUCH"));
   } else if (s[0] == 'Q') {        // fast live position + touch for the DRO
     long x, y, z;
@@ -716,7 +848,11 @@ void handleLine(char *s) {
     long sp = (s[1] == 0) ? MOVE_SPEED : atol(s + 1);
     clearHold();
     srm20.jumpToView((int)sp);
-    waitForMotorStop();
+    if (!waitForMotorStop()) {     // stopped on the way: not "ok"
+      if (gLiftPending) abortLift();
+      Serial.println(F("E Y ABORT"));
+      return;
+    }
     Serial.println(F("Y ok"));
   } else if (s[0] == 'I') {        // v3: the machine's remote-command version
 #ifdef SRM20SPIREMOTE_LOCAL_PATCH
@@ -727,13 +863,23 @@ void handleLine(char *s) {
 #endif
   } else if (s[0] == 'F') {        // v3: SPI per-byte framing delay (us)
 #ifdef SRM20SPIREMOTE_LOCAL_PATCH
-    if (s[1] != 0) srm20.setFrameDelayUs((unsigned int)atol(s + 1));
+    if (s[1] != 0) {
+      // 200 us at the least: transfers were measured to corrupt near 50 us,
+      // and nothing checks a jumpTo's bytes. Read as a long, then clamped,
+      // so 70000 no longer wraps to 4464.
+      long us = atol(s + 1);
+      if (us < 200) us = 200;
+      if (us > 16000) us = 16000;
+      srm20.setFrameDelayUs((unsigned int)us);
+    }
     Serial.print(F("F ")); Serial.println(srm20.frameDelayUs());
 #else
     Serial.println(F("E F NOPATCH"));
 #endif
   } else if (s[0] == 'U') {        // v5: fast down, stopping at the first touch
-    long tz = strtol(s + 1, NULL, 10);
+    long v[1];
+    if (!readLongs(s + 1, v, 1)) { argsError('U'); return; }
+    long tz = v[0];
     long x, y, z;
     if (!readPos(x, y, z)) { Serial.println(F("E U UNSTABLE")); return; }
     if (probeTouched()) { Serial.println(F("E U LOW")); return; }
@@ -755,11 +901,9 @@ void handleLine(char *s) {
     // speed units. Timed on the board (millis) so the USB round-trip is not in
     // the number. Resolution is the status-poll interval (~100 ms at the stock
     // framing delay), so use moves of several seconds.
-    char *p = s + 1;
-    long dx = strtol(p, &p, 10);
-    long dy = strtol(p, &p, 10);
-    long dz = strtol(p, &p, 10);
-    long sp = strtol(p, &p, 10);
+    long v[4];
+    if (!readLongs(s + 1, v, 4)) { argsError('N'); return; }
+    long dx = v[0], dy = v[1], dz = v[2], sp = v[3];
     long x, y, z;
     if (!readPos(x, y, z)) { Serial.println(F("E N UNSTABLE")); return; }
     clearHold();
@@ -784,10 +928,9 @@ void handleLine(char *s) {
   } else if (s[0] == 'O') {        // v4: setOrigin(x, y, z) absolute, no motion.
     // The autonomous run owns the work origin: XY where the job's frame says,
     // Z on the copper it touched. Read back so the host sees what took.
-    char *p = s + 1;
-    long x = strtol(p, &p, 10);
-    long y = strtol(p, &p, 10);
-    long z = strtol(p, &p, 10);
+    long v[3];
+    if (!readLongs(s + 1, v, 3)) { argsError('O'); return; }
+    long x = v[0], y = v[1], z = v[2];
     if (z > 0) { Serial.println(F("E O RANGE")); return; }
     srm20.setOrigin(x, y, z);
     delay(150);
@@ -798,7 +941,13 @@ void handleLine(char *s) {
     // origin (all 'M' moves are origin-relative) and clear any stale abort
     clearHold();
     sawCmdErr = false;
-    srm20.getOrigin(strOX, strOY, strOZ);
+    // Every 'M' is relative to this, its Z included: a bad read here would
+    // put the whole stream at the wrong depth.
+    if (!readOrigin(strOX, strOY, strOZ)) {
+      haveStreamOrigin = false;
+      Serial.println(F("E C UNSTABLE"));
+      return;
+    }
     haveStreamOrigin = true;
     Serial.print(F("C ")); Serial.print(strOX); Serial.print(' ');
     Serial.print(strOY); Serial.print(' '); Serial.println(strOZ);
@@ -806,11 +955,9 @@ void handleLine(char *s) {
     if (!haveStreamOrigin) { Serial.println(F("E M NOSESSION")); return; }
     if (checkAbort()) { if (gLiftPending) abortLift();
                         Serial.println(F("E M ABORT")); return; }
-    char *p = s + 1;
-    long x = strtol(p, &p, 10);
-    long y = strtol(p, &p, 10);
-    long z = strtol(p, &p, 10);
-    long sp = strtol(p, &p, 10);
+    long v[4];
+    if (!readLongs(s + 1, v, 4)) { argsError('M'); return; }
+    long x = v[0], y = v[1], z = v[2], sp = v[3];
     long mz = strOZ + z;
     if (mz > 0) mz = 0;            // never above machine Z home
     sawCmdErr = false;
@@ -823,20 +970,19 @@ void handleLine(char *s) {
     Serial.print(F("M ")); Serial.print(x); Serial.print(' ');
     Serial.print(y); Serial.print(' '); Serial.println(z);
   } else if (s[0] == 'H') {        // hole test at absolute (x,y) um
+    long v[2];
+    if (!readLongs(s + 1, v, 2)) { argsError('H'); return; }
+    long x = v[0], y = v[1];
     if (!haveRef) { Serial.println(F("E H NOREF")); return; }
     if (probeTouched()) { Serial.println(F("E H LOW")); return; }
     clearHold();
-    char *p = s + 1;
-    long x = strtol(p, &p, 10);
-    long y = strtol(p, &p, 10);
     // Travel and start just above the surface the reference touch measured,
     // not the general approach plane: every hole test sits within a couple
     // of millimetres of that touch, and the descent from the approach plane
     // was most of each test's time. Never above the approach plane.
     long startZ = refSurfaceZ + HOLE_CLEAR_UM;
     if (startZ > approachZ()) startZ = approachZ();
-    srm20.jumpTo(x, y, startZ, MOVE_SPEED);
-    if (!waitForMotorStop()) { liftSafe(x, y); Serial.println(F("E H ABORT")); return; }
+    if (!travelTo(x, y, startZ)) { liftSafe(x, y); Serial.println(F("E H ABORT")); return; }
     long z = startZ;
     // The answer is only copper or not, so the step near the surface can be
     // coarser than a height probe's; it still stops at the first contact.
@@ -855,7 +1001,7 @@ void handleLine(char *s) {
 #endif
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);
-    Serial.print(F("# v3 datum=")); Serial.print(haveDatum);
+    Serial.print(F("# v5 datum=")); Serial.print(haveDatum);
     Serial.print(F(" safeZ=")); Serial.print(safeZ);
     Serial.print(F(" rpm=")); Serial.print(spindleRpm);
     Serial.print(F(" guard=")); Serial.print(statusGuard);
@@ -863,10 +1009,9 @@ void handleLine(char *s) {
     if (ok) { Serial.print(x); Serial.print(','); Serial.print(y); Serial.print(','); Serial.println(z); }
     else Serial.println(F("UNSTABLE"));
   } else if (s[0] == 'P') {
-    char *p = s + 1;
-    long id = strtol(p, &p, 10);
-    long x  = strtol(p, &p, 10);
-    long y  = strtol(p, &p, 10);
+    long v[3];
+    if (!readLongs(s + 1, v, 3)) { argsError('P'); return; }
+    long id = v[0], x = v[1], y = v[2];
     if (!haveDatum) { Serial.print(F("E ")); Serial.print(id); Serial.println(F(" NODATUM")); return; }
     if (probeTouched()) { Serial.print(F("E ")); Serial.print(id); Serial.println(F(" LOW")); return; }
     clearHold();                          // fresh probe — clear any stale abort
@@ -882,12 +1027,18 @@ void handleLine(char *s) {
       Serial.print(F("E ")); Serial.print(id); Serial.println(F(" RUNAWAY"));
     } else if (r == -3) {
       Serial.print(F("E ")); Serial.print(id); Serial.println(F(" UNSTABLE"));
+    } else if (r == -4) {
+      Serial.print(F("E ")); Serial.print(id); Serial.println(F(" LOW"));
     } else {
       Serial.print(F("E ")); Serial.print(id); Serial.println(F(" NOTOUCH"));
     }
   } else if (s[0] == '!') {                  // ABORT: stop, spindle off, lift
     gAbort = true;
     abortLift();
+  } else {
+    // A letter this firmware does not know is said so, not met with silence:
+    // a host built for another firmware finds out at once, not by timeout.
+    Serial.print(F("E ")); Serial.print(s[0]); Serial.println(F(" UNKNOWN"));
   }
 }
 
@@ -903,21 +1054,36 @@ void setup() {
   // connects, or mid-cut during a VPanel job. The deadman's job is narrow: if
   // WE started the spindle and OUR host goes quiet, stop it. A spindle someone
   // else started is not ours to police.
-  Serial.println(F("# SRM-20 prober v3 ready. D|P id x y|B|T|W|X|S rpm|~^%K|Y|N|V|?"));
+  Serial.println(F("# SRM-20 prober v5 ready. D|P id x y|B|T|W|X|S rpm|~^%K|Y|N|V|?"));
 }
 
 void loop() {
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
-      if (lineLen) {
+      if (lineTooLong) {
+        // Refused whole. The bytes past the buffer used to be dropped and the
+        // first 47 run as if they were the command - numbers cut short.
+        line[lineLen] = 0;
+        Serial.print(F("E ")); Serial.print(lineLen ? line[0] : '?');
+        Serial.println(F(" LONG"));
+        lineTooLong = false;
+        lineLen = 0;
+      } else if (lineLen) {
         line[lineLen] = 0;
         lastCmdMs = millis();      // the host is alive -> feed the deadman
         handleLine(line);
+        // ...and again now: the host was waiting on US for however long the
+        // command took. A move past SPINDLE_DEADMAN_MS ('M' at a slow feed,
+        // 'N') used to trip the deadman the moment it returned - stopping a
+        // spindle the host had every right to expect running.
+        lastCmdMs = millis();
         lineLen = 0;
       }
     } else if (lineLen < (int)sizeof(line) - 1) {
       line[lineLen++] = c;
+    } else {
+      lineTooLong = true;
     }
   }
   // SPINDLE DEADMAN: a running spindle with a silent host is the one failure
