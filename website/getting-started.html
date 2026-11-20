@@ -3,18 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Getting started — SRM-CAM guide</title>
-<meta name="description" content="Install SRM-CAM on Windows or Linux, learn the window, Novice and Pro, and the files KiCad has to give you.">
+<title>Install &amp; connect — SRM-CAM guide</title>
+<meta name="description" content="Install SRM-CAM on Windows, Linux or macOS, Roland's driver on Windows, connect the SRM-20 mill and the xTool F1 Ultra laser by USB, and learn the window, the rail and Novice and Pro.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
-<script defer src="js/anim/core.js?v=20260930a"></script>
-<script defer src="js/anim/laptop.js?v=20260930b"></script>
-<script defer src="js/anim/gs-window.js?v=20261118a"></script>
-<script defer src="js/anim/gs-files.js?v=20260930b"></script>
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <style>.figs.top { align-items: start; }</style>
+<script defer src="js/anim/core.js?v=20260930a"></script> <script defer src="js/anim/hw-cables.js?v=20261120a"></script> <script defer src="js/anim/rl-rail.js?v=20261120a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -36,34 +34,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link active" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link active" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -71,14 +82,34 @@
 
 <main>
 <div class="content">
+<h1>Install &amp; connect</h1>
+<p class="lead">Install SRM-CAM, plug in the mill and the laser, and learn the window. On Windows the mill also needs Roland's driver, once per PC. Then go on to <a href="kicad.html">From KiCad</a> and <a href="make-a-board.html">Make a board</a>.</p>
 
-<h1>Install &amp; KiCad</h1>
-<p class="lead">First Roland's driver (<a href="#roland">required, once per PC</a>), then SRM-CAM. Learn the four regions of the window and Novice and Pro, and get the right files out of KiCad. Then go on to <a href="automatic.html">Mill a board</a>.</p>
+<h2 id="install">Install SRM-CAM</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
+<tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive. The mill also needs <a href="#roland">Roland's driver</a>.</td></tr>
+<tr><td>Linux</td><td><code>SRM-CAM-…-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root. No driver for the mill: once, <span class="menu-path">Machine › Set up USB access…</span>.</td></tr>
+<tr><td>macOS (Apple silicon)</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-macOS-arm64.dmg">SRM-CAM-macOS-arm64.dmg</a></td><td>For the mill: once, <span class="menu-path">Machine › Set up the mill on this Mac…</span>.</td></tr>
+<tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
+</table></div>
+<p>Then, in SRM-CAM, <span class="menu-path">Help › Add the SRM-CAM buttons to KiCad…</span> (it also offers this a moment after it first opens). The buttons are on <a href="kicad.html">From KiCad</a>.</p>
 
-<h2 id="roland">Required before first use: Roland's driver</h2>
-<div class="danger"><span class="t">SRM-CAM does not work on its own</span>
-<p>SRM-CAM cannot talk to the SRM-20 until the Roland <strong>driver</strong> is installed. Windows needs it to see the mill at all. When the driver is installed, the mill shows up as a printer called <em>Roland SRM-20</em>, and SRM-CAM sends the job to that printer. Without it, <span class="ui">Start</span> stops with <em>&ldquo;The Roland SRM-20 printer is not installed on this PC&rdquo;</em>.</p>
-<p>The driver is the only thing you must install. Download it from Roland <strong>before you plug the mill into the PC</strong>. Roland's <strong>VPanel</strong> is optional: the run in SRM-CAM sends the job itself, in Novice and in Pro, and does not use it. See <a href="#vpanel">when you want VPanel</a>.</p></div>
+<h2 id="connect">Connect the machines</h2>
+<p>Three USB cables, on Windows, Linux and macOS alike. The mill has two: the <strong>black</strong> one is the Arduino fitted inside it (position, jog, probing, STOP), the <strong>white</strong> one is the mill's own (SRM-CAM sends the jobs over it). The run uses both. The laser has one.</p>
+<figure class="anim" data-anim="hw-cables">
+  <figcaption><span class="k">Three cables</span>Pick your system to see what the mill's own USB needs on it. The Arduino and the laser need nothing installed on any of them.</figcaption>
+</figure>
+<ul>
+  <li><strong>The mill's link:</strong> press <span class="ui">Connect</span> on the machine bar at the bottom of the window (or <span class="menu-path">Machine › Connect / disconnect</span>, Ctrl+L). More on <a href="machine-control.html">Machine control</a>.</li>
+  <li><strong>The laser</strong> (xTool F1 Ultra) shows up as a USB network adapter. SRM-CAM talks to it directly: no driver, and no xTool Creative Space. The laser page says when it has an answer. More on <a href="laser.html">The laser page</a>.</li>
+  <li><strong>No PC at the mill?</strong> Install SRM-CAM on your own laptop (Windows, Linux or macOS) and plug the cables in yourself. On Windows, Roland's driver too.</li>
+</ul>
+
+<h2 id="roland">Windows only: Roland's driver</h2>
+<div class="danger"><span class="t">Before the mill's USB goes into a Windows PC</span>
+<p>On Windows, SRM-CAM cannot talk to the SRM-20 until the Roland <strong>driver</strong> is installed: Windows needs it to see the mill at all. When the driver is installed, the mill shows up as a printer called <em>Roland SRM-20</em>, and SRM-CAM sends the job to that printer. Without it, <span class="ui">Start</span> stops with <em>&ldquo;The Roland SRM-20 printer is not installed on this PC&rdquo;</em>.</p>
+<p>On Windows the driver is the only thing you must install besides SRM-CAM. Download it from Roland <strong>before you plug the mill into the PC</strong>. Roland's <strong>VPanel</strong> is optional: the run in SRM-CAM sends the job itself, in Novice and in Pro, and does not use it. See <a href="#vpanel">when you want VPanel</a>.</p></div>
 
 <h3>Download</h3>
 <p>It is on Roland DG's official download page for the SRM-20 (the monoFab SRM-20). Open it on the <span class="ui">Software</span> tab:</p>
@@ -107,88 +138,74 @@
 <h3 id="vpanel">VPanel (optional)</h3>
 <p>SRM-CAM does not need VPanel to cut a board: with the driver installed, the automatic run sends the job to the mill itself. Install VPanel only if you want one of these:</p>
 <ul>
-  <li><strong>Pro, by hand:</strong> you export the files and play them from VPanel, as in <a href="milling-a-board.html">Milling a board</a>.</li>
+  <li><strong>Pro, by hand:</strong> you export the files and play them from VPanel, as in <a href="milling-a-board.html">Milling a board by hand</a>.</li>
   <li><strong>The mill's own settings:</strong> the command set must be <span class="ui">NC Code</span> and the G54 X/Y origin must be machine 0,&nbsp;0. They are stored in the mill, so a mill that is already set up needs nothing. If a run stops and names one of them, VPanel is where you change it on Windows.</li>
 </ul>
 <ol class="steps">
   <li><span class="st">Unzip and run</span>Unzip the VPanel file, double-click <code>setup.exe</code> in the folder, and follow the installer.</li>
   <li><span class="st">Start it in the right order</span>Close the mill's front cover, switch the mill on and wait for the light to stay lit, then open <span class="menu-path">Start &rsaquo; VPanel for SRM-20</span>. If VPanel was opened with the mill off, switch the mill on and click <span class="ui">Retry</span>.</li>
-  <li><span class="st">Set it up</span>In VPanel, <span class="menu-path">Setup &rsaquo; Command Set</span> must be <span class="ui">NC Code</span> and the G54 X/Y origin must be machine 0,&nbsp;0. The run stops before it cuts if either is wrong; see <a href="automatic.html#steps">Mill a board</a>.</li>
+  <li><span class="st">Set it up</span>In VPanel, <span class="menu-path">Setup &rsaquo; Command Set</span> must be <span class="ui">NC Code</span> and the G54 X/Y origin must be machine 0,&nbsp;0. The run stops before it cuts if either is wrong; see <a href="troubleshooting.html">Troubleshooting</a>.</li>
 </ol>
 
-<div class="warn"><span class="t">On Linux</span>
-<p>No driver and no VPanel: the kernel already knows the mill. Plug in both USB cables (the mill's and the Arduino's), then use <span class="menu-path">Machine &rsaquo; Set up USB access…</span> once; it asks for your password. SRM-CAM sets the Command Set itself before a run.</p></div>
+<div class="warn"><span class="t">On Linux and macOS</span>
+<p>No driver and no VPanel. On Linux, plug in both USB cables, then use <span class="menu-path">Machine &rsaquo; Set up USB access…</span> once; it asks for your password. On macOS, <span class="menu-path">Machine &rsaquo; Set up the mill on this Mac…</span> once. On both, SRM-CAM sets the mill's Command Set to NC Code itself before a run, and <span class="menu-path">Machine &rsaquo; The mill's settings…</span> has the rest.</p></div>
 
-<h2 id="install">Install SRM-CAM</h2>
-<div class="tbl-wrap"><table>
-<tr><th>Platform</th><th>Get it</th><th>Notes</th></tr>
-<tr><td>Windows</td><td><a href="https://github.com/MadsRudolph/srm-cam/releases/latest/download/SRM-CAM-Setup.exe">SRM-CAM-Setup.exe</a></td><td>No Python needed. Start-menu entry, <code>Documents\SRM-CAM\</code> workspace. Install a new version over the old one; setups and profiles survive.</td></tr>
-<tr><td>Linux</td><td><code>SRM-CAM-x86_64.AppImage</code> from the <a href="https://github.com/MadsRudolph/srm-cam/releases/latest">latest release</a></td><td><code>chmod +x</code>, run. No install, no root; it carries its own Qt. Runs the mill too, with no driver: once, <span class="menu-path">Machine &rsaquo; Set up USB access…</span>.</td></tr>
-<tr><td>From source</td><td><code>pip install -e ".[gui]"</code> then <code>python -m gerber2rml</code></td><td>After a <code>git pull</code>, <code>python -m gerber2rml.doctor</code> installs anything new.</td></tr>
-</table></div>
 
-<h3>No PC at the mill?</h3>
-<p>The lab's CNC PC has SRM-CAM and VPanel on it. If it isn't free, install both on your own <strong>Windows</strong> laptop (the link and VPanel are Windows-only) and plug in the two USB cables yourself.</p>
-<figure class="anim" data-anim="laptop">
-  <figcaption><span class="k">Two cables</span>The white USB is the mill, for VPanel; the black USB is the Arduino probe link, for SRM-CAM.</figcaption>
-</figure>
-
-<h3>Staying current</h3>
+<h2 id="updates">Staying current</h2>
 <p>The app checks GitHub for a newer release a moment after it opens and says so once, with the download link. <span class="menu-path">Help › Check for updates…</span> asks any time. It never installs anything by itself: you download the new file and install it the same way as the first time.</p>
-<figure class="fig mid">
-  <img src="img/gui2_update.png" alt="The update sheet, saying which version is installed and whether a newer one exists" loading="lazy">
-  <figcaption><span class="menu-path">Help › Check for updates…</span> When a newer release exists, the sheet names it and opens the download page.</figcaption>
-</figure>
 <p>The first interface is still shipped: <code>SRM-CAM --original</code> from an install, <code>python -m gerber2rml.gui</code> from source. Same engine, same files.</p>
 
-<h3>Workspace folders</h3>
+<h2 id="folders">Workspace folders</h2>
 <div class="tbl-wrap"><table>
 <tr><th>Folder</th><th>Contents</th></tr>
 <tr><td><code>Documents\SRM-CAM\sessions</code></td><td>Setups (<code>.srmcam</code>) and height maps (<code>.csv</code>)</td></tr>
 <tr><td><code>Documents\SRM-CAM\exports</code></td><td>Exported <code>.nc</code> / <code>.rml</code> files and the run plan</td></tr>
 <tr><td><code>Documents\SRM-CAM\photos</code></td><td>Board photos for the overlay</td></tr>
+<tr><td><code>Documents\SRM-CAM\runs</code></td><td>One folder per run on the mill: its log, height map and the files sent. See <a href="mill.html#made">What the run made</a>.</td></tr>
+<tr><td><code>Documents\SRM-CAM\laser.log</code></td><td>What the laser page did.</td></tr>
 <tr><td><code>Documents\SRM-CAM\gui2.log</code></td><td>Where a start-up problem ends up when there is no console. Read it first if the window never opens.</td></tr>
 </table></div>
 
+
 <h2 id="window">The window</h2>
-<p>Four regions that never move, and a header. Tap one to see what it is for; tap a step on the rail and the stage draws its toolpath, as the app does.</p>
-<figure class="anim" data-anim="gs-window">
-  <figcaption><span class="k">The four regions</span>The rail, the stage, the inspector and the machine bar. Schematic; the real window is below.</figcaption>
-</figure>
+<p>A header, the rail on the left, the bed in the middle, the page of the selected row on the right, and the machine bar at the bottom.</p>
 <figure class="fig">
-  <img src="img/gui2_setup.png" alt="The SRM-CAM window with the setup step selected" loading="lazy">
-  <figcaption>The real window, on the setup step (a Linux screenshot from before the link ran on Linux, so the machine bar is a sentence).</figcaption>
+  <div class="pinwrap"><img src="img/gs_window.png" alt="SRM-CAM in Novice with a laser board: header with the chip Laser from KiCad, CNC and Laser, and Novice; the rail; the bed with the board on the sheet; Your board's page on the right; the machine bar at the bottom with STOP" loading="lazy">
+    <span class="pin" style="left:28%;top:6%">1</span>
+    <span class="pin" style="left:15%;top:29.5%">2</span>
+    <span class="pin" style="left:37%;top:63%">3</span>
+    <span class="pin" style="left:96%;top:22%">4</span>
+    <span class="pin" style="left:42%;top:96%">5</span>
+    <span class="pin" style="left:91%;top:6%">6</span></div>
+  <ol class="pins">
+    <li><strong>The header:</strong> the method chip (<a href="kicad.html#method">how the board is made</a>; click to choose another), then <span class="ui">CNC</span> / <span class="ui">Laser</span>: the mill's page or the laser's (Ctrl+1 / Ctrl+2).</li>
+    <li><strong>The rail:</strong> the board's steps, top to bottom. Click any row at any time; nothing is locked. A finding that matters stays on the banner above it.</li>
+    <li><strong>The bed</strong> of the mill, in machine coordinates: the sheet, the board, the toolpaths of the selected step. Above it: <span class="ui">Turn left</span>, <span class="ui">Turn right</span>, <span class="ui">Mirror</span>, <span class="ui">Centre</span>, <span class="ui">Undo</span>, <span class="ui">Photo ▾</span> and <span class="ui">As cut</span> / <span class="ui">X-ray</span>. Fit (Ctrl+0) and Travel moves are in the View menu.</li>
+    <li><strong>The page</strong> of the selected row: <span class="ui">Your board</span> here, the checks, the run page.</li>
+    <li><strong>The machine bar:</strong> <span class="ui">Connect</span> and the port, the position, the <a href="machine-control.html#jog">jog pad</a>, and <span class="ui">STOP</span>. Esc stops the machine from anywhere, a dialog open or not.</li>
+    <li><strong>The tier chip:</strong> <span class="ui">Novice</span> or <span class="ui">Pro</span>. Click to switch.</li>
+  </ol>
+  <figcaption>The window as it opens a laser board in Novice (a screenshot).</figcaption>
 </figure>
-<ul>
-  <li><strong>The header</strong> (top): the chip at the left says <a href="automatic.html#method">how the board is made</a> (click it to choose another), <span class="ui">CNC</span> / <span class="ui">Laser</span> switches between the mill's page and the laser's, and the tier chip at the right switches <a href="#tiers">Novice and Pro</a>. The status chips (<span class="ui">Mesh</span>, <span class="ui">Fit</span>, <span class="ui">Photo</span>, <span class="ui">Boxes</span>) only show once they are lit.</li>
-  <li><strong>The rail</strong> (left) is the plan, for both machines, in groups: <em>On the mill</em> (the run), <em>One step at a time</em> (Pro only, folded shut under the run: click it to open it; each mill step has <span class="ui">Run this step on the mill</span>, which finds the stock, probes and cuts that step alone), <em>On the laser</em> and <em>When you need it</em>. Rows that run on a machine carry a <strong>MILL</strong> or <strong>LASER</strong> tag; picking a laser row opens the laser page beside the rail. Click any row at any time; nothing is locked. A finding that matters stays on the red banner until it is fixed. At the foot of the rail: <span class="ui">Export for VPanel…</span> in Pro, <span class="ui">Save the files…</span> in Novice.</li>
-  <li><strong>The stage</strong> (middle) is the bed in machine coordinates: the copper sheet, the board, the toolpaths of the selected step, the spoilboard's screw grid. Drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan.</li>
-  <li><strong>The bed's toolbar</strong> (above the stage): <span class="ui">Turn left</span>, <span class="ui">Turn right</span>, <span class="ui">Mirror</span>, <span class="ui">Centre</span> (on the copper once it is set, otherwise on the bed), <span class="ui">Undo</span> (<kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back any of them), <span class="ui">Photo ▾</span>, <span class="ui">Bed — as cut</span> / <span class="ui">Design X-ray</span>, <span class="ui">Fit</span> and <span class="ui">Travel moves</span>. <span class="ui">Bed — as cut</span> is the only frame the machine understands; <span class="ui">Design X-ray</span> is for checking that the two faces of a double-sided board register.</li>
-  <li><strong>The inspector</strong> (right) shows the selected step: the setup page, the checks, or a step's parameters, estimate and file.</li>
-  <li><strong>The machine bar</strong> (bottom) is always there: <span class="ui">Connect</span> and the port, the position readout (always machine coordinates), the <a href="machine-control.html#jog">jog pad</a>, <span class="ui">View</span>, <span class="ui">Probe Z</span>, <span class="ui">Pause</span>, <span class="ui">Click to jog</span>, and <span class="ui">STOP</span>. <kbd>Esc</kbd> stops the machine from anywhere, including with a dialog open.</li>
-</ul>
-<div class="figs top">
-  <figure class="fig">
-    <img src="img/gui2_rail.png" alt="The rail: the run plan, with the drill as step 1 and the isolation traces as step 2" loading="lazy">
-    <figcaption>The steps of a one-bit job, one at a time, as Pro lists them: fit the bit and set the Z origin by hand, then the drill, the traces, and the cut-out last.</figcaption>
-  </figure>
-  <figure class="fig">
-    <img src="img/gui2_inspector_step.png" alt="The inspector showing the isolation traces step" loading="lazy">
-    <figcaption>The inspector on the traces step: what it needs, the file, and (in Pro) the cutting parameters, with the tool switchable between a flat endmill and a V-bit.</figcaption>
-  </figure>
-</div>
+<p>On the bed, drag the board, or tap the arrow keys to nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 0.01&nbsp;mm). Scroll to zoom, right-drag to pan. <span class="ui">As cut</span> is the frame the machine works in; <span class="ui">X-ray</span> is for checking that the two faces of a two-sided board line up.</p>
+
+<h3 id="rail">The rail</h3>
+<p>Which rows the rail has depends on the board's method, the tier, and the layers its folder has. A row that runs on a machine carries a <span class="tag mill">MILL</span> or <span class="tag laser">LASER</span> tag; a laser row opens the laser page beside the rail. At the foot: <span class="ui">Save the files…</span> in Novice, <span class="ui">Export for VPanel…</span> in Pro.</p>
+<figure class="anim" data-anim="rl-rail">
+  <figcaption><span class="k">Build a rail</span>The rows as SRM-CAM builds them, with their own words. Switch the method and the tier, and say which layers the board has.</figcaption>
+</figure>
 <figure class="fig">
   <img src="img/gui2_bar.png" alt="The machine bar" loading="lazy">
   <figcaption>The machine bar, linked, with <span class="ui">Arrow keys</span> lit. <span class="ui">STOP</span> is always there.</figcaption>
 </figure>
 
 <h2 id="tiers">Novice &amp; Pro</h2>
-<p>Two tiers. Click the tier chip at the top right of the window to switch, or use <span class="menu-path">View › Novice controls</span> / <span class="menu-path">Pro controls</span>. <strong>Novice</strong> is the default and is built around one thing: <a href="automatic.html">Mill a board</a>. <strong>Pro</strong> runs the same run and has everything else too. It is the same program and the same plan, and exported files are identical in both.</p>
+<p>Two tiers. Click the tier chip at the top right of the window to switch, or use <span class="menu-path">View › Novice controls</span> / <span class="menu-path">Pro controls</span>. <strong>Novice</strong> is the default: the rail has only what the run needs (<a href="make-a-board.html">Make a board</a>). <strong>Pro</strong> runs the same run and has everything else too. It is the same program and the same plan, and exported files are identical in both.</p>
 <div class="tbl-wrap"><table>
 <tr><th></th><th>Novice</th><th>Pro</th></tr>
 <tr><td>Rail</td><td>Your board, Check it, the run, and the laser's rows</td><td>The same, plus every step one at a time</td></tr>
 <tr><td>How it cuts</td><td>The run, sent directly to the mill</td><td>The same run, or files you play from VPanel</td></tr>
-<tr><td>The stock</td><td>Held in the corner bracket</td><td>The bracket, or anywhere: the probe finds its corner. Or clamped or screwed, by hand</td></tr>
+<tr><td>The stock</td><td>Held in the corner bracket</td><td>The bracket, or anywhere: the probe finds its corner. Or held by hand (<a href="holding-the-copper.html#pro">Holding the copper</a>)</td></tr>
 <tr><td>Levelling</td><td>Part of the run</td><td>Also its own page, and by hand</td></tr>
 <tr><td>Double-sided</td><td>One tick</td><td>Fiducials or dowels, every setting</td></tr>
 <tr><td>Cutting parameters</td><td>From the tool profile</td><td>Per operation, and your own profiles</td></tr>
@@ -196,74 +213,11 @@
 <tr><td>Both</td><td colspan="2">The pre-flight checks, the jog pad and arrow keys, Click to jog, and <span class="ui">STOP</span></td></tr>
 </table></div>
 <p><span class="menu-path">Help › What Novice and Pro differ by…</span> lists it in the app. A lab that wants the profile fixed sets <code>SRM_CAM_MODE</code> to <code>novice</code> or <code>pro</code> in the environment or the shortcut.</p>
-<div class="figs top">
-  <figure class="fig">
-    <img src="img/automatic_setup.png" alt="Novice: three rows on the rail, and the Your board page" loading="lazy">
-    <figcaption>Novice: <span class="ui">Your board</span>, <span class="ui">Check it</span> and the run on the rail. A board with laser layers adds the laser's rows.</figcaption>
-  </figure>
-  <figure class="fig">
-    <img src="img/gui2_tiers.png" alt="The sheet explaining what Novice and Pro differ by" loading="lazy">
-    <figcaption><span class="menu-path">Help › What Novice and Pro differ by…</span></figcaption>
-  </figure>
-</div>
 <figure class="fig mid">
-  <img src="img/gui2_help_menu.png" alt="The Help menu" loading="lazy">
-  <figcaption>The Help menu: the web guide on <kbd>F1</kbd>, the machine lessons, and the update check.</figcaption>
+  <img src="img/gui2_tiers.png" alt="The sheet explaining what Novice and Pro differ by" loading="lazy">
+  <figcaption><span class="menu-path">Help › What Novice and Pro differ by…</span></figcaption>
 </figure>
-
-<h3>The machine, in five minutes</h3>
-<p><span class="menu-path">Help › The machine, in five minutes</span> is the part that is true at every step: VPanel's three coordinate systems and why G54 is the one that matters; zero Z and leave X and Y alone; keep machine Z above −50&nbsp;mm with the bit on the copper (−55 is the end of the travel); the probe's one wire, the red clip on the copper; STOP against Pause; and where the files go.</p>
-<figure class="fig mid">
-  <img src="img/gui2_basics.png" alt="The sheet titled The machine, in five minutes" loading="lazy">
-  <figcaption><span class="menu-path">Help › The machine, in five minutes</span></figcaption>
-</figure>
-
-<h2 id="kicad">Files from KiCad</h2>
-<div class="note"><span class="t">Before you route: the KiCad buttons</span>
-<p><span class="menu-path">Help › Add the SRM-CAM buttons to KiCad…</span> in SRM-CAM adds three buttons to KiCad's PCB editor:</p>
-<ul>
-  <li><span class="ui">Show SRM-20 build area</span> draws the mill's build area around your board and says whether it fits.</li>
-  <li><span class="ui">Set design rules for SRM-CAM</span>: choose how the board is made (flat mill, ball mill or fiber laser), and it sets the clearances and track widths for that. SRM-CAM reads the choice when it opens the board: see <a href="automatic.html#method">How it is made</a>.</li>
-  <li><span class="ui">Send to SRM-CAM</span> plots every layer SRM-CAM reads (copper, outline, mask, silkscreen and paste) with the drill files, checks the board against its method, and opens it in SRM-CAM. A board with no method set is checked against the one its own rules point to.</li>
-</ul>
-<p>By hand: set the net class clearance to at least the width of the bit (<span class="menu-path">Board Setup › Design Rules › Net Classes</span>): a 0.8&nbsp;mm endmill cannot enter a gap narrower than 0.8&nbsp;mm. The app's checks list every gap that is too narrow for the method, but it is quicker to fix before routing.</p></div>
-<div class="figs">
-  <figure class="fig">
-    <img src="img/kicad_clearance.png" alt="KiCad Board Setup, Net Classes, with clearance and track width set" loading="lazy">
-    <figcaption>Net Classes: clearance and track width, set before routing.</figcaption>
-  </figure>
-  <figure class="fig">
-    <img src="img/kicad_plugin.png" alt="KiCad PCB editor with the SRM-20 build area and the recommended maximum board drawn around a board" loading="lazy">
-    <figcaption>The build-area plugin: the machine's travel and the recommended maximum board, drawn on User.Drawings.</figcaption>
-  </figure>
-</div>
-<figure class="fig mid">
-  <img src="img/kicad_plugin_menu.png" alt="KiCad's toolbar with the Show SRM-20 build area button" loading="lazy">
-  <figcaption>After a KiCad restart the buttons are on the toolbar and under <span class="menu-path">Tools › External Plugins</span>.</figcaption>
-</figure>
-<ol class="steps">
-  <li><span class="st">Plot Gerbers</span>
-    <span class="menu-path">File › Fabrication Outputs › Gerbers</span>: at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (and <strong>F.Cu</strong> for double-sided), into one folder. Add the mask, silkscreen and paste layers if the board will get <a href="solder-mask.html">solder mask</a>, silkscreen or a <a href="smd.html#stencil">stencil</a> on the laser: each one adds a row to the rail. If KiCad asks to refill the zones, say yes. <span class="ui">Send to SRM-CAM</span> does all of this in one press.</li>
-  <li><span class="st">Drill files</span>
-    Same dialog, <span class="ui">Generate Drill Files…</span>: Excellon, millimetres, into the same folder. KiCad writes the plated and unplated holes as two files; keep both.</li>
-  <li><span class="st">Open</span>
-    In SRM-CAM, <span class="menu-path">File › Open Gerber folder…</span> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) picks up the layers and the drills and names the job after the KiCad project.</li>
-</ol>
-<figure class="anim" data-anim="gs-files">
-  <figcaption><span class="k">What the folder needs</span>Tap a file to take it out and see what Open Gerber folder… makes of the rest: without B.Cu or Edge.Cuts the folder is refused; without the drill files it loads with no holes.</figcaption>
-</figure>
-<div class="figs">
-  <figure class="fig">
-    <img src="img/kicad_plot.png" alt="KiCad's Plot dialog with F.Cu, B.Cu and Edge.Cuts ticked and Gerber format" loading="lazy">
-    <figcaption>Plot: Gerber format, the copper layers and Edge.Cuts, one output folder.</figcaption>
-  </figure>
-  <figure class="fig">
-    <img src="img/kicad_drill.png" alt="KiCad's Generate Drill Files dialog with Excellon and millimetres" loading="lazy">
-    <figcaption>Drill files: Excellon, millimetres, into the same folder.</figcaption>
-  </figure>
-</div>
-<div class="tip"><span class="t">No KiCad handy?</span>
-<p><span class="ui">Demo board</span> on <span class="menu-path">Set up the job › The board</span> loads a bundled 40×30&nbsp;mm coupon that exercises every operation.</p></div>
+<p>By hand in VPanel (Pro)? <span class="menu-path">Help › The machine, in five minutes</span> has the lessons for that: see <a href="milling-a-board.html#basics">Milling a board by hand</a>.</p>
 
 <h2 id="setups">Setups</h2>
 <p><span class="menu-path">File › Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes one <code>.srmcam</code> file with everything: the boards and where they sit, the tool, the copper sheet, the screws, the height maps of both faces, the measured flip. <span class="menu-path">File › Load a setup…</span> brings it back. A setup written by the first interface loads too.</p>
@@ -271,11 +225,11 @@
 <p>A probed height map is minutes of machine time. Save the setup right after probing; the map is in it.</p></div>
 
 <div class="tip"><span class="t">Need help?</span>
-<p>Reach out to Mads Rudolph, or to the TAs of the course, if you need guidance with the milling.</p></div>
+<p>Reach out to Mads Rudolph, or to the TAs of the course, if you need guidance with the machines.</p></div>
 
 <div class="page-nav">
-  <a href="index.html"><span class="lbl">Previous</span><span class="ttl">← Overview</span></a>
-  <a class="next" href="milling-a-board.html"><span class="lbl">Next</span><span class="ttl">Milling a board →</span></a>
+  <a class="prev" href="make-a-board.html"><span class="lbl">Previous</span><span class="ttl">← Make a board</span></a>
+  <a class="next" href="kicad.html"><span class="lbl">Next</span><span class="ttl">From KiCad →</span></a>
 </div>
 
 <footer class="site">

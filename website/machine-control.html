@@ -9,11 +9,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/mc-bar.js?v=20261118a"></script>
 <script defer src="js/anim/mc-stop.js?v=20260930b"></script>
 <script defer src="js/anim/zlimit.js?v=20260930b"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -35,34 +36,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link active" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -73,16 +87,16 @@
 
 <div class="hero">
   <h1>Machine control</h1>
-  <p class="lead">With the Arduino fitted, the bar along the bottom of SRM-CAM reads the machine's position, jogs X, Y and Z, finds the copper, pauses, and stops. Runs from SRM-CAM start and stop the spindle themselves; VPanel's slider sets its speed. The drawings are live: try the bar.</p>
+  <p class="lead">With the Arduino fitted, the bar along the bottom of SRM-CAM reads the machine's position, jogs X, Y and Z, finds the copper, pauses, and stops. Runs from SRM-CAM start and stop the spindle themselves; its speed is a setting stored in the mill. The drawings are live: try the bar.</p>
   <div class="badge-row">
-    <span class="badge copper">Windows only</span>
+    <span class="badge copper">Windows · Linux · macOS</span>
     <span class="badge">Firmware v5</span>
-    <span class="badge">Speed: VPanel's slider</span>
+    <span class="badge">Speed: a setting in the mill</span>
   </div>
 </div>
 
 <h2 id="connect">Connect</h2>
-<p>Plug in the <strong>black USB</strong> (the Arduino; the white one is the mill, for VPanel). Pick the port on the bar, most likely Arduino first, and press <span class="ui">Connect</span>, or <span class="menu-path">Machine › Connect / disconnect</span> (<kbd>Ctrl</kbd>+<kbd>L</kbd>). Plugged in after SRM-CAM started? <span class="menu-path">Machine › Rescan the serial ports</span>. The chip on the left says what the link is doing: <em>Machine offline</em>, <em>Connecting…</em>, <em>Linked</em>, <em>Lid open</em>, <em>Spindle on</em>, or <em>Link failed</em>.</p>
+<p>Plug in the <strong>black USB</strong> (the Arduino; the white one is the mill's own, which the run sends its jobs over). Pick the port on the bar, most likely Arduino first, and press <span class="ui">Connect</span>, or <span class="menu-path">Machine › Connect / disconnect</span> (<kbd>Ctrl</kbd>+<kbd>L</kbd>). Plugged in after SRM-CAM started? <span class="menu-path">Machine › Rescan the serial ports</span>. The chip on the left says what the link is doing: <em>Machine offline</em>, <em>Connecting…</em>, <em>Linked</em>, <em>Lid open</em>, <em>Spindle on</em>, or <em>Link failed</em>.</p>
 
 <h2 id="bar">The machine bar</h2>
 <figure class="anim" data-anim="mc-bar">
@@ -93,7 +107,7 @@
 <tr><td>X Y Z readout</td><td>The machine's position, about three times a second, in <strong>machine coordinates</strong>. Z turns red and says <em>Touch</em> while the probe reads contact. SRM-CAM has no G54 switch: VPanel shows G54.</td></tr>
 <tr><td>Jog pad</td><td>Move X, Y and Z by the step: see <a href="#jog">Jogging</a>.</td></tr>
 <tr><td><span class="ui">View</span></td><td>Lift the bit to the top and bring the board out to look at it: the same view position the run stops at after the traces.</td></tr>
-<tr><td><span class="ui">Probe Z</span></td><td>Lower the bit from here until it touches, and stop on the copper. Tells <strong>SRM-CAM</strong> where the surface is (for the Z-reach check and the level page). VPanel's origin is untouched. The run takes its own touches, so it doesn't need this. For files played by hand, set the Z origin in VPanel: see <a href="milling-a-board.html#zero">Milling a board</a>.</td></tr>
+<tr><td><span class="ui">Probe Z</span></td><td>Lower the bit from here until it touches, and stop on the copper. Tells <strong>SRM-CAM</strong> where the surface is (for the Z-reach check and the level page). VPanel's origin is untouched. The run takes its own touches, so it doesn't need this. For files played by hand, set the Z origin in VPanel: see <a href="milling-a-board.html#zero">Milling a board by hand</a>.</td></tr>
 <tr><td><span class="ui">Pause</span></td><td>Hold the machine where it is, spindle still turning; <span class="ui">Resume</span> carries on. VPanel's Pause, from SRM-CAM.</td></tr>
 <tr><td><span class="ui">Click to jog</span></td><td>Click the bed and the head lifts about 5&nbsp;mm and travels there, snapping to the hole under the cursor. In the <span class="ui">Bed — as cut</span> frame only.</td></tr>
 <tr><td>Run readout</td><td>While a run is being followed: how far it has got and the time left. It starts by itself when the bit starts moving, also for a file played from VPanel.</td></tr>
@@ -140,11 +154,11 @@
 <tr><td><span class="ui">Machine test…</span></td><td>Exercise every SPI command and report PASS / FAIL / UNKNOWN. Read-only by default; motion and spindle tests are armed separately. STOP reaches a running test.</td></tr>
 </table></div>
 
-<p>Novice's menu has only the serial ports, connect and the View position; the rest is in Pro. The run itself is not in a menu: it is the run row on the rail, <a href="automatic.html">Mill a board</a>, in both tiers.</p>
+<p>Novice's menu has only the serial ports, connect and the View position; the rest is in Pro. The run itself is not in a menu: it is the run row on the rail, <a href="automatic.html">Mill a whole board</a>, in both tiers.</p>
 
 <h2 id="limits">What the link does not give you</h2>
-<div class="danger"><span class="t">Spindle speed is a VPanel setting</span>
-<p>The machine ignores an rpm sent over the link: 500, 1000, 2000 and 3000 all settle on whatever VPanel's slider says. Set it there before a run.</p></div>
+<div class="danger"><span class="t">Spindle speed is a setting in the mill</span>
+<p>The machine ignores an rpm sent over the link: 500, 1000, 2000 and 3000 all settle on the speed stored in the mill. On Windows set it with VPanel's slider. On Linux and macOS, <span class="menu-path">Machine › The mill's settings…</span> has <span class="ui">Set the spindle speed</span>.</p></div>
 <ul>
   <li><strong>Only the lid bit of the status word is proven</strong> on this machine. The bit Roland labels "paused" does not mean paused here, so none of the others is shown as a machine state.</li>
   <li><strong>No origin is set from SRM-CAM.</strong> Nothing on the bar zeroes X, Y or Z, on purpose: the screw fixture, dowel registration and every re-run depend on the XY origin staying put. The run leaves G54 alone too, and checks it before cutting.</li>
@@ -160,8 +174,8 @@
 </ul>
 
 <div class="page-nav">
-  <a href="hardware.html"><span class="lbl">Previous</span><span class="ttl">← Hardware &amp; firmware</span></a>
-  <a class="next" href="reference.html"><span class="lbl">Next</span><span class="ttl">Files &amp; reference →</span></a>
+  <a class="prev" href="hardware.html"><span class="lbl">Previous</span><span class="ttl">← Hardware &amp; firmware</span></a>
+  <a class="next" href="projects.html"><span class="lbl">Next</span><span class="ttl">Projects: many boards →</span></a>
 </div>
 
 <footer class="site">

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community &amp; Discord — SRM-CAM guide</title>
+<meta name="description" content="The SRM-CAM Discord: ask questions about making boards on the mill and the laser, get help, see new features explained, and show your boards.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link active" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+
+<div class="hero">
+  <h1>Community &amp; Discord</h1>
+  <p class="lead">The SRM-CAM Discord is where to ask about making a board, on the mill or the laser, and get an answer from Mads or from students who have done it. New features are explained there first, in more detail than the release notes.</p>
+  <div class="btn-row">
+    <a class="btn primary" href="https://discord.gg/JUVbzanj6B">Join the Discord →</a>
+    <a class="btn" href="troubleshooting.html">Troubleshooting first</a>
+  </div>
+</div>
+
+<h2 id="channels">What is there</h2>
+<div class="cards">
+  <a class="card" href="https://discord.gg/JUVbzanj6B"><span class="ct">#announcements</span><span class="cd">New releases and features, explained with pictures: what changed, and how to use it.</span></a>
+  <a class="card" href="https://discord.gg/JUVbzanj6B"><span class="ct">#help</span><span class="cd">Questions about a board, the mill, the laser or SRM-CAM. One thread per problem.</span></a>
+  <a class="card" href="https://discord.gg/JUVbzanj6B"><span class="ct">#show-your-boards</span><span class="cd">Photos of what you made: milled, lasered, masked. The best end up in this guide.</span></a>
+  <a class="card" href="https://discord.gg/JUVbzanj6B"><span class="ct">#feature-requests</span><span class="cd">What SRM-CAM should do next.</span></a>
+  <a class="card" href="https://discord.gg/JUVbzanj6B"><span class="ct">#bug-reports</span><span class="cd">Something the app did wrong. Say what you pressed and what it said.</span></a>
+</div>
+
+<h2 id="ask">Asking a good question</h2>
+<ol class="steps">
+  <li><span class="st">Look it up first</span>Search <a href="troubleshooting.html">Troubleshooting</a>: the common problems are there with their fix.</li>
+  <li><span class="st">Say where you are</span>The board, the method (the chip at the top left), and the step on the rail.</li>
+  <li><span class="st">Show it</span>A screenshot of the window, and a photo of the board or the machine. For the laser, <code>laser.log</code> helps; for a run, the run's folder under <code>Documents\SRM-CAM\runs</code>.</li>
+  <li><span class="st">Say what it said</span>The exact message, copied, not remembered.</li>
+</ol>
+
+<div class="note"><span class="t">Personal support</span>
+<p>Stuck at the machine with something the guide doesn't cover? Ask in <strong>#help</strong> and Mads will answer, or arrange to help in person.</p></div>
+
+<p>Prefer a form? <a href="feedback.html">Feedback</a> sends your comments straight to Mads.</p>
+
+<div class="page-nav">
+  <a class="prev" href="troubleshooting.html"><span class="lbl">Previous</span><span class="ttl">← Troubleshooting</span></a>
+  <a class="next" href="feedback.html"><span class="lbl">Next</span><span class="ttl">Feedback →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

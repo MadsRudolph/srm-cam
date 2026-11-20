@@ -50,3 +50,9 @@ examples/fullboard_probe_test/
 # agent worktrees (Claude Code)
 .claude/worktrees/
 scripts/lab_runs/
+
+# SRM-CAM assistant Worker
+ask/node_modules/
+ask/.wrangler/
+ask/.dev.vars
+ask/knowledge.js

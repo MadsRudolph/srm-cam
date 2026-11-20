@@ -159,7 +159,7 @@
     function draw(u) {
       gTape.setAttribute("display", mode === "tape" ? "inline" : "none");
       gDisc.setAttribute("display", mode === "disc" ? "inline" : "none");
-      title.textContent = mode === "tape" ? "1 · DOUBLE-SIDED TAPE (BEST)" : "2 · FOUR DISC CLAMPS";
+      title.textContent = mode === "tape" ? "1 · DOUBLE-SIDED TAPE" : "2 · FOUR DISC CLAMPS";
       if (mode === "tape") drawTape(u); else drawDisc(u);
       oneBtn.disabled = mode !== "disc";
     }
@@ -181,7 +181,7 @@
       missing = !missing; this.textContent = missing ? "Put it back" : "Remove one disc"; play();
     });
     var st = A.status(row);
-    st.textContent = "The lab's two holds. Tape is best; the disc clamps are next.";
+    st.textContent = "By hand, without the bracket: tape or four disc clamps.";
     oneBtn.disabled = true;
     play();
   });

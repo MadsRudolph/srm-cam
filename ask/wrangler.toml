@@ -1,0 +1,24 @@
+# Cloudflare Worker for the SRM-CAM assistant (the guide's "Ask SRM-CAM"
+# pane and the Discord /ask command). Deploy: see ask/README.md.
+name = "srm-cam-ask"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "srm-cam-ask.madsrudolph.dev", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "srm-cam-ask"
+database_id = "7668e6c1-7ec4-4914-8b6c-161a69a6f643"
+
+[vars]
+# The guide on GitHub Pages, plus the local preview server.
+ALLOWED_ORIGINS = "https://madsrudolph.github.io,http://127.0.0.1:8811"
+# Spend caps in USD, counted from each answer's token usage.
+DAILY_CAP_USD = "3"
+MONTHLY_CAP_USD = "90"
+# Questions per visitor (or Discord user) per hour.
+PER_HOUR = "20"

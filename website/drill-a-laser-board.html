@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drilling a laser-etched board — SRM-CAM guide</title>
+<title>Drilling a board etched first — SRM-CAM guide</title>
 <meta name="description" content="Drilling a board whose copper was etched on the fiber laser: measure three pads with the probe, fit, and drill every hole onto the real board with the SRM-20.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/ld-fit.js?v=20260930b"></script>
 <script defer src="js/anim/ds-findhole.js?v=20260930b"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -34,34 +35,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link active" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link active" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -70,13 +84,13 @@
 <main>
 <div class="content">
 
-<h1>Drilling a laser-etched board</h1>
+<h1>Drilling a board etched first</h1>
 <p class="lead">A board whose copper was etched on the fiber laser, and only needs its holes. Nothing on it was cut from the mill's origin, so its drill file cannot simply be run: SRM-CAM measures where three of its holes really are, fits the whole hole pattern onto the board, and writes a drill file for the board in front of you. Proven on a 90&nbsp;×&nbsp;72&nbsp;mm board with 120 holes: worst pad 0.034&nbsp;mm.</p>
 
 <div class="note"><span class="t">Novice or Pro?</span>
 <p>This page is for <strong>Pro</strong>: click the tier chip at the top right of the window.</p></div>
 <div class="tip"><span class="t">Making a new laser board?</span>
-<p>Then drill it first. Set the board to <strong>Laser copper</strong>, and the mill drills the holes and cuts the outline on tabs before the laser etches the copper, lined up on those holes. No measuring needed: see <a href="automatic.html#laser">A laser board</a>. This page is for a board whose copper was etched <em>before</em> it was drilled.</p></div>
+<p>Then drill it first. Set the board to <strong>Laser copper</strong>, and the mill drills the holes and cuts the outline on tabs before the laser etches the copper, lined up on those holes. No measuring needed: see <a href="make-a-board.html">Make a board</a>. This page is for a board whose copper was etched <em>before</em> it was drilled.</p></div>
 
 <div class="pill-flow">
   <span class="pf">Export from KiCad</span><span class="arr">→</span>
@@ -127,13 +141,13 @@
 <ol class="steps">
   <li><span class="st">Write the drill file</span>Writes <code>&lt;name&gt;_drill_fitted.nc</code>: every hole, moved onto the measured board. Nothing else is written.</li>
   <li><span class="st">Don't touch XY</span>Do not move the board, and do not reset X or Y, between measuring and drilling.</li>
-  <li><span class="st">Set the Z origin</span>In VPanel, with the drill bit on the copper and VPanel on <strong>G54</strong>; and with the bit on the copper, machine Z must stay above −50&nbsp;mm (see <a href="milling-a-board.html#zero">Milling a board</a>).</li>
+  <li><span class="st">Set the Z origin</span>In VPanel, with the drill bit on the copper and VPanel on <strong>G54</strong>; and with the bit on the copper, machine Z must stay above −50&nbsp;mm (see <a href="milling-a-board.html#zero">Milling a board by hand</a>).</li>
   <li><span class="st">Drill it</span>In VPanel: <span class="ui">Cut</span>, <span class="ui">Add</span> the one file, <span class="ui">Output</span>.</li>
 </ol>
 <p>Then check every hole landed inside its pad ring, and leave the machine as you found it (see <a href="automatic.html#tidy">Leave it as you found it</a>).</p>
 
 <div class="page-nav">
-  <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>
+  <a class="prev" href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided by hand</span></a>
   <a class="next" href="photo-and-rework.html"><span class="lbl">Next</span><span class="ttl">Photo check &amp; rework →</span></a>
 </div>
 

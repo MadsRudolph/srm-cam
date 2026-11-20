@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silkscreen — SRM-CAM guide</title>
+<meta name="description" content="The silkscreen on the xTool fiber laser: turn the sheet over, Autofocus and Align on the drilled holes, and mark F.Silkscreen on the component side.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/sk-flip.js?v=20261120a"></script>
+<script defer src="js/anim/lz-faces.js?v=20261120b"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link active" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+<h1>Silkscreen</h1>
+<p class="lead">The laser can mark the board's <strong>component side</strong>: part outlines, references and text from KiCad's <strong>F.Silkscreen</strong>. On the usual laser board the copper is on the bottom (B.Cu), so the component side is the <strong>laminate</strong>: the sheet is turned over, and the job is lined up on the same drilled holes by <span class="ui">Autofocus</span> and <span class="ui">Align</span>.</p>
+<div class="warn"><span class="t">Experimental</span>
+<p>The steps below work, but there is no proven silkscreen recipe yet (<a href="#recipe">The recipe</a>). Try it on the waste of the sheet first. The board works without a silkscreen.</p></div>
+
+<div class="pill-flow">
+  <span class="pf">Traces (and mask)</span><span class="arr">→</span>
+  <span class="pf">Peel the Kapton</span><span class="arr">→</span>
+  <span class="pf">Turn the sheet over</span><span class="arr">→</span>
+  <span class="pf">Autofocus</span><span class="arr">→</span>
+  <span class="pf">Align</span><span class="arr">→</span>
+  <span class="pf">Mark the silkscreen</span><span class="arr">→</span>
+  <span class="pf">Break the tabs</span>
+</div>
+
+<h2 id="when">When</h2>
+<ul>
+  <li><strong>After</strong> the traces are etched and checked, and after the <a href="solder-mask.html">solder mask</a> if the board gets one.</li>
+  <li><strong>Before</strong> you break the tabs: the board is still in its sheet, so it lies flat and square, and its holes are where they were.</li>
+  <li>The rail shows a <span class="ui">Silkscreen</span> <span class="tag laser">LASER</span> row when the board's folder has a silkscreen layer; the job marks F.Silkscreen. <span class="ui">Send to SRM-CAM</span> plots it.</li>
+</ul>
+
+<div class="note"><span class="t">What the drawing looks like</span>
+<p>The Silk job is drawn as KiCad shows it, <strong>not mirrored</strong>: you look at the component side from above, as KiCad does. The traces and the mask are mirrored: KiCad draws B.Cu as seen through the board from the top, and on the bed you look straight at that face. The page sets this itself.</p></div>
+
+<figure class="anim" data-anim="sk-flip">
+  <figcaption><span class="k">Turning the sheet over</span>Step through: the tape off, the sheet turned over left to right, then Autofocus and Align on the same drilled holes, seen now from the other side. Schematic.</figcaption>
+</figure>
+
+<h2 id="steps">Mark it</h2>
+<ol class="steps">
+  <li><span class="st">Peel the Kapton</span>If the board has a mask, take the tape off the laminate side first. Wipe it clean.</li>
+  <li><span class="st">Turn the sheet over</span>Left to right, like the page of a book. The laminate is up now. Lay it square to the bed's edges, the board near the middle (<a href="laser.html#field">where on the bed</a>). Close the lid.</li>
+  <li><span class="st">Open the job</span>Click <span class="ui">Silkscreen</span> on the rail. The laser page opens on the Silk job; its step reads <span class="say">Mark the silkscreen</span>.</li>
+  <li><span class="st">Autofocus</span>Press <span class="ui">Autofocus</span>, on the laminate. It takes a new photo at that height.</li>
+  <li><span class="st">Drag it close</span>The job is still where the traces were, but the sheet has been turned over: drag the drawing roughly onto the board in the photo, within about 25&nbsp;mm.</li>
+  <li><span class="st">Align</span>Press <span class="ui">Align</span>. It finds the drilled holes, seen from this side, in any quarter turn, and moves the drawing onto them. It moves nothing unless it finds 75&nbsp;% of the holes.</li>
+  <li><span class="st">Show where</span>The blue diode traces the outline on the board, without marking.</li>
+  <li><span class="st">Mark the silkscreen</span>Press <span class="ui">Mark the silkscreen</span>. Then switch to <span class="ui">Outlines</span> to check it on the photo. A faint part: <span class="ui">Select</span> it and mark it again (<span class="ui">Mark 2 selected</span>).</li>
+</ol>
+<figure class="fig">
+  <img src="img/lz_silk.png" alt="The laser page on the Silk job: the boost_v2 silkscreen drawn white on the bed, part outlines and references reading normally, not mirrored; on the right the step Mark the silkscreen, the size line 61 shapes, not mirrored, and the recipe RemoveSolderMask (sphawes); the bottom bar reads Mark the silkscreen" loading="lazy">
+  <figcaption>The Silk job, rendered from the app with no laser attached. The references read the right way round: the drawing is not mirrored. No Calibrate here: <span class="ui">Autofocus</span> and <span class="ui">Align</span> are at the top.</figcaption>
+</figure>
+
+<h2 id="recipe">The recipe</h2>
+<div class="warn"><span class="t">There is no silkscreen recipe yet</span>
+<p>The Silk job has no preset of its own: it opens on the mask's, <strong>RemoveSolderMask (sphawes)</strong> (40&nbsp;%, 800&nbsp;mm/s, 30&nbsp;kHz, 6 passes, cross-hatched). That recipe was made to ablate mask ink, not to mark laminate, and it has not been proven for the silkscreen. Try it on the waste of the sheet or a scrap first, and ask in the lab (or Mads) for the settings that work. <span class="ui">Adjust the numbers</span> shows and changes them.</p></div>
+
+<h2 id="faces">Which face is up, job by job</h2>
+<figure class="anim" data-anim="lz-faces">
+  <figcaption><span class="k">One sheet, the jobs</span>The board as KiCad draws it, beside the sheet on the bed for each job: copper face up for the traces and the mask (mirrored), laminate up for the silkscreen (as drawn). Schematic.</figcaption>
+</figure>
+
+<h2 id="then">Then</h2>
+<p>Break the tabs, clear the holes, and check continuity: <a href="make-a-board.html#finish">Make a board: the finish</a>. The silkscreen off, or mirrored: <a href="troubleshooting.html#laser-silk">Troubleshooting</a>.</p>
+
+<div class="page-nav">
+  <a class="prev" href="solder-mask.html"><span class="lbl">Previous</span><span class="ttl">← Solder mask</span></a>
+  <a class="next" href="smd.html"><span class="lbl">Next</span><span class="ttl">Fine pitch &amp; paste stencil →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>
