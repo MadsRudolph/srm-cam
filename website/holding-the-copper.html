@@ -4,16 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Holding the copper — SRM-CAM guide</title>
-<meta name="description" content="Holding the copper on the SRM-20: double-sided tape or four disc clamps, telling SRM-CAM where it is, the extra depth a board held at points needs, and checking it before you cut, with interactive explainers.">
+<meta name="description" content="How the copper sheet is held on the SRM-20 for SRM-CAM's run: the corner bracket and its probe tongue, clamps and tape on the free edges, marking clamps as no-go zones; and the by-hand holds for Pro.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
-<script defer src="js/anim/core.js?v=20260930a"></script>
-<script defer src="js/anim/hc-hold.js?v=20260930b"></script>
-<script defer src="js/anim/hc-place.js?v=20261118a"></script>
-<script defer src="js/anim/hc-flex.js?v=20260930b"></script>
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script> <script defer src="js/anim/ml-nogo.js?v=20261120a"></script> <script defer src="js/anim/hc-hold.js?v=20261120a"></script> <script defer src="js/anim/hc-place.js?v=20261120a"></script> <script defer src="js/anim/hc-flex.js?v=20261120a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -35,34 +33,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link active" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link active" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -70,74 +81,113 @@
 
 <main>
 <div class="content">
-
 <div class="hero">
   <h1>Holding the copper</h1>
-  <p class="lead">Almost every ruined board comes down to one question: <strong>does the machine know where the copper is, and will it still be there in ten minutes?</strong> The drawings are live: press the buttons and drag the sliders.</p>
+  <p class="lead">For the run, the sheet sits in the corner bracket on the mill's bed. The bracket holds two edges and tells SRM-CAM where the sheet is; you hold the other two edges down. If clamps are on the sheet, mark them so the bit keeps clear.</p>
 </div>
 
-<div class="note"><span class="t">Novice or Pro?</span>
-<p>Typing the sheet's corner and using screws or clamps are for <strong>Pro</strong>, by hand. In Novice the stock is taped and pushed into the bracket: see <a href="automatic.html#hold">Mill a board</a>. In Pro, the run can also find the copper itself: see <a href="automatic.html#pro">the stock anywhere</a>.</p></div>
+<h2 id="bracket">The corner bracket</h2>
+<p>An L screwed to the bed (the lab's is in the <strong>back-right</strong> corner). The sheet is pushed into its inside corner, copper up. A short <strong>probe tongue</strong> on the back arm reaches 4&nbsp;mm over the sheet's edge; the run keeps the bit clear of it. Because the corner is known, you only type in the sheet's size (W and H), and the run touches the copper once to find its height.</p>
+<figure class="fig mid">
+  <img src="img/hc_bracket.png" alt="A render of the printed probe bracket: an L with countersunk screw holes along both arms and the slot for the probe tongue at its inside corner" loading="lazy">
+  <figcaption>The printed probe bracket (a render, <code>hardware/probe_bracket</code>). Screws go through the countersunk holes into the bed.</figcaption>
+</figure>
+<ol class="steps">
+  <li><span class="st">Clean</span>Brush the bed and the bracket's corner: a chip under the sheet tilts it.</li>
+  <li><span class="st">In the corner</span>Slide the sheet under the tongue and push it firmly into the corner, copper up.</li>
+  <li><span class="st">Hold the free edges</span>See below. Then press on the copper near the middle: if it moves, the bit will move it too.</li>
+  <li><span class="st">Tell SRM-CAM</span>On the run page, type the sheet's W and H. Check the bracket's corner and kind match the bed (<a href="mill.html#stock">The mill page</a>).</li>
+</ol>
+<p>A newer bracket with a pogo pin in place of the tongue is a concept only, not in the lab: <a href="hardware.html#pogo">Concept: a probe bracket with a pogo pin</a>.</p>
 
-<h2 id="hold">1 · Hold it down</h2>
-<p>The lab uses two holds. Pick one, then tell SRM-CAM which, under <span class="menu-path">Set up the job › The copper › Held down by</span>: it decides whether the cut is deepened (<a href="#points">section 3</a>).</p>
+<h2 id="free">The two free edges</h2>
+<p>What has worked in the lab, as tried so far:</p>
+<div class="tbl-wrap"><table>
+<tr><th>Sheet</th><th>Hold it with</th></tr>
+<tr><td><strong>Small</strong> (80&nbsp;×&nbsp;42&nbsp;mm worked)</td><td>Clamps on the two free edges.</td></tr>
+<tr><td><strong>Big</strong> (160&nbsp;mm)</td><td>Clamps, and masking tape stuck under the sheet, across the middle too. Three layers worked.</td></tr>
+</table></div>
+<ul>
+  <li><strong>The clamps</strong> are the lab's printed cam clamps: a 26&nbsp;mm disc on one screw, the screw off centre. Fit one loosely in a bed hole beside the free edge, push it round by hand until it presses the sheet into the corner, then tighten: its flat lip lies 2&nbsp;mm over the copper. Don't push hard: that can bow the sheet. Print them from <a href="hardware.html#clamps">Hardware &amp; firmware</a>.</li>
+  <li><strong>Tape</strong> under a big sheet keeps its middle from lifting.</li>
+  <li><strong>Flat enough?</strong> The run measures it: a sheet more than 1.0&nbsp;mm out of flat is refused ("Re-tape the stock flat").</li>
+</ul>
+
+<h2 id="nogo">Mark a clamp (no-go zone)</h2>
+<p>Clamps sit where the bit and the probe may go: the surface touches are 2&nbsp;mm in from the board's edge. So mark each clamp: on the run page press <span class="ui">Mark a clamp (no-go zone)</span>, then click the bed hole the clamp is screwed into. SRM-CAM draws the clamp there, turned onto the sheet's nearest edge. Drag on the bed instead to mark a box (tape, a tool, anything else).</p>
+<figure class="anim" data-anim="ml-nogo">
+  <figcaption><span class="k">What a marked clamp does</span>To scale: a board almost as big as its sheet, so the touches come near the edges. With a clamp marked, the bit keeps 1&nbsp;mm from it (2&nbsp;mm from a box), a touch that would land on it moves to free copper (15&nbsp;mm at most), travel goes round it, and a cut that would go through it is refused.</figcaption>
+</figure>
+<ul>
+  <li>Right-click a zone to delete it; <span class="ui">Clear zones</span> removes them all.</li>
+  <li><strong>Zones are not kept</strong> when SRM-CAM closes: mark the clamps again each session.</li>
+  <li>If the zones leave too few surface points free, the run stops and says so: move a clamp off the board's area.</li>
+</ul>
+
+<h2 id="pro">Pro: without the bracket</h2>
+<p id="pro-anywhere">In Pro the run page has <span class="ui">Anywhere - the probe finds its corner</span> instead of <span class="ui">In the corner bracket</span>. Drag the board on the bed to where the copper is; the probe starts in its middle, walks out to the copper's edges, and measures where the sheet is, how it is turned and how big it is. A size that does not match the one typed stops the run with the measured size filled in. No-go zones need the bracket.</p>
+<p>Everything below is the by-hand way of <a href="milling-a-board.html">Milling a board by hand</a>, where you type the sheet's corner yourself.</p>
+
+<h3 id="hold">Hold it down by hand</h3>
+<p>Without the bracket there are two holds. Pick one, then tell SRM-CAM which, under <span class="menu-path">Set up the job › The copper › Held down by</span>: it decides whether the cut is deepened (<a href="#points">below</a>).</p>
 <figure class="anim" data-anim="hc-hold">
   <figcaption><span class="k">Tape, or four disc clamps</span>Tape holds the whole back flat. The discs press the edges in from all four sides; take one away and the board can slide and lift.</figcaption>
 </figure>
-<h3>Best: double-sided tape</h3>
+<h4>Double-sided tape</h4>
 <p>Lay double-sided tape across the whole back of the board and press it flat onto the spoilboard. It is the easiest to set up, and because the whole back is held, nothing can arch: the probed surface is the surface that gets cut. In SRM-CAM: <span class="menu-path">Held down by › Bonded across the whole back (tape)</span>, which adds no extra depth. It is the default.</p>
-<h3>Second best: four disc clamps</h3>
+<h4>Four disc clamps</h4>
 <ol class="steps">
   <li><span class="st">Beside the board, not through it</span>Each clamp is a plastic disc with a chamfer round its side. Put its screw through a spoilboard grid hole just beside the board's edge, into the threads of the metal plate underneath.</li>
   <li><span class="st">Turn it in</span>Turn the disc until its chamfered side presses on the board's edge, pushing it down and in.</li>
   <li><span class="st">One on every side</span>Use all four: the clamping force has to come from all sides, or the board slides away from the open side.</li>
-  <li><span class="st">Tell SRM-CAM</span><span class="menu-path">Held down by › Screwed or clamped at points</span>. A board held at its edges can arch in the middle, so the cut is deepened a little (<a href="#points">section 3</a>).</li>
+  <li><span class="st">Tell SRM-CAM</span><span class="menu-path">Held down by › Screwed or clamped at points</span>. A board held at its edges can arch in the middle, so the cut is deepened a little (<a href="#points">below</a>).</li>
 </ol>
 <figure class="fig mid">
   <img src="img/copper-clamped-on-the-bed.jpg" alt="A copper sheet on the SRM-20's spoilboard, with black disc clamps at its edges" loading="lazy">
   <figcaption>Disc clamps at the edges of a sheet on the spoilboard.</figcaption>
 </figure>
 
-<h2 id="where">2 · Tell SRM-CAM where the copper is</h2>
-<p>Under <span class="menu-path">Set up the job › The copper</span>: the board thickness from calipers, then the sheet's width and height. Then its front-left corner. Find the corner with the probe (the walk is on <a href="milling-a-board.html#zero">Milling a board</a>), leave the bit there, and press <span class="ui">Set the corner from the tool</span>. It only reads the machine's X and Y: nothing moves, and the work origin is not touched. Then <span class="ui">Centre</span>, on the bed's toolbar, puts the job in the middle of the part of the sheet the spindle can reach.</p>
+<h3 id="where">Tell SRM-CAM where the copper is</h3>
+<p>Under <span class="menu-path">Set up the job › The copper</span>: the board thickness from calipers, then the sheet's width and height. Then its front-left corner. Find the corner with the probe (the walk is on <a href="milling-a-board.html#zero">Milling a board by hand</a>), leave the bit there, and press <span class="ui">Set the corner from the tool</span>. It only reads the machine's X and Y: nothing moves, and the work origin is not touched. Then <span class="ui">Centre</span>, on the bed's toolbar, puts the job in the middle of the part of the sheet the spindle can reach.</p>
 <figure class="anim" data-anim="hc-place">
   <figcaption><span class="k">Two truths</span>Until the corner is set, SRM-CAM's copper is a placeholder at the machine origin, and its "on the copper" check is about a sheet nobody measured. Set the corner, then centre the job on the copper.</figcaption>
 </figure>
 <div class="warn"><span class="t">Set the copper first</span>
 <p><span class="ui">Centre</span> centres on the copper once the sheet's size and corner are set. Before that it centres on the bed: the middle of the machine's travel, which on a sheet clamped off to one side is bare spoilboard. <kbd>Ctrl</kbd>+<kbd>Z</kbd> puts the job back where it was.</p></div>
 
-<h2 id="points">3 · A board held at points gives under the cutter</h2>
+<h3 id="points">A board held at points gives under the cutter</h3>
 <p>Clamped at its edges, the board can arch over air between the clamps. The probe measures that arch with a static tool at almost no force; the cutter arrives spinning and pushing down, and the unsupported part gives a little instead of being cut. So, held at points, SRM-CAM deepens the cut:</p>
 <ul>
   <li><strong>Screwed or clamped at points</strong>, with the probe map applied: a quarter of the arch the map shows (what a flat, tilted plane cannot explain), capped at 0.12&nbsp;mm, plus the 0.035&nbsp;mm copper foil. The number is on the setup page.</li>
   <li><strong>The map not applied</strong>: nothing cancels the tilt, so the whole range of the map is charged, plus the foil. Apply the map.</li>
-  <li><strong>Bonded across the whole back</strong> (tape, the lab's best hold): there is nowhere for it to go, so nothing is added.</li>
+  <li><strong>Bonded across the whole back</strong> (tape): there is nowhere for it to go, so nothing is added.</li>
 </ul>
 <figure class="anim" data-anim="hc-flex">
   <figcaption><span class="k">The give, and what it costs</span>Drag the arch and press Play, then switch to tape. A board that arches more than the cap wants re-fixing, not a deeper cut.</figcaption>
 </figure>
 <p>Untick <span class="menu-path">Set up the job › The copper › Work the extra depth out from the probe map</span> to set <span class="ui">Cut deeper by</span> yourself, down to nothing, if the board keeps coming out too deep or too shallow. How to measure the map is on <a href="bed-leveling.html">Bed levelling</a>.</p>
 
-<h2 id="check">4 · Check it before you cut</h2>
+<h3 id="check">Check it before you cut</h3>
 <p>With the link connected, turn on <span class="ui">Click to jog</span> and click the board's corners on the bed. The head lifts and goes there: look that the bit is over the copper at each one. If it is not, find the corner again and re-place the job. A minute, before every job.</p>
-<p>In Pro, the run can do this for you: with the stock set to <span class="ui">Anywhere - the probe finds its corner</span>, the probe walks out to the copper's edges and measures where the sheet is and how it is turned. See <a href="automatic.html#pro">Mill a board</a>.</p>
+<p>In Pro, the run can do this for you: with the stock set to <span class="ui">Anywhere - the probe finds its corner</span>, the probe walks out to the copper's edges and measures where the sheet is and how it is turned. See <a href="#pro-anywhere">Pro: without the bracket</a>.</p>
 
-<h2 id="which">Which one do I need?</h2>
+<h3 id="which">Which one do I need?</h3>
 <div class="tbl-wrap"><table>
 <tr><th>Situation</th><th>Use</th></tr>
-<tr><td>Any board (the lab's routine)</td><td>Double-sided tape across the back; set the corner from the tool, probe the bed, check the corners with Click to jog</td></tr>
+<tr><td>Any board, by hand</td><td>Double-sided tape across the back; set the corner from the tool, probe the bed, check the corners with Click to jog</td></tr>
 <tr><td>No tape to hand, or the board won't stay taped</td><td>Four disc clamps, one per side, and probe the bed so the extra depth is measured rather than guessed</td></tr>
-<tr><td>Double-sided</td><td>Dowel registration: see <a href="double-sided.html">Double-sided boards</a></td></tr>
+<tr><td>Double-sided</td><td>Dowel registration: see <a href="double-sided.html">Double-sided by hand</a></td></tr>
 </table></div>
 
 <div class="note"><span class="t">The app can also… (not the lab routine)</span>
 <p><span class="menu-path">Set up the job › The copper › Held down with M4 screws</span> screws the copper down <em>through</em> the board: <span class="ui">Write the screw file…</span> drills clearance holes in the copper over the spoilboard grid, and raises the lift to 4&nbsp;mm to clear the screw heads. <span class="menu-path">Machine › Export the bed fixture (pin holes)…</span> drills dowel-pin holes into the spoilboard. Both procedures have you set the XY work origin, which the lab rule (X and Y stay at the machine origin) does not allow. Use tape or the disc clamps instead.</p></div>
 
+
 <p>When you are done, leave the machine as you found it: <a href="automatic.html#tidy">Leave it as you found it</a>.</p>
 
 <div class="page-nav">
-  <a href="panels.html"><span class="lbl">Previous</span><span class="ttl">← Several boards on one sheet</span></a>
-  <a class="next" href="bed-leveling.html"><span class="lbl">Next</span><span class="ttl">Bed levelling &amp; probing →</span></a>
+  <a class="prev" href="mill.html"><span class="lbl">Previous</span><span class="ttl">← The mill page</span></a>
+  <a class="next" href="laser.html"><span class="lbl">Next</span><span class="ttl">The laser page →</span></a>
 </div>
 
 <footer class="site">

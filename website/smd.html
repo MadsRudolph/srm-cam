@@ -3,13 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SMD boards — SRM-CAM guide</title>
-<meta name="description" content="Fine-pitch SMD boards on the SRM-20: isolate traces with the 0.8 mm ball mill, which cuts a 0.44 mm channel, and cut the solder paste stencil on the xTool F1 Ultra straight from SRM-CAM.">
+<title>Fine pitch &amp; paste stencil — SRM-CAM guide</title>
+<meta name="description" content="How fine the laser, the ball mill and the flat mill go, which fine-pitch parts each allows, and the solder paste stencil cut on the xTool F1 Ultra straight from SRM-CAM, in zones with rests.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/sd-trim.js?v=20261120a"></script>
+<script defer src="js/anim/sd-stencil.js?v=20261120a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -31,34 +35,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link active" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link active" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -66,108 +83,87 @@
 
 <main>
 <div class="content">
+<h1>Fine pitch &amp; paste stencil</h1>
+<p class="lead">How fine each method goes, which parts that allows, and the solder paste stencil, cut on the <strong>xTool F1 Ultra</strong> straight from SRM-CAM.</p>
 
-<h1>SMD boards: fine traces and a paste stencil</h1>
-<p class="lead">Two things make small surface-mount parts work on a milled board. The <strong>0.8&nbsp;mm ball mill</strong> isolates traces with a <strong>0.44&nbsp;mm</strong> channel, against 0.8&nbsp;mm for the usual flat bit. The <strong>xTool F1 Ultra</strong> cuts the solder paste stencil, driven straight from SRM-CAM over USB.</p>
-
-<div class="pill-flow">
-  <span class="pf">KiCad rules</span><span class="arr">→</span>
-  <span class="pf">Ball mill method</span><span class="arr">→</span>
-  <span class="pf">Mill</span><span class="arr">→</span>
-  <span class="pf">Stencil on the xTool</span><span class="arr">→</span>
-  <span class="pf">Paste and parts</span>
-</div>
-
-<h2 id="ball-mill">Fine traces with the ball mill</h2>
-<p>A flat 0.8&nbsp;mm bit cuts a channel 0.8&nbsp;mm wide, so no gap on the board can be narrower. The 0.8&nbsp;mm ball mill, cut 0.08&nbsp;mm deep, only touches the copper with the tip of its ball: the channel is 0.44&nbsp;mm at the copper surface.</p>
-
+<h2 id="methods">How fine each method goes</h2>
 <div class="tbl-wrap"><table>
-<tr><th>Measured on the lab's mill</th><th>Ball mill, 0.08&nbsp;mm deep</th></tr>
-<tr><td>Channel at the copper surface</td><td>0.44&nbsp;mm (0.41–0.47)</td></tr>
-<tr><td>Bare laminate at the bottom</td><td>0.29&nbsp;mm (0.21–0.36)</td></tr>
-<tr><td>Finest gap that metered open</td><td>0.20&nbsp;mm, the finest on the test board</td></tr>
-<tr><td>Finest trace that kept continuity</td><td>0.15&nbsp;mm, the finest on the test board</td></tr>
-<tr><td>Holes and cut-out with the same bit</td><td>Run once, about 2&nbsp;mm deep</td></tr>
+<tr><th>Method</th><th>Narrowest gap between two nets</th><th>Fine-pitch parts</th></tr>
+<tr><td><strong>Laser copper</strong> (the mill drills and cuts out)</td><td>The KiCad rules set 0.25&nbsp;mm clearance; 0.20&nbsp;mm is the floor</td><td>The finest of the three</td></tr>
+<tr><td><strong>Ball mill</strong> (the mill alone)</td><td>0.44&nbsp;mm, the channel at the copper</td><td>SOIC, SOT-23, 0603, 0402; TSSOP marginal</td></tr>
+<tr><td><strong>Flat mill</strong> (the mill alone)</td><td>0.8&nbsp;mm, the bit's width</td><td>Through-hole and larger SMD</td></tr>
 </table></div>
-<p>Measured from microscope photos, about ±0.03&nbsp;mm. Full record: <a href="https://github.com/MadsRudolph/srm-cam/blob/main/docs/bit-capabilities.md">bit-capabilities.md</a>.</p>
+<p>For fine pitch, the usual way is the laser: <a href="make-a-board.html">Make a board</a>. The method is chosen in KiCad with <span class="ui">Set design rules for SRM-CAM</span> (<a href="kicad.html">From KiCad</a>), which sets the clearance in the board's rules and tells SRM-CAM how the board is made.</p>
 
-<h3 id="profile">Use it</h3>
-<ol class="steps">
-  <li><span class="st">Fit the ball mill</span>One bit does the whole job: traces, holes and cut-out. An automatic run has no bit change.</li>
-  <li><span class="st">Set the method</span>The chip at the top left (or <span class="ui">How it is made</span> on <span class="ui">Your board</span>): <strong>Ball mill (0.44 mm channel)</strong>. A board set up in KiCad for the ball mill opens like that by itself. It picks the profile <strong>SRM-20 0.8 mm ball mill</strong>, which sets the traces to 0.44&nbsp;mm at 0.08&nbsp;mm deep in one pass, 0.8&nbsp;mm holes, and the outline at 1.9&nbsp;mm with 4 tabs.</li>
-  <li><span class="st">Mill as usual</span><a href="automatic.html">Mill a board</a>. Bed levelling matters more here: at 0.08&nbsp;mm deep, a surface 0.1&nbsp;mm off is the difference between cutting and not.</li>
-</ol>
-<p>The profile also has <span class="ui">Cut gaps too narrow for the bit</span> on: a gap under 0.44&nbsp;mm gets one cut down its middle, which trims the pads on either side instead of leaving them joined.</p>
-
-<h3 id="kicad">Design rules in KiCad</h3>
-<p>Draw the board so no two nets are closer than the cut: <strong>0.44&nbsp;mm clearance</strong>. The SRM-CAM KiCad buttons set this for you. <span class="menu-path">Tools › External Plugins › Set design rules for SRM-CAM</span>: choose the ball mill, and it sets the clearance in the board's rules, every net class and every zone, then refills the zones. It also remembers the choice, so SRM-CAM opens the board as a ball-mill board. <span class="ui">Send to SRM-CAM</span> checks the board against those rules before it sends it.</p>
-<p>Gaps finer than 0.44&nbsp;mm? Choose the fiber laser instead: the mill drills and cuts out, and the laser etches the copper. See <a href="automatic.html#laser">A laser board</a>.</p>
+<h2 id="ball-mill">On the mill alone: the ball mill</h2>
+<p>A flat 0.8&nbsp;mm bit cuts a channel 0.8&nbsp;mm wide. The 0.8&nbsp;mm ball mill, cut 0.08&nbsp;mm deep, touches the copper only with the tip of its ball: the channel is 0.44&nbsp;mm at the copper. What it measured on the lab's mill, and how to set it up, is on <a href="automatic.html#small">Mill a whole board: How small can it go?</a></p>
 
 <h3 id="parts">Which parts</h3>
-<p>Pitch, not the bit, sets the limit. A cut down the gap between two pads leaves each pad at most <em>pitch − 0.44&nbsp;mm</em> wide.</p>
+<p>Pitch, not the bit, sets the limit. Where two pads are closer than 0.44&nbsp;mm, <span class="ui">Cut gaps too narrow for the bit (trims pads)</span> (on in the ball-mill profile) runs one cut down the middle of the gap. That trims both pads: each is left at most <em>pitch − 0.44&nbsp;mm</em> wide.</p>
+<figure class="anim" data-anim="sd-trim">
+  <figcaption><span class="k">Pads at three pitches</span>The 0.44&nbsp;mm channel and the pitch to scale; the pad widths are typical footprint values. Pick a part.</figcaption>
+</figure>
 <div class="tbl-wrap"><table>
 <tr><th>Part</th><th>Pad left at 0.44&nbsp;mm</th><th></th></tr>
 <tr><td>SOIC (1.27&nbsp;mm), SOT-23, 0603, 0402</td><td>Plenty</td><td>Fine</td></tr>
 <tr><td>TSSOP (0.65&nbsp;mm)</td><td>About 0.21&nbsp;mm</td><td>Marginal</td></tr>
-<tr><td>0.5&nbsp;mm pitch (QFN, fine TSSOP)</td><td>About 0.06&nbsp;mm</td><td>Not usable</td></tr>
+<tr><td>0.5&nbsp;mm pitch (QFN, fine TSSOP)</td><td>About 0.06&nbsp;mm</td><td>Not usable: make it on the laser</td></tr>
 </table></div>
 <div class="note"><span class="t">How far this has been proven</span>
-<p>The channel, the gaps and the traces are measured. Pad sizes on the 0.44&nbsp;mm profile looked right under the microscope but were not measured, and no fine-pitch part has been soldered on one yet. How long a ball mill lasts through holes and cut-outs is not known.</p></div>
+<p>The ball mill's channel, gaps and traces are measured. Pad sizes on the 0.44&nbsp;mm profile looked right under the microscope but were not measured, and no fine-pitch part has been soldered on one yet.</p></div>
 
-<h2 id="stencil">The paste stencil on the xTool F1 Ultra</h2>
-<p>SRM-CAM makes the stencil from the board's paste layer and cuts it on the F1 Ultra itself, without xTool's own software. It spreads the heat, which XCS cannot: thin steel warps when one spot gets 30 passes in a row, so the holes are cut in zones, a few passes at a time, with rests between.</p>
+<h2 id="stencil">The paste stencil</h2>
+<p>SRM-CAM makes the stencil from the board's paste layer and cuts it on the F1 Ultra itself. It spreads the heat, which xTool Creative Space does not: thin steel warps when one spot gets 30 passes in a row, so the holes are cut in zones, a few passes at a time, with rests between.</p>
 
 <h3 id="stencil-need">What you need</h3>
 <div class="tbl-wrap"><table>
 <tr><th>What</th><th>Which</th></tr>
-<tr><td>Laser</td><td>xTool F1 Ultra, plugged into the SRM-CAM PC by USB (it shows up as a network connection)</td></tr>
+<tr><td>Laser</td><td>The xTool F1 Ultra, plugged into the SRM-CAM PC by USB</td></tr>
 <tr><td>Foil</td><td>0.1&nbsp;mm 304 stainless steel</td></tr>
-<tr><td>Gerbers</td><td><strong>B.Paste</strong> (or F.Paste) and Edge.Cuts, plotted with the copper</td></tr>
+<tr><td>Gerbers</td><td>The paste layer of the side the parts go on: <strong>B.Paste</strong> on the usual board (parts on the copper face), <strong>F.Paste</strong> if the parts are on top. <span class="ui">Send to SRM-CAM</span> plots both.</td></tr>
 </table></div>
 
 <h3 id="stencil-make">Make it</h3>
 <ol class="steps">
-  <li><span class="st">Plot the paste layer</span>In KiCad's Gerber plot, tick <strong>B.Paste</strong> for a board milled on the bottom, both pastes for double-sided. A board with its parts on top and no B.Paste uses F.Paste.</li>
-  <li><span class="st">Pick Paste stencil on the rail</span>Under <em>On the laser</em>, with a <strong>LASER</strong> tag. It opens the laser page beside the rail. Each hole is drawn smaller by half the laser's kerf (0.08&nbsp;mm, measured on the lab's laser), so it comes out pad-sized, and mirrored like the copper.</li>
-  <li><span class="st">Read the warnings</span>A hole too small for paste to leave it cleanly (area ratio under 0.66) is kept, and named.</li>
-  <li><span class="st">For XCS instead</span>The export writes the stencil as a DXF too, with the other files.</li>
+  <li><span class="st">Paste stencil on the rail</span>The <span class="ui">Paste stencil</span> <span class="tag laser">LASER</span> row opens the laser page on the Stencil job. Each hole is drawn smaller by half the laser's kerf (0.08&nbsp;mm, measured on the lab's laser), 0.04&nbsp;mm a side, so it comes out pad-sized. B.Paste is mirrored, like the copper.</li>
+  <li><span class="st">Read the warnings</span>A hole too small for the paste to leave it cleanly (area ratio under 0.66) is kept, and named.</li>
+  <li><span class="st">Foil on the bed</span>Flat, near the middle of the bed. Close the lid.</li>
+  <li><span class="st">Place it</span><span class="ui">Photo</span>, then drag the stencil onto the foil, or right-click <span class="ui">Centre the stencil here</span>. Arrow keys nudge it 0.1&nbsp;mm (<kbd>Shift</kbd> 1&nbsp;mm, <kbd>Ctrl</kbd> 10&nbsp;mm); <span class="ui">Turn left</span> and <span class="ui">Turn right</span> turn it a quarter.</li>
+  <li><span class="st">Autofocus</span>Measures the foil under the focus cross, which follows the stencil's middle; right-click <span class="ui">Autofocus here</span> to measure elsewhere. For foil that doesn't lie flat, <span class="ui">Focus map</span>: see <a href="laser.html#focus">Focus</a>.</li>
+  <li><span class="st">Cut the stencil</span>The recipe is <strong>0.1 mm 304 stainless</strong>. While it runs the page reads <span class="say">Zone k of 4 · round r of 6</span>, then <span class="say">Resting, laser off</span> between bursts. <span class="ui">STOP</span> always works.</li>
+  <li><span class="st">Re-cut what did not go through</span>Push out any slugs. Switch to <span class="ui">Outlines</span> so the photo shows through the holes; in <span class="ui">Select</span>, box the holes that need more, and cut again (<span class="ui">Cut 4 selected</span>): only those, and the outline is not marked again.</li>
 </ol>
-
-<h3 id="laser-page">On the laser page</h3>
-<ol class="steps">
-  <li><span class="st">Photo</span>Takes the laser's camera picture, straightened into the laser's millimetres, with the stencil drawn on it.</li>
-  <li><span class="st">Place it</span>In <span class="ui">Move</span>, drag the stencil onto the foil. Arrow keys nudge it (Shift ×10, Ctrl ×100), <span class="ui">Turn left</span> and <span class="ui">Turn right</span> turn it a quarter, right-click <span class="ui">Centre the stencil here</span>.</li>
-  <li><span class="st">Autofocus</span>Measures the foil under the pink cross, which follows the stencil's middle; right-click <span class="ui">Autofocus here</span> to measure elsewhere. The head goes to the thickness + 8&nbsp;mm. New, and still being finished: <span class="ui">Measure focus</span> measures the height with the blue dot at a grid of points over the job (the corners, the edges and the middle). If the work is not within the depth of focus everywhere, the run is split into bands, each cut with the head refocused for it.</li>
-  <li><span class="st">Recipe</span><strong>0.1 mm 304 stainless</strong>. <span class="ui">Adjust the numbers</span> shows them.</li>
-  <li><span class="st">Cut</span>The zone being cut lights up, with the time left. <span class="ui">STOP</span> always works. With <span class="ui">Photo when done</span>, the result is on screen when it finishes.</li>
-  <li><span class="st">Re-cut what did not go through</span>Switch the holes to <span class="ui">Outlines</span> so the photo shows through them. In <span class="ui">Select</span>, click or box the holes that need more, and <span class="ui">Cut</span> again: only those, and the outline is not marked again.</li>
-</ol>
+<figure class="anim" data-anim="sd-stencil">
+  <figcaption><span class="k">Zones, bursts and rests</span>The holes split into 4 zones round their middle. Each zone gets a burst of 5 passes in turn, with a 6&nbsp;s rest after every burst; 6 rounds make the 30 passes. Sped up a lot; the close-up of one hole is to scale.</figcaption>
+</figure>
+<figure class="fig">
+  <img src="img/lz_stencil.png" alt="The laser page on the Stencil job: the paste holes drawn white on the bed with the focus cross among them; on the right the step Cut the stencil, the size line with the kerf 0.08 mm, and the recipe 0.1 mm 304 stainless, 6 rounds of 5 passes per zone, 6 s laser-off after each; the bottom bar reads Cut the stencil" loading="lazy">
+  <figcaption>The Stencil job, rendered from the app with no laser attached, on a test paste layer.</figcaption>
+</figure>
 <div class="tbl-wrap"><table>
 <tr><th colspan="2">0.1 mm 304 stainless</th></tr>
-<tr><td>Source</td><td>Fiber</td></tr>
 <tr><td>Power, speed, frequency</td><td>100&nbsp;%, 550&nbsp;mm/s, 30&nbsp;kHz</td></tr>
 <tr><td>Passes per hole</td><td>30, in bursts of 5</td></tr>
-<tr><td>Heat</td><td>4 zones, 6&nbsp;s rest after every burst</td></tr>
+<tr><td>Heat</td><td>4 zones, a 6&nbsp;s rest after every burst</td></tr>
 <tr><td>Outline</td><td>Marked once at 50&nbsp;%, not cut</td></tr>
 </table></div>
 
 <h3 id="align">Putting a stencil back</h3>
 <p><span class="ui">Align</span> finds the stencil's own holes in a new photo and moves the drawing onto them, turning it if needed. Use it after the foil has been lifted, to re-cut holes. It moves nothing unless it finds 85&nbsp;% of the holes.</p>
-<p>The camera sees about half a millimetre off from where the fiber cuts. <span class="ui">Learn from this cut</span>, in the <span class="ui">Camera</span> section, measures that from a stencil that has not moved since it was cut. The page then checks the photo after every cut and suggests learning again when it is more than 0.3&nbsp;mm off.</p>
-
+<p>In Pro, <span class="ui">Learn from this cut</span> in the <span class="ui">Camera</span> section measures the camera's error from a stencil that has not moved since it was cut. After a cut, the page suggests it when the holes in the photo are more than 0.3&nbsp;mm from where they were cut.</p>
 <div class="warn"><span class="t">Fumes</span>
-<p>Keep the enclosure closed, and vent it outdoors.</p></div>
+<p>Keep the lid closed while it runs, and the fumes vented outdoors.</p></div>
 
-<h2 id="mask">The copper, mask and silkscreen too</h2>
-<p>The rail's other laser rows open the same page on their job: <span class="ui">Etch the traces</span> on a laser board, <span class="ui">Solder mask</span> (the openings over the pads) and <span class="ui">Silkscreen</span> (filled with cross-hatched lines). Each is lined up on the board's drilled holes. The order for a whole laser board is on <a href="automatic.html#laser">Mill a board</a>; inking and curing the mask are on <a href="solder-mask.html">Solder mask</a>.</p>
+<h2 id="laser">The copper, mask and silkscreen</h2>
+<p>The other laser rows open the same page on their job: <a href="laser.html">Etch the traces</a> on a laser board, <a href="solder-mask.html">Solder mask</a> and <a href="silkscreen.html">Silkscreen</a>. Each is lined up on the board's drilled holes. The whole order, from KiCad to a finished board, is on <a href="make-a-board.html">Make a board</a>.</p>
 
 <div class="page-nav">
-  <a href="automatic.html"><span class="lbl">Previous</span><span class="ttl">← Mill a board</span></a>
-  <a href="solder-mask.html" class="next"><span class="lbl">Next</span><span class="ttl">Solder mask →</span></a>
+  <a class="prev" href="silkscreen.html"><span class="lbl">Previous</span><span class="ttl">← Silkscreen</span></a>
+  <a class="next" href="automatic.html"><span class="lbl">Next</span><span class="ttl">Mill a whole board →</span></a>
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
 </footer>
 
 </div>

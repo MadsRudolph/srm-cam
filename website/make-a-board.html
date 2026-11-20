@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a board — SRM-CAM guide</title>
+<meta name="description" content="Make a PCB the usual way with SRM-CAM: KiCad rules and Send, the SRM-20 mill drills the holes and cuts the outline on tabs, then the xTool F1 Ultra fiber laser finds the board by its holes and etches the copper; mask, silkscreen, break the tabs.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script> <script defer src="js/anim/mb-rules.js?v=20261120a"></script> <script defer src="js/anim/mb-sheet.js?v=20261120d"></script> <script defer src="js/anim/ml-level.js?v=20261120a"></script> <script defer src="js/anim/mb-calibrate.js?v=20261120a"></script> <script defer src="js/anim/continuity.js?v=20261120a"></script> <script defer src="js/anim/mb-handover.js?v=20261120b"></script> <script defer src="js/anim/mb-look.js?v=20261120b"></script> <script defer src="js/anim/mb-tabs.js?v=20261120b"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link active" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+<div class="hero">
+  <h1>Make a board</h1>
+  <p class="lead">The usual way, start to finish. The mill drills the holes and cuts the outline on tabs, so the board stays in its sheet. The whole sheet goes to the laser, which finds the board by its holes and etches the copper. Mask and silkscreen if you want them, then break the tabs.</p>
+  <div class="badge-row">
+    <span class="badge copper">One 0.8&nbsp;mm flat bit</span>
+    <span class="badge">Two presses on the laser</span>
+    <span class="badge">One side or two</span>
+  </div>
+</div>
+
+<div class="route">
+  <div class="stg"><span class="m">KiCad</span><span class="h">Rules, then Send</span><span class="d"><a href="#export">Set the rules before you route</a></span></div>
+  <div class="stg mill"><span class="m">Mill</span><span class="h">Drill and cut out</span><span class="d"><a href="#mill">The board stays in its sheet</a></span></div>
+  <div class="stg laser"><span class="m">Laser</span><span class="h">Calibrate</span><span class="d"><a href="#calibrate">Finds the board by its holes</a></span></div>
+  <div class="stg laser"><span class="m">Laser</span><span class="h">Etch the traces</span><span class="d"><a href="#etch">Etch, look, re-etch spots</a></span></div>
+  <div class="stg"><span class="m">Laser + bench</span><span class="h">Finish</span><span class="d"><a href="#finish">Mask, silkscreen, break the tabs</a></span></div>
+</div>
+
+<div class="note"><span class="t">Before your first board</span>
+<ul>
+  <li><strong>SRM-CAM is installed</strong> and the KiCad buttons are added: <a href="getting-started.html">Install &amp; connect</a>.</li>
+  <li><strong>At the mill:</strong> the corner bracket is screwed to the bed; its tongue presses the probe's wire onto the copper (with a plain bracket, the red probe clip does). See <a href="hardware.html#probe">Hardware &amp; firmware</a>. Two USB cables from the mill to the PC: the black one (the Arduino) and the white one (the mill).</li>
+  <li><strong>At the laser:</strong> one USB cable. It shows up as a network connection; there is nothing to install and no xTool Creative Space.</li>
+  <li><strong>Stuck at any point?</strong> <a href="troubleshooting.html">Troubleshooting</a>.</li>
+</ul></div>
+
+<h3>The whole way, in the app</h3>
+<p>Click a picture to open it full size.</p>
+<div class="journey">
+  <figure><a href="img/mb_board.png" title="Open the full screenshot"><img src="img/mb_board.png" alt="Your board in Novice: How it is made reads Laser copper (mill drills and cuts out), From kicad" loading="lazy"></a><figcaption><b>1 · Your board</b>The chip at the top says <em>Laser · from KiCad</em>.</figcaption></figure>
+  <figure><a href="img/mb_check.png" title="Open the full screenshot"><img src="img/mb_check.png" alt="Check it: Fits the bed, Holes fit the bit, Net clearance, The job is on the copper, and one amber line Z reach unknown" loading="lazy"></a><figcaption><b>2 · Check it</b>Green is good. Amber is a look, not a stop.</figcaption></figure>
+  <figure class="mill"><a href="img/ml_run_panel_top.png" title="Open the full screenshot"><img src="img/ml_run_panel_top.png" alt="The run page Drill and cut out, on tabs: stock W and H, the bracket back-right, Centre the board on the copper, Start" loading="lazy"></a><figcaption><b>3 · Drill and cut out</b>Sheet size, Centre, Start.</figcaption></figure>
+  <figure class="laser"><a href="img/lz_report.png" title="Open the full screenshot"><img src="img/lz_report.png" alt="The laser page's Alignment report after Calibrate: Ready to cut, board found on 51 of 51 holes, proof on 3 marks in the waste beside the board" loading="lazy"></a><figcaption><b>4 · Calibrate</b>The report: <em>Ready to cut</em>.</figcaption></figure>
+  <figure class="laser"><a href="img/mb_rework_crop.png" title="Open the full screenshot"><img src="img/mb_rework_crop.png" alt="Rework mode on the laser page with two boxes drawn and the button Re-etch 2 boxes" loading="lazy"></a><figcaption><b>5 · Etch, then rework</b>Box a spot, <em>Re-etch</em>.</figcaption></figure>
+</div>
+
+<h2 id="export">1 · In KiCad: rules, then Send</h2>
+<ol class="steps">
+  <li><span class="st">Set the rules before you route</span>In the PCB editor, press <span class="ui">Set design rules for SRM-CAM</span> (on the toolbar, and under <span class="menu-path">Tools › External Plugins</span>). Pick <span class="ui">Fiber laser copper (holes and outline on the mill)</span> and press <span class="ui">Apply</span>.</li>
+  <li><span class="st">Save</span>Save the board (Ctrl+S). Closing without saving undoes the rules.</li>
+  <li><span class="st">Route, then DRC</span>The rules move no tracks. Route, then run <span class="menu-path">Inspect › Design Rules Checker</span> and fix what it marks.</li>
+  <li><span class="st">Send it</span>Press <span class="ui">Send to SRM-CAM</span>. It checks the board against the laser's rules, plots every layer and the drill files into a folder <code>srm-cam</code> beside the board, and opens it in SRM-CAM.</li>
+</ol>
+<p>The buttons, the check, the files and the by-hand export are on <a href="kicad.html">From KiCad</a>.</p>
+
+<h3 id="rules">The design rules, by method</h3>
+<p>What <span class="ui">Set design rules for SRM-CAM</span> writes into the board, laid out the way KiCad's <span class="menu-path">File › Board Setup…</span> shows it. Set the same numbers by hand if you don't use the button. All in millimetres.</p>
+<div class="tbl-wrap"><table>
+<tr><th>KiCad setting</th><th>Laser copper</th><th>Ball mill</th><th>Flat mill</th></tr>
+<tr><td colspan="4"><span class="menu-path">Design Rules › Constraints</span></td></tr>
+<tr><td>Minimum clearance</td><td><strong>0.20</strong></td><td>0.44</td><td>0.80</td></tr>
+<tr><td>Copper to edge clearance</td><td><strong>0.50</strong></td><td>0.50</td><td>0.50</td></tr>
+<tr><td>Minimum through hole</td><td><strong>0.80</strong></td><td>0.80</td><td>0.80</td></tr>
+<tr><td colspan="4"><span class="menu-path">Design Rules › Net Classes</span>, every class</td></tr>
+<tr><td>Clearance</td><td><strong>0.25</strong></td><td>0.50</td><td>0.85</td></tr>
+<tr><td>Track width (Default class; others only raised to it)</td><td><strong>0.30</strong></td><td>0.50</td><td>1.00</td></tr>
+<tr><td>Via hole</td><td><strong>0.80</strong></td><td>0.80</td><td>0.80</td></tr>
+<tr><td>Via size</td><td><strong>1.80</strong></td><td>1.80</td><td>1.80</td></tr>
+<tr><td colspan="4"><span class="menu-path">Zone properties</span>, every zone and the defaults for new ones</td></tr>
+<tr><td>Clearance</td><td><strong>0.25</strong></td><td>0.50</td><td>0.85</td></tr>
+<tr><td>Minimum width</td><td><strong>0.25</strong></td><td>0.50</td><td>0.50</td></tr>
+<tr><td>Thermal relief gap</td><td><strong>0.25</strong></td><td>0.50</td><td>0.85</td></tr>
+</table></div>
+<figure class="anim" data-anim="mb-rules">
+  <figcaption><span class="k">One gap, three methods</span>Drag the gap between two nets. Each method's tool is drawn to scale: the flat mill's 0.8&nbsp;mm channel, the ball mill's 0.44&nbsp;mm, and the laser's rings clearing about 0.22&nbsp;mm from each copper edge. Under each are the rules <span class="ui">Set design rules for SRM-CAM</span> writes for it.</figcaption>
+</figure>
+<ul>
+  <li><strong>Minimum clearance</strong> is the narrowest gap the method can make at all. A custom rule for a fine-pitch footprint may go below the net-class clearance, never below this.</li>
+  <li><strong>Holes are drilled on the mill</strong> whatever makes the copper, so every method asks for the 0.8&nbsp;mm drill as the smallest hole, with 0.5&nbsp;mm of copper round a via. Holes and vias are only ever raised, never made smaller.</li>
+  <li><strong>Why 0.25 on the laser:</strong> it clears about 0.22&nbsp;mm out from every copper edge (6 rings), so a pour 0.25&nbsp;mm off leaves a trench no wider than the gap.</li>
+</ul>
+
+<h2 id="open">Open it: Your board, Check it</h2>
+<p>The board opens in SRM-CAM by itself. On the left is the <strong>rail</strong>, the board's steps from top to bottom: <span class="ui">Your board</span>, <span class="ui">Check it</span>, then one <span class="tag mill">MILL</span> row and a <span class="tag laser">LASER</span> row for each job the folder has layers for.</p>
+<figure class="fig">
+  <div class="pinwrap"><img src="img/gs_window.png" alt="SRM-CAM with a laser board loaded in Novice: the chip Laser from KiCad top left, the rail with Your board, Check it, On the mill Drill and cut out, On the laser Etch the traces, Solder mask, Silkscreen, Paste stencil; the board on the bed in the middle; Your board's settings on the right" loading="lazy">
+    <span class="pin" style="left:28%;top:6%">1</span>
+    <span class="pin" style="left:15%;top:29.5%">2</span>
+    <span class="pin" style="left:15%;top:40%">3</span>
+    <span class="pin" style="left:37%;top:63%">4</span>
+    <span class="pin" style="left:96%;top:22%">5</span></div>
+  <ol class="pins">
+    <li>The method chip: <strong>Laser · from KiCad</strong>. Not Laser? Click it and pick <span class="ui">Laser copper (mill drills and cuts out)</span>.</li>
+    <li><span class="ui">Your board</span> and <span class="ui">Check it</span>.</li>
+    <li>On the mill: <span class="ui">Drill and cut out</span>. On the laser: <span class="ui">Etch the traces</span>, then mask, silkscreen and stencil if the folder has them.</li>
+    <li>The bed of the mill, with the board on the sheet.</li>
+    <li>The page of the row you picked. <span class="ui">Next: Check it →</span> at its foot.</li>
+  </ol>
+</figure>
+<ol class="steps">
+  <li><span class="st">The chip</span>It must say <strong>Laser</strong>. It says <em>chosen</em> if you picked a method on the chip for this folder before: your own pick wins over KiCad. More on <a href="kicad.html#method">From KiCad</a>.</li>
+  <li><span class="st">The tool</span>On <span class="ui">Your board</span>, under <span class="ui">The tool</span>, the profile is the <strong>0.8&nbsp;mm flat</strong> one. The mill drills and cuts out with the one flat bit in the collet; a ball-mill profile asks for two bits, and the run will not start with it.</li>
+  <li><span class="st">Check it</span><span class="ui">Next: Check it →</span>. Green lines are fine. A red line will cost a board: fix it in KiCad first. On a laser board the gap between nets is checked against the laser's 0.20&nbsp;mm.</li>
+</ol>
+<div class="tip"><span class="t">"1 thing to look at: Z reach unknown"</span>
+<p>Every board shows this amber line until the mill has touched the copper. The run probes the copper by itself, so it does not stop you. Press <span class="ui">Next: Run it →</span>.</p>
+<p>Its detail names machine −58.0 and a 60.5&nbsp;mm Z stroke: the bare limit for the 2&nbsp;mm-deep drill and cut-out. Keep to the safer rule instead: with the bit on the copper, machine Z above −50 (<a href="troubleshooting.html#z-limit">why</a>).</p></div>
+
+<h2 id="mill">2 · On the mill: Drill and cut out</h2>
+<ol class="steps">
+  <li><span class="st">The bit</span>The 0.8&nbsp;mm flat endmill in the collet. Both USB cables in.</li>
+  <li><span class="st">The sheet</span>Measure the copper sheet. Pick one with room round the board: <a href="#sheet">at least 12&nbsp;mm longer and wider than the board</a>.</li>
+  <li><span class="st">Into the bracket</span>Slide the sheet into the corner bracket, under the probe tongue, copper up. Hold its free edges down: <a href="holding-the-copper.html">Holding the copper</a>.</li>
+  <li><span class="st">The run page</span>Click <span class="ui">Drill and cut out</span> <span class="tag mill">MILL</span> on the rail. Type the sheet's <strong>W</strong> and <strong>H</strong> in mm: in the bracket the run does not measure the sheet, it takes the bracket's corner plus the size you type.</li>
+  <li><span class="st">Centre the board</span>Tick <span class="ui">Centre the board on the copper</span>. Leave <span class="ui">Leave the board in the sheet (no cut-out)</span> <strong>unticked</strong>.</li>
+  <li><span class="st">Start</span>Press <span class="ui">Connect</span>. The probe's contact must be on the copper: the bracket's tongue, or the red clip. Close the lid, press <span class="ui">Start</span>.</li>
+</ol>
+<p>The run then goes by itself: it touches the copper once to find it (<span class="ui">Find the stock</span>), probes the surface at 12 points, 4 × 3 (<span class="ui">Probe the surface</span>), drills every hole 2.0&nbsp;mm deep (<span class="ui">Drill</span>), and cuts the outline in two 1.0&nbsp;mm passes with four 1.5&nbsp;mm tabs (<span class="ui">Cut the board out</span>). There is no stop for a check: a laser board has no traces to look at yet. At the end the head moves to the view position.</p>
+<div class="note"><span class="t">"The board is done."</span>
+<p>That toast means <strong>the mill</strong> is done. The board is still on its tabs, in its sheet, and goes to the laser as it is. Every detail of the run page: <a href="mill.html">The mill page</a>.</p></div>
+
+<h3 id="sheet">Keep the board in its sheet, with room round it</h3>
+<p>Do not break the board out after the mill. On the laser, <span class="ui">Calibrate</span> fires three small camera marks, 1.5&nbsp;mm squares, from 3.0 to 4.5&nbsp;mm outside the board's outline. With sheet copper there, the marks go in the <strong>waste</strong> and never touch the board. If any mark would miss the sheet, all three go on the board's <strong>isolation</strong> round the holes instead: copper the etch clears anyway, so the board is not harmed, but the marks are no longer in scrap.</p>
+<figure class="anim" data-anim="mb-sheet">
+  <figcaption><span class="k">How much sheet, and where the marks go</span>To scale, a 50&nbsp;×&nbsp;34&nbsp;mm board on a 72&nbsp;×&nbsp;52&nbsp;mm sheet, the bracket at the back-right. As the page opens, the board sits in the bracket's corner, 3.0&nbsp;mm from the side arm and pushed off the probe tongue at the back: a mark on the right falls off the sheet. <em>Centre ticked</em> leaves spare copper on every side. Each state ends in the line the laser's report would say.</figcaption>
+</figure>
+<div class="fig duo">
+  <div><img src="img/ml_corner.png" alt="The mill's bed in SRM-CAM: a 160 by 100 mm sheet, the board in the bracket's back-right corner" loading="lazy"><div class="sub">As it opens: the board in the bracket's corner.</div></div>
+  <div><img src="img/ml_centre.png" alt="The mill's bed in SRM-CAM: a 100 by 90 mm sheet, the board centred, the 12 green surface-probe points round it" loading="lazy"><div class="sub"><span class="ui">Centre the board on the copper</span> ticked, a 100&nbsp;×&nbsp;90&nbsp;mm sheet. Green crosses: the 12 touches.</div></div>
+  <figcaption>The same 83&nbsp;×&nbsp;69.5&nbsp;mm board in SRM-CAM's mill page (screenshots).</figcaption>
+</div>
+<ul>
+  <li><strong>How much room:</strong> at least 6&nbsp;mm of sheet on every side, so a sheet at least 12&nbsp;mm longer and wider than the board. The marks reach 4.5&nbsp;mm out. At the bracket's back edge the run also keeps the bit clear of the probe tongue; if <span class="ui">Start</span> says <em>the job runs under the bracket's probe tongue</em>, use a bigger piece.</li>
+  <li><strong>"Leave the board in the sheet (no cut-out)"</strong> is a different thing: it cuts no outline at all and pushes the board against the far edges, so there is no waste there. Leave it unticked; the tabs keep the board in the sheet.</li>
+</ul>
+
+<h3 id="level">Why a laser board is levelled too</h3>
+<p>The holes and the outline go 2.0&nbsp;mm deep into a 1.6&nbsp;mm board: 0.4&nbsp;mm to spare. A sheet can bow more than that. A 124&nbsp;mm sheet zeroed at one spot and not levelled (drums1, 19 November 2026) came out with only its left- and right-most holes through. So the run probes the surface first and the cuts follow it.</p>
+<figure class="anim" data-anim="ml-level">
+  <figcaption><span class="k">0.4&nbsp;mm to spare</span>A sheet that dips in the middle, in cross-section, heights stretched forty times. Drag the dip, then switch to <em>Levelled</em>. Over 1.0&nbsp;mm out of flat the run refuses: re-tape the sheet flat.</figcaption>
+</figure>
+<ul>
+  <li><strong>Holes not through?</strong> Leave the sheet where it is and run again with <span class="ui">Start at</span> set to <span class="ui">Drill</span>. If it was taken out in between, also tick <span class="ui">The sheet was moved: line up with the board's holes</span>. See <a href="mill.html#startat">Start at</a>.</li>
+  <li><strong>Before it leaves the mill:</strong> vacuum the sheet and brush the swarf out of the holes. Calibrate finds the board by its holes, and a hole full of dust does not show.</li>
+</ul>
+
+<h2 id="handover">The hand-over: mill to laser</h2>
+<div class="warn"><span class="t">Put the sheet on the laser the right way</span>
+<ul>
+  <li><strong>Copper face up</strong>, the same way up as it came off the mill. Turned over, the holes look mirrored and the etch would land on the laminate.</li>
+  <li><strong>Square to the bed:</strong> line the sheet's edge up with the edge of the laser's bed.</li>
+  <li><strong>The board, not the sheet, near the middle of the bed</strong>: the laser's field is weaker towards its edges. See <a href="laser.html#field">Where on the bed</a>.</li>
+  <li><strong>Flat:</strong> if it rocks, tape its corners down in the waste, outside the marks.</li>
+</ul></div>
+<figure class="anim" data-anim="mb-handover">
+  <figcaption><span class="k">The sheet on the laser's bed</span>To scale: the 220&nbsp;mm bed the laser page draws, and the sheet from <a href="#sheet">Keep the board in its sheet</a>. Pick a mistake to see what Calibrate does with it. The side view is schematic.</figcaption>
+</figure>
+
+<h2 id="calibrate">3 · On the laser: Calibrate</h2>
+<ol class="steps">
+  <li><span class="st">Open the job</span>Click <span class="ui">Etch the traces</span> <span class="tag laser">LASER</span> on the rail. The laser page opens in place of the mill's bed, beside the rail, with the board's isolation trenches drawn.</li>
+  <li><span class="st">Calibrate</span>Close the lid and press <span class="ui">Calibrate</span> at the bottom right. It finds the board by its drilled holes anywhere on the bed, autofocuses on the copper, fires its marks in the waste to correct the camera, and locks the job onto the holes. It never etches.</li>
+  <li><span class="st">Read the report</span>Under <span class="ui">Alignment</span>. <em>"Ready to cut: look at the photo, then press Cut."</em> means go on (the button reads <span class="ui">Etch the traces</span>).</li>
+  <li><span class="st">Look at the photo</span>The board should shine like copper. Pale or green means the sheet is upside down: turn it over and Calibrate again.</li>
+</ol>
+<figure class="anim" data-anim="mb-calibrate">
+  <figcaption><span class="k">Calibrate, one press</span>The sheet can lie anywhere on the bed. Step through, or let it play; then switch to <em>Board broken out</em> to see where the marks go without the waste round it.</figcaption>
+</figure>
+<div class="tbl-wrap"><table>
+<tr><th>The report ends with</th><th>Do</th></tr>
+<tr><td>"Ready to cut: look at the photo, then press Cut."</td><td>Look at the photo, then press <span class="ui">Etch the traces</span>.</td></tr>
+<tr><td>"Calibrated, with things to check before you press Cut."</td><td>Read the ⚠ lines above it (a camera correction that changed by more than 1.5&nbsp;mm, or fewer holes seen on the lock) and look at the photo before you etch.</td></tr>
+<tr><td>"Stopped at … Nothing was cut. Fix what it says, then press Calibrate again."</td><td>Do what that step says; <a href="troubleshooting.html#calibrate">Troubleshooting</a> has each message.</td></tr>
+</table></div>
+<p>Every line of the report, and what to do about each: <a href="laser.html#report">The report</a>. A board with no holes cannot be found: drag the drawing onto the blank in the photo and press <span class="ui">Calibrate</span>; it corrects the camera and leaves the job where you put it (<a href="laser.html#calibrate">Calibrate</a>).</p>
+
+<h2 id="etch">4 · Etch, look, re-etch</h2>
+<ol class="steps">
+  <li><span class="st">Etch</span>Press <span class="ui">Etch the traces</span>. The trench being cut lights up, with the time left. Leave <span class="ui">Photo when done</span> ticked to see the result on screen.</li>
+  <li><span class="st">Look</span>Etched copper is dark; a trench that still shines is not through. On anything close, use a multimeter across two nets.</li>
+  <li><span class="st">Re-etch the spots</span>Without moving the sheet: choose <span class="ui">Rework</span> above the bed, drag a box over each spot, and press <span class="ui">Re-etch the boxes</span>. Only the boxes are etched again, with the passes under <span class="ui">Rework passes</span>.</li>
+</ol>
+<figure class="anim" data-anim="mb-look">
+  <figcaption><span class="k">Dark is etched, shiny is not</span>A close-up of the photo after the etch, schematic. Step through: find the stretch that shines, box it in <span class="ui">Rework</span>, re-etch only the box.</figcaption>
+</figure>
+<figure class="fig">
+  <img src="img/lz_rework.png" alt="The laser page in Rework mode: two numbered boxes over the trenches, Re-etch 2 boxes, Rework passes 5, and Etch the traces at the bottom" loading="lazy">
+  <figcaption>Rework on the laser page: two boxes drawn, <span class="ui">Re-etch 2 boxes</span>. Drawn on the grid here; at the laser the photo of the sheet is under it. More on <a href="laser.html#rework">Re-etching spots</a>.</figcaption>
+</figure>
+<div class="danger"><span class="t">Safety</span>
+<p>Keep the laser's lid closed while it runs and the fumes vented; <span class="ui">STOP</span> on the bottom bar, or Esc from any page, stops it. More on <a href="laser.html#safety">the laser page</a>.</p></div>
+<div class="note"><span class="t">Copper on both faces</span>
+<p>The mill drills straight through, and the laser etches each face on the same holes: etch one face, turn the sheet over, set <span class="ui">Copper face</span> to the other one, <span class="ui">Calibrate</span> again, and etch. See <a href="laser.html#faces">Two copper faces</a>.</p></div>
+
+<h2 id="finish">5 · Finish, in this order</h2>
+<ol class="steps">
+  <li><span class="st">Solder mask</span>Optional. Ink the board, cure it, put the sheet back on the laser, and the <span class="ui">Solder mask</span> row opens the pads, lined up on the same holes by <span class="ui">Align</span>. See <a href="solder-mask.html">Solder mask</a>.</li>
+  <li><span class="st">Silkscreen</span>Optional, and still experimental: there is no proven silkscreen recipe yet. Turn the sheet over: the silkscreen goes on the component side. The <span class="ui">Silkscreen</span> row marks it, lined up on the drilled holes. See <a href="silkscreen.html">Silkscreen</a>.</li>
+  <li><span class="st">Break the tabs</span>Only now. Snap the board out of the sheet and sand the edges.</li>
+  <li><span class="st">Clear the holes</span>Push out any dust or ink left in them.</li>
+  <li><span class="st">Check it</span>A multimeter: continuity along each net, none between nets.</li>
+</ol>
+<figure class="anim" data-anim="mb-tabs">
+  <figcaption><span class="k">Breaking a tab</span>To scale: the 0.8&nbsp;mm cut-out channel and a 1.5&nbsp;mm tab, left the sheet's full thickness. Most boards have one tab per side; a long, narrow board gets two on each long side. How the tab cracks is schematic.</figcaption>
+</figure>
+<figure class="anim" data-anim="continuity">
+  <figcaption><span class="k">Check with a multimeter</span>Click two pads to measure. A strand of copper left between two nets shows up as a short; re-etch it, or scrape it.</figcaption>
+</figure>
+<p>The paste stencil is cut from steel foil, not on the board: see <a href="smd.html#stencil">Fine pitch &amp; paste stencil</a>.</p>
+
+<h2 id="more">More than one board</h2>
+<ul>
+  <li><strong>Several boards on one sheet</strong> go to the laser as one job: see <a href="panels.html">Several boards on one sheet</a>.</li>
+  <li><strong>A project of many boards</strong>, each ticked off as its steps are done (Pro): see <a href="projects.html">Projects</a>.</li>
+  <li><strong>No laser?</strong> The mill can make the whole board on its own, coarser and slower: <a href="automatic.html">Mill a whole board</a>.</li>
+</ul>
+
+<div class="tip"><span class="t">Questions? Ask on Discord</span>
+<p>Stuck, or not sure? Ask in <a href="https://discord.gg/JUVbzanj6B">the SRM-CAM Discord</a>: Mads and other students answer there, and new features are explained first. See <a href="community.html">Community</a>.</p></div>
+
+<div class="page-nav">
+  <a class="prev" href="index.html"><span class="lbl">Previous</span><span class="ttl">← Overview</span></a>
+  <a class="next" href="getting-started.html"><span class="lbl">Next</span><span class="ttl">Install &amp; connect →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

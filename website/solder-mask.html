@@ -3,24 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solder mask on a milled board — SRM-CAM guide</title>
-<meta name="description" content="Solder mask on a board milled on the SRM-20: ink it, cure it under the big UV lamp in the student lab, and open the pads on the xTool fiber laser, with a file SRM-CAM makes from the Gerber folder.">
+<title>Solder mask — SRM-CAM guide</title>
+<meta name="description" content="Solder mask on a laser board: ink the copper face, cure it under the big UV lamp in the student lab, and open the pads on the xTool fiber laser, lined up by Align on the drilled holes.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/sm-board.js?v=20261104a"></script>
 <script defer src="js/anim/sm-tape.js?v=20261104a"></script>
 <script defer src="js/anim/sm-ink.js?v=20261104a"></script>
 <script defer src="js/anim/sm-cure.js?v=20261104a"></script>
+<script defer src="js/anim/sm-align.js?v=20261120a"></script>
 <script defer src="js/anim/sm-files.js?v=20261104a"></script>
-<script defer src="js/anim/sm-xtool.js?v=20261104a"></script>
-<script defer src="js/anim/sm-bracket.js?v=20261104a"></script>
 <script defer src="js/anim/sm-rim.js?v=20261104a"></script>
 <script defer src="js/anim/sm-open.js?v=20261104a"></script>
 <script defer src="js/anim/sm-finish.js?v=20261104a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -42,34 +42,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link active" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link active" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -77,25 +90,22 @@
 
 <main>
 <div class="content">
-
-<h1>Solder mask on a milled board</h1>
-<p class="lead">Cover the copper side in UV-curing ink, cure it under the <strong>big UV lamp in the student lab</strong>, the lab where the boards are cut and drilled, and let the xTool fiber laser open the pads again. Single-sided boards, after the normal cut-out. SRM-CAM makes the laser's file from the same Gerber folder the mill's files came from.</p>
+<h1>Solder mask</h1>
+<p class="lead">Cover the copper face in UV-curing ink, cure it under the <strong>big UV lamp in the student lab</strong>, and let the xTool fiber laser open the pads again. SRM-CAM lines the job up by itself: <span class="ui">Align</span> finds the board's drilled holes in the camera's photo, through the ink, and puts the openings on them. No corner bracket and no xTool Creative Space.</p>
 
 <div class="note"><span class="t">How far this has been proven</span>
-<p>Mads has this working with Mechanic solder mask on FR-4. It is still new on milled boards, so treat the numbers here as a starting point. <strong>Run the whole thing on a scrap milled board first.</strong> Silkscreen over the mask is not part of this page yet, though SRM-CAM's laser page has a <span class="ui">Silkscreen</span> row for it.</p></div>
+<p>Mads has this working with Mechanic solder mask on FR-4. It is still new, so treat the numbers here as a starting point. <strong>Run the whole thing on a scrap board first.</strong></p></div>
 
 <div class="pill-flow">
-  <span class="pf">Mill, file</span><span class="arr">→</span>
+  <span class="pf">Etch the traces</span><span class="arr">→</span>
   <span class="pf">Clean</span><span class="arr">→</span>
   <span class="pf">Tape</span><span class="arr">→</span>
   <span class="pf">Ink</span><span class="arr">→</span>
   <span class="pf">Cure</span><span class="arr">→</span>
-  <span class="pf">Laser file</span><span class="arr">→</span>
-  <span class="pf">xTool set-up</span><span class="arr">→</span>
-  <span class="pf">Bracket</span><span class="arr">→</span>
-  <span class="pf">Check three pads</span><span class="arr">→</span>
-  <span class="pf">Open the rest</span><span class="arr">→</span>
-  <span class="pf">Finish</span>
+  <span class="pf">Autofocus, Align</span><span class="arr">→</span>
+  <span class="pf">Three pads</span><span class="arr">→</span>
+  <span class="pf">Open the mask</span><span class="arr">→</span>
+  <span class="pf">Silkscreen, finish</span>
 </div>
 
 <h2 id="need">What you need</h2>
@@ -103,35 +113,38 @@
 <tr><th>What</th><th>Where, or which</th></tr>
 <tr><td>Solder mask ink</td><td>Mechanic, UV-curing</td></tr>
 <tr><td>UV lamp</td><td>The big UV lamp in the student lab, where the boards are cut and drilled</td></tr>
-<tr><td>Laser</td><td>The xTool fiber laser. Its PC already has the presets loaded</td></tr>
-<tr><td>A scrap milled board</td><td>For the cure test, the laser test, and seeing if pad edges show through the ink</td></tr>
-<tr><td>Bracket</td><td>3D-printed <a href="https://github.com/sphawes/fiber-laser-pcb-fab/blob/main/f1-pcb-mount.step"><code>f1-pcb-mount.step</code></a> from sphawes's repository, drawn for the xTool F1; his README lists the hardware it takes</td></tr>
+<tr><td>Laser</td><td>The xTool F1 Ultra, plugged into the SRM-CAM PC by USB</td></tr>
+<tr><td>Gerbers</td><td><strong>B.Mask</strong> in the board's folder. <span class="ui">Send to SRM-CAM</span> plots it. Only the bottom (B.Mask) can be masked: the laser page always builds the B.Mask job.</td></tr>
+<tr><td>A scrap board</td><td>For the cure test and the laser test</td></tr>
 <tr><td>Applying the ink</td><td>A squeegee, and a silkscreen frame or a transparency sheet</td></tr>
-<tr><td>Cleaning and finishing</td><td>600 grit paper, a file, IPA, Kapton tape, a pin vise</td></tr>
+<tr><td>Cleaning and finishing</td><td>600 grit paper, IPA, Kapton tape, a pin vise</td></tr>
 </table></div>
 
-<h2 id="mill">1 · Mill it as normal</h2>
-<p>Mill through the cut-out as usual: <a href="automatic.html">Mill a board</a>. Then file the tab stubs flat, especially at the corner that will go into the bracket: a stub there holds the whole board off the corner and everything lands that far out.</p>
-<p>Rectangular boards suit this best, because the bracket relies on a square corner.</p>
-<p>A <a href="automatic.html#laser">laser board</a> goes the other way round: it stays in the sheet on its tabs, and the mask goes on after the copper is etched, lined up on the same drilled holes. Break the tabs at the end.</p>
+<h2 id="mill">1 · The board first</h2>
+<ul>
+  <li><strong>A laser board</strong> (the usual way): drilled and cut out on tabs on the mill, the traces etched on the laser (<a href="make-a-board.html">Make a board</a>). It is still on its tabs, in its sheet: leave it there. The mask lines up on the same drilled holes.</li>
+  <li><strong>A board made on the mill alone</strong> (<a href="automatic.html">Mill a whole board</a>) comes off the mill on its tabs, in its sheet, too. One extra step before you ink it, if the laser has not been calibrated on this PC today: put it on the laser, open the <span class="ui">Traces</span> tab and press <span class="ui">Calibrate</span>. It finds the board and corrects the camera; it never etches. The correction is then used for the mask.</li>
+</ul>
+<p>Either way the board needs its drilled holes: they are what <span class="ui">Align</span> finds.</p>
 
 <h2 id="clean">2 · Clean it</h2>
 <ol class="steps">
-  <li><span class="st">Sand</span>All over the copper side, with 600 grit.</li>
-  <li><span class="st">Blow it out</span>The channels and the holes. Milling dust left in a channel ends up under the ink.</li>
+  <li><span class="st">Sand</span>All over the copper face, with 600 grit.</li>
+  <li><span class="st">Blow it out</span>The channels and the holes. Dust left in a channel ends up under the ink.</li>
   <li><span class="st">Wipe with IPA</span>Then keep your fingers off the copper.</li>
 </ol>
 
 <h2 id="tape">3 · Tape the laminate side</h2>
-<p>Cover the laminate side with Kapton tape, over every hole, and press it down around them. The ink goes on the other side, and without the tape it comes through the holes onto the laminate.</p>
+<p>Cover the laminate side with Kapton tape, over every hole, and press it down round them. The ink goes on the copper face, and without the tape it comes through the holes onto the laminate.</p>
 <figure class="anim" data-anim="sm-tape">
   <figcaption><span class="k">Why the tape</span>The ink runs down every hole it passes. Switch the tape off to see where it goes.</figcaption>
 </figure>
 
 <h2 id="ink">4 · Apply the mask</h2>
+<p>Ink the board and a little round it. The waste of the sheet needs no ink.</p>
 <ol class="steps">
-  <li><span class="st">A bead of ink</span>Mechanic mask, across one end of the copper side.</li>
-  <li><span class="st">Frame or sheet</span>Use a silkscreen frame, which sphawes finds the more consistent, or lay a transparency sheet over the ink.</li>
+  <li><span class="st">A bead of ink</span>Mechanic mask, across one end of the copper face.</li>
+  <li><span class="st">Frame or sheet</span>Use a silkscreen frame, or lay a transparency sheet over the ink. sphawes, the maker whose fiber-laser process this page adapts (see the end), finds the frame the more consistent.</li>
   <li><span class="st">Squeegee it</span>Across the board, as evenly as you can.</li>
   <li><span class="st">Look for bubbles</span>Along the channels above all. A bubble left in a channel is a spot with no ink.</li>
 </ol>
@@ -140,109 +153,82 @@
 </figure>
 
 <h2 id="cure">5 · Cure it under the big UV lamp</h2>
-<p>Take the board to the <strong>big UV lamp in the student lab</strong>, the same lab where you cut and drill. There is no cure time on this page, because it has to be found: put a scrap board under the lamp, inked the same way, and scrape the ink <strong>inside a channel</strong> on it. That is where the ink is deepest, and the last place to harden. If the top is hard and the bottom is soft, it needs longer. Then give the real board the time that worked.</p>
+<p>Take the board to the <strong>big UV lamp in the student lab</strong>. There is no cure time on this page, because it has to be found: put a scrap board under the lamp, inked the same way, and scrape the ink <strong>inside a channel</strong> on it. That is where the ink is deepest, and the last place to harden. If the top is hard and the bottom is soft, it needs longer. Then give the real board the time that worked.</p>
 <figure class="anim" data-anim="sm-cure">
   <figcaption><span class="k">Under the lamp, then the scrape</span>The ink hardens from the top down. A scrape on the surface proves nothing; a scrape in a channel does.</figcaption>
 </figure>
 
-<h2 id="files">6 · Make the laser file in SRM-CAM</h2>
-<p>SRM-CAM writes the file from the Gerber folder you loaded. You do not have to go back to KiCad's DXF plot.</p>
+<h2 id="align">6 · On the laser: Autofocus, then Align</h2>
 <ol class="steps">
-  <li><span class="st">Plot B.Mask too</span>In KiCad, <span class="menu-path">File › Fabrication Outputs › Gerbers</span>: tick <strong>B.Mask</strong> with B.Cu and Edge.Cuts, into the same folder (<span class="ui">Send to SRM-CAM</span> does this for you). The rail then has a <span class="ui">Solder mask</span> row, under <em>On the laser</em>.</li>
-  <li><span class="st">Get the file</span>There is nothing to tick: the export writes it beside the mill's files. That is <span class="ui">Export for VPanel…</span> in Pro and <span class="ui">Save the files…</span> in Novice, both at the foot of the rail.</li>
+  <li><span class="st">Sheet on the bed</span>Inked copper face up, the same way up as for the traces. Square to the bed's edges, the board near the middle (<a href="laser.html#field">where on the bed</a>). Close the lid.</li>
+  <li><span class="st">Open the job</span>Click <span class="ui">Solder mask</span> <span class="tag laser">LASER</span> on the rail. The laser page opens on the Mask job: the pad openings, mirrored like the copper and drawn 0.10&nbsp;mm smaller per side.</li>
+  <li><span class="st">Autofocus</span>Press <span class="ui">Autofocus</span>: it measures the ink at the focus cross and takes a new photo at that height.</li>
+  <li><span class="st">Drag it close</span>Drag the drawing roughly onto the board in the photo, within about 25&nbsp;mm.</li>
+  <li><span class="st">Align</span>Press <span class="ui">Align</span>. A drilled hole shows as a dark dot through the ink. SRM-CAM finds them, in any quarter turn, and moves the openings onto them. It moves nothing unless it finds at least 75&nbsp;% of the holes.</li>
+  <li><span class="st">Show where</span>The blue diode traces the job's outline on the board, without marking. Check it sits on the board.</li>
 </ol>
-<div class="tip"><span class="t">Or let SRM-CAM drive the laser</span>
-<p>The <span class="ui">Solder mask</span> row opens SRM-CAM's own laser page on the mask, lined up on the board's drilled holes, instead of xTool's software and the bracket. That way is newer. The steps below, in xTool's own software, are the ones proven on milled boards.</p></div>
-<figure class="fig mid" style="max-width:440px">
-  <img src="img/gui2_solder_mask.png" alt="The Solder mask section of SRM-CAM's setup page in an earlier version, with the shrink setting" loading="lazy">
-  <figcaption>The mask settings, in an earlier version of the app.</figcaption>
+<p><strong>Why no Calibrate here?</strong> <span class="ui">Calibrate</span> is on the Traces job only. The camera correction it made when you etched the traces is kept, and used for the mask.</p>
+<figure class="anim" data-anim="sm-align">
+  <figcaption><span class="k">Autofocus, drag, Align</span>The inked board on the bed, to scale (54&nbsp;×&nbsp;45.8&nbsp;mm, 27 holes). Step through, and try leaving the drawing 40&nbsp;mm away: Align then finds too few holes and moves nothing.</figcaption>
 </figure>
-<p>You get <code>&lt;name&gt;_mask_mirrored.dxf</code>: one file in millimetres at 1:1, with the pad openings as closed shapes on a layer called <code>MASK_OPENINGS</code>, and the outline on a layer called <code>OUTLINE</code>.</p>
-<ul>
-  <li><strong>Mirrored once, already.</strong> KiCad plots B layers seen from the top, and the board lies copper side up on the laser, just as it did on the mill. So the file is mirrored, openings and outline together, the way SRM-CAM mirrors the copper. <strong>Do not flip it in the xTool software.</strong></li>
-  <li><strong>Smaller than the pads.</strong> Each opening is 0.10&nbsp;mm smaller per side, because the mill and the laser are lined up by hand: a 0.9&nbsp;×&nbsp;1.5&nbsp;mm pad gets a 0.7&nbsp;×&nbsp;1.3&nbsp;mm opening. A small error then leaves ink on the pad's edge and not bare copper beside it.</li>
-  <li><strong>It says what it could not do.</strong> A pad too small to survive the shrink stays under the ink, and SRM-CAM tells you which one.</li>
-</ul>
+<figure class="fig">
+  <img src="img/lz_mask.png" alt="The laser page on the Mask job: the board's 51 pad openings drawn white on the bed; on the right, the step Open the solder mask, the size line 51 openings, mirrored, shrunk 0.1 mm a side, and the recipe RemoveSolderMask (sphawes); the bottom bar reads Open the mask" loading="lazy">
+  <figcaption>The Mask job, rendered from the app with no laser attached. The Alignment section has no Calibrate button here; the run button reads <span class="ui">Open the mask</span>.</figcaption>
+</figure>
+<p>On the test board, all 27 drilled holes fell inside their mask openings after Align.</p>
 <figure class="anim" data-anim="sm-files">
-  <figcaption><span class="k">What it does to the Gerber</span>Watch the ringed pad cross the board. The whole drawing flips about its middle, and then each opening shrinks.</figcaption>
+  <figcaption><span class="k">What SRM-CAM does to the mask Gerber</span>Watch the ringed pad cross the board. The whole drawing flips about its middle, like the copper, and then each opening shrinks by 0.10&nbsp;mm per side.</figcaption>
 </figure>
-
-<h2 id="xtool">7 · Set it up in the xTool software</h2>
-<ol class="steps">
-  <li><span class="st">Import the DXF</span><code>&lt;name&gt;_mask_mirrored.dxf</code>. Ungroup it if it comes in as a group. Leave its mirroring alone.</li>
-  <li><span class="st">The outline: its own colour, output off</span>Select the outline and move it to its own colour, and turn that colour's output off. It is there to place the job by.</li>
-  <li><span class="st">Three check pads: another colour</span>Pick three pads far apart, not in a line, and move them to a colour of their own. They are <a href="#check">step 9</a>.</li>
-  <li><span class="st">The rest: Make Compound Vector</span>Select all the other pads and press <span class="ui">Make Compound Vector</span>, so they fill as one job.</li>
-  <li><span class="st">Engrave, with the preset</span>Set both pad colours to <span class="ui">Engrave</span> and pick <strong>RemoveSolderMask</strong>. The presets are already loaded on the xTool PC, so pick it there. There is nothing to import.</li>
-</ol>
-<figure class="anim" data-anim="sm-xtool">
-  <figcaption><span class="k">On the drawing</span>Step through it, or let it play. A schematic of what happens to the drawing; the xTool window itself looks different.</figcaption>
-</figure>
-<div class="tbl-wrap"><table>
-<tr><th colspan="2">RemoveSolderMask</th></tr>
-<tr><td>Light source</td><td>Fiber IR</td></tr>
-<tr><td>Power</td><td>40&nbsp;%</td></tr>
-<tr><td>Speed</td><td>800&nbsp;mm/s</td></tr>
-<tr><td>Passes</td><td>6</td></tr>
-<tr><td>Line density</td><td>300&nbsp;lines/cm</td></tr>
-<tr><td>Frequency</td><td>30&nbsp;kHz</td></tr>
-<tr><td>Scan</td><td>Uni-directional, cross hatch</td></tr>
-</table></div>
+<ul>
+  <li><strong>Why smaller:</strong> a small error then leaves ink on the pad's edge, not bare copper beside it. A pad too small to survive the shrink stays under the ink, and the page says which.</li>
+  <li><strong>The recipe</strong> is <strong>RemoveSolderMask (sphawes)</strong>: fiber, 40&nbsp;%, 800&nbsp;mm/s, 30&nbsp;kHz, 300&nbsp;lines/cm, 6 passes, one way, cross-hatched, each pass at right angles to the last. It is sphawes's xTool Creative Space preset, run as vector hatch lines. <span class="ui">Adjust the numbers</span> shows it.</li>
+</ul>
 <div class="warn"><span class="t">Fumes</span>
-<p>Keep the enclosure closed, and vent it outdoors.</p></div>
+<p>Keep the lid closed while it runs, and the fumes vented outdoors. <span class="ui">STOP</span>, or <kbd>Esc</kbd> from any page, stops it.</p></div>
 
-<h2 id="locate">8 · Locate the board with the bracket</h2>
-<p>Print the bracket (<a href="https://github.com/sphawes/fiber-laser-pcb-fab/blob/main/f1-pcb-mount.step"><code>f1-pcb-mount.step</code></a>) and mount it on the laser's bed. <strong>The first time</strong>, find out where the job has to sit:</p>
+<h2 id="check">7 · Check on a few pads</h2>
+<p>Before opening every pad, open three, far apart and not in a line. In <span class="ui">Select</span> mode click them (<kbd>Ctrl</kbd> adds), and press <span class="ui">Open 3 selected</span>. Then look at the <strong>rim of ink round each opening</strong>, with <span class="ui">Outlines</span> on so the photo shows through.</p>
 <ol class="steps">
-  <li><span class="st">A milled blank in the corner</span>Push it into the corner, its filed corner first.</li>
-  <li><span class="st">Score the outline at low power</span>Turn the outline's output on for this, at a low power that only marks the surface.</li>
-  <li><span class="st">Adjust until it lands</span>Change X and Y and score again, until the line lands on the board's edges.</li>
-  <li><span class="st">Note X and Y</span>And reuse them for every board, for as long as the bracket stays where it is.</li>
-</ol>
-<figure class="anim" data-anim="sm-bracket">
-  <figcaption><span class="k">The first time</span>Blank in the corner, score, adjust. The numbers are an example; yours will differ.</figcaption>
-</figure>
-<p>Then put the inked board in the corner the same way round as the drawing, and turn the outline's output off again.</p>
-
-<h2 id="check">9 · Check on three pads</h2>
-<p>Output only the three check pads, and leave the board where it is. Now look at the <strong>rim of ink around each opening</strong>. It should be even. The opening was drawn 0.10&nbsp;mm smaller per side, so a job that is off by 0.10&nbsp;mm brings it right up to the pad's edge on one side: that is the limit.</p>
-<ol class="steps">
-  <li><span class="st">Read the three rims</span>A rim thick on one side and thin on the other, the same way on all three, is a shift. Different on each is a turn.</li>
-  <li><span class="st">Nudge</span>Nudge X and Y, or the rotation, until the error is <strong>0.10&nbsp;mm or less</strong>. Those three are open now, so after a nudge, check again on another pad close to each.</li>
-  <li><span class="st">It also catches a mirrored job</span>A file flipped a second time puts the openings nowhere near the pads. An outline cannot show this; three pads far apart can.</li>
+  <li><span class="st">Even rims</span>Aligned. Go on.</li>
+  <li><span class="st">Thick on one side, the same on all three</span>A shift. Nudge the job with the arrow keys (0.1&nbsp;mm a press) towards the thin side.</li>
+  <li><span class="st">Different on each</span>A turn: <span class="ui">Align</span> again, or check the board did not move.</li>
 </ol>
 <figure class="anim" data-anim="sm-rim">
-  <figcaption><span class="k">Try it</span>Pick a case, then nudge until all three are within 0.10&nbsp;mm. To scale, with the real pad positions of a 54&nbsp;×&nbsp;45.8&nbsp;mm board.</figcaption>
+  <figcaption><span class="k">Reading the rims</span>Pick a case, then nudge until all three are within 0.10&nbsp;mm. To scale, with the real pad positions of a 54&nbsp;×&nbsp;45.8&nbsp;mm board.</figcaption>
 </figure>
-<div class="warn"><span class="t">This needs pad edges you can see</span>
-<p>The check only works if the pad edges show through the ink. Look at that on the scrap board, before you rely on it.</p></div>
 
-<h2 id="open">10 · Open the rest</h2>
-<p><strong>Without moving the board</strong>, output the compound of the remaining pads. Inspect it before you take it out: a board that has not moved can simply be run again, and one that has been out of the corner may not land the same. Run any hazy pads again.</p>
+<h2 id="open">8 · Open the rest</h2>
+<p><span class="ui">None</span> clears the selection, so the run does the whole job: press <span class="ui">Open the mask</span>. <strong>Don't move the board</strong> before you have looked at it: a board that has not moved can simply be run again over the hazy pads (select them, and open just those).</p>
 <figure class="anim" data-anim="sm-open">
   <figcaption><span class="k">Six crossed passes</span>Each pass runs at right angles to the last. Sped up a lot, and the hazy pad is there on purpose.</figcaption>
 </figure>
+<div class="tip"><span class="t">The old way, without SRM-CAM's laser page</span>
+<p><span class="ui">Save the files…</span> also writes <code>&lt;name&gt;_mask_mirrored.dxf</code> (openings on layer <code>MASK_OPENINGS</code>, outline on <code>OUTLINE</code>, mm at 1:1, already mirrored) for xTool Creative Space. There you place it by hand, with sphawes's corner bracket and a scored outline. SRM-CAM's <span class="ui">Align</span> replaces all of that.</p></div>
 
-<h2 id="finish">11 · Finish</h2>
+<h2 id="finish">9 · Then the silkscreen and the finish</h2>
 <ol class="steps">
-  <li><span class="st">Wipe with IPA</span>The copper side, once the board is out.</li>
-  <li><span class="st">Peel the tape</span>Off the laminate side.</li>
-  <li><span class="st">Clear the holes</span>With a pin vise, from the copper side.</li>
+  <li><span class="st">Wipe with IPA</span>The copper face, while the board is still in its sheet.</li>
+  <li><span class="st">Peel the tape</span>Off the laminate side. The silkscreen goes there.</li>
+  <li><span class="st">Silkscreen, if you want it</span>The sheet turned over, lined up on the same holes: <a href="silkscreen.html">Silkscreen</a>.</li>
+  <li><span class="st">Break the tabs</span>Only now, when the laser is done with the board.</li>
+  <li><span class="st">Clear the holes</span>With a pin vise, from the copper face.</li>
   <li><span class="st">Check it</span>Continuity across the board, and tin a few pads: solder that will not take means ink is still on the pad.</li>
 </ol>
 <figure class="anim" data-anim="sm-finish">
-  <figcaption><span class="k">Tape, then holes</span>The tape comes off first; the pin vise goes in from the copper side.</figcaption>
+  <figcaption><span class="k">Tape, then holes</span>The tape comes off first; the pin vise goes in from the copper face.</figcaption>
 </figure>
+<p>The whole order, mill included: <a href="make-a-board.html#finish">Make a board: the finish</a>. Mask misaligned, or pads still hazy: <a href="troubleshooting.html#laser-mask">Troubleshooting</a>.</p>
 
 <h2 id="credit">Where this comes from</h2>
-<p>This adapts <a href="https://github.com/sphawes/fiber-laser-pcb-fab">sphawes/fiber-laser-pcb-fab</a>, which makes whole boards on a fiber laser, into the CNC workflow here: the mill does the copper and the holes, and the laser only opens the mask. The RemoveSolderMask preset and the bracket are his. The drawings on this page were made for this guide.</p>
+<p>This adapts <a href="https://github.com/sphawes/fiber-laser-pcb-fab">sphawes/fiber-laser-pcb-fab</a>, which makes whole boards on a fiber laser, into the workflow here: the mill drills and cuts out, and the laser etches the copper and opens the mask, lined up on the drilled holes. The RemoveSolderMask preset is his. The drawings on this page were made for this guide.</p>
 
 <div class="page-nav">
-  <a href="smd.html"><span class="lbl">Previous</span><span class="ttl">← SMD: fine traces &amp; stencil</span></a>
+  <a class="prev" href="laser.html"><span class="lbl">Previous</span><span class="ttl">← The laser page</span></a>
+  <a class="next" href="silkscreen.html"><span class="lbl">Next</span><span class="ttl">Silkscreen →</span></a>
 </div>
 
 <footer class="site">
-  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a>
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
 </footer>
 
 </div>

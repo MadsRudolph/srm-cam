@@ -9,11 +9,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/pn-sheet.js?v=20261118a"></script>
 <script defer src="js/anim/pn-gap.js?v=20260930b"></script>
 <script defer src="js/anim/pn-edge.js?v=20260930b"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -35,34 +36,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link active" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -114,12 +128,53 @@
   <figcaption><span class="k">The 0.5&nbsp;mm rule</span>Slide the board towards the sheet's edge and past it. Without the sheet set, the app only knows the bed and cuts the whole ring.</figcaption>
 </figure>
 
+<h2 id="laser">Several boards on the laser</h2>
+<p>A sheet of laser boards comes off the mill in one piece, every board on its tabs. It goes on the laser in one piece too, and the laser page makes it <strong>one job</strong>: every board's copper where that board sits on the sheet, one outline round them all, and all their drilled holes. The size line says how many, for example <em>3 boards on one sheet</em>.</p>
+<figure class="fig">
+  <svg viewBox="0 0 740 410" role="img" aria-label="A sheet with three laser boards on tabs, drawn as one laser job: one outline round all three, and the three camera marks outside the outer boards" style="display:block;width:100%;height:auto;background:#0d1015">
+  <rect x="20" y="30" width="700" height="360" fill="#6b482a" stroke="#b4763c"/>
+  <rect x="68" y="83" width="184" height="254" fill="none" stroke="#08090b" stroke-width="4"/>
+  <rect x="70" y="85" width="180" height="250" fill="#b4763c"/>
+  <circle cx="90" cy="105" r="3.2" fill="#08090b"/>
+  <circle cx="230" cy="105" r="3.2" fill="#08090b"/>
+  <circle cx="90" cy="315" r="3.2" fill="#08090b"/>
+  <circle cx="230" cy="315" r="3.2" fill="#08090b"/>
+  <circle cx="160" cy="210" r="3.2" fill="#08090b"/>
+  <rect x="278" y="83" width="184" height="254" fill="none" stroke="#08090b" stroke-width="4"/>
+  <rect x="280" y="85" width="180" height="250" fill="#b4763c"/>
+  <circle cx="300" cy="105" r="3.2" fill="#08090b"/>
+  <circle cx="440" cy="105" r="3.2" fill="#08090b"/>
+  <circle cx="300" cy="315" r="3.2" fill="#08090b"/>
+  <circle cx="440" cy="315" r="3.2" fill="#08090b"/>
+  <circle cx="370" cy="210" r="3.2" fill="#08090b"/>
+  <rect x="488" y="83" width="184" height="254" fill="none" stroke="#08090b" stroke-width="4"/>
+  <rect x="490" y="85" width="180" height="250" fill="#b4763c"/>
+  <circle cx="510" cy="105" r="3.2" fill="#08090b"/>
+  <circle cx="650" cy="105" r="3.2" fill="#08090b"/>
+  <circle cx="510" cy="315" r="3.2" fill="#08090b"/>
+  <circle cx="650" cy="315" r="3.2" fill="#08090b"/>
+  <circle cx="580" cy="210" r="3.2" fill="#08090b"/>
+  <rect x="65" y="80" width="610" height="260" fill="none" stroke="#4ea8ff" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <rect x="47.5" y="206.25" width="7.5" height="7.5" fill="#4ea8ff"/>
+  <rect x="685" y="101.25" width="7.5" height="7.5" fill="#4ea8ff"/>
+  <rect x="366.25" y="350" width="7.5" height="7.5" fill="#4ea8ff"/>
+  
+  </svg>
+  <figcaption>Three laser boards on one sheet, as the laser page sees them: one job (dashed), one Calibrate. Blue squares: the three camera marks, 3.0 to 4.5&nbsp;mm outside the outer boards. Schematic boards; the marks and the 0.8&nbsp;mm channel are to scale.</figcaption>
+</figure>
+<ul>
+  <li><strong>Calibrate</strong> finds the sheet by all the holes at once, and locks the whole job onto them. Press it once, not once per board.</li>
+  <li><strong>The camera marks</strong> go beside three drilled holes far apart on the whole sheet, so beside the outer boards. Leave waste outside the outer boards as you would round one board (<a href="make-a-board.html#sheet">how much</a>).</li>
+  <li><strong>Mask and silkscreen</strong> are built the same way, the whole sheet at once; for the silkscreen the sheet is turned over left to right, so the boards swap sides, and <span class="ui">Align</span> finds them on the drilled holes.</li>
+  <li>The laser's field is weaker towards its edge: keep the sheet's middle near the bed's middle (<a href="laser.html#field">Where on the bed</a>).</li>
+</ul>
+
 <h2 id="files">The files, and the rest of the job</h2>
 <ul>
   <li><strong>File names</strong> join every board's name: <code>buck+buck_2_traces.nc</code>, unless you type a <span class="ui">Job name</span> under <span class="menu-path">Set up the job › The board</span>.</li>
   <li><strong>VPanel still lists them alphabetically</strong>, so the cut-out lands first. Move it to the bottom, drill first if you can: see <a href="milling-a-board.html#cut">Cut in VPanel</a>.</li>
   <li><strong>Isolation sees all the copper at once</strong>, so two boards placed close enough to short each other show up in the checks like any other short.</li>
-  <li><strong>On the laser</strong>, the whole sheet is one job: every board's copper, mask or silkscreen in one run. See <a href="automatic.html#laser">A laser board</a>.</li>
+  <li><strong>On the laser</strong>, the whole sheet is one job: see <a href="#laser">above</a>.</li>
   <li>The probe grid, the screws and the checks see the whole sheet's worth. Setups save every board with its own placement and rotation.</li>
 </ul>
 <figure class="fig">
@@ -130,8 +185,8 @@
 <p>A double-sided job is one board registered to its holes. Add boards to a single-sided job.</p></div>
 
 <div class="page-nav">
-  <a href="milling-a-board.html"><span class="lbl">Previous</span><span class="ttl">← Milling a board</span></a>
-  <a class="next" href="holding-the-copper.html"><span class="lbl">Next</span><span class="ttl">Holding the copper →</span></a>
+  <a class="prev" href="milling-a-board.html"><span class="lbl">Previous</span><span class="ttl">← Milling a board by hand</span></a>
+  <a class="next" href="bed-leveling.html"><span class="lbl">Next</span><span class="ttl">Bed levelling &amp; probing →</span></a>
 </div>
 
 <footer class="site">

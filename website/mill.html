@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The mill page — SRM-CAM guide</title>
+<meta name="description" content="SRM-CAM's mill page for the Roland SRM-20: the sheet in the corner bracket, Centre the board on the copper, levelling, the run step by step, Start at, lining up on the holes, oval holes, and the files a run leaves.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script> <script defer src="js/anim/ml-level.js?v=20261120a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link active" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+<h1>The mill page</h1>
+<p class="lead">The page behind the <span class="tag mill">MILL</span> row on the rail: <span class="ui">Drill and cut out</span> on a laser board, <span class="ui">Mill it</span> on a board the mill makes on its own. Set the sheet, press <span class="ui">Start</span>, and the run finds the copper, levels it and cuts, all in one go. This page goes through it top to bottom.</p>
+
+<div class="pill-flow">
+  <span class="pf">Sheet in the bracket</span><span class="arr">→</span>
+  <span class="pf">W and H typed</span><span class="arr">→</span>
+  <span class="pf">Centre</span><span class="arr">→</span>
+  <span class="pf">Connect, lid shut</span><span class="arr">→</span>
+  <span class="pf">Start</span>
+</div>
+
+<figure class="fig">
+  <div class="pinwrap"><img src="img/ml_run_novice.png" alt="SRM-CAM in Novice with a laser board: the rail with Drill and cut out selected, the mill's bed with the sheet in the bracket's back-right corner and the board in its corner, and the run page with The stock, the bracket, the ticks, Start at, Mark a clamp, Run and Start" loading="lazy">
+    <span class="pin" style="left:15%;top:40%">1</span>
+    <span class="pin" style="left:48.5%;top:51%">2</span>
+    <span class="pin" style="left:30%;top:62%">3</span>
+    <span class="pin" style="left:96%;top:24%">4</span>
+    <span class="pin" style="left:96%;top:78%">5</span></div>
+  <ol class="pins">
+    <li>The row on the rail: <span class="ui">Drill and cut out</span>, "Stock in the bracket, then Start".</li>
+    <li>The bracket, drawn where it is screwed to the bed (the lab's: back-right).</li>
+    <li>The sheet, at the size you typed, and the board on it.</li>
+    <li><span class="ui">The stock</span>: its size, the bracket, and the ticks below.</li>
+    <li><span class="ui">Run</span>: <span class="ui">Connect</span>, <span class="ui">Start</span>, and the run's steps.</li>
+  </ol>
+  <figcaption>The mill page as it opens in Novice on the lab's defaults (a screenshot).</figcaption>
+</figure>
+
+<h2 id="stock">The stock</h2>
+<figure class="fig mid" style="float:right;max-width:340px;margin-left:20px">
+  <img src="img/ml_run_panel.png" alt="The run page, top to bottom: The stock with W 160 and H 100 mm, back-right, Probe bracket (tongue), Find it with the bit, Reset position, Centre the board on the copper, Leave the board in the sheet (no cut-out), Probe the surface first (bed levelling), Levelling 2.0 mm, Stop before the cut-out greyed, Start at The beginning, The sheet was moved, Mark a clamp (no-go zone), Run, Start, and the four steps" loading="lazy">
+  <figcaption>The run page, top to bottom.</figcaption>
+</figure>
+<ul>
+  <li><strong>W and H</strong>, in mm (10 to 200): measure the sheet and type it. In the bracket the run does <strong>not</strong> measure the sheet: it takes the bracket's inside corner plus the size you typed. A wrong size puts the board in the wrong place.</li>
+  <li><strong>The bracket:</strong> which corner it is in (the lab's is <span class="ui">back-right</span>) and which kind: <span class="ui">Probe bracket (tongue)</span> or <span class="ui">Plain bracket</span>. Drag the bracket on the bed to the holes it is screwed into, or press <span class="ui">Find it with the bit</span>: jog the bit over its inside corner and it snaps to the nearest holes. It is remembered on this PC.</li>
+  <li><strong><span class="ui">Reset position</span></strong> puts the board back in the bracket's corner of the sheet, 3&nbsp;mm in from its edges and clear of the probe tongue. Dragging the board near the corner snaps it there.</li>
+  <li><strong><span class="ui">Centre the board on the copper</span></strong> puts it in the middle, with the spare shared on every side. <strong>Tick it for a laser board</strong>: the laser's camera marks then land in the waste on every side (<a href="make-a-board.html#sheet">why</a>). It is remembered. Dragging the board turns it off.</li>
+  <li><strong><span class="ui">Leave the board in the sheet (no cut-out)</span></strong> is for a board about as big as the sheet: nothing is cut round the outline, and the board is pushed against the two edges away from the bracket. <strong>Not for a laser board</strong>: the tabs already keep it in its sheet, and this leaves no waste on two sides.</li>
+  <li><strong>Pro only:</strong> <span class="ui">Anywhere - the probe finds its corner</span> instead of <span class="ui">In the corner bracket</span>. Then the probe finds the sheet's edges and angle by itself, and checks its size. See <a href="holding-the-copper.html#pro">Holding the copper</a>.</li>
+</ul>
+<p>If the board does not fit in the corner of the sheet you typed, SRM-CAM says how big the sheet must be, and how small the outline must be in KiCad.</p>
+<div style="clear:both"></div>
+
+<h2 id="level">Levelling</h2>
+<p><span class="ui">Probe the surface first (bed levelling)</span> is on by default, also on a laser board. The probe touches the copper at 12 points, 4&nbsp;×&nbsp;3, <span class="ui">Levelling: touches this far in from the edge</span> (2.0&nbsp;mm unless you change it), and every cut follows the surface it measured. The touches are drawn on the bed before you start.</p>
+<figure class="anim" data-anim="ml-level">
+  <figcaption><span class="k">Why it stays on</span>Holes and outline go 2.0&nbsp;mm into a 1.6&nbsp;mm board: 0.4&nbsp;mm to spare. Drag the dip; a sheet that bows more than that, zeroed at one spot, keeps its low holes closed. The run refuses a sheet more than 1.0&nbsp;mm out of flat. Heights stretched forty times.</figcaption>
+</figure>
+<ul>
+  <li><strong><span class="ui">Stop before the cut-out, so I can check the traces</span></strong> is greyed out on a laser board: there are no traces to check until the laser. On a mill-only board it is on by default: see <a href="automatic.html#check">the check before the cut-out</a>.</li>
+</ul>
+
+<h2 id="run">The run</h2>
+<ol class="steps">
+  <li><span class="st">Connect</span>"The machine is not connected." Press <span class="ui">Connect</span> (here or on the machine bar).</li>
+  <li><span class="st">The probe, the lid</span>The probe's contact on the sheet's copper: the probe bracket's tongue does it as the sheet slides in; with a plain bracket, clip the red clip on. Close the lid: the run waits for it ("Close the lid to carry on."), and stops at once if it was started with the lid open.</li>
+  <li><span class="st">Start</span>Press <span class="ui">Start</span>. The steps tick off one by one: ○ waiting, ● running, ✓ done, ✕ failed, – skipped.</li>
+</ol>
+<figure class="fig duo">
+  <div><img src="img/ml_running.png" alt="A laser board's run on SRM-CAM's simulated mill: the board centred on a 110 by 95 mm sheet, the head drilling" loading="lazy"><div class="sub">The whole window: the head drilling, the board centred on a 110&nbsp;×&nbsp;95&nbsp;mm sheet.</div></div>
+  <div><img src="img/ml_running_panel.png" alt="The Run section: Step 3 of 4, Drill, 49 percent; Find the stock and Probe the surface ticked, Drill running, Cut the board out waiting" loading="lazy"><div class="sub">The Run section, close up.</div></div>
+  <figcaption>A laser board's run, half-way through the drill: <em>Step 3 of 4 · Drill · 49% · about 1m 50s left · …</em>. This is SRM-CAM's simulated mill (Pro), so the times are the simulator's, not the real mill's.</figcaption>
+</figure>
+<div class="tbl-wrap"><table>
+<tr><th>Step on the page</th><th>What the mill does</th></tr>
+<tr><td><span class="ui">Find the stock</span></td><td>One touch, 15&nbsp;mm in from the bracket's corner, to find the copper.</td></tr>
+<tr><td><span class="ui">Probe the surface</span></td><td>12 touches, 4&nbsp;×&nbsp;3. Then it checks where the mill's G54 origin is before the first cut.</td></tr>
+<tr><td><span class="ui">Drill</span></td><td>Every hole with the one 0.8&nbsp;mm bit, 2.0&nbsp;mm deep. Bigger holes are circled out.</td></tr>
+<tr><td><span class="ui">Isolation traces</span> (mill-only boards)</td><td>The copper. Then the check before the cut-out.</td></tr>
+<tr><td><span class="ui">Cut the board out</span></td><td>The outline, 2.0&nbsp;mm deep in two 1.0&nbsp;mm passes, leaving four 1.5&nbsp;mm tabs.</td></tr>
+</table></div>
+<p>At the end the head goes to the view position and the toast says <em>"The board is done."</em> On a laser board that means <strong>the mill</strong> is done: the board stays on its tabs, in its sheet, and goes to the laser (<a href="make-a-board.html#handover">the hand-over</a>).</p>
+<ul>
+  <li><strong>The tabs</strong> go along the longest straight sides, at least 2&nbsp;mm from a corner: one on each side of a near-square board, two on each long side of a long one. A board edge that lies on the sheet's edge is not cut. Where the cut-out would run into the bracket's bar it stops just short, and says so: break that bit free afterwards.</li>
+  <li><strong>STOP</strong> on the machine bar, or Esc anywhere, stops the run. The steps already done stay ticked on the rail.</li>
+</ul>
+<div class="warn"><span class="t">The run will not start?</span>
+<p>The commonest reasons, each with its exact message, are on <a href="troubleshooting.html">Troubleshooting</a>: the mill's USB not set up on this PC, the probe already reading contact, no copper under the touch, a sheet more than 1.0&nbsp;mm out of flat, the board under the probe tongue, and a tool profile that needs two bits ("This tool profile needs 2 different bits…": pick the 0.8&nbsp;mm flat profile on <span class="ui">Your board</span>).</p></div>
+
+<h2 id="startat">Start at: finishing a board that stopped</h2>
+<p><span class="ui">Start at</span> skips the steps before the one you pick: <span class="ui">The beginning</span>, or a step by name (<span class="ui">Drill</span>, <span class="ui">Cut the board out</span>, …). The stock must not have moved, unless you also tick the line-up below.</p>
+<div class="tbl-wrap"><table>
+<tr><th>What happened</th><th>Start at</th><th>Also</th></tr>
+<tr><td>It stopped before the cut-out</td><td><span class="ui">Cut the board out</span></td><td>—</td></tr>
+<tr><td>Holes not through; the sheet was not touched</td><td><span class="ui">Drill</span></td><td>—</td></tr>
+<tr><td>Holes not through; the sheet was taken out and put back</td><td><span class="ui">Drill</span></td><td>Tick <span class="ui">The sheet was moved: line up with the board's holes</span></td></tr>
+</table></div>
+
+<h3 id="moved">The sheet was moved: line up with the board's holes</h3>
+<p>Before anything is cut, the probe finds the board's mounting holes (or, with none, its widest drilled holes) by touch, fits the board to them, and every step goes through that fit. It needs at least two holes wider than the bit, far apart. It trusts the fit only if the holes agree within 0.15&nbsp;mm; otherwise it stops and cuts nothing. The result is shown under the tick: "Lined up with the board's … holes: … The board is X … Y … mm from where the placement put it …".</p>
+
+<h3 id="oval">Oval holes</h3>
+<p>KiCad's oval holes (slots) are read from the drill file and drilled with the same 0.8&nbsp;mm bit as a row of overlapping plunges, a quarter of the slot's width apart. A board drilled before SRM-CAM cut oval holes gets <span class="ui">Only the oval holes: drill just those</span> (it shows only when the board has slots): <span class="ui">Start</span> then drills just the slots. Tick the line-up above too.</p>
+<figure class="fig mid">
+  <svg viewBox="0 0 590 170" role="img" aria-label="A 0.9 by 2.5 mm slot drawn as overlapping 0.9 mm plunges, 0.225 mm apart" style="display:block;width:100%;height:auto;background:#0d1015">
+    <g transform="translate(70,30)">
+      <rect x="0" y="0" width="450" height="81" rx="40.5" fill="#2a1e13" stroke="#d59456" stroke-width="2" stroke-dasharray="6 4"/>
+      <g fill="none" stroke="#4ea8ff" stroke-width="1.4" opacity="0.85">
+        <circle cx="40.5" cy="40.5" r="40.5"/><circle cx="60.75" cy="40.5" r="40.5"/><circle cx="81" cy="40.5" r="40.5"/><circle cx="101.25" cy="40.5" r="40.5"/><circle cx="121.5" cy="40.5" r="40.5"/><circle cx="141.75" cy="40.5" r="40.5"/><circle cx="162" cy="40.5" r="40.5"/><circle cx="182.25" cy="40.5" r="40.5"/><circle cx="202.5" cy="40.5" r="40.5"/><circle cx="222.75" cy="40.5" r="40.5"/><circle cx="243" cy="40.5" r="40.5"/><circle cx="263.25" cy="40.5" r="40.5"/><circle cx="283.5" cy="40.5" r="40.5"/><circle cx="303.75" cy="40.5" r="40.5"/><circle cx="324" cy="40.5" r="40.5"/><circle cx="344.25" cy="40.5" r="40.5"/><circle cx="364.5" cy="40.5" r="40.5"/><circle cx="384.75" cy="40.5" r="40.5"/><circle cx="405" cy="40.5" r="40.5"/><circle cx="409.5" cy="40.5" r="40.5"/>
+      </g>
+    </g>
+    <text x="70" y="140" fill="#aab3bd" font-size="14" font-family="Inter,sans-serif">0.9 × 2.5 mm slot (dashed), 0.9 mm plunges 0.225 mm apart (blue)</text>
+  </svg>
+  <figcaption>An oval hole is a row of overlapping round holes. To scale, 180 times life size.</figcaption>
+</figure>
+
+<h2 id="clamps">Mark a clamp (no-go zone)</h2>
+<p>With clamps on the sheet, mark each one so the bit and the touches keep clear of it: <span class="ui">Mark a clamp (no-go zone)</span>, then click the bed hole the clamp is screwed into. How, and what it does: <a href="holding-the-copper.html#nogo">Holding the copper</a>.</p>
+
+<h2 id="made">What the run made</h2>
+<p>Under the run: <span class="ui">Height map</span>, <span class="ui">Fiducial fit</span> (two-sided mill boards), <span class="ui">Watch a step in 3D</span> and <span class="ui">The job files</span>, which opens the run's folder:</p>
+<div class="tbl-wrap"><table>
+<tr><th>In <code>Documents/SRM-CAM/runs/&lt;job&gt;_&lt;date&gt;/</code></th><th>What it is</th></tr>
+<tr><td><code>run.log</code></td><td>Every line the run said, with the time.</td></tr>
+<tr><td><code>height_map_bottom.csv</code></td><td>The 12 touches, as height differences from the first.</td></tr>
+<tr><td><code>01_drill_run.nc</code>, <code>02_cutout_run.nc</code>, …</td><td>Exactly what was sent to the mill.</td></tr>
+<tr><td>The laser files</td><td>The traces, mask and silkscreen drawings (named in <code>run.log</code>). The laser page does not need them: it builds its jobs from the board that is loaded.</td></tr>
+</table></div>
+<p>Making a board on the mill alone? The differences are on <a href="automatic.html">Mill a whole board</a>.</p>
+
+<div class="page-nav">
+  <a class="prev" href="kicad.html"><span class="lbl">Previous</span><span class="ttl">← From KiCad</span></a>
+  <a class="next" href="holding-the-copper.html"><span class="lbl">Next</span><span class="ttl">Holding the copper →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

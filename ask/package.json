@@ -1,0 +1,15 @@
+{
+  "name": "srm-cam-ask",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "knowledge": "python3 build_knowledge.py",
+    "deploy": "python3 build_knowledge.py && wrangler deploy"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.11.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.165.0"
+  }
+}

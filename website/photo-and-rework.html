@@ -9,11 +9,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/continuity.js?v=20260930b"></script>
 <script defer src="js/anim/pr-overlay.js?v=20260930b"></script>
 <script defer src="js/anim/pr-rework.js?v=20261102a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -35,34 +36,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link active" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -72,10 +86,10 @@
 <div class="content">
 
 <h1>Photo check &amp; rework</h1>
-<p class="lead">Did every channel cut through? Find the spots that didn't, box them, and re-cut only there, deeper, in one program. The board stays on the machine, and the XY origin is never touched. The drawings are live: press the buttons, and drag on the board.</p>
+<p class="lead">Did every channel of a <strong>milled</strong> board cut through? Find the spots that didn't, box them, and re-cut only there, deeper, in one program. Do it before the sheet comes off the mill: the XY origin is never touched, so the recut lands in the same channels. The drawings are live: press the buttons, and drag on the board.</p>
 
 <div class="note"><span class="t">Novice or Pro?</span>
-<p>This page is the <strong>Fix spots row, in Pro</strong>, for a board that is already off the machine. During a run, <a href="automatic.html#check">the check before the cut-out</a> recuts in boxes without any of this. On a laser board, <span class="ui">Fix spots</span> opens the laser's rework boxes instead: the copper is fixed where it was made.</p></div>
+<p>This page is the <strong>Fix spots row, in Pro</strong>, for a milled board whose run has finished, the sheet still where it was cut. During a run, <a href="automatic.html#check">the check before the cut-out</a> recuts in boxes without any of this. A <strong>laser board's</strong> copper is fixed on the laser, where it was made: <span class="ui">Fix spots</span> opens the laser page's rework boxes (see <a href="laser.html#rework">Re-etching spots</a>), and so does the <span class="ui">Rework</span> mode on the laser page in Novice.</p></div>
 
 <div class="pill-flow">
   <span class="pf">Find the spots</span><span class="arr">→</span>
@@ -128,8 +142,8 @@
 <p>Re-zero Z on the copper (on G54) before you send the rework program, and don't touch X and Y. The boxes only land on the spots because the board, the photo and the first pass share one XY origin.</p></div>
 
 <div class="page-nav">
-  <a href="double-sided.html"><span class="lbl">Previous</span><span class="ttl">← Double-sided boards</span></a>
-  <a class="next" href="hardware.html"><span class="lbl">Next</span><span class="ttl">Hardware &amp; firmware →</span></a>
+  <a class="prev" href="drill-a-laser-board.html"><span class="lbl">Previous</span><span class="ttl">← Drilling a board etched first</span></a>
+  <a class="next" href="reference.html"><span class="lbl">Next</span><span class="ttl">Files &amp; reference →</span></a>
 </div>
 
 <footer class="site">

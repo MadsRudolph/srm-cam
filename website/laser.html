@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The laser page — SRM-CAM guide</title>
+<meta name="description" content="The xTool F1 Ultra fiber laser driven from SRM-CAM: where the sheet goes on the bed, Calibrate and its report, etching the traces, re-etching spots, two copper faces, focus, the proven FR4 recipe, and placing a job by hand.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script>
+<script defer src="js/anim/mb-calibrate.js?v=20261120a"></script>
+<script defer src="js/anim/lz-field.js?v=20261120a"></script>
+<script defer src="js/anim/lz-proof.js?v=20261120a"></script>
+<script defer src="js/anim/lz-rings.js?v=20261120a"></script>
+<script defer src="js/anim/lz-faces.js?v=20261120b"></script>
+<script defer src="js/anim/lz-autofocus.js?v=20261120a"></script>
+<script defer src="js/anim/lz-focus.js?v=20261120a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link active" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+<h1>The laser page</h1>
+<p class="lead">SRM-CAM drives the <strong>xTool F1 Ultra</strong> fiber laser itself, over USB: no xTool Creative Space, no files to carry. The laser is a page of the main window. Click any <span class="tag laser">LASER</span> row on the rail (<span class="ui">Etch the traces</span>, <span class="ui">Solder mask</span>, <span class="ui">Silkscreen</span>, <span class="ui">Paste stencil</span>), or <span class="ui">Laser</span> at the top (<kbd>Ctrl</kbd>+<kbd>2</kbd>; <kbd>Ctrl</kbd>+<kbd>1</kbd> goes back to the mill).</p>
+
+<p>This page follows a laser board in the order you meet it at the laser: the sheet on the bed, <span class="ui">Calibrate</span>, the report, <span class="ui">Etch the traces</span>, a look, and re-etching spots. The rest (focus, the recipe, placing by hand) is below, for when you need it. The whole route, mill included, is on <a href="make-a-board.html">Make a board</a>.</p>
+
+<div class="pill-flow">
+  <span class="pf">Sheet on the bed</span><span class="arr">→</span>
+  <span class="pf">Calibrate</span><span class="arr">→</span>
+  <span class="pf">Read the report</span><span class="arr">→</span>
+  <span class="pf">Etch the traces</span><span class="arr">→</span>
+  <span class="pf">Look</span><span class="arr">→</span>
+  <span class="pf">Re-etch the boxes</span>
+</div>
+
+<figure class="fig">
+  <div class="shot">
+  <img src="img/lz_page.png" alt="The laser page with a board loaded on the Traces job: the tool buttons across the top, the 220 mm bed with the board's isolation trenches in the middle, the job's settings on the right, and Photo when done, Show where, Calibrate, Etch the traces and STOP along the bottom" loading="lazy">
+  <span class="pin" style="left:54.5%;top:2.6%">1</span>
+  <span class="pin" style="left:3.2%;top:10.8%">2</span>
+  <span class="pin" style="left:60%;top:7%">3</span>
+  <span class="pin" style="left:81%;top:2.6%">4</span>
+  <span class="pin" style="left:26.6%;top:39%">5</span>
+  <span class="pin" style="left:37.6%;top:47.6%">6</span>
+  <span class="pin" style="left:70.1%;top:12.7%">7</span>
+  <span class="pin" style="left:70.1%;top:33.5%">8</span>
+  <span class="pin" style="left:70.1%;top:41.2%">9</span>
+  <span class="pin" style="left:31%;top:96.5%">10</span>
+  <span class="pin" style="left:62.7%;top:90.6%">11</span>
+  <span class="pin" style="left:71.7%;top:90.6%">12</span>
+  <span class="pin" style="left:79.4%;top:90.6%">13</span>
+  <span class="pin" style="left:90.4%;top:90.6%">14</span>
+  </div>
+  <figcaption>The laser page on the Traces job, rendered from the app with no laser attached: the bed shows the drawing on the grid. At the laser, the camera's photo of the bed sits under the drawing.</figcaption>
+</figure>
+<ol class="keys">
+  <li><span class="ui">Photo</span> · <span class="ui">Autofocus</span> · <span class="ui">Focus map</span> · <span class="ui">Align</span>, then <span class="ui">Turn left</span> · <span class="ui">Turn right</span> · <span class="ui">Undo</span> · <span class="ui">Redo</span> · <span class="ui">Fit</span></li>
+  <li>What a click on the bed does: <span class="ui">Move</span>, <span class="ui">Select</span>, <span class="ui">Rework</span>, <span class="ui">Skip</span>; <span class="ui">All</span> and <span class="ui">None</span> for the selection</li>
+  <li>How the drawing looks over the photo: <span class="ui">Filled</span>, <span class="ui">Outlines</span>, <span class="ui">Hidden</span> (<kbd>H</kbd>)</li>
+  <li>The link to the laser: <span class="ui">Laser not asked yet</span>, then <span class="ui">Laser connected</span></li>
+  <li>The 220&nbsp;mm bed, with a 10&nbsp;mm grid and the board's isolation trenches</li>
+  <li>The focus cross (teal-green): where <span class="ui">Autofocus</span> measures</li>
+  <li>The job: <span class="ui">Traces</span> · <span class="ui">Mask</span> · <span class="ui">Silk</span> · <span class="ui">Stencil</span></li>
+  <li><span class="ui">Copper face</span>: <span class="ui">B.Cu — bottom copper</span> or <span class="ui">F.Cu — top copper</span></li>
+  <li><span class="ui">Auto-skip: on</span>: leaves out trenches that isolate nothing</li>
+  <li><span class="ui">Cursor</span>, the number of trenches, and <span class="ui">Estimate</span> (it becomes <span class="ui">Left</span> while the laser runs)</li>
+  <li><span class="ui">Photo when done</span> and <span class="ui">Show where</span></li>
+  <li><span class="ui">Calibrate</span>: finds the board and lines the job up. Traces only</li>
+  <li><span class="ui">Etch the traces</span>: fires the job</li>
+  <li><span class="ui">STOP</span>. <kbd>Esc</kbd> stops the laser too, from any page</li>
+</ol>
+
+<div class="danger" id="safety"><span class="t">Safety at the laser</span>
+<p>Keep the lid closed while it runs, and the fumes vented outdoors. <span class="ui">STOP</span> on the bottom bar always works, and <kbd>Esc</kbd> stops the laser from any page of SRM-CAM. Etching copper, mask and steel makes fumes: never run it with the lid open or the fan off.</p></div>
+
+<h2 id="connect">Connecting</h2>
+<ul>
+  <li><strong>USB</strong> from the F1 Ultra into the PC that runs SRM-CAM. It shows up as a network adapter, with the laser at 201.234.3.1. No driver and no xTool Creative Space are needed.</li>
+  <li><strong>The chip</strong> at the top right says <span class="ui">Laser not asked yet</span> until the page first talks to the laser. After the first photo it says <span class="ui">Laser connected</span>.</li>
+  <li><strong>No answer?</strong> The page says <span class="say">No answer from the laser at 201.234.3.1 (…). Is it switched on and plugged into this PC by USB?</span> and the chip turns red: <span class="ui">Laser: no answer</span>. Check the cable and that the laser has finished starting.</li>
+</ul>
+
+<h2 id="jobs">The four jobs</h2>
+<p>The tabs at the top of the right panel switch the job. A rail row opens its own job, and the tabs follow the rail.</p>
+<figure class="fig">
+  <img src="img/lz_tabs.png" alt="Four crops of the laser page's right panel: the Traces tab with its step Etch the copper traces and the buttons Calibrate, Etch the traces, STOP; the Mask tab with Open the solder mask and Open the mask; the Silk tab with Mark the silkscreen; the Stencil tab with Cut the stencil" loading="lazy">
+  <figcaption>The same page, four jobs. Each has its own step, its own run button, and its own recipe. Only Traces has <span class="ui">Calibrate</span>.</figcaption>
+</figure>
+<div class="tbl-wrap"><table>
+<tr><th>Job</th><th>Rail row</th><th>What the laser does</th><th>Run button</th><th>Lines up by</th><th>More</th></tr>
+<tr><td><strong>Traces</strong></td><td><span class="ui">Etch the traces</span></td><td>Clears rings round every net on the copper face</td><td><span class="ui">Etch the traces</span></td><td><span class="ui">Calibrate</span>: the drilled holes</td><td>Below</td></tr>
+<tr><td><strong>Mask</strong></td><td><span class="ui">Solder mask</span></td><td>Ablates cured ink off the pads (B.Mask)</td><td><span class="ui">Open the mask</span></td><td><span class="ui">Autofocus</span>, <span class="ui">Align</span>: the drilled holes</td><td><a href="solder-mask.html">Solder mask</a></td></tr>
+<tr><td><strong>Silk</strong></td><td><span class="ui">Silkscreen</span></td><td>Marks F.Silkscreen on the laminate side</td><td><span class="ui">Mark the silkscreen</span></td><td><span class="ui">Autofocus</span>, <span class="ui">Align</span>: the drilled holes</td><td><a href="silkscreen.html">Silkscreen</a></td></tr>
+<tr><td><strong>Stencil</strong></td><td><span class="ui">Paste stencil</span></td><td>Cuts paste holes in 0.1&nbsp;mm steel foil</td><td><span class="ui">Cut the stencil</span></td><td><span class="ui">Align</span>: the holes it cut</td><td><a href="smd.html#stencil">Paste stencil</a></td></tr>
+</table></div>
+<p>Switching the job keeps where the job sits on the bed and the camera's correction. It does not line the new job up: run <span class="ui">Align</span> for each new job. For the silkscreen the sheet is turned over, so the old place is wrong anyway.</p>
+
+<h2 id="field">Where on the bed</h2>
+<p>Lay the whole sheet on the bed, <strong>copper face up</strong>, the same way up as it came off the mill. Three things matter:</p>
+<ol class="steps">
+  <li><span class="st">Square to the bed</span>Line the sheet's edges up with the bed's edges. <span class="ui">Calibrate</span> finds the board in any quarter turn, but only within about 4° of square.</li>
+  <li><span class="st">The board near the middle</span>The laser is weaker towards the edge of its field. The proven recipe gives the trenches more than 45&nbsp;mm from the bed's middle 10 extra passes, and beyond about 57&nbsp;mm the field test cleared nothing at all.</li>
+  <li><span class="st">Flat</span>If the sheet rocks, tape its corners down in the waste, clear of the board.</li>
+</ol>
+<figure class="anim" data-anim="lz-field">
+  <figcaption><span class="k">Where on the bed, to scale</span>The 220&nbsp;mm bed, its middle, and the 83&nbsp;×&nbsp;69.5&nbsp;mm example board in its sheet. Drag the board: the trenches that reach past 45&nbsp;mm turn orange and get 10 more passes, and the run reads <span class="say">Pass k of 30</span> instead of <span class="say">of 20</span>.</figcaption>
+</figure>
+
+<h2 id="calibrate">Calibrate</h2>
+<p>On the Traces job, press <span class="ui">Calibrate</span> on the bottom bar. One press does the whole set-up, each step as if you pressed it yourself:</p>
+<ol class="steps">
+  <li><span class="st">Find the board</span>A photo of the whole bed. The board's drilled holes are looked for everywhere on it, in all four quarter turns, and the job jumps onto them.</li>
+  <li><span class="st">Autofocus</span>At the focus cross: the job's middle, moved to a spot kept 1.5&nbsp;mm clear of holes and off the cut-out. It may sit in the waste beside the board.</li>
+  <li><span class="st">Camera and holes</span>Three small marks are fired in the waste beside the board, and photographed. Where they really landed corrects the camera. The drilled holes in the same photo then lock the job exactly onto the board.</li>
+  <li><span class="st">The report</span>Each step with its numbers, under <span class="ui">Alignment</span>, and a verdict.</li>
+</ol>
+<figure class="anim" data-anim="mb-calibrate">
+  <figcaption><span class="k">Calibrate, one press</span>The sheet anywhere on the bed, even a quarter turn round. Switch to <em>Board broken out</em> to see where the marks go with no waste round the board.</figcaption>
+</figure>
+<p><strong>Why the board stays in its sheet.</strong> The camera marks need copper to land on that is not the board. In its sheet, they go in the waste: 1.5&nbsp;mm squares, 3 to 4.5&nbsp;mm outside the board's outline, next to three drilled holes far apart. Before firing, Calibrate checks in the photo that there is sheet under every mark. If there is not (the board was broken out, or the sheet ends too close), it marks the board's own isolation instead, round three holes: copper the etch removes anyway. That works, but the marks are on the board. So leave the board on its tabs, with waste on every side: <a href="make-a-board.html#sheet">how much sheet round the board</a>.</p>
+<figure class="anim" data-anim="lz-proof">
+  <figcaption><span class="k">The camera marks, close up</span>The board's edge, the 0.8&nbsp;mm cut-out channel, a tab and the 1.5&nbsp;mm mark, to scale. Step through, change how far the camera is off, and switch to <em>Broken out</em>.</figcaption>
+</figure>
+<ul>
+  <li><strong>Calibrate never etches.</strong> <span class="ui">Etch the traces</span> is still yours to press.</li>
+  <li><strong>It does not measure a focus map.</strong> You do not need one on a flat sheet: the field test cleared just as well 0.3&nbsp;mm above or below focus. Pressing <span class="ui">Calibrate</span> also forgets any focus map you made before. For a bowed sheet, see <a href="#focus">Focus</a>.</li>
+  <li><strong>Look at the photo before you etch.</strong> The board should shine like copper, and the drawing sit on the pads. Pale laminate in the photo means the sheet is upside down: turn it over and press <span class="ui">Calibrate</span> again. A board with a symmetric hole pattern can be "found" upside down.</li>
+  <li><strong>A board with no holes</strong>: drag the drawing onto the copper in the photo and press <span class="ui">Calibrate</span>. It focuses and corrects the camera, and leaves the job where you put it: <span class="say">No drilled holes, so the job stays where it is: check it on the photo, then etch.</span></li>
+</ul>
+
+<h2 id="report">The report</h2>
+<div class="side-by">
+  <figure class="fig">
+    <img src="img/lz_report.png" alt="The Alignment section after Calibrate: Ready to cut: look at the photo, then press Cut. Then three lines with ticks: Find the board, Autofocus, Camera and holes, each with its numbers" loading="lazy">
+    <figcaption>All three steps ticked: <span class="vchip ok">Ready to cut</span></figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/lz_report_warn.png" alt="The Alignment section after Calibrate with warnings: Calibrated, with things to check before you press Cut, the three ticked lines, and two warnings: the camera's correction changed by more than 1.5 mm, and only 41 of 51 holes were seen on the lock" loading="lazy">
+    <figcaption>Done, with warnings: <span class="vchip chk">Things to check</span></figcaption>
+  </figure>
+</div>
+<p>The report reads the verdict first, then one line per step (✓ done, ✗ stopped there), then any warnings (⚠). Where it says "press Cut", the button is <span class="ui">Etch the traces</span>.</p>
+<div class="tbl-wrap"><table>
+<tr><th></th><th>The report says</th><th>What to do</th></tr>
+<tr><td><span class="vchip ok">Ready</span></td><td><span class="say">Ready to cut: look at the photo, then press Cut.</span></td><td>Look at the photo: copper shining, pads round the holes. Then <span class="ui">Etch the traces</span>.</td></tr>
+<tr><td><span class="vchip chk">Check</span></td><td><span class="say">Calibrated, with things to check before you press Cut.</span></td><td>Read the warnings under it, below.</td></tr>
+<tr><td><span class="vchip chk">Check</span></td><td><span class="say">⚠ The camera's correction changed by more than 1.5 mm: look at the photo closely before cutting.</span></td><td>Zoom in on the photo. <span class="ui">Show where</span> traces the outline in blue on the board. If it sits right, etch; if not, Calibrate again.</td></tr>
+<tr><td><span class="vchip chk">Check</span></td><td><span class="say">⚠ Only a of b holes were seen on the lock: check the pads sit round the holes in the photo.</span></td><td>Fewer than 90&nbsp;% of the holes. Brush the swarf out of the holes, or check the pads sit round them in the photo.</td></tr>
+<tr><td><span class="vchip stop">Stopped</span></td><td><span class="say">Stopped at Find the board. Nothing was cut. Fix what it says, then press Calibrate again.</span></td><td>The step's own line says why. See <a href="troubleshooting.html#calibrate">Troubleshooting: Calibrate</a>.</td></tr>
+<tr><td><span class="vchip stop">Stopped</span></td><td><span class="say">Stopped before the end. Nothing was cut.</span></td><td>It ended before its last step without saying why. Press <span class="ui">Calibrate</span> again.</td></tr>
+</table></div>
+<p>The report is also written to <code>laser.log</code> (<a href="reference.html#laser">Files &amp; reference</a>): send it along with any question.</p>
+
+<h2 id="etch">Etching the traces</h2>
+<p>Press <span class="ui">Etch the traces</span>. With nothing selected, it etches the whole job.</p>
+<figure class="fig">
+  <img src="img/lz_bar.png" alt="The bottom bar while the laser runs: the status reads Pass 15 of 20 above a thin progress line; the readouts say Trenches 40 and Left 1:38; every button but STOP is greyed out" loading="lazy">
+  <figcaption>While it runs: <span class="say">Pass k of N</span>, the progress line, and <span class="ui">Left</span> counting down. Everything that could change the job is locked; the bed still zooms and pans. Rendered with no laser attached.</figcaption>
+</figure>
+<ul>
+  <li><strong>Pass k of N.</strong> The proven recipe makes 20 passes over every trench. With trenches more than 45&nbsp;mm from the bed's middle, N counts their 10 extra passes too (<a href="#field">Where on the bed</a>).</li>
+  <li><strong>Cutting now.</strong> The trench being cut is drawn orange-red on the bed.</li>
+  <li><strong>STOP</strong> stops it at once; so does <kbd>Esc</kbd>, from any page.</li>
+  <li><strong>When it is done</strong>, with <span class="ui">Photo when done</span> ticked, a new photo of the bed replaces the old one, and the page says <span class="say">Done at Z …: 40 trenches, 20 passes. Switch to Outlines to check them on the photo; select any that need more and run those again.</span></li>
+  <li><strong>The rail row is ticked</strong> only after a whole run. A run of selected trenches, or a re-etch, does not tick it.</li>
+</ul>
+<figure class="anim" data-anim="lz-rings">
+  <figcaption><span class="k">How the laser clears the copper</span>A close-up, to scale: a trace, a pad and a ground pour. Switch between the three methods, and turn auto-skip off to see the mounting hole's ring etched for nothing.</figcaption>
+</figure>
+<ul>
+  <li><span class="ui">Auto-skip: on</span> (the default) leaves out trenches that isolate nothing: round the board's edge, round a mounting hole in a pour. Pads, vias, thermal reliefs and other nets always keep theirs. The panel says how many it left out.</li>
+  <li><span class="ui">Skip</span> mode: click a trench, or drag a box, to leave it out; click again to put it back. A skipped trench joins the copper on its two sides, so only leave out what isolates nothing.</li>
+  <li><span class="ui">Select</span> mode: click trenches or drag a box, and the run does only those (<span class="ui">Etch 3 selected</span>). <span class="ui">None</span> goes back to the whole job.</li>
+</ul>
+
+<h2 id="rework">Look, then re-etch spots</h2>
+<p>Etched copper turns dark. A trench that still shines is not through. Switch the drawing to <span class="ui">Outlines</span> (or <span class="ui">Hidden</span>, <kbd>H</kbd>) to see the photo through it.</p>
+<figure class="fig">
+  <img src="img/lz_rework.png" alt="The laser page in Rework mode, zoomed on the board drawn as outlines, with two orange numbered boxes over spots on the traces; on the right the Rework section says 2 boxes on the bed, Rework passes 5, and the button reads Re-etch 2 boxes" loading="lazy">
+  <figcaption>Rework mode with two boxes. The button counts them: <span class="ui">Re-etch 2 boxes</span>. Rendered with no laser attached: at the laser, the photo shows under the outlines.</figcaption>
+</figure>
+<ol class="steps">
+  <li><span class="st">Rework mode</span>Choose <span class="ui">Rework</span> above the bed.</li>
+  <li><span class="st">Box the spots</span>Drag a box over each spot that did not clear (at least 0.3&nbsp;mm each way). Click a box to remove it; <span class="ui">Clear boxes</span> removes them all.</li>
+  <li><span class="st">Focus, if far apart</span><span class="ui">Focus on the boxes</span> autofocuses at their middle.</li>
+  <li><span class="st">Re-etch</span><span class="ui">Re-etch the boxes</span> runs the isolation again only inside the boxes, <span class="ui">Rework passes</span> times over (5 by default), at the recipe's power and speed.</li>
+  <li><span class="st">Look again</span>Clear the boxes that are through and run the rest again.</li>
+</ol>
+<div class="warn"><span class="t">Only if the sheet has not moved</span>
+<p>Nothing lines the job up again before a re-etch. If the sheet was lifted or knocked, press <span class="ui">Calibrate</span> first.</p></div>
+<p>In Pro, the rail's <span class="ui">Fix spots</span> row on a laser board opens this page on Traces, in Rework mode.</p>
+
+<h2 id="faces">Two copper faces</h2>
+<p>A board with copper on both faces is drilled and cut out once on the mill, then etched once per face on the laser, on the same holes.</p>
+<ol class="steps">
+  <li><span class="st">B.Cu first</span>Copper face up as it came off the mill. <span class="ui">Copper face</span> says <span class="ui">B.Cu — bottom copper</span>: Calibrate, etch, check.</li>
+  <li><span class="st">Turn the sheet over</span>Left to right, square to the bed again.</li>
+  <li><span class="st">F.Cu</span>Set <span class="ui">Copper face</span> to <span class="ui">F.Cu — top copper</span>. The page says <span class="say">Showing F.Cu (top). Place that copper face upwards on the laser bed.</span></li>
+  <li><span class="st">Calibrate again</span>It finds the same holes from the other side. Then <span class="ui">Etch the traces</span>.</li>
+</ol>
+<div class="side-by">
+  <figure class="fig">
+    <img src="img/lz_faces.png" alt="The laser page on a two-faced test board with Copper face set to F.Cu — top copper; the size line says F.Cu (top), not mirrored, and the status line says Showing F.Cu (top). Place that copper face upwards on the laser bed." loading="lazy">
+    <figcaption>Copper face on F.Cu: the drawing is not mirrored.</figcaption>
+  </figure>
+  <div>
+    <p>KiCad draws the whole board seen from the top, so B.Cu is drawn as if you looked at it through the board. On the bed you look straight down at that face, so its drawing is mirrored. F.Cu is etched as KiCad draws it. The same goes for the mask (mirrored, like B.Cu) and the silkscreen (as drawn, laminate up).</p>
+    <p>On a <a href="projects.html">project</a>, the two faces are two ticks: <span class="ui">Etch the traces · B.Cu (bottom)</span> and <span class="ui">Etch the traces · F.Cu (top)</span>.</p>
+  </div>
+</div>
+<figure class="anim" data-anim="lz-faces">
+  <figcaption><span class="k">Which face is up</span>The board as KiCad draws it, beside the sheet on the bed for each job. Schematic.</figcaption>
+</figure>
+
+<h2 id="focus">Focus</h2>
+<p><span class="ui">Calibrate</span> autofocuses for the traces. On the other jobs, press <span class="ui">Autofocus</span> yourself, before <span class="ui">Align</span>.</p>
+<figure class="anim" data-anim="lz-autofocus">
+  <figcaption><span class="k">Autofocus</span>The blue diode's dot lands further along the further the surface is from focus. The camera reads where, against the factory's table of heights, and the head moves; again, until within 0.1&nbsp;mm, up to 4 tries. Schematic.</figcaption>
+</figure>
+<div class="tbl-wrap"><table>
+<tr><th>Tool</th><th>What it does</th><th>When</th></tr>
+<tr><td><span class="ui">Autofocus</span></td><td>Measures the height under the focus cross with the blue dot and moves the head. Drag the cross, or right-click <span class="ui">Autofocus here</span>, to measure elsewhere.</td><td>Every job. <span class="ui">Calibrate</span> does it for traces.</td></tr>
+<tr><td><span class="ui">Set the height by hand</span></td><td>Moves the head to the stock's thickness + 8&nbsp;mm.</td><td>When Autofocus can't see the dot.</td></tr>
+<tr><td><span class="ui">Focus map</span></td><td>Measures the height at points over the job, about 30&nbsp;mm apart, 3&nbsp;mm in from its edge, clear of the holes. Within ±0.3&nbsp;mm everywhere: one run. More: the run is split into bands no deeper than 0.6&nbsp;mm, the head refocused for each.</td><td>A sheet that is bowed or tilted. Autofocus first.</td></tr>
+<tr><td><span class="ui">Field test…</span></td><td>Puts a 150&nbsp;×&nbsp;90&nbsp;mm test in place of the job, for a spare 160&nbsp;×&nbsp;100 sheet: fine pad-and-trace coupons on a grid at focus, and ladders at −0.6, −0.3, +0.3 and +0.6&nbsp;mm.</td><td>Edges that won't clear: is it focus, or the edge of the field?</td></tr>
+</table></div>
+<figure class="anim" data-anim="lz-focus">
+  <figcaption><span class="k">Focus map, in section</span>The blue dot reads the height at points over the job, kept clear of the holes. Within ±0.3&nbsp;mm everywhere: one run. More: the job is split into bands no deeper than 0.6&nbsp;mm, and the head is refocused for each. Bend or tilt the sheet to see it.</figcaption>
+</figure>
+<figure class="fig">
+  <svg viewBox="0 0 170 120" role="img" aria-label="The field test, to scale: a 150 by 90 mm test on a 160 by 100 sheet, 15 coupons on a 5 by 3 grid at focus, and six ladders of four coupons at minus 0.6, minus 0.3, plus 0.3 and plus 0.6 mm" style="display:block;width:100%;height:auto;background:#0d1015"><rect x="5" y="5" width="160" height="100" fill="#2a1e13" stroke="#6b482a" stroke-width="0.4"/><rect x="10" y="10" width="150" height="90" fill="none" stroke="#767f89" stroke-width="0.3" stroke-dasharray="1.5 1"/><rect x="20.45" y="20.75" width="2.5" height="2.5" fill="#d59456"/><rect x="23.25" y="19.50" width="0.3" height="5.0" fill="#d59456"/><rect x="51.95" y="20.75" width="2.5" height="2.5" fill="#d59456"/><rect x="54.75" y="19.50" width="0.3" height="5.0" fill="#d59456"/><rect x="83.45" y="20.75" width="2.5" height="2.5" fill="#d59456"/><rect x="86.25" y="19.50" width="0.3" height="5.0" fill="#d59456"/><rect x="114.95" y="20.75" width="2.5" height="2.5" fill="#d59456"/><rect x="117.75" y="19.50" width="0.3" height="5.0" fill="#d59456"/><rect x="146.45" y="20.75" width="2.5" height="2.5" fill="#d59456"/><rect x="149.25" y="19.50" width="0.3" height="5.0" fill="#d59456"/><rect x="20.45" y="53.75" width="2.5" height="2.5" fill="#d59456"/><rect x="23.25" y="52.50" width="0.3" height="5.0" fill="#d59456"/><rect x="51.95" y="53.75" width="2.5" height="2.5" fill="#d59456"/><rect x="54.75" y="52.50" width="0.3" height="5.0" fill="#d59456"/><rect x="83.45" y="53.75" width="2.5" height="2.5" fill="#d59456"/><rect x="86.25" y="52.50" width="0.3" height="5.0" fill="#d59456"/><rect x="114.95" y="53.75" width="2.5" height="2.5" fill="#d59456"/><rect x="117.75" y="52.50" width="0.3" height="5.0" fill="#d59456"/><rect x="146.45" y="53.75" width="2.5" height="2.5" fill="#d59456"/><rect x="149.25" y="52.50" width="0.3" height="5.0" fill="#d59456"/><rect x="20.45" y="86.75" width="2.5" height="2.5" fill="#d59456"/><rect x="23.25" y="85.50" width="0.3" height="5.0" fill="#d59456"/><rect x="51.95" y="86.75" width="2.5" height="2.5" fill="#d59456"/><rect x="54.75" y="85.50" width="0.3" height="5.0" fill="#d59456"/><rect x="83.45" y="86.75" width="2.5" height="2.5" fill="#d59456"/><rect x="86.25" y="85.50" width="0.3" height="5.0" fill="#d59456"/><rect x="114.95" y="86.75" width="2.5" height="2.5" fill="#d59456"/><rect x="117.75" y="85.50" width="0.3" height="5.0" fill="#d59456"/><rect x="146.45" y="86.75" width="2.5" height="2.5" fill="#d59456"/><rect x="149.25" y="85.50" width="0.3" height="5.0" fill="#d59456"/><rect x="16.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="19.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="18.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.6</text><rect x="25.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="28.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="27.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.3</text><rect x="34.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="37.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="36.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.3</text><rect x="43.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="46.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="45.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.6</text><rect x="65.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="68.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="67.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.6</text><rect x="74.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="77.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="76.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.3</text><rect x="92.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="95.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="94.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.3</text><rect x="101.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="104.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="103.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.6</text><rect x="123.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="126.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="125.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.6</text><rect x="132.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="135.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="134.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.3</text><rect x="141.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="144.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="143.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.3</text><rect x="150.45" y="37.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="153.25" y="36.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="152.00" y="44.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.6</text><rect x="16.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="19.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="18.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.6</text><rect x="25.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="28.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="27.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.3</text><rect x="34.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="37.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="36.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.3</text><rect x="43.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="46.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="45.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.6</text><rect x="65.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="68.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="67.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.6</text><rect x="74.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="77.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="76.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.3</text><rect x="92.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="95.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="94.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.3</text><rect x="101.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="104.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="103.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.6</text><rect x="123.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="126.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="125.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.6</text><rect x="132.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="135.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="134.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">-0.3</text><rect x="141.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="144.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="143.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.3</text><rect x="150.45" y="70.25" width="2.5" height="2.5" fill="#4ea8ff"/><rect x="153.25" y="69.00" width="0.3" height="5.0" fill="#4ea8ff"/><text x="152.00" y="77.10" font-size="2.6" fill="#aab3bd" text-anchor="middle" font-family="monospace">+0.6</text><text x="10" y="108.5" font-size="3.6" fill="#aab3bd" font-family="sans-serif">150 × 90 mm test on a 160 × 100 sheet · copper: at focus · blue: ladders, mm from focus</text></svg>
+  <figcaption>The field test, to scale: each coupon is a 2.5&nbsp;mm pad with a 0.3&nbsp;mm trace 0.3&nbsp;mm beside it, as fine as a board. The 15 copper ones are cut at the page's focus; the blue ladders at −0.6, −0.3, +0.3 and +0.6&nbsp;mm from it.</figcaption>
+</figure>
+<ul>
+  <li><strong>Reading the field test:</strong> grid coupons near the edge unfinished, but a ladder coupon there clean: it is focus, use <span class="ui">Focus map</span>. All of them unfinished out there: it is the edge of the field, move the board nearer the middle.</li>
+  <li><strong>The lab F1 Ultra's own error is built in.</strong> Its blue dot reads a false slope across the bed (up to 1.28&nbsp;mm, measured once on its bare bed); SRM-CAM takes it off on every PC. For another laser, <span class="ui">Measure on a flat sheet</span> under <span class="ui">Focus map correction</span> measures its own, and <span class="ui">Forget</span> goes back to the built-in one.</li>
+</ul>
+
+<h2 id="recipe">The recipe</h2>
+<div class="side-by">
+  <figure class="fig">
+    <img src="img/lz_recipe.png" alt="The Recipe section on the Traces job: preset FR4 1.6 mm proven, Method Concentric passes (FlatCAM, fast), the summary line, and Adjust the numbers open with Power 100 %, Speed 1000 mm/s, Frequency 30 kHz, Passes 20, Isolation passes 6 rings, Cleared line width 0.040 mm, Line density 285 lines/cm, Rest 0 s, Edge passes 10 more beyond 45 mm from the bed's middle" loading="lazy">
+    <figcaption><span class="ui">Adjust the numbers</span> open on the proven preset.</figcaption>
+  </figure>
+  <div>
+    <p><strong>FR4 1.6 mm · proven (100 %, 1000 mm/s × 20)</strong> is the default for traces: <strong>100&nbsp;%, 1000&nbsp;mm/s, 30&nbsp;kHz, 20 passes</strong>, 6 concentric rings round the copper (a 0.22&nbsp;mm gap), and 10 more passes beyond 45&nbsp;mm from the bed's middle.</p>
+    <p>On the lab's F1 Ultra it isolated every net of the curtain-drive board without burning a fine trace, in <strong>about five minutes of laser time</strong>. The same board took about two hours through xTool Creative Space's own fill, the old way.</p>
+    <p>On a laser board the summary starts <em>Changed from the preset</em>. That is expected: SRM-CAM turns off <span class="ui">Etch drill hole centres inside pads</span> by itself, because the mill drilled the holes.</p>
+  </div>
+</div>
+<ul>
+  <li><span class="ui">Method</span>: <em>Concentric passes (FlatCAM, fast)</em>, the default; <em>Moat hatch (cross-hatched band)</em>; or <em>Full rubout (clear all non-copper)</em>.</li>
+  <li>The other presets say <em>uncalibrated</em>: starting points, not proven. Settings from xTool Creative Space's fill do not carry over to these rings.</li>
+  <li>The mask and the silkscreen have their own recipes on their jobs: see <a href="solder-mask.html">Solder mask</a> and <a href="silkscreen.html">Silkscreen</a>.</li>
+</ul>
+
+<h3 id="copper-cal">New copper stock (Pro)</h3>
+<p><span class="menu-path">Traces › Recipe › Adjust the numbers › Calibrate copper vectors…</span> (or <code>srm-cam-laser --calibrate</code>) runs coupons on a flat scrap of the new stock:</p>
+<ol class="steps">
+  <li><span class="st">Find the exposure</span>16 small real traces: 300, 600, 1000 and 2000&nbsp;mm/s across, 5, 10, 20 and 40 passes down. Pick the cell that cleared with the fewest passes, and prove it with a meter across its two pads.</li>
+  <li><span class="st">Lines, spacing, corners and pads</span>At that exposure, on fresh copper each time.</li>
+  <li><span class="st">Save it</span><span class="ui">Save measured recipe…</span> stores it as a traces preset.</li>
+</ol>
+<p>Every run is kept with its settings in <code>Documents/SRM-CAM/exports/copper-calibration/</code>.</p>
+
+<h2 id="by-hand">Placing the job by hand</h2>
+<p>For a stencil, a board without holes, or to check a job's place yourself:</p>
+<ul>
+  <li><span class="ui">Photo</span> takes the camera's picture, straightened into the laser's millimetres, under the drawing.</li>
+  <li><strong>Drag</strong> the job in <span class="ui">Move</span> mode. Arrow keys nudge it 0.1&nbsp;mm; with <kbd>Shift</kbd> 1&nbsp;mm, with <kbd>Ctrl</kbd> 10&nbsp;mm. <span class="ui">Turn left</span> and <span class="ui">Turn right</span> turn it a quarter. <span class="ui">Position in numbers</span> types it: X and Y are the outline's top-left corner.</li>
+  <li><span class="ui">Mirror left–right</span> follows the copper face by itself (B.Cu mirrored, F.Cu as drawn). <span class="ui">Flip top–bottom</span> with the quarter turns gives every way round.</li>
+  <li><span class="ui">Align</span> takes a photo and moves the job onto the drilled holes it finds, within about 25&nbsp;mm and 6° of where you put it, in any quarter turn. It moves nothing unless it finds 75&nbsp;% of the holes (85&nbsp;% of a stencil's own).</li>
+  <li><span class="ui">Show where</span> runs the blue diode, at a glow, round the job's outline 15 times without marking: check it sits on the board.</li>
+  <li><span class="ui">Calibrate and lock onto the holes</span>, under <span class="ui">Alignment</span> (<span class="ui">Calibrate the camera</span> on a job with no drilled holes), fires the camera marks and locks onto the holes near where the job already sits, without finding the board or autofocusing first.</li>
+  <li><span class="ui">Undo</span> (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) takes back a move, a turn, a rework box, a skipped trench or the mirror; <span class="ui">Redo</span> is <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>.</li>
+</ul>
+
+<h2 id="mask-silk">Mask, silkscreen and stencil</h2>
+<p>After the traces, the same page does the rest, each lined up on the same drilled holes: <a href="solder-mask.html">Solder mask</a> (ink, cure, open the pads), then <a href="silkscreen.html">Silkscreen</a> (turn the sheet over, mark the component side). The paste stencil is on <a href="smd.html#stencil">Fine pitch &amp; paste stencil</a>. Then the finish: <a href="make-a-board.html#finish">break the tabs</a>.</p>
+<p>Logs, the laser on its own (<code>srm-cam-laser</code>), and DXF files: <a href="reference.html#laser">Files &amp; reference</a>. Something went wrong: <a href="troubleshooting.html#laser">Troubleshooting</a>.</p>
+
+<div class="page-nav">
+  <a class="prev" href="holding-the-copper.html"><span class="lbl">Previous</span><span class="ttl">← Holding the copper</span></a>
+  <a class="next" href="solder-mask.html"><span class="lbl">Next</span><span class="ttl">Solder mask →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

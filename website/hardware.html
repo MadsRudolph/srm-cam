@@ -9,11 +9,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/hw-link.js?v=20260930b"></script>
 <script defer src="js/anim/hw-probe.js?v=20260930b"></script>
 <script defer src="js/anim/hw-touch.js?v=20260930b"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -35,34 +36,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link active" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -74,14 +88,14 @@
 <h1>Hardware &amp; firmware</h1>
 <p class="lead">An Arduino Uno fitted to the SRM-20's SPI remote header lets SRM-CAM read where the head is, jog it, feel the bit touch the copper, probe the bed, and find the copper's corner for a run. This page is what is fitted, how it talks, and how a touch is measured. The drawings are live.</p>
 
-<div class="note"><span class="t">Optional, and Windows-only</span>
-<p>Everything else — traces, drilling, cut-out, panels, double-sided registration, rework, the checks and every export — runs on a stock SRM-20 through VPanel with nothing fitted. The link runs on Windows, macOS and Linux. A height map is also a file, so you can <span class="menu-path">Level the bed › Save…</span> the CSV and <span class="menu-path">Load…</span> it anywhere to export levelled toolpaths.</p></div>
+<div class="note"><span class="t">Needed for the run</span>
+<p>The run on the rail (<span class="ui">Drill and cut out</span>, <span class="ui">Mill it</span>) finds the copper and levels it with this probe, so the lab's mill has it fitted and the black USB cable must be plugged in. The link runs on Windows, macOS and Linux. Without it, only the by-hand way is left: export the files (Pro) and play them from VPanel on a stock SRM-20 (<a href="milling-a-board.html">Milling a board by hand</a>). A height map is also a file, so you can <span class="menu-path">Level the bed › Save…</span> the CSV and <span class="menu-path">Load…</span> it anywhere to export levelled toolpaths.</p></div>
 
 <h2 id="link">What is fitted, and how it talks</h2>
 <p>The Arduino is not listening in on the machine: it is the <strong>SPI master on the SRM-20's own remote header</strong>, speaking Roland's remote protocol through Roland's <code>SRM20SPIRemote</code> library (vendored in <code>hardware/</code>, with three small marked patches). It sits on an SPI shield plugged into the header, with slave-select on D9 and the ready line on D6.</p>
-<p>Two USB cables go to the PC. The <strong>black</strong> one is the Arduino: SRM-CAM sends it one short text line at a time (115200 baud, distances in microns) and the firmware turns each line into SPI calls. The <strong>white</strong> one is the mill itself, for VPanel, which keeps playing the files. The two coexist, and both can go to your own laptop when the mill's PC is not free (<a href="milling-a-board.html#need">What you need</a>).</p>
+<p>Two USB cables go to the PC. The <strong>black</strong> one is the Arduino: SRM-CAM sends it one short text line at a time (115200 baud, distances in microns) and the firmware turns each line into SPI calls. The <strong>white</strong> one is the mill itself: SRM-CAM sends the jobs over it (through Roland's driver on Windows), and VPanel can play files over it too. The two coexist, and both can go to your own laptop when the mill's PC is not free (<a href="getting-started.html#connect">Connect the machines</a>).</p>
 <figure class="anim" data-anim="hw-link">
-  <figcaption><span class="k">Follow one exchange</span>Each button sends a real command from SRM-CAM down the black cable, the SPI call it becomes, and the answer coming back. VPanel's file takes the white cable and never passes the Arduino.</figcaption>
+  <figcaption><span class="k">Follow one exchange</span>Each button sends a real command from SRM-CAM down the black cable, the SPI call it becomes, and the answer coming back. A job sent to the mill takes the white cable and never passes the Arduino.</figcaption>
 </figure>
 
 <h2 id="probe">The probe: one wire</h2>
@@ -92,7 +106,11 @@
   <li><span class="st">Test it</span>Touch the clip to the bit: SRM-CAM's Z readout on the machine bar turns red and says <em>Touch</em>. Let go and it goes back to <em>Z</em>.</li>
 </ol>
 <h3 id="bracket">The probe bracket</h3>
-<p>The printed corner bracket replaces the clip: a sprung tongue presses the bare wire onto the sheet as it slides in. Files: <a href="https://github.com/MadsRudolph/srm-cam/tree/main/hardware/probe_bracket"><code>hardware/probe_bracket</code></a>.</p>
+<p>The printed corner bracket replaces the clip: a sprung tongue presses the bare wire onto the sheet as it slides in. It is also what the run's sheet sits in: <a href="holding-the-copper.html#bracket">Holding the copper</a>. Files: <a href="https://github.com/MadsRudolph/srm-cam/tree/main/hardware/probe_bracket"><code>hardware/probe_bracket</code></a>.</p>
+<figure class="fig mid">
+  <img src="img/hc_bracket.png" alt="A render of the printed probe bracket: an L with countersunk screw holes along both arms and the tongue at its inside corner" loading="lazy">
+  <figcaption>The probe bracket (a render of <code>probe_bracket.stl</code>). Wanted: a photo of it fitted, with the Arduino and its SPI shield.</figcaption>
+</figure>
 <ol class="steps">
   <li><span class="st">Print</span><code>probe_bracket_print.stl</code> in PLA: 0.15&nbsp;mm layers, 100% infill, no supports. Check the slit beside the tongue is open.</li>
   <li><span class="st">Tongue</span>Strip 15&nbsp;mm. Bare end down through a tongue hole, along the groove, up the other hole; knot or tape it on top.</li>
@@ -100,6 +118,12 @@
   <li><span class="st">Mount</span>Countersunk M4 in the back-right holes. The wire stays connected while cutting, so keep it off the copper.</li>
   <li><span class="st">Test</span>Slide in a sheet and lower the bit onto it by hand: Z must turn red and say <em>Touch</em>.</li>
 </ol>
+<div class="note" id="pogo"><span class="t">Concept: a probe bracket with a pogo pin</span>
+<p>A newer bracket is being designed with a sprung pogo pin (an RDEXP 6&nbsp;mm pin) at its inside corner, in place of the tongue. The pin leans back over the bracket at 45°, along the corner's diagonal. A sheet pushed into the corner meets its tip with its edge, pushes the plunger in, and the tip climbs onto the copper. Only the tip and the end of its holder stand over the copper, in the very corner. It is a concept only and not in the lab. The lab uses the tongue bracket above, or the plain bracket with the red clip. Files: <code>hardware/probe_bracket/concepts</code>.</p></div>
+<figure class="fig">
+  <img src="img/hc_bracket_probe.jpg" alt="Two renders of the pogo-pin concept: a slim tapered sleeve rising from the bracket's inside corner, its gold pogo tip resting on the copper of a sheet pushed into the corner, a red wire leading from it" loading="lazy">
+  <figcaption>Concept, not in the lab: design renders of the pogo pin in the bracket's corner, with a sheet in place. Not a photo.</figcaption>
+</figure>
 <h3 id="clamps">The clamps</h3>
 <p>Print <code>clamp_print.stl</code> from the same folder in PLA, one for each clamp: 0.15&nbsp;mm layers, 100% infill, no supports. Each one takes an M4 thumbscrew in any spoilboard hole. Its flat lip presses the copper down, and pushing it round moves the sheet into the corner.</p>
 <figure class="anim" data-anim="hw-probe">
@@ -131,6 +155,9 @@
 <div class="warn"><span class="t">STOP does not promise to lift the tool</span>
 <p>STOP drops the move and stops the spindle. Firmware v4 and later fix the retract after an abort, which used to cancel itself, but SRM-CAM does not count on it: the bit may still be down. Raise it with <kbd>Page Up</kbd> before the next move. See <a href="machine-control.html#pause-stop">Pause and STOP</a>.</p></div>
 
+<h2 id="laser">The laser</h2>
+<p>The xTool F1 Ultra needs nothing fitted. Its USB cable shows up on the PC as a network adapter, and SRM-CAM talks to the laser over it directly: no driver, no xTool Creative Space. How to use it: <a href="laser.html">The laser page</a>.</p>
+
 <h2 id="install">Install (one-time, for whoever maintains the mill)</h2>
 <ol class="steps">
   <li><span class="st">Fit the Arduino</span>An Arduino Uno on the SPI shield, plugged into the SRM-20's SPI remote header on the back. The red clip's wire goes to D7. Full story: <code>docs/archive/2026-06-25-srm20-spi-and-bed-leveling.md</code>.</li>
@@ -152,7 +179,7 @@
 <tr><td><code>U z</code></td><td>Fast straight down to machine Z, halting at the first touch (v5). The motors take a moment to stop, so treat it as a safety net: a bit can still hit the copper at speed.</td></tr>
 <tr><td><code>O x y z</code></td><td>Set the work origin absolutely, no motion (v4). It reaches the User origin only, which NC jobs ignore.</td></tr>
 <tr><td><code>Q</code> / <code>G</code> / <code>V</code> / <code>I</code></td><td>Position and touch / work origin / firmware version and features / the machine's remote-protocol version</td></tr>
-<tr><td><code>X</code> / <code>S rpm</code></td><td>Status words and spindle rpm / spindle on or off (the machine ignores the rpm: VPanel's slider sets the speed)</td></tr>
+<tr><td><code>X</code> / <code>S rpm</code></td><td>Status words and spindle rpm / spindle on or off (the machine ignores the rpm: the speed is a setting in the mill, set from VPanel or <span class="menu-path">Machine › The mill's settings…</span>)</td></tr>
 <tr><td><code>~</code> <code>^</code> <code>%</code> <code>K</code></td><td>Pause / resume / drop the move in flight / cancel the job</td></tr>
 <tr><td><code>Y</code> / <code>N dx dy dz s</code></td><td>Move to the View position / timed relative move, no lift (the jog pad and arrow keys)</td></tr>
 <tr><td><code>C</code> / <code>M x y z s</code></td><td>Begin a streaming session / stream one move. Still in the firmware; the app no longer runs jobs this way (they go through Roland's driver)</td></tr>
@@ -161,7 +188,7 @@
 </table></div>
 
 <div class="page-nav">
-  <a href="photo-and-rework.html"><span class="lbl">Previous</span><span class="ttl">← Photo check &amp; rework</span></a>
+  <a class="prev" href="automatic.html"><span class="lbl">Previous</span><span class="ttl">← Mill a whole board</span></a>
   <a class="next" href="machine-control.html"><span class="lbl">Next</span><span class="ttl">Machine control →</span></a>
 </div>
 

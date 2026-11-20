@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects: many boards — SRM-CAM guide</title>
+<meta name="description" content="SRM-CAM projects (Pro): one file that lists many boards, each with its own steps on the mill and the laser as tick boxes, so a dozen boards can be made and kept track of.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link active" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+<h1>Projects: many boards</h1>
+<p class="lead">A project is one file that lists boards, each with its own steps on the mill and the laser as tick boxes. Made for jobs like the analog synth: eleven boards. Open a board from the list, make it the usual way, and its steps tick themselves.</p>
+
+<div class="note"><span class="t">Pro only</span>
+<p>Click the tier chip at the top right to switch to Pro. The <span class="ui">Project</span> page then sits beside <span class="ui">CNC</span> and <span class="ui">Laser</span> at the top of the window (or <span class="menu-path">View › The project</span>).</p></div>
+
+<figure class="fig">
+  <div class="pinwrap"><img src="img/pj_page.png" alt="The Project page with three boards: preload_example 2 of 7 done, with Drill and Cut the board out ticked on the mill and its laser rows Etch the traces B.Cu bottom and F.Cu top, Solder mask, Silkscreen, Paste stencil; double_sided_40x20 1 of 4; hole_test, a mill-only board, open, 0 of 5" loading="lazy">
+    <span class="pin" style="left:22%;top:10%">1</span>
+    <span class="pin" style="left:30%;top:43.6%">2</span>
+    <span class="pin" style="left:30%;top:60%">3</span>
+    <span class="pin" style="left:30%;top:76.4%">4</span>
+    <span class="pin" style="left:74%;top:19.5%">5</span></div>
+  <ol class="pins">
+    <li>The project, and how far it is: boards finished, steps done.</li>
+    <li>A laser board: <span class="ui">Drill</span> and <span class="ui">Cut the board out</span> on the mill (ticked), then each laser job. With copper on both faces its traces are two ticks: <em>Etch the traces · B.Cu (bottom)</em> and <em>· F.Cu (top)</em>.</li>
+    <li>Another laser board, one step done.</li>
+    <li>A mill-only board: <span class="ui">Drill</span>, <span class="ui">Isolation traces</span>, <span class="ui">Cut the board out</span>, then its mask and silkscreen on the laser. <em>◀ open</em> marks the board loaded now.</li>
+    <li><span class="ui">Open next unfinished</span> and <span class="ui">Open board</span>.</li>
+  </ol>
+  <figcaption>The Project page with three example boards (a screenshot; the ticks were set for the picture).</figcaption>
+</figure>
+
+<h2 id="make">Make one</h2>
+<ol class="steps">
+  <li><span class="st">New project…</span>Saved as a <code>.srmproj</code> file. Board folders are stored relative to it, so the project and its boards can move together.</li>
+  <li><span class="st">Add boards…</span>Point it at a folder: it finds every Gerber folder under it and adds each as a board, named after its folder. A board not opened yet says <em>not opened yet</em>.</li>
+  <li><span class="st">Steps as ticks</span>Each board lists its steps from its own plan: the mill's steps, and each laser job its folder has layers for.</li>
+</ol>
+
+<h2 id="use">Work through it</h2>
+<ol class="steps">
+  <li><span class="st">Open a board</span><span class="ui">Open board</span>, or double-click it. The window loads it, as it was left.</li>
+  <li><span class="st">Make it</span>The usual way, on the rail: <a href="make-a-board.html">Make a board</a>. A mill run ticks every step that finished, even if a later one stopped; a whole laser job ticks its row.</li>
+  <li><span class="st">Next</span><span class="ui">Open next unfinished</span> goes to the next board with a step still to do. The board you leave is kept, with its setup and ticks.</li>
+</ol>
+<ul>
+  <li><strong>A tick by hand</strong> on the Project page reaches the rail, and back.</li>
+  <li><strong>The last project reopens</strong> with the app. Opening a board by hand, outside the project, lets the project go.</li>
+  <li><strong>One board at a time.</strong> Each board in a project is its own sheet on the mill and the laser. To put several boards on one sheet, cut together and etched as one job, see <a href="panels.html">Several boards on one sheet</a>.</li>
+</ul>
+
+<div class="page-nav">
+  <a class="prev" href="machine-control.html"><span class="lbl">Previous</span><span class="ttl">← Machine control</span></a>
+  <a class="next" href="milling-a-board.html"><span class="lbl">Next</span><span class="ttl">Milling a board by hand →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

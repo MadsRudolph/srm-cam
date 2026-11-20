@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From KiCad — SRM-CAM guide</title>
+<meta name="description" content="The SRM-CAM buttons in KiCad's PCB editor: Show SRM-20 build area, Set design rules for SRM-CAM and Send to SRM-CAM; what lands in the srm-cam folder, where the method chip comes from, and plotting by hand.">
+<link rel="icon" type="image/png" href="img/srm-cam-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
+<script defer src="js/anim/core.js?v=20260930a"></script> <script defer src="js/anim/kc-send.js?v=20261120a"></script> <script defer src="js/anim/kc-method.js?v=20261120a"></script> <script defer src="js/anim/gs-files.js?v=20261120a"></script>
+<script defer src="js/ask.js?v=20261120a"></script>
+</head>
+<body>
+<div class="layout">
+
+<aside class="sidebar">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="padding:0;border:0;margin:0">
+      <img src="img/srm-cam-256.png" alt="" width="34" height="34" style="border-radius:8px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <button class="menu-btn" onclick="document.querySelector('.nav-wrap').classList.toggle('open')">Menu</button>
+  </div>
+  <div class="nav-wrap">
+    <a class="brand" href="index.html">
+      <img src="img/srm-cam-256.png" alt="" width="38" height="38" style="border-radius:9px">
+      <span><span class="name">SRM-CAM</span><span class="sub">User guide</span></span>
+    </a>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-title">Start here</div>
+        <a class="nav-link" href="index.html">Overview</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link active" href="kicad.html">From KiCad</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
+        <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
+        <a class="nav-link" href="machine-control.html">Machine control</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
+        <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
+        <a class="nav-link" href="panels.html">Several boards on one sheet</a>
+        <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
+        <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
+        <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
+        <a class="nav-link" href="reference.html">Files &amp; reference</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
+        <a class="nav-link" href="feedback.html">Feedback</a>
+      </div>    </nav>
+  </div>
+</aside>
+
+<main>
+<div class="content">
+<h1>From KiCad</h1>
+<p class="lead">Three buttons in KiCad's PCB editor take a board from your design to SRM-CAM: one shows whether it fits the mill, one sets the design rules for how it is made, and one sends it. Set the rules <strong>before</strong> you route.</p>
+
+<div class="pill-flow">
+  <span class="pf">Show SRM-20 build area</span><span class="arr">→</span>
+  <span class="pf">Set design rules for SRM-CAM</span><span class="arr">→</span>
+  <span class="pf">Save, route, DRC</span><span class="arr">→</span>
+  <span class="pf">Send to SRM-CAM</span>
+</div>
+
+<figure class="anim" data-anim="kc-send">
+  <figcaption><span class="k">From KiCad to SRM-CAM</span>What the two buttons do, step by step: the method kept beside the board, the check, the files plotted into <code>srm-cam/</code>, and the board opening in SRM-CAM as a laser board.</figcaption>
+</figure>
+
+<h2 id="buttons">Add the buttons</h2>
+<p>In SRM-CAM: <span class="menu-path">Help › Add the SRM-CAM buttons to KiCad…</span>. It copies the plugin into every KiCad it finds and tells it where SRM-CAM is. SRM-CAM also offers this once, a moment after it opens (<span class="ui">Add it</span> / <span class="ui">Not now</span>). Restart KiCad. The three buttons are on the PCB editor's toolbar and under <span class="menu-path">Tools › External Plugins</span>.</p>
+<figure class="fig mid">
+  <img src="img/kicad_plugin_menu.png" alt="KiCad's toolbar with the Show SRM-20 build area button" loading="lazy">
+  <figcaption>After a KiCad restart the buttons are on the toolbar and under <span class="menu-path">Tools › External Plugins</span>.</figcaption>
+</figure>
+<p>Changing the tool profile in SRM-CAM tells the plugin the new bit, so its checks follow the bit you use. If SRM-CAM has been moved, opening it once is enough for <span class="ui">Send to SRM-CAM</span> to find it again.</p>
+
+<h2 id="area">Show SRM-20 build area</h2>
+<p>Draws two rectangles on <strong>User.Drawings</strong>, centred on the board: the mill's build area, <strong>203.2&nbsp;×&nbsp;152.4&nbsp;mm</strong>, and the recommended largest board, <strong>189.2&nbsp;×&nbsp;138.4&nbsp;mm</strong> (7&nbsp;mm a side for holding it down). Nothing is saved yet: Ctrl+Z undoes it. It needs an outline on Edge.Cuts first.</p>
+<figure class="fig mid">
+  <img src="img/kicad_plugin.png" alt="KiCad PCB editor with the SRM-20 build area and the recommended maximum board drawn around a board" loading="lazy">
+  <figcaption>The build area and the recommended largest board, drawn round a board on User.Drawings.</figcaption>
+</figure>
+
+<h2 id="rules">Set design rules for SRM-CAM</h2>
+<p>Opens a window that asks how the board is made, shows the board's rules now beside what the method needs, and sets them when you press <span class="ui">Apply</span>.</p>
+<div class="mock">
+  <div class="mt">Design rules for SRM-CAM <span>schematic</span></div>
+  <div class="mb">
+    How is this board made? <span class="sel">Fiber laser copper (holes and outline on the mill) ▾</span>
+    <div class="tbl-wrap"><table>
+      <tr><th></th><th>Board now</th><th>Set to (mm)</th></tr>
+      <tr><td>Track width</td><td>0.25</td><td>0.30</td></tr>
+      <tr><td>Clearance (net classes)</td><td>0.20</td><td>0.25</td></tr>
+      <tr><td>Board minimum clearance</td><td>0.00</td><td>0.20</td></tr>
+      <tr><td>Pour to other copper</td><td>0.50</td><td>0.25</td></tr>
+      <tr><td>Thermal relief gap</td><td>0.50</td><td>0.25</td></tr>
+      <tr><td>Pour minimum width</td><td>0.25</td><td>0.25</td></tr>
+      <tr><td>Copper to board edge</td><td>0.50</td><td>0.50</td></tr>
+      <tr><td>Smallest hole (drill)</td><td>0.80</td><td>0.80</td></tr>
+    </table></div>
+    <p style="margin:0">Sets the net classes, the board's minimums, every pour and the defaults for new pours, then refills the pours. Tracks are not moved: run DRC afterwards. Save to keep, or close without saving to undo.</p>
+    <div class="btns"><span class="ui">Cancel</span><span class="ui def">Apply</span></div>
+  </div>
+</div>
+<p class="shotlist">A drawing of the window with its real labels (KiCad's own windows cannot be screenshotted here). The "Board now" column is an example; the "Set to" column is the laser's numbers.</p>
+<ul>
+  <li><strong>The three methods:</strong> <span class="ui">Mill: 0.8 mm flat endmill</span>, <span class="ui">Mill: 0.8 mm ball mill (0.44 mm channel)</span> and <span class="ui">Fiber laser copper (holes and outline on the mill)</span>. The numbers each one writes are in <a href="make-a-board.html#rules">the rules table</a>, with the animation.</li>
+  <li><strong>After Apply</strong> a message lists every change ("Net class Default clearance 0.20 -> 0.25 mm" and so on), says the pours are refilled and the tracks are where they were, and reminds you to save. Then <strong>save the board</strong> (Ctrl+S) and run <span class="menu-path">Inspect › Design Rules Checker</span>.</li>
+  <li><strong>What it changes:</strong> clearances and pours are set up or down to the method; the Default class's track width is set, other classes are only raised; via and hole sizes are only ever raised.</li>
+  <li><strong>Custom rules</strong> (fine-pitch footprints) are not touched; orange notes under the grid warn about them. After editing them, run DRC once so KiCad reads them again, then refill (B).</li>
+  <li>The choice is kept in <code>srm-cam/method.json</code> beside the board, so the window opens on it next time and SRM-CAM reads it. Without one, the window guesses from the board's rules.</li>
+</ul>
+
+<h2 id="send">Send to SRM-CAM</h2>
+<ol class="steps">
+  <li><span class="st">Saved once?</span>A new board must be saved once first, so SRM-CAM has a name and a folder for the files. Later edits do not need saving: Send plots the board as it is on screen.</li>
+  <li><span class="st">The check</span>It checks the board's rules and holes against its method. If anything is tighter than the method can make, it says so and sends nothing yet.</li>
+  <li><span class="st">The plot</span>It plots every layer SRM-CAM reads and both drill files into <code>srm-cam</code> beside the board, after clearing the old plot out of it.</li>
+  <li><span class="st">The hand-over</span>It gives the folder to SRM-CAM: to the window that is open, or it starts SRM-CAM with it.</li>
+</ol>
+<div class="mock">
+  <div class="mt">Send to SRM-CAM <span>schematic</span></div>
+  <div class="mb">
+    <p style="margin:0 0 6px">This board asks for more than its method can make, checked as Fiber laser copper (holes and outline on the mill):</p>
+    <p class="orange" style="margin:0 0 6px;padding-left:18px">Net class Default clearance: 0.20 mm</p>
+    <p style="margin:0">Open the design rules and set them for how the board is made? The board is not sent yet.</p>
+    <div class="btns"><span class="ui def">Set the rules...</span><span class="ui">Send anyway</span><span class="ui">Cancel</span></div>
+  </div>
+</div>
+<p class="shotlist">A drawing of the warning with its real wording; the orange line is an example of what it lists. With no method set, it checks against the method the board's own rules point to and says "(guessed …)".</p>
+<h3 id="files">What lands in <code>srm-cam/</code></h3>
+<div class="tbl-wrap"><table>
+<tr><th>File (board called <code>boost_v2</code>)</th><th>What it is</th></tr>
+<tr><td><code>boost_v2-B_Cu.gbl</code>, <code>-F_Cu.gtl</code></td><td>The copper. B.Cu must be there, or Send stops.</td></tr>
+<tr><td><code>boost_v2-Edge_Cuts.gm1</code></td><td>The outline: the cut-out, and the board on the laser.</td></tr>
+<tr><td><code>boost_v2-PTH.drl</code>, <code>-NPTH.drl</code></td><td>The holes, plated and unplated, Excellon in mm. Oval holes (slots) come through too.</td></tr>
+<tr><td><code>-B_Mask.gbs</code>, <code>-F_Mask.gts</code></td><td>Solder mask: adds the <span class="ui">Solder mask</span> row.</td></tr>
+<tr><td><code>-F_Silkscreen.gto</code>, <code>-B_Silkscreen.gbo</code></td><td>Silkscreen: adds the <span class="ui">Silkscreen</span> row.</td></tr>
+<tr><td><code>-F_Paste.gtp</code>, <code>-B_Paste.gbp</code></td><td>Paste: adds the <span class="ui">Paste stencil</span> row.</td></tr>
+<tr><td><code>method.json</code></td><td>How the board is made, from <span class="ui">Set design rules for SRM-CAM</span>. Kept when the plot is cleared.</td></tr>
+</table></div>
+<div class="tbl-wrap"><table>
+<tr><th>Send says</th><th>What happened</th></tr>
+<tr><td>SRM-CAM is running a job, so the board was not loaded.</td><td>A run is in progress in SRM-CAM. The files are written; send again when it is done.</td></tr>
+<tr><td>SRM-CAM was not found.</td><td>Open SRM-CAM once (and use <span class="menu-path">Help › Add the SRM-CAM buttons to KiCad…</span> if it was never added). The message names a "KiCad ▸ Set up the build-area plugin…" menu: that item is the Help menu entry above.</td></tr>
+<tr><td>The board could not be plotted: …</td><td>KiCad's own error follows. Fix it in KiCad and send again.</td></tr>
+</table></div>
+
+<h2 id="method">The method chip</h2>
+<p>Every board in SRM-CAM has one <strong>method</strong>, shown on the chip at the top left: <strong>Laser · from KiCad</strong>, <strong>Flat mill · guessed</strong>, <strong>Ball mill · chosen</strong>. It decides the checks, the tool and the rows on the rail. The same choice is under <span class="ui">How it is made</span> on <span class="ui">Your board</span>.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Method</th><th>Narrowest gap</th><th>Who makes what</th></tr>
+<tr><td><strong>Laser copper (mill drills and cuts out)</strong></td><td>0.20&nbsp;mm</td><td>The mill drills and cuts out on tabs; the laser etches the copper. <strong>The usual way.</strong> <a href="make-a-board.html">Make a board</a>.</td></tr>
+<tr><td><strong>Flat mill (0.8 mm endmill)</strong></td><td>0.80&nbsp;mm</td><td>The mill does it all. <a href="automatic.html">Mill a whole board</a>.</td></tr>
+<tr><td><strong>Ball mill (0.44 mm channel)</strong></td><td>0.44&nbsp;mm</td><td>The mill does it all, finer. <a href="automatic.html#small">How small can it go?</a></td></tr>
+</table></div>
+<figure class="anim" data-anim="kc-method">
+  <figcaption><span class="k">Where the method comes from</span>SRM-CAM looks in this order: what you picked on the chip for this folder before, then what KiCad's <span class="ui">Set design rules for SRM-CAM</span> stored, then a guess from the narrowest gap between two nets (0.80&nbsp;mm or more: flat mill; 0.44&nbsp;mm or more: ball mill; less: laser). Try the switches.</figcaption>
+</figure>
+<ul>
+  <li><strong>Change it:</strong> click the chip and pick another, at any time. Picking <em>Laser</em> unticks double-sided: the mill drills straight through, and the laser etches each face on the same holes.</li>
+  <li><strong>"· chosen" wins over KiCad.</strong> If you changed the method in KiCad later and the chip still shows your old pick, pick again on the chip.</li>
+</ul>
+
+<h2 id="by-hand">Without the buttons: plot by hand</h2>
+<ol class="steps">
+  <li><span class="st">Rules</span>Set the numbers from <a href="make-a-board.html#rules">the rules table</a> in <span class="menu-path">File › Board Setup…</span> before you route.</li>
+  <li><span class="st">Plot Gerbers</span><span class="menu-path">File › Fabrication Outputs › Gerbers</span>: at least <strong>B.Cu</strong> and <strong>Edge.Cuts</strong> (and <strong>F.Cu</strong> for two faces), into one folder. Add the mask, silkscreen and paste layers for those jobs on the laser. Refill the zones if KiCad asks.</li>
+  <li><span class="st">Drill files</span>Same dialog, <span class="ui">Generate Drill Files…</span>: Excellon, millimetres, into the same folder. Keep both files, plated and unplated.</li>
+  <li><span class="st">Open</span>In SRM-CAM, <span class="menu-path">File › Open Gerber folder…</span> (Ctrl+O). Without a <code>method.json</code> the method is guessed from the gaps: check the chip.</li>
+</ol>
+<div class="figs">
+  <figure class="fig">
+    <img src="img/kicad_plot.png" alt="KiCad's Plot dialog with F.Cu, B.Cu and Edge.Cuts ticked and Gerber format" loading="lazy">
+    <figcaption>Plot: Gerber format, the copper layers and Edge.Cuts, one output folder.</figcaption>
+  </figure>
+  <figure class="fig">
+    <img src="img/kicad_drill.png" alt="KiCad's Generate Drill Files dialog with Excellon and millimetres" loading="lazy">
+    <figcaption>Drill files: Excellon, millimetres, into the same folder.</figcaption>
+  </figure>
+</div>
+<figure class="anim" data-anim="gs-files">
+  <figcaption><span class="k">What the folder needs</span>Tap a file to take it out and see what <span class="menu-path">File › Open Gerber folder…</span> makes of the rest: without the copper or Edge.Cuts the folder is refused; without the drill files it loads with no holes.</figcaption>
+</figure>
+<div class="tip"><span class="t">No KiCad handy?</span>
+<p><span class="ui">Demo board</span> on <span class="ui">Your board</span> loads a bundled 40&nbsp;×&nbsp;30&nbsp;mm coupon that exercises every operation.</p></div>
+
+<div class="page-nav">
+  <a class="prev" href="getting-started.html"><span class="lbl">Previous</span><span class="ttl">← Install &amp; connect</span></a>
+  <a class="next" href="mill.html"><span class="lbl">Next</span><span class="ttl">The mill page →</span></a>
+</div>
+
+<footer class="site">
+  SRM-CAM · DTU 62768 team · <a href="https://github.com/MadsRudolph/srm-cam">GitHub</a> · <a href="https://github.com/MadsRudolph/srm-cam/releases">Releases</a> · <a href="community.html">Discord</a> · <a href="feedback.html">Feedback</a>
+</footer>
+
+</div>
+</main>
+
+</div>
+</body>
+</html>

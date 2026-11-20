@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/site.css?v=20260930a">
+<link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930b"></script>
 <script defer src="js/anim/rf-files.js?v=20261118a"></script>
 <script defer src="js/anim/rf-feeds.js?v=20260930b"></script>
@@ -40,6 +40,7 @@
   .rf-file { flex: 1 1 45%; }
 }
 </style>
+<script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
 <div class="layout">
@@ -61,34 +62,47 @@
       <div class="nav-group">
         <div class="nav-title">Start here</div>
         <a class="nav-link" href="index.html">Overview</a>
-        <a class="nav-link" href="automatic.html">Mill a board</a>
-        <a class="nav-link" href="getting-started.html">Install &amp; KiCad</a>
-        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="make-a-board.html">Make a board</a>
+        <a class="nav-link" href="getting-started.html">Install &amp; connect</a>
+        <a class="nav-link" href="kicad.html">From KiCad</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Set up a mill</div>
+        <div class="nav-title">On the mill</div>
+        <a class="nav-link" href="mill.html">The mill page</a>
+        <a class="nav-link" href="holding-the-copper.html">Holding the copper</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the laser</div>
+        <a class="nav-link" href="laser.html">The laser page</a>
+        <a class="nav-link" href="solder-mask.html">Solder mask</a>
+        <a class="nav-link" href="silkscreen.html">Silkscreen</a>
+        <a class="nav-link" href="smd.html">Fine pitch &amp; paste stencil</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">On the mill alone</div>
+        <a class="nav-link" href="automatic.html">Mill a whole board</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">Set up the machines</div>
         <a class="nav-link" href="hardware.html">Hardware &amp; firmware</a>
         <a class="nav-link" href="machine-control.html">Machine control</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">Pro: by hand</div>
+        <div class="nav-title">Pro</div>
+        <a class="nav-link" href="projects.html">Projects: many boards</a>
         <a class="nav-link" href="milling-a-board.html">Milling a board by hand</a>
         <a class="nav-link" href="panels.html">Several boards on one sheet</a>
-        <a class="nav-link" href="holding-the-copper.html">Screws and fixtures</a>
         <a class="nav-link" href="bed-leveling.html">Bed levelling &amp; probing</a>
         <a class="nav-link" href="double-sided.html">Double-sided by hand</a>
-        <a class="nav-link" href="drill-a-laser-board.html">Drilling a laser-etched board</a>
+        <a class="nav-link" href="drill-a-laser-board.html">Drilling a board etched first</a>
         <a class="nav-link" href="photo-and-rework.html">Photo check &amp; rework</a>
         <a class="nav-link active" href="reference.html">Files &amp; reference</a>
       </div>
       <div class="nav-group">
-        <div class="nav-title">More</div>
+        <div class="nav-title">Help</div>
+        <a class="nav-link" href="troubleshooting.html">Troubleshooting</a>
+        <a class="nav-link" href="community.html">Community &amp; Discord</a>
         <a class="nav-link" href="feedback.html">Feedback</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">After milling</div>
-        <a class="nav-link" href="smd.html">SMD: fine traces &amp; stencil</a>
-        <a class="nav-link" href="solder-mask.html">Solder mask</a>
       </div>
     </nav>
   </div>
@@ -104,7 +118,7 @@
 <div class="tbl-wrap"><table>
 <tr><th>Type</th><th>Files</th><th>Notes</th></tr>
 <tr><td>Gerber</td><td><code>*-B_Cu.gbr</code>, <code>*-Edge_Cuts.gbr</code> (or <code>.gbl</code>, <code>.gm1</code>)</td><td>KiCad's plot: <span class="menu-path">File › Fabrication Outputs › Gerbers</span>, or <span class="ui">Send to SRM-CAM</span>. B.Cu and Edge.Cuts at least; F.Cu (<code>.gtl</code>) for double-sided. Mask, silkscreen and paste layers each add a row for the laser.</td></tr>
-<tr><td>Method</td><td><code>srm-cam/method.json</code></td><td>How the board is made, written by KiCad's <span class="ui">Set design rules for SRM-CAM</span> in the folder <span class="ui">Send to SRM-CAM</span> plots into. See <a href="automatic.html#method">How it is made</a>.</td></tr>
+<tr><td>Method</td><td><code>srm-cam/method.json</code></td><td>How the board is made, written by KiCad's <span class="ui">Set design rules for SRM-CAM</span> in the folder <span class="ui">Send to SRM-CAM</span> plots into. See <a href="kicad.html#method">How it is made</a>.</td></tr>
 <tr><td>Excellon drill</td><td><code>.drl</code></td><td><span class="menu-path">Generate Drill Files…</span>, millimetres, into the same folder. Split PTH and NPTH files are merged, and a stale combined file beside them is ignored.</td></tr>
 <tr><td>Setup</td><td><code>.srmcam</code></td><td>The whole job, from <span class="menu-path">File › Save the setup…</span> (<kbd>Ctrl</kbd>+<kbd>S</kbd>); back with <span class="menu-path">File › Load a setup…</span>. The first interface's <code>.json</code> setups load too.</td></tr>
 <tr><td>Height map</td><td><code>.csv</code></td><td><code>x_mm, y_mm, dz_mm</code>, with a <code>#&nbsp;face:</code> line saying which face it was probed on. <span class="ui">Save…</span> and <span class="ui">Load…</span> on <span class="menu-path">Level the bed</span>.</td></tr>
@@ -112,8 +126,8 @@
 </table></div>
 
 <h2>What comes out</h2>
-<p><a href="automatic.html#after">Mill a board</a> keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code>. Below is what the export writes: <span class="ui">Export for VPanel…</span> at the foot of the rail in Pro, <span class="ui">Save the files…</span> in Novice.</p>
-<p><span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) writes one program per step, in the machine's format, the run plan beside them, and the laser's files for every laser row the board has. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
+<p>The run on the mill keeps its own folder for each run: <code>Documents\SRM-CAM\runs\&lt;board&gt;_&lt;time&gt;</code> (<a href="mill.html#made">What the run made</a>). Below is what the <strong>export</strong> writes. It is one export with three ways in: <span class="ui">Save the files…</span> at the foot of the rail in Novice, <span class="ui">Export for VPanel…</span> there in Pro, and <span class="menu-path">File › Export the job…</span> (<kbd>Ctrl</kbd>+<kbd>E</kbd>, Pro).</p>
+<p>It writes one program per step, in the machine's format, the run plan beside them, and the laser's files for every laser row the board has. With the lab's one-bit 0.8&nbsp;mm profile the order is <strong>drill, traces, cut-out</strong>; with a different bit for the traces (a V-bit), the traces come before the drill to save bit changes. The cut-out is always last.</p>
 <figure class="anim" data-anim="rf-files">
   <figcaption><span class="k">Inside the files</span>Click a file, then a line, to see what it does. The lines are real output from the test board. Switch to <em>As VPanel lists them</em> to see why the cut-out has to be moved down.</figcaption>
 </figure>
@@ -124,7 +138,7 @@
 <tr><td><code>&lt;name&gt;_traces.nc</code></td><td>Isolation, mirrored for the bottom copper; warped to the height map when one is applied.</td></tr>
 <tr><td><code>&lt;name&gt;_cutout.nc</code></td><td>The outline with four tabs. Always last.</td></tr>
 <tr><td><code>&lt;name&gt;_runplan.txt</code></td><td>The run sheet as text: order, bit per step, depths, times, where each board of a panel sits.</td></tr>
-<tr><td><code>&lt;name&gt;_traces_…dxf</code>, <code>_mask_…dxf</code>, <code>_silk_…dxf</code>, <code>_stencil_…dxf</code></td><td>For the laser, not the mill: one file for each laser row the board has (the copper on a laser board; the mask, silkscreen and stencil when the folder has those layers). The end of the name says the face and whether it is mirrored, e.g. <code>&lt;name&gt;_mask_mirrored.dxf</code>. See <a href="automatic.html#laser">A laser board</a> and <a href="solder-mask.html">Solder mask</a>.</td></tr>
+<tr><td><code>&lt;name&gt;_traces_…dxf</code>, <code>_mask_…dxf</code>, <code>_silk_…dxf</code>, <code>_stencil_…dxf</code></td><td>For the laser, not the mill: one file for each laser row the board has (the copper on a laser board; the mask, silkscreen and stencil when the folder has those layers). The end of the name says the face and whether it is mirrored, e.g. <code>&lt;name&gt;_mask_mirrored.dxf</code>. See <a href="make-a-board.html">Make a board</a> and <a href="solder-mask.html">Solder mask</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_align.nc</code>, <code>_bottom_drill.nc</code>, <code>_bottom_traces.nc</code>, <code>_top_traces.nc</code></td><td>Double-sided, in that order, with the cut-out after the top traces. See <a href="double-sided.html">Double-sided boards</a>.</td></tr>
 <tr><td><code>&lt;name&gt;_top_drill.nc</code></td><td>The blind holes finished from the top, on the measured flip.</td></tr>
 <tr><td><code>&lt;name&gt;_&lt;pass&gt;_rework.nc</code></td><td>A rework program: the pass clipped to your boxes, each at its own depth. <a href="photo-and-rework.html#rework">Fix spots</a>.</td></tr>
@@ -146,12 +160,52 @@
 <p>The G-code uses only words on the SRM-20's NC list: plain <code>G0</code>/<code>G1</code> moves, no arcs or canned cycles, <code>M3</code>/<code>M5</code> for the spindle and a 2&nbsp;s <code>G04</code> pause after <code>M3</code> so the spindle is up to speed before the bit touches copper. The spindle speed is set in VPanel: the SRM-20 has no <code>S</code> word.</p>
 
 <h2>Tool profiles</h2>
-<p>A profile is the whole set of numbers for all three operations; <span class="ui">Apply profile</span> on <span class="menu-path">Set up the job › The tool</span> replaces them all. The board's <a href="automatic.html#method">method</a> picks the flat or the ball mill profile. Built in:</p>
+<p>A profile is the whole set of numbers for all three operations; <span class="ui">Apply profile</span> on <span class="menu-path">Set up the job › The tool</span> replaces them all. The board's <a href="kicad.html#method">method</a> picks the flat or the ball mill profile. Built in:</p>
 <ul>
   <li><strong>SRM-20 0.8&nbsp;mm flat</strong>: the lab's profile, and the one that opens applied. One 0.8&nbsp;mm flat end mill for traces (0.15&nbsp;mm deep), drill and cut-out (2.0&nbsp;mm deep, four 1.5&nbsp;mm tabs). One bit, so the drill runs first and nothing is re-zeroed between steps.</li>
-  <li><strong>SRM-20 0.8&nbsp;mm ball mill</strong>: fine SMD work with one 0.8&nbsp;mm ball mill for the whole job. Traces are told 0.44&nbsp;mm and cut 0.08&nbsp;mm deep, with <span class="ui">Cut gaps too narrow for the bit (trims pads)</span> on. Holes go 2.0&nbsp;mm deep and the outline 1.9&nbsp;mm, with four 1.5&nbsp;mm tabs. Keep levelling on: the cut's width depends on its depth.</li>
+  <li><strong>SRM-20 0.8&nbsp;mm ball mill</strong>: fine SMD work with one 0.8&nbsp;mm ball mill for the whole job. Traces are told 0.44&nbsp;mm and cut 0.08&nbsp;mm deep, with <span class="ui">Cut gaps too narrow for the bit (trims pads)</span> on. Holes go 2.0&nbsp;mm deep and the outline 1.9&nbsp;mm, with four 1.5&nbsp;mm tabs. Keep levelling on: the cut's width depends on its depth. The run on the rail does not start with this profile today (it counts the 0.44 and 0.8&nbsp;mm settings as two bits): see <a href="automatic.html#small">How small can it go?</a></li>
 </ul>
 <p><span class="ui">Save as…</span> (Pro) keeps your own in <code>~/.gerber2rml/presets.json</code>. A lab can share profiles in a <code>presets.json</code> beside the installed program (in a source checkout, <code>examples/presets.json</code>).</p>
+
+<h2 id="laser">The laser</h2>
+<p>How to use it: <a href="laser.html">The laser page</a>. What it keeps and reads:</p>
+
+<h3 id="laser-recipes">The three proven or default recipes</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Job</th><th>Preset</th><th>Numbers</th></tr>
+<tr><td>Traces</td><td><strong>FR4 1.6 mm · proven (100 %, 1000 mm/s × 20)</strong></td><td>Fiber, 100&nbsp;%, 1000&nbsp;mm/s, 30&nbsp;kHz, 20 passes; 6 concentric rings, a 0.22&nbsp;mm gap; +10 passes beyond 45&nbsp;mm from the bed's middle</td></tr>
+<tr><td>Mask (and Silk, until it has its own)</td><td><strong>RemoveSolderMask (sphawes)</strong></td><td>40&nbsp;%, 800&nbsp;mm/s, 30&nbsp;kHz, 6 passes, 300&nbsp;lines/cm, cross-hatched, one way; openings 0.10&nbsp;mm smaller per side</td></tr>
+<tr><td>Stencil</td><td><strong>0.1 mm 304 stainless</strong></td><td>100&nbsp;%, 550&nbsp;mm/s, 30&nbsp;kHz, 30 passes in bursts of 5, 6&nbsp;s rest, 4 zones; holes 0.04&nbsp;mm smaller per side (0.08&nbsp;mm kerf); outline marked once at 50&nbsp;%</td></tr>
+</table></div>
+<p>The other traces presets (<em>FlatCAM isolation</em>, <em>Wide isolation</em>, <em>Moat hatch</em>, <em>Full rubout</em>) say <em>uncalibrated</em>: starting points only.</p>
+
+<h3 id="laser-files">Files</h3>
+<ul>
+  <li><code>Documents/SRM-CAM/laser.log</code> (or <code>$SRM_CAM_HOME/laser.log</code>): every step the laser page ran and what it said, the focus map's points, Calibrate's report, and each etch's job, place, recipe, passes and time. Send it with any question about a laser run.</li>
+  <li><code>Documents/SRM-CAM/exports/copper-calibration/</code>: the copper calibration runs (Pro), each with its settings.</li>
+  <li><span class="ui">Save the files…</span> also writes the laser files beside the mill's: the traces DXF, <code>&lt;name&gt;_mask_mirrored.dxf</code> (for xTool Creative Space, the old way) and the stencil.</li>
+</ul>
+
+<h3 id="laser-cli">The laser on its own</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Command</th><th>Opens</th></tr>
+<tr><td><code>srm-cam-laser</code></td><td>SRM-CAM on the laser page</td></tr>
+<tr><td><code>srm-cam-laser &lt;gerber-folder&gt;</code></td><td>That board, on its laser jobs</td></tr>
+<tr><td><code>srm-cam-laser &lt;board.dxf&gt;</code></td><td>Copper traces from a DXF drawing</td></tr>
+<tr><td><code>srm-cam-laser --job mask &lt;folder&gt;</code></td><td>On that job (<code>traces</code>, <code>mask</code>, <code>silk</code>, <code>stencil</code>)</td></tr>
+<tr><td><code>srm-cam-laser --calibrate</code></td><td>The copper calibration window</td></tr>
+</table></div>
+<p>In the main window: <span class="menu-path">View › The xTool laser</span> (<kbd>Ctrl</kbd>+<kbd>2</kbd>), and <span class="menu-path">File › Open a DXF for the laser…</span>.</p>
+
+<h3 id="laser-keys">Keys on the laser page</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Key</th><th>Does</th></tr>
+<tr><td>Arrow keys</td><td>Nudge the job 0.1&nbsp;mm; <kbd>Shift</kbd> 1&nbsp;mm; <kbd>Ctrl</kbd> 10&nbsp;mm</td></tr>
+<tr><td><kbd>H</kbd></td><td>Hide the drawing / show it again</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo, redo</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>Stops the laser, from any page</td></tr>
+<tr><td>Wheel, double-click, middle-drag</td><td>Zoom, fit, pan the bed (also while it runs)</td></tr>
+</table></div>
 
 <h2>Cutting parameters</h2>
 <p>On each step's page under <span class="menu-path">Cutting parameters</span>, in Pro. In Novice, the profile sets them.</p>
@@ -208,7 +262,7 @@ python -m gerber2rml.doctor                           # fix dependencies after a
 </figure>
 
 <div class="page-nav">
-  <a href="machine-control.html"><span class="lbl">Previous</span><span class="ttl">← Machine control</span></a>
+  <a class="prev" href="photo-and-rework.html"><span class="lbl">Previous</span><span class="ttl">← Photo check &amp; rework</span></a>
   <a class="next" href="troubleshooting.html"><span class="lbl">Next</span><span class="ttl">Troubleshooting →</span></a>
 </div>
 

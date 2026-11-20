@@ -667,7 +667,7 @@ of times. SRM-CAM defaults to **Concentric passes (FlatCAM style)**:
   rings (6 rings, 0.04 mm kerf, 285 lines/cm).
 - **Result on the lab's F1 Ultra (16 Nov 2026):** the whole curtain-drive board
   came out with every net isolated and no fine trace burnt, in about five minutes
-  of laser time, against about two hours on the mill.
+  of laser time, against about two hours with XCS's own fill (the old way).
 - **Other presets:** the rest are still uncalibrated starting points. XCS fill
   settings do not carry over to these vector rings.
 
