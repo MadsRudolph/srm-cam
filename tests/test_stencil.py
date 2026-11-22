@@ -494,10 +494,13 @@ def test_drilled_holes_land_in_the_mask_openings():
     assert all(any(o.contains(f.centroid) for o in art.openings) for f in feats)
 
 
-@pytest.mark.parametrize("action,kind,run", [
-    ("action_mask_laser", "mask", "Open the mask"),
-    ("action_silk_laser", "silk", "Mark the silkscreen")])
-def test_mask_and_silkscreen_open_the_laser_page(qt_app, monkeypatch, action, kind, run):
+@pytest.mark.parametrize("action,kind,run,preset,passes", [
+    ("action_mask_laser", "mask", "Open the mask",
+     "RemoveSolderMask · concentric rings", 4),
+    ("action_silk_laser", "silk", "Mark the silkscreen",
+     "Silkscreen on mask · 15 % × 2, rings", 2)])
+def test_mask_and_silkscreen_open_the_laser_page(qt_app, monkeypatch, action, kind,
+                                                 run, preset, passes):
     monkeypatch.setenv("SRM_CAM_MODE", "pro")
     from gerber2rml.gui2 import stencil_laser as sl
     from gerber2rml.gui2.window import MainWindow
@@ -510,12 +513,12 @@ def test_mask_and_silkscreen_open_the_laser_page(qt_app, monkeypatch, action, ki
         assert w.mode() == "laser" and w.modes.currentWidget() is d
         assert d.embedded and not d.isWindow()
         assert d.kind == kind and d.cut_btn.text() == run
-        assert d.preset.currentText() == "RemoveSolderMask (sphawes)"
+        assert d.preset.currentText() == preset
         assert len(d.base_art.features) == 27
         d.x.setValue(40)
         d.y.setValue(40)
         job = xtool.fill_job(d._shapes(), [], d.recipe())
-        assert job.passes == 6 and job.seconds > 0
+        assert job.passes == passes and job.seconds > 0
         d.close()
     finally:
         w.close()

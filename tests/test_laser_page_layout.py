@@ -126,13 +126,15 @@ def test_the_main_window_opens_boards_not_the_page(qt_app, sl):
 # ------------------------------------------------------------ Escape and the rail
 
 def test_stop_and_is_running(qt_app, sl):
-    stopped = []
+    stopped, sent = [], []
     _host, d = _page(sl, _traces())
-    d.laser = type("L", (), {"stop": lambda self: stopped.append(1)})()
+    d.laser = type("L", (), {"stop": lambda self: stopped.append(1),
+                             "gcode": lambda self, line: sent.append(line)})()
     try:
         assert d.is_running() is False
         d.stop()
         assert stopped == [1] and "Stopped" in d.status.text()
+        assert sent == ["M3S0", "M5"]           # the blue diode put out too
     finally:
         d.close()
 

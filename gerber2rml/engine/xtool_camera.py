@@ -355,12 +355,65 @@ PAD_RING_MM = (0.0, 0.25)   # the trench round a pad, out from the opening + shr
 PAD_SHRINK_MM = 0.1      # openings are drawn this much inside their pads
 
 
+
+# The test fire's image work, in numpy alone: the installer leaves scipy out
+# (packaging/srm-cam.spec), so these stand in for scipy.signal.fftconvolve and
+# scipy.ndimage's label and binary_fill_holes, with their defaults.
+
+def _correlate_same(a, t):
+    """``a`` correlated with ``t``, the size of ``a``: what
+    ``fftconvolve(a, t[::-1, ::-1], mode="same")`` gives."""
+    k = t[::-1, ::-1]
+    sh = (a.shape[0] + k.shape[0] - 1, a.shape[1] + k.shape[1] - 1)
+    full = np.fft.irfft2(np.fft.rfft2(a, sh) * np.fft.rfft2(k, sh), sh)
+    y0, x0 = (k.shape[0] - 1) // 2, (k.shape[1] - 1) // 2
+    return full[y0:y0 + a.shape[0], x0:x0 + a.shape[1]]
+
+
+def _label(mask):
+    """The 4-connected pieces of bool ``mask``: (labels 1..n, n), numbered
+    in the order a row-by-row scan meets them, as ndimage.label numbers them."""
+    H, W = mask.shape
+    lab = np.zeros((H, W), np.int32)
+    n = 0
+    for y0, x0 in zip(*np.nonzero(mask)):
+        if lab[y0, x0]:
+            continue
+        n += 1
+        lab[y0, x0] = n
+        stack = [(y0, x0)]
+        while stack:
+            y, x = stack.pop()
+            for yy, xx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                if 0 <= yy < H and 0 <= xx < W and mask[yy, xx] and not lab[yy, xx]:
+                    lab[yy, xx] = n
+                    stack.append((yy, xx))
+    return lab, n
+
+
+def _fill_holes(mask):
+    """``mask`` with every hole in it filled: what is not reached from the
+    border through 4-connected background is set."""
+    H, W = mask.shape
+    out = np.zeros((H, W), bool)
+    stack = [(y, x) for y in range(H) for x in (0, W - 1) if not mask[y, x]]
+    stack += [(y, x) for x in range(W) for y in (0, H - 1) if not mask[y, x]]
+    for y, x in stack:
+        out[y, x] = True
+    while stack:
+        y, x = stack.pop()
+        for yy, xx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if 0 <= yy < H and 0 <= xx < W and not mask[yy, xx] and not out[yy, xx]:
+                out[yy, xx] = True
+                stack.append((yy, xx))
+    return ~out
+
+
 def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM):
     """Where the pad of ``opening`` (drawn, bed mm) is in ``gray`` (a photo
     from before the burn), within ``search_mm`` of ``near``: the middle of
     the best fit of its outline ring and its hole (dx, dy, d from the
     opening's middle) on the darkness there. Bed mm, or None."""
-    from scipy.signal import fftconvolve
     from matplotlib.path import Path as _MPath
     from shapely.affinity import translate as _tr
     from shapely.geometry import Point
@@ -393,7 +446,7 @@ def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM
     win = gray[cj - s:cj + s + 1, ci - s:ci + s + 1]
     bg = _box_blur(win, max(2, int(1.0 * px_per_mm)))
     D = np.clip(bg - win, 0, None)
-    score = fftconvolve(D, T[::-1, ::-1], mode="same")
+    score = _correlate_same(D, T)
     m = int(np.ceil(search_mm * px_per_mm))
     yy, xx = np.mgrid[-s:s + 1, -s:s + 1]
     score[(xx * xx + yy * yy) > m * m] = -np.inf
@@ -432,19 +485,17 @@ class OpeningFit:
 
 def _blob_near(mask, at, px_per_mm):
     """The connected piece of ``mask`` nearest ``at`` (px), as a bool image."""
-    from scipy import ndimage
-    lab, n = ndimage.label(mask)
+    lab, n = _label(mask)
     if not n:
         return None
     best, bd = None, None
-    for i, sl in enumerate(ndimage.find_objects(lab)):
-        cy, cx = ndimage.center_of_mass(lab[sl] == i + 1)
-        d = math.hypot(sl[1].start + cx - at[0], sl[0].start + cy - at[1])
-        size = (lab[sl] == i + 1).sum()
-        if size < 0.15 * px_per_mm ** 2:            # specks
+    for i in range(1, n + 1):
+        yy, xx = np.nonzero(lab == i)
+        if len(yy) < 0.15 * px_per_mm ** 2:         # specks
             continue
+        d = math.hypot(xx.mean() - at[0], yy.mean() - at[1])
         if bd is None or d < bd:
-            best, bd = i + 1, d
+            best, bd = i, d
     return None if best is None else lab == best
 
 
@@ -479,8 +530,7 @@ def fit_test_openings(before, after, px_per_mm, tests, *, search_mm=3.0,
         # The hole is dark in both photos, so it is a gap in what changed;
         # where it sits at the opening's edge, a notch. The opening's middle
         # is the middle of its extent, which neither moves.
-        from scipy import ndimage
-        blob = ndimage.binary_fill_holes(blob)
+        blob = _fill_holes(blob)
         yy, xx = np.nonzero(blob)
         ox = (xx.min() + xx.max()) / 2                      # the opening, px
         oy = (yy.min() + yy.max()) / 2
