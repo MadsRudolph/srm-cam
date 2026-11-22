@@ -30,6 +30,7 @@ numpy is needed here; it comes with the GUI's dependencies, and only the GUI
 uses this module.
 """
 import json
+import math
 import re
 from dataclasses import dataclass
 
@@ -232,8 +233,11 @@ class Alignment:
 # Holes cut in steel show bright plate through every one: 85 %. Holes drilled
 # in a board sit over the bed's slats, and over a bright slat a hole hardly
 # reads dark: at the machine 42-44 of 52 on a drilled board, the fit the same
-# every time. A wrong place or a wrong way round finds far fewer.
-DRILLED_NEED = 0.75
+# every time. A wrong place or a wrong way round finds far fewer. Under solder
+# mask ink many holes are part filled and read paler still: the env board of
+# the analog synth (2026-11-22) matched 131-141 of 205 at its true place, 64-69
+# %, and at most 71 (35 %) anywhere wrong. 75 % turned the right fit away.
+DRILLED_NEED = 0.55
 
 
 @dataclass
@@ -340,6 +344,193 @@ def align(bed_rgb, px_per_mm, holes, *, search_mm=25.0, max_turn=6.0, polarity="
             found += 1
     return Alignment(dx=dx_mm, dy=dy_mm, turn=float(deg), found=found,
                      total=len(holes), score=float(s), need=need)
+
+
+# ---------------------------------------------------------------------------
+# Test openings: where a few burnt pads landed against their own holes
+# ---------------------------------------------------------------------------
+
+PAD_SEARCH_MM = 1.5      # how far a pad may be from where its opening burnt
+PAD_RING_MM = (0.0, 0.25)   # the trench round a pad, out from the opening + shrink
+PAD_SHRINK_MM = 0.1      # openings are drawn this much inside their pads
+
+
+def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM):
+    """Where the pad of ``opening`` (drawn, bed mm) is in ``gray`` (a photo
+    from before the burn), within ``search_mm`` of ``near``: the middle of
+    the best fit of its outline ring and its hole (dx, dy, d from the
+    opening's middle) on the darkness there. Bed mm, or None."""
+    from scipy.signal import fftconvolve
+    from matplotlib.path import Path as _MPath
+    from shapely.affinity import translate as _tr
+    from shapely.geometry import Point
+    c = opening.centroid
+    shape = _tr(opening, -c.x, -c.y)
+    padp = shape.buffer(PAD_SHRINK_MM)
+    ring = padp.buffer(PAD_RING_MM[1]).difference(padp.buffer(PAD_RING_MM[0]))
+    hx, hy, hd = hole
+    disc = Point(hx, hy).buffer(max(hd, 0.3) / 2)
+    x0, y0, x1, y1 = padp.buffer(PAD_RING_MM[1]).bounds
+    kr = int(np.ceil(max(-x0, x1, -y0, y1) * px_per_mm)) + 1
+    ky, kx = np.mgrid[-kr:kr + 1, -kr:kr + 1]
+    pts = np.c_[kx.ravel() / px_per_mm, ky.ravel() / px_per_mm]
+
+    def raster(geom):
+        out = np.zeros(len(pts), bool)
+        for gg in getattr(geom, "geoms", [geom]):
+            m = _MPath(np.asarray(gg.exterior.coords)).contains_points(pts)
+            for r in gg.interiors:
+                m &= ~_MPath(np.asarray(r.coords)).contains_points(pts)
+            out |= m
+        return out.reshape(kx.shape)
+    T = raster(ring).astype(np.float32) + raster(disc).astype(np.float32)
+    T -= T.mean()
+    H, W = gray.shape
+    s = int(np.ceil(search_mm * px_per_mm)) + kr + 2
+    ci, cj = int(round(near[0] * px_per_mm)), int(round(near[1] * px_per_mm))
+    if ci - s < 0 or cj - s < 0 or ci + s >= W or cj + s >= H:
+        return None
+    win = gray[cj - s:cj + s + 1, ci - s:ci + s + 1]
+    bg = _box_blur(win, max(2, int(1.0 * px_per_mm)))
+    D = np.clip(bg - win, 0, None)
+    score = fftconvolve(D, T[::-1, ::-1], mode="same")
+    m = int(np.ceil(search_mm * px_per_mm))
+    yy, xx = np.mgrid[-s:s + 1, -s:s + 1]
+    score[(xx * xx + yy * yy) > m * m] = -np.inf
+    j, i = np.unravel_index(np.argmax(score), score.shape)
+    if not np.isfinite(score[j, i]) or score[j, i] <= 0:
+        return None
+
+    def vertex(a_, b_, c_):
+        d = a_ - 2 * b_ + c_
+        return 0.0 if not np.isfinite(d) or d >= 0 else 0.5 * (a_ - c_) / d
+    fx = vertex(score[j, i - 1], score[j, i], score[j, i + 1]) if 0 < i < score.shape[1] - 1 else 0.0
+    fy = vertex(score[j - 1, i], score[j, i], score[j + 1, i]) if 0 < j < score.shape[0] - 1 else 0.0
+    return ((ci - s + i + fx) / px_per_mm, (cj - s + j + fy) / px_per_mm)
+
+
+HOLE_REACH_MM = 0.15     # past the burnt opening's edge, short of the trench
+HOLE_DARK = 0.6          # of the bare copper's brightness: the hole is darker
+HOLE_UNDER_INK = 0.75    # and of the ink's round the opening
+
+
+@dataclass
+class OpeningFit:
+    """How to move a job so its test openings sit on their holes."""
+    dx: float               # mm on the bed, Y down
+    dy: float
+    turn: float             # degrees clockwise about ``centre``
+    centre: tuple           # middle of the openings as drawn
+    offsets: list           # per opening: (drawn centre, hole minus opening)
+    total: int
+    used: int = 0           # measured and agreeing with the rest
+
+    @property
+    def worst(self):
+        return max((math.hypot(*o) for _c, o in self.offsets), default=0.0)
+
+
+def _blob_near(mask, at, px_per_mm):
+    """The connected piece of ``mask`` nearest ``at`` (px), as a bool image."""
+    from scipy import ndimage
+    lab, n = ndimage.label(mask)
+    if not n:
+        return None
+    best, bd = None, None
+    for i, sl in enumerate(ndimage.find_objects(lab)):
+        cy, cx = ndimage.center_of_mass(lab[sl] == i + 1)
+        d = math.hypot(sl[1].start + cx - at[0], sl[0].start + cy - at[1])
+        size = (lab[sl] == i + 1).sum()
+        if size < 0.15 * px_per_mm ** 2:            # specks
+            continue
+        if bd is None or d < bd:
+            best, bd = i + 1, d
+    return None if best is None else lab == best
+
+
+def fit_test_openings(before, after, px_per_mm, tests, *, search_mm=3.0,
+                      min_spread_mm=15.0, max_off_mm=2.0, outlier_mm=0.3):
+    """``before`` and ``after`` straightened photos (same frame, ``px_per_mm``)
+    either side of burning a few openings; ``tests`` are (opening polygon,
+    hole (x, y, diameter)) on the bed as drawn. Each opening is found where it
+    changed the photo, its hole as the darkest hole-sized spot round it, both
+    in the same photo, so the camera's own error cancels. Returns an
+    :class:`OpeningFit` moving the job onto the holes (a turn too when the
+    openings are spread out), or None when none could be measured."""
+    g0 = before.astype(np.float32).mean(axis=2)
+    g1 = after.astype(np.float32).mean(axis=2)
+    H, W = g1.shape
+    drawn, moved = [], []
+    offsets = []
+    k = int(search_mm * px_per_mm)
+    for opening, (hx, hy, hd) in tests:
+        c = opening.centroid
+        ci, cj = int(round(c.x * px_per_mm)), int(round(c.y * px_per_mm))
+        if ci - k < 0 or cj - k < 0 or ci + k >= W or cj + k >= H:
+            continue
+        win0 = g0[cj - k:cj + k + 1, ci - k:ci + k + 1]
+        win1 = g1[cj - k:cj + k + 1, ci - k:ci + k + 1]
+        diff = win1 - win0
+        if diff.max() < 25:
+            continue
+        blob = _blob_near(diff > max(25.0, 0.4 * float(diff.max())), (k, k), px_per_mm)
+        if blob is None:
+            continue
+        # The hole is dark in both photos, so it is a gap in what changed;
+        # where it sits at the opening's edge, a notch. The opening's middle
+        # is the middle of its extent, which neither moves.
+        from scipy import ndimage
+        blob = ndimage.binary_fill_holes(blob)
+        yy, xx = np.nonzero(blob)
+        ox = (xx.min() + xx.max()) / 2                      # the opening, px
+        oy = (yy.min() + yy.max()) / 2
+        # The pad, in the photo from before: the trench etched round it and
+        # its drilled hole both show through the ink (after the burn the hole
+        # hides in the opening's edge). A drawing of that ring and hole is
+        # slid over the darkness there; where it fits best is the pad. The
+        # job is lined up on the copper, so a hole drilled a little off its
+        # pad does not pull it.
+        sx_mm = (ci - k + ox) / px_per_mm
+        sy_mm = (cj - k + oy) / px_per_mm
+        pad = _pad_centre(g0, px_per_mm, opening, (hx - c.x, hy - c.y, hd),
+                          (sx_mm, sy_mm), search_mm=PAD_SEARCH_MM)
+        if pad is None:
+            continue
+        off = (pad[0] - sx_mm, pad[1] - sy_mm)
+        if math.hypot(*off) > max_off_mm:
+            continue
+        drawn.append((c.x, c.y))
+        moved.append((c.x + off[0], c.y + off[1]))
+        offsets.append(((c.x, c.y), off))
+    if not drawn:
+        return None
+    # A hole the mill put a little off its pad says the job is off when it
+    # is not: with three or more, the ones further than ``outlier_mm`` from
+    # the best turn-and-shift of them all are left out (and still listed).
+    P, Q = np.array(drawn), np.array(moved)
+    spread = len(P) >= 2 and np.ptp(P, axis=0).max() >= min_spread_mm
+
+    def rigid(P, Q):
+        pm, qm = P.mean(axis=0), Q.mean(axis=0)
+        th = 0.0
+        if spread and len(P) >= 2:
+            A, B = P - pm, Q - qm
+            th = math.atan2((A[:, 0] * B[:, 1] - A[:, 1] * B[:, 0]).sum(),
+                            (A * B).sum())
+        return pm, qm, th
+
+    pm, qm, th = rigid(P, Q)
+    if len(P) >= 3:
+        c_, s_ = math.cos(th), math.sin(th)
+        fit = (P - pm) @ np.array([[c_, s_], [-s_, c_]]) + qm
+        keep = np.hypot(*(fit - Q).T) <= outlier_mm
+        if 2 <= keep.sum() < len(P):
+            P, Q = P[keep], Q[keep]
+            pm, qm, th = rigid(P, Q)
+    turn = math.degrees(th)
+    return OpeningFit(dx=float(qm[0] - pm[0]), dy=float(qm[1] - pm[1]), turn=turn,
+                      centre=(float(pm[0]), float(pm[1])), offsets=offsets,
+                      total=len(tests), used=len(P))
 
 
 # ---------------------------------------------------------------------------

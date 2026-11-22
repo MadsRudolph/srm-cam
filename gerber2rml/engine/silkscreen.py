@@ -48,6 +48,7 @@ __all__ = ["LAYER_SILK", "LAYER_OUTLINE", "SilkError", "SilkArtwork",
 _SILK_PATTERNS = {"top": ("*-F_Silkscreen.*", "*-F_SilkS.*", "*.gto"),
                   "bottom": ("*-B_Silkscreen.*", "*-B_SilkS.*", "*.gbo")}
 _LAYER_NAME = {"top": "F.Silkscreen", "bottom": "B.Silkscreen"}
+SIMPLIFY_MM = 0.01        # far finer than the beam
 _CLIP_MM2 = 0.01          # less than this off the board is a rounding, not a clip
 
 
@@ -124,7 +125,12 @@ def build_silk(folder, *, side="top", mirror=None):
     x0, y0, _, _ = outline.bounds
     outline = translate(outline, -x0, -y0)
     on_board = translate(on_board, -x0, -y0)
-    shapes = [p for p in _polygons(on_board) if p.area >= _SLIVER_MM2]
+    # Outlined text comes with curves drawn very finely: vcf's top had 495
+    # shapes in 108 000 points, and the page froze working on them. Drawn to
+    # SIMPLIFY_MM they keep their shape (under 1 % of the area) in a seventh.
+    shapes = [q for p in _polygons(on_board) if p.area >= _SLIVER_MM2
+              for q in _polygons(p.simplify(SIMPLIFY_MM).buffer(0))
+              if q.area >= _SLIVER_MM2]
     if not shapes:
         raise SilkError(
             f"Everything on {path.name} lies outside the board outline. The "

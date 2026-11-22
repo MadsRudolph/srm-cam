@@ -193,6 +193,23 @@ def bias_at(at):
     return ref.at(*at)
 
 
+class Stopped(RuntimeError):
+    """STOP was pressed while the dot was measuring."""
+
+
+def _measure_or_stop(page, points, progress):
+    """The dot over ``points``; STOP on the page ends it between two points
+    (2026-11-22: a focus map pressed by mistake ran on, STOP only stopped
+    jobs). A map cut short is thrown away, never used."""
+    fmap = lf.measure_map(page.laser, page._calibration(), points,
+                          progress=lambda i, n: progress(i),
+                          should_stop=lambda: getattr(page, "_stop_requested", False))
+    if getattr(page, "_stop_requested", False):
+        raise Stopped("Stopped. The focus measurement was not finished, so "
+                      "nothing was changed.")
+    return fmap
+
+
 def calibrate(page):
     """Measure the machine's error over the job's area on a sheet known to be
     flat (fresh copper-clad lying on the bed), the head focused on it."""
@@ -209,8 +226,7 @@ def calibrate(page):
     points.append(centre)
 
     def work(progress):
-        return lf.measure_map(page.laser, page._calibration(), points,
-                              progress=lambda i, n: progress(i))
+        return _measure_or_stop(page, points, progress)
 
     def done(fmap):
         ref = lf.reference_from(fmap)
@@ -249,8 +265,7 @@ def measure(page):
     ref = load_reference()
 
     def work(progress):
-        return lf.measure_map(page.laser, page._calibration(), points,
-                              progress=lambda i, n: progress(i))
+        return _measure_or_stop(page, points, progress)
 
     def done(fmap):
         raw = fmap

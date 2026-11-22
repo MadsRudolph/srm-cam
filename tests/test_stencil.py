@@ -697,6 +697,34 @@ def test_curtain_drive_top_traces_can_be_selected(qt_app, monkeypatch):
         w.close()
 
 
+def test_the_mask_has_a_top_face_too(qt_app, monkeypatch):
+    """A two-sided board gets ink on both faces (the analog synth, 2026-11-22):
+    the face switch opens F.Mask as drawn, B.Mask mirrored."""
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.window import MainWindow
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "mask-faces"))
+    w = MainWindow()
+    try:
+        w.load_folder(str(Path(__file__).parent / "fixtures" / "mosfet_test"))
+        w.action_traces_laser()
+        d = w.laser_view
+        d.switch_kind("mask")
+        assert d.kind == "mask" and d.art.side == "bottom" and d.art.mirrored
+        assert d.copper_side_field.isVisibleTo(d)
+        assert "B.Mask (bottom)" in d.size_lbl.text()
+        n = len(d.art.apertures)
+        d.copper_side.setCurrentIndex(d.copper_side.findData("top"))
+        assert d.kind == "mask" and d.art.side == "top" and not d.art.mirrored
+        assert "F.Mask (top)" in d.size_lbl.text()
+        assert len(d.art.apertures) == n > 0
+        # Back on the copper the face stays where it was put.
+        d.switch_kind("traces")
+        assert d.kind == "traces" and d.art.side == "top"
+        d.close()
+    finally:
+        w.close()
+
+
 def test_vector_passes_remove_moves_that_collapse_at_output_precision():
     paths = [[(0, 0), (0.0001, -0.0001), (1, 0), (1.0001, 0), (0, 0)],
              [(2, 2), (2.0001, 2.0001)], []]

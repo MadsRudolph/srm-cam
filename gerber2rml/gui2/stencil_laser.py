@@ -35,6 +35,7 @@ and below the bed go onto two rows when there is no room for one
 (``_Reflow``), and the side panel wraps its text and only scrolls up and down.
 """
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -69,7 +70,15 @@ BUILTIN_PRESETS = {
 }
 # Filled jobs: the sphawes/fiber-laser-pcb-fab settings the lab imports into XCS.
 FILL_PRESETS = {
-    "RemoveSolderMask (sphawes)": xtool.SPHAWES_REMOVE_MASK,
+    # The default: proven on the analog synth's boards, 2026-11-22.
+    "RemoveSolderMask · concentric rings": xtool.CONCENTRIC_REMOVE_MASK,
+    "RemoveSolderMask (sphawes, hatch)": xtool.SPHAWES_REMOVE_MASK,
+    "Traces (sphawes)": xtool.SPHAWES_TRACES,
+}
+# Silkscreen on the cured mask: its own list, so the mask's (which burns
+# through to copper) is never its default.
+SILK_PRESETS = {
+    "Silkscreen on mask · 15 % × 2, rings": xtool.SILK_ON_MASK,
     "Traces (sphawes)": xtool.SPHAWES_TRACES,
 }
 # Copper trace presets: FlatCAM-style concentric isolation + optional moat / rubout.
@@ -104,8 +113,11 @@ KINDS = {
     "silk": dict(window="silkscreen", step="Mark the silkscreen",
                  section="The silkscreen", noun="shape", run="Mark the silkscreen",
                  run_selected="Mark {n} selected", busy="Marking the silkscreen",
-                 presets=FILL_PRESETS),
+                 presets=SILK_PRESETS),
 }
+TEST_FIRE_PX_PER_MM = 16
+# The jobs the face switch turns between B and F: the copper and its mask.
+FACE_KINDS = ("traces", "mask")
 _LEGEND_NOUN = {"traces": "isolation trench", "stencil": "paste hole",
                 "mask": "mask opening", "silk": "silkscreen", "calibration": "test vectors"}
 
@@ -700,7 +712,7 @@ class StencilLaserDialog(QDialog):
         self._jobs = jobs
         self._source = art
         self.base_art = art
-        self._trace_side = art.side if art.kind == "traces" else None
+        self._trace_side = art.side if art.kind in FACE_KINDS else None
         self.turns = 0
         self.fine = 0.0                     # degrees on top of the quarter turns
         self.look = "filled"
@@ -1183,6 +1195,11 @@ class StencilLaserDialog(QDialog):
         self._spot_by_hand = False
         self._spot_auto = False             # True while the page sets it
         self.spot_drills.toggled.connect(self._spot_toggled)
+        self.fill_pattern = QComboBox()
+        self.fill_pattern.addItem("Hatch: lines across the whole board", "hatch")
+        self.fill_pattern.addItem("Concentric rings: pad by pad", "concentric")
+        self.fill_pattern_field = widgets.Field("Fill", self.fill_pattern)
+        self.fill_pattern.currentIndexChanged.connect(self._fill_pattern_changed)
         self.cross = QCheckBox("Cross hatch: each pass at right angles to the last")
         self.one_way = QCheckBox("One way: every line drawn the same direction")
         self.mark = QCheckBox("Mark the board outline afterwards")
@@ -1206,6 +1223,7 @@ class StencilLaserDialog(QDialog):
         self.edge_radius_field = widgets.Field(
             "Beyond", self.edge_radius, unit="mm from the bed's middle")
 
+        self.recipe_more.body.addWidget(self.fill_pattern_field)
         for field_w, wdg in (
             (self.power_field, self.power),
             (self.speed_field, self.speed),
@@ -1288,9 +1306,22 @@ class StencilLaserDialog(QDialog):
         mv.addWidget(self.bar)
         self.photo_after = QCheckBox("Photo when done")
         self.photo_after.setChecked(True)
+        # A mask's test fire moves the job onto the pads it opened - once. It
+        # clears itself after, so reworking a few openings (also a selected
+        # run) never moves the job again (2026-11-22, the analog synth).
+        self.line_up = QCheckBox("Line up on this test fire")
+        self.line_up.setChecked(True)
+        self.line_up.setToolTip(
+            "Open a few selected pads that have holes: the job then moves onto "
+            "those pads. Clears itself once it has, and after the whole face, "
+            "so reworking selected pads does not move the job. Tick it again "
+            "for another line-up.")
         self.trace_btn = widgets.button(
             "Show where", on=self.trace,
-            tip="The blue diode round the outline, faint enough not to mark steel")
+            tip="The blue diode round the outline, faint enough not to mark steel. "
+                "With shapes selected: round each of them instead, fast, for "
+                "about 15 s, as XCS frames (the lid may be open) - line the "
+                "job up by eye, nudge with the arrow keys, show again.")
         # The whole set-up of a traces job, one press (gui2/laser_autocal.py).
         self.autocal_btn = widgets.button(
             "Calibrate", kind="primary", on=lambda: _autocal.start(self),
@@ -1303,7 +1334,7 @@ class StencilLaserDialog(QDialog):
         self.stop_btn.setMinimumWidth(112)
         readouts = _group(self.cursor_read, self.sel_read, self.time_read,
                           gap=theme.GAP_M)
-        runs = _group(self.photo_after, self.trace_btn, self.autocal_btn,
+        runs = _group(self.line_up, self.photo_after, self.trace_btn, self.autocal_btn,
                       self.cut_btn,
                       self.stop_btn, gap=theme.GAP_M)
         foot = _Reflow(readouts, mid, runs, move_first=True, stretch=1, room=240,
@@ -1563,6 +1594,10 @@ class StencilLaserDialog(QDialog):
             self._inspector_w = need
             scroll.setFixedWidth(need)
 
+    def _fill_pattern_changed(self, *_a):
+        self._sync_recipe_widgets()
+        self._recipe_changed()
+
     def _sync_recipe_widgets(self):
         is_stencil = self.kind == "stencil"
         is_traces = self.kind == "traces"
@@ -1572,7 +1607,8 @@ class StencilLaserDialog(QDialog):
             self.calibrate_btn.setVisible(is_traces and self._pro())
         strat = self.strategy.currentData() or "concentric"
         is_hatch = is_traces and strat in ("moat", "rubout")
-        self.copper_side_field.setVisible(is_traces)
+        self.copper_side_field.setVisible(
+            is_traces or (self.kind == "mask" and self._dxf is None))
         self.strategy_field.setVisible(is_traces)
         self.offsets_field.setVisible(is_traces and strat != "rubout")
         self.trace_kerf_field.setVisible(is_traces)
@@ -1584,35 +1620,47 @@ class StencilLaserDialog(QDialog):
             f.setVisible(is_traces and strat == "concentric")
         self.spot_drills.setVisible(is_traces and bool(self.base_art.drills))
         self._sync_spot_drills()
-        self.cross.setVisible(self.kind in ("mask", "silk") or is_hatch)
-        self.one_way.setVisible(self.kind in ("mask", "silk") or is_hatch)
+        filled = self.kind in ("mask", "silk")
+        self.line_up.setVisible(self.kind == "mask")
+        lines = filled and self.fill_pattern.currentData() != "concentric"
+        self.fill_pattern_field.setVisible(filled)
+        self.cross.setVisible(lines or is_hatch)
+        self.one_way.setVisible(lines or is_hatch)
         self.mark.setText("Mark the board outline afterwards"
                           if is_stencil else
                           "Score the board outline afterwards, faintly")
         self._fit_inspector()
 
-    def _trace_art_for(self, side):
-        if self._dxf is not None:
+    def _trace_art_for(self, side, kind="traces"):
+        if self._dxf is not None and kind == "traces":
             from gerber2rml.engine import dxf_traces
             return dxf_traces.build_dxf_traces(self._dxf, side=side)
         if callable(self._jobs):
-            return self._jobs("traces", side=side)
+            return self._jobs(kind, side=side)
         if self._host is not None and hasattr(self._host, "_laser_art_for"):
-            return self._host._laser_art_for("traces", side=side)
+            return self._host._laser_art_for(kind, side=side)
         raise ValueError("Load this Gerber folder in the main window to change copper faces.")
 
     def _switch_copper_side(self, *_a):
         side = self.copper_side.currentData()
-        if self.kind != "traces" or side == self.base_art.side:
+        if self.kind not in FACE_KINDS or side == self.base_art.side:
             return
         self._extra_mirror = False          # the face's own mirroring again
         try:
-            art = self._trace_art_for(side)
+            art = self._trace_art_for(side, self.kind)
         except Exception as e:
             self.copper_side.blockSignals(True)
             self.copper_side.setCurrentIndex(self.copper_side.findData(self.base_art.side))
             self.copper_side.blockSignals(False)
             self._say(str(e), warn=True)
+            return
+        if self.kind == "mask":
+            self._apply_kind("mask", art)
+            self._sync_warnings()
+            self._sync_recipe_widgets()
+            self._sync_orientation()
+            self._say(f"Showing {'F.Mask (top)' if side == 'top' else 'B.Mask (bottom)'}. "
+                      "Place that face upwards on the laser bed.")
             return
         self._take_traces_art(art)
         self._say(f"Showing {'F.Cu (top)' if side == 'top' else 'B.Cu (bottom)'}. "
@@ -1739,6 +1787,9 @@ class StencilLaserDialog(QDialog):
             if kind == "traces" and (self._trace_side is not None
                                      or self._dxf is not None):
                 new_art = self._trace_art_for(self._trace_side or "top")
+            elif kind == "mask" and self._trace_side is not None \
+                    and self._dxf is None:
+                new_art = self._trace_art_for(self._trace_side, "mask")
             elif callable(self._jobs):
                 new_art = self._jobs(kind)
             elif isinstance(self._jobs, dict) and kind in self._jobs:
@@ -1813,6 +1864,7 @@ class StencilLaserDialog(QDialog):
 
     def _apply_kind(self, kind, new_art):
         changed = kind != self.kind
+        self.line_up.setChecked(True)       # a new job or face: line it up
         self.kind = kind
         self.k = KINDS[kind]
         self._made_with = self._host_setting(kind)
@@ -1821,7 +1873,7 @@ class StencilLaserDialog(QDialog):
         self.auto_reference_source.setCurrentIndex(1 if kind == "stencil" else 0)
         self._populate_auto_references()
         self.art = xtool.rotated(self.base_art, self.turns, self.fine)
-        if kind == "traces":
+        if kind in FACE_KINDS:
             self._trace_side = self.base_art.side
             self.copper_side.blockSignals(True)
             self.copper_side.setCurrentIndex(self.copper_side.findData(self._trace_side))
@@ -1903,7 +1955,9 @@ class StencilLaserDialog(QDialog):
         n = len(self.art.apertures)
         self.size_lbl.setText(
             (f"{'F.Cu (top)' if self.art.side == 'top' else 'B.Cu (bottom)'} · "
-             if self.kind == "traces" else "")
+             if self.kind == "traces" else
+             f"{'F.Mask (top)' if self.art.side == 'top' else 'B.Mask (bottom)'} · "
+             if self.kind == "mask" else "")
             + f"{n} {self._noun(n)} · {w:.1f} × {h:.1f} mm · "
             f"{'mirrored' if self.art.mirrored else 'not mirrored'}"
             + (" · flipped" if getattr(self.art, "flipped", False) else "")
@@ -2415,6 +2469,7 @@ class StencilLaserDialog(QDialog):
         self.sel_read.set(f"{n} / {total}" if n else f"{total}")
         self.sel_read.set_label("Selected" if n else self._noun(2))
         self.cut_btn.setText(self.k["run_selected"].format(n=n) if n else self.k["run"])
+        self.trace_btn.setText(f"Show {n} in blue" if n else "Show where")
         if estimate:
             self._estimate()
 
@@ -2484,13 +2539,17 @@ class StencilLaserDialog(QDialog):
         else:
             self.passes.setValue(d["passes"])
             self.density.setValue(d["lines_per_cm"])
+            self.fill_pattern.blockSignals(True)
+            self.fill_pattern.setCurrentIndex(max(0, self.fill_pattern.findData(
+                d.get("pattern", "hatch"))))
+            self.fill_pattern.blockSignals(False)
             self.cross.setChecked(bool(d["cross_hatch"]))
             self.one_way.setChecked(bool(d["one_way"]))
             self.mark.setChecked(bool(d["mark_outline"]))
         self._syncing_recipe = False
         self.del_btn.setEnabled(name in saved)
         QSettings(*_SETTINGS).setValue(self._key("preset"), name)
-        if self.kind == "traces":
+        if self.kind != "stencil":         # strategy or fill pattern changed
             self._sync_recipe_widgets()
             self._refresh_traces_art()
         self._recipe_changed()
@@ -2589,9 +2648,11 @@ class StencilLaserDialog(QDialog):
                 what = (f"{mode} · {r.power:g} % · {r.speed:g} mm/s · {r.passes} passes · "
                         f"{r.lines_per_cm:g} lines/cm")
         else:
-            what = (f"{r.power:g} % · {r.speed:g} mm/s · {r.passes} pass"
+            rings = getattr(r, "pattern", "hatch") == "concentric"
+            what = (("Concentric rings · " if rings else "")
+                    + f"{r.power:g} % · {r.speed:g} mm/s · {r.passes} pass"
                     f"{'' if r.passes == 1 else 'es'}"
-                    f"{', cross-hatched' if r.cross_hatch else ''} · "
+                    f"{', cross-hatched' if r.cross_hatch and not rings else ''} · "
                     f"{r.lines_per_cm:g} lines/cm ({r.interval:.3f} mm)")
         uncalibrated = (self.kind == "traces" and self.preset.currentText() in TRACES_PRESETS
                         and "proven" not in self.preset.currentText())
@@ -2623,6 +2684,8 @@ class StencilLaserDialog(QDialog):
         key = f"laser_{self.kind}"
         if plan is not None and plan.by_key(key) is not None \
                 and hasattr(host, "traveller"):
+            if self.kind == "mask" and getattr(self, "_trace_side", None) == "top":
+                return                  # the rail's mask row is the bottom face
             if self.kind == "traces" and getattr(self, "_trace_side", None) == "top":
                 # The second face of a two-sided board: its own tick in a
                 # project (gui2/projectpage.py); the rail has one row.
@@ -2700,7 +2763,8 @@ class StencilLaserDialog(QDialog):
                                     lines_per_cm=self.density.value(),
                                     cross_hatch=self.cross.isChecked(),
                                     one_way=self.one_way.isChecked(),
-                                    mark_outline=self.mark.isChecked())
+                                    mark_outline=self.mark.isChecked(),
+                                    pattern=self.fill_pattern.currentData() or "hatch")
         return xtool.Recipe(power=self.power.value(), speed=self.speed.value(),
                             frequency=self.freq.value(),
                             total_passes=self.passes.value(),
@@ -3123,7 +3187,8 @@ class StencilLaserDialog(QDialog):
         for w in (self.proof_hint, self.proof_btn):
             w.setVisible(on)
         if hasattr(self, "autocal_btn"):
-            self.autocal_btn.setVisible(on)
+            self.autocal_btn.setVisible(on or (self.kind == "mask" and len(
+                self.base_art.features or []) >= 2))
         self.proof_more.setVisible(on and self._pro())
         if not on:
             self.proof_note.setVisible(False)
@@ -3364,6 +3429,8 @@ class StencilLaserDialog(QDialog):
 
     def trace(self):
         self._settle()
+        if self.selected:
+            return self._show_selected()
         try:
             _, outline = xtool.stencil_paths(self.art, self.origin())
             text = xtool.trace_job(outline)
@@ -3376,6 +3443,25 @@ class StencilLaserDialog(QDialog):
             self.laser.wait(180)
         self._start(work, "Tracing the outline in blue…",
                     lambda _r: "Traced. Move the stencil if it was off.")
+
+    def _show_selected(self):
+        """The selected shapes' outlines in blue, round and round for a while,
+        as XCS frames: line the job up by eye on the pads, nudge, show again."""
+        try:
+            text, secs, power, rate = xtool.show_job(
+                _bed_shapes(self.art, self.origin(), set(self.selected)))
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        self._remember()
+        n = len(self.selected)
+
+        def work(_p):
+            self.laser.frame(text)
+            self.laser.wait(secs * 3 + 60)
+        steady = "" if rate >= 30 else " (choose fewer to stop the flicker)"
+        self._start(work, f"Showing {n} in blue, lid open to see it{steady}…",
+                    lambda _r: "Shown. If the blue was off the pads, nudge "
+                               "with the arrow keys (0.1 mm a press) and show again.")
 
     def cut(self):
         self._settle()
@@ -3456,6 +3542,7 @@ class StencilLaserDialog(QDialog):
         self.bar.setVisible(True)
         take_photo = self.photo_after.isChecked()
         before = self._raw_rgb
+        tests = self._test_openings()       # a few pads fired: line up on them
 
         fmap = getattr(self, "_focus_map", None)
         zones = None
@@ -3508,6 +3595,10 @@ class StencilLaserDialog(QDialog):
 
         def work(progress):
             z = self.laser.z()
+            # The test fire's measure: at 8 px/mm a pixel is 0.125 mm, and on
+            # brain (2026-11-22) the job was still about that far off after.
+            hi = TEST_FIRE_PX_PER_MM
+            raw_a = self._raw_photo() if tests else None
             run_map = fmap
             if field:
                 from gerber2rml.engine import laser_focus as _lf
@@ -3531,16 +3622,25 @@ class StencilLaserDialog(QDialog):
                                              {"state": "P_IDLE"})
                 self.laser.run(job.text)
                 self.laser.wait(job.seconds * 2 + 120, progress=progress)
-            return z, (self._photo_after_job(before) if take_photo else None)
+            if tests:
+                from gerber2rml.engine import xtool_camera as cam
+                raw_b = self._raw_photo(like=raw_a)
+                fit = cam.fit_test_openings(self._photo(hi, raw_a),
+                                            self._photo(hi, raw_b), hi, tests)
+                return z, self._photo(_PX_PER_MM, raw_b), fit
+            return z, (self._photo_after_job(before) if take_photo else None), None
 
         whole = not self.selected and not field
 
         def done(res):
-            z, rgb = res
+            z, rgb, fit = res
             if rgb is not None:
                 self.show_bed(rgb)
             if whole:
                 self._tell_host_done()
+                self.line_up.setChecked(False)
+            if tests:
+                return self._line_up_on(fit, len(tests))
             n = len(picked)
             return (f"Done at Z {z:.2f}: {n} {self._noun(n)}, "
                     f"{job.passes} passes. Switch to Outlines to check them on the "
@@ -3559,10 +3659,91 @@ class StencilLaserDialog(QDialog):
             bands=[[round(dz, 3), len(b)] for dz, b in (zones or [])])
         self._start(work, f"{self.k['busy']}: {what}, {job.passes} passes…", done)
 
+    def _test_openings(self):
+        """A few selected openings of a mask job, each with its drilled hole:
+        a test fire to line the job up on. [(opening, (hx, hy, d))] on the
+        bed, or [] when this run is not one."""
+        if self.kind != "mask" or not self.selected or not self.art.features \
+                or len(self.selected) > 12 or not self.line_up.isChecked():
+            return []
+        from shapely.geometry import Polygon
+        _, h = self.art.size
+        holes = [Polygon(xtool.to_bed(list(p.exterior.coords), self.origin(), h))
+                 for p in self.art.features]
+        out = []
+        for k, poly in zip(sorted(self.selected),
+                           _bed_shapes(self.art, self.origin(), set(self.selected))):
+            inside = [q for q in holes if poly.buffer(0.3).contains(q.centroid)]
+            if inside:
+                q = min(inside, key=lambda q: q.centroid.distance(poly.centroid))
+                x0, y0, x1, y1 = q.bounds
+                out.append((poly, (q.centroid.x, q.centroid.y, max(x1 - x0, 0.3))))
+        return out
+
+    def _line_up_on(self, fit, n):
+        """Move (and turn) the job by what the test openings showed."""
+        if fit is None:
+            return (f"Opened {n} test pads, but none could be measured in the "
+                    "photo, so the job was not moved. Check them under the "
+                    "loupe and nudge by hand.")
+        # Rotate about the openings the fit used, then put their middle
+        # where it says.
+        target = (fit.centre[0] + fit.dx, fit.centre[1] + fit.dy)
+        mx, my = fit.centre
+        if abs(fit.turn) > 0.02:
+            pivot = self.centre()           # _turn_to keeps the job's middle
+            self._turn_to(self.turns, self.fine + fit.turn, preserve_selection=True)
+            mx, my = self._turned_about(fit.centre, pivot, fit.turn)
+        else:
+            self._remember_place()
+        self.x.setValue(round(self.x.value() + target[0] - mx, 3))
+        self.y.setValue(round(self.y.value() + target[1] - my, 3))
+        self._remember()
+        self.line_up.setChecked(False)          # lined up: rework stays put
+        # The camera showed the pads off by what the job moved: the same
+        # correction for its photo, so the next board's Find starts closer.
+        if fit.used >= 2 and math.hypot(fit.dx, fit.dy) < 2.0:
+            self._set_offset((self.cam_offset[0] - fit.dx,
+                              self.cam_offset[1] - fit.dy))
+        self._last_lineup = fit
+        off = math.hypot(fit.dx, fit.dy)
+        m = len(fit.offsets)
+        odd = m - fit.used
+        _laserlog.write("test fire", job=self.name_lbl.text(), pads=n,
+                        measured=[[round(c[0], 2), round(c[1], 2),
+                                   round(o[0], 3), round(o[1], 3)]
+                                  for c, o in fit.offsets],
+                        used=fit.used, dx=round(fit.dx, 3), dy=round(fit.dy, 3),
+                        turn=round(fit.turn, 3))
+        return (f"Test fire: measured {m} of {n} pads against their holes, "
+                f"worst {fit.worst:.2f} mm off"
+                + (f"; {odd} disagreed with the rest (a hole off its pad?) and "
+                   f"{'was' if odd == 1 else 'were'} left out" if odd else "")
+                + f". The job moved {off:.2f} mm"
+                + (f" and turned {fit.turn:+.2f}°" if abs(fit.turn) > 0.02 else "")
+                + ". Clear the selection and open the mask. Line-up is now "
+                  "off, so a check or rework of selected pads stays put "
+                  "(Ctrl+Z undoes the move).")
+
+    @staticmethod
+    def _turned_about(point, pivot, deg):
+        """``point`` turned ``deg`` clockwise on the bed (Y down) about
+        ``pivot``, as the job turns."""
+        a = math.radians(deg)
+        dx, dy = point[0] - pivot[0], point[1] - pivot[1]
+        return (pivot[0] + dx * math.cos(a) - dy * math.sin(a),
+                pivot[1] + dx * math.sin(a) + dy * math.cos(a))
+
     def stop(self):
-        """Stop the laser, whatever it is doing: what STOP does."""
+        """Stop the laser, whatever it is doing: what STOP does. A job on the
+        machine is stopped there; work the page drives step by step (the
+        focus map's dot, point by point) stops before its next step, and the
+        blue diode is put out."""
+        self._stop_requested = True
         try:
             self.laser.stop()
+            for line in ("M3S0", "M5"):
+                self.laser.gcode(line)
             self._say("Stopped.", warn=True)
         except xtool.LaserError as e:
             self._say(str(e), warn=True)
@@ -3596,6 +3777,7 @@ class StencilLaserDialog(QDialog):
             self.item.paint_holes(self.selected, active, self.look, self._skipped_now())
 
     def _start(self, fn, text, done=None):
+        self._stop_requested = False
         self._say(text)
         self._busy(True)
         self._worker = _Worker(fn, self)

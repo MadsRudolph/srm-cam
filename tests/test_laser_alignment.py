@@ -494,10 +494,14 @@ def test_on_a_blank_the_calibration_corrects_the_camera_and_moves_nothing(
 
 
 
-def test_drilled_holes_need_three_quarters_found_stencils_more():
+def test_drilled_holes_need_over_half_found_stencils_more():
     a = cam.Alignment(dx=0.1, dy=-0.3, turn=0.0, found=42, total=52, score=0.33)
     assert not a.ok                                  # 81 % < 85 %: a stencil
     a.need = cam.DRILLED_NEED
     assert a.ok                                      # a drilled board: enough
-    a.found = 35                                     # 67 %: too few either way
-    assert not a.ok
+    # Under solder mask ink: the env board's true place matched 131 of 205.
+    inked = cam.Alignment(dx=0, dy=0, turn=0.6, found=131, total=205,
+                          score=0.25, need=cam.DRILLED_NEED)
+    assert inked.ok
+    inked.found = 71                                 # its best wrong place: 35 %
+    assert not inked.ok

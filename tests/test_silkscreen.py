@@ -85,8 +85,11 @@ def test_the_artwork_is_all_there_and_where_kicad_put_it():
     x0, y0, *_ = outline.bounds
     moved = translate(drawn, -x0, -y0)
     got = sum(p.area for p in art.shapes)
-    assert got == pytest.approx(drawn.area, rel=1e-6)
-    assert art.shapes and all(moved.buffer(1e-6).contains(p) for p in art.shapes)
+    # Drawn to silkscreen.SIMPLIFY_MM, so a little under (2026-11-22: vcf froze
+    # the page on 108 000 points of outlined text).
+    assert got == pytest.approx(drawn.area, rel=0.01)
+    assert art.shapes and all(moved.buffer(ss.SIMPLIFY_MM).contains(p)
+                              for p in art.shapes)
     assert any(p.interiors for p in art.shapes)
 
 

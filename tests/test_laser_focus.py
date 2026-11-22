@@ -446,3 +446,58 @@ def test_the_machines_correction_is_built_in(qt_app, monkeypatch):
     assert not lfu.reference_is_builtin()
     assert len(lfu.load_reference().points) == 3          # this PC's wins
     lfu.save_reference(None)
+
+
+def test_stop_ends_a_focus_map_between_points(qt_app, monkeypatch):
+    """A focus map pressed by mistake (2026-11-22) ran on: STOP only stopped
+    jobs on the machine, and the map is the page walking the dot point by
+    point. STOP now ends it before the next point, puts the diode out, and
+    the half map is thrown away."""
+    import time
+    from shapely.geometry import box
+    from PySide6.QtCore import QCoreApplication
+    from gerber2rml.engine import xtool
+    from gerber2rml.gui2 import stencil_laser as sl, laser_focus_ui as lfu
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "laser-focus-stop"))
+    art = xtool.LaserArt(kind="mask", outline=box(0, 0, 120, 60),
+                         apertures=[box(x, 25, x + 4, 29)
+                                    for x in range(5, 115, 10)],
+                         mirrored=False)
+    d = sl.StencilLaserDialog(art)
+    log = []
+
+    class Laser:
+        def z(self):
+            return 10.0
+
+        def _json(self, method, path, body=None):
+            log.append(body.get("state") if isinstance(body, dict) else path)
+
+        def measure(self, cal, at):
+            log.append("dot")
+            if log.count("dot") == 2:
+                d.stop()                     # pressed while the map runs
+            time.sleep(0.01)
+            return 0.0
+
+        def stop(self):
+            log.append("stop")
+
+        def gcode(self, line):
+            log.append(line)
+
+    d.laser = Laser()
+    monkeypatch.setattr(d, "_calibration", lambda: None)
+    points, _moved = lfu.plan(d)
+    assert len(points) > 4
+    before = d._focus_map
+    lfu.measure(d)
+    t0 = time.time()
+    while d._worker_running() and time.time() - t0 < 20:
+        QCoreApplication.processEvents()
+    QCoreApplication.processEvents()
+    assert log.count("dot") == 2                     # not one point more
+    assert "stop" in log and "M5" in log and log[-1] == "P_IDLE"
+    assert d._focus_map is before                    # the half map not used
+    assert "not finished" in d.status.text()
+    d.close()

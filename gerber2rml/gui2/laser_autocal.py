@@ -41,7 +41,7 @@ def find_board(page):
     them. Sets ``page._autocal_found``."""
     from gerber2rml.engine import xtool_camera as cam
     page._autocal_found = None
-    if len(page.base_art.drills or []) < 2:
+    if len(page.base_art.drills or page.base_art.features or []) < 2:
         page._autocal_found = "no holes"
         return page.take_photo()
     candidates = []
@@ -88,11 +88,81 @@ def find_board(page):
     page._start(work, "Finding the board on the bed…", done)
 
 
+# A solder mask job's test fire: pads near each corner and the middle, each
+# with a drilled hole, sized like an ordinary pad (2026-11-22, the analog synth).
+TEST_PAD_MM = (0.9, 3.5)
+TEST_CORNER_INSET = 0.12      # of the board's size, in from each corner
+
+
+def pick_test_pads(page):
+    """Indices of up to five of the job's openings to fire as a test: the
+    nearest to each corner of the board and to its middle that has a drilled
+    hole inside and a pad's size."""
+    from shapely.geometry import Polygon
+    from gerber2rml.gui2.stencil_laser import _bed_shapes
+    art = page.art
+    _, h = art.size
+    holes = [Polygon(xtool.to_bed(list(p.exterior.coords), page.origin(), h))
+             for p in (art.features or [])]
+    shapes = _bed_shapes(art, page.origin())
+    ok = []
+    for k, poly in enumerate(shapes):
+        x0, y0, x1, y1 = poly.bounds
+        if not TEST_PAD_MM[0] <= max(x1 - x0, y1 - y0) <= TEST_PAD_MM[1]:
+            continue
+        if any(poly.contains(q.centroid) for q in holes):
+            ok.append((k, poly.centroid))
+    if not ok:
+        return []
+    xs = [c.x for _k, c in ok]
+    ys = [c.y for _k, c in ok]
+    bx0, bx1, by0, by1 = min(xs), max(xs), min(ys), max(ys)
+    ix, iy = TEST_CORNER_INSET * (bx1 - bx0), TEST_CORNER_INSET * (by1 - by0)
+    aims = [(bx0 + ix, by0 + iy), (bx1 - ix, by0 + iy), (bx0 + ix, by1 - iy),
+            (bx1 - ix, by1 - iy), ((bx0 + bx1) / 2, (by0 + by1) / 2)]
+    picks = []
+    for ax, ay in aims:
+        at = dict(ok)
+        k = min((k for k in at if k not in picks),
+                key=lambda k: (at[k].x - ax) ** 2 + (at[k].y - ay) ** 2,
+                default=None)
+        if k is not None:
+            picks.append(k)
+    return picks
+
+
+def test_fire(page):
+    """Open the test pads, measure them against their copper and move the job
+    onto it (the page's own test fire, gui2/stencil_laser.py)."""
+    page._last_lineup = None
+    picks = pick_test_pads(page)
+    if len(picks) < 2:
+        return page._say("Fewer than two pads with drilled holes to test on: "
+                         "select a few by hand and open them.", warn=True)
+    page.selected.clear()
+    page.selected.update(picks)
+    page.line_up.setChecked(True)
+    page._paint(estimate=False)
+    page._fill()
+
+
 class AutoCalibration:
     """Runs the steps one after another on the page's worker."""
 
     def __init__(self, page):
         self.page = page
+        if page.kind == "mask":
+            # Find the board, focus, burn a few pads and line up on them.
+            # Opening the mask stays the person's to press; any pad that
+            # needs more is rework.
+            self.steps = [
+                ("Find the board", lambda: find_board(page), self._found),
+                ("Autofocus", lambda: page.autofocus(), self._ok),
+                ("Test pads", lambda: test_fire(page), self._lined_up),
+            ]
+            self.results = []
+            self.i = -1
+            return
         self.steps = [
             ("Find the board", lambda: find_board(page), self._found),
             ("Autofocus", lambda: page.autofocus(), self._ok),
@@ -108,6 +178,9 @@ class AutoCalibration:
     # -- what makes each step a success ------------------------------------
     def _ok(self, msg, warn):
         return not warn
+
+    def _lined_up(self, msg, warn):
+        return not warn and getattr(self.page, "_last_lineup", None) is not None
 
     def _found(self, msg, warn):
         return not warn and self.page._autocal_found in (True, "no holes")
@@ -148,6 +221,9 @@ class AutoCalibration:
     def _finish(self):
         page = self.page
         page._autocal = None
+        if page.kind == "mask":
+            page.selected.clear()           # Open the mask: the whole face
+            page._paint(estimate=False)
         report = build_report(page, self.results, len(self.steps))
         page._autocal_report = report
         show_report(page, report)
@@ -185,6 +261,9 @@ def build_report(page, results, total):
         verdict = "Stopped before the end. Nothing was cut."
     elif warnings:
         verdict = "Calibrated, with things to check before you press Cut."
+    elif getattr(page, "kind", None) == "mask":
+        verdict = ("Lined up on the test pads: look at them, then press Open "
+                   "the mask. Rework any pad that needs more.")
     else:
         verdict = "Ready to cut: look at the photo, then press Cut."
     return {"ok": not failed and len(results) == total and not warnings,
@@ -205,9 +284,10 @@ def show_report(page, report):
 
 def start(page):
     """Calibrate the job on the page from scratch."""
-    if getattr(page, "kind", None) != "traces" or getattr(page, "_empty", True):
-        return page._say("Calibrate sets up a traces job: load a board first.",
-                         warn=True)
+    if getattr(page, "kind", None) not in ("traces", "mask") \
+            or getattr(page, "_empty", True):
+        return page._say("Calibrate sets up a traces or solder mask job: load "
+                         "a board first.", warn=True)
     if page._worker_running():
         return page._say("The laser is busy.", warn=True)
     AutoCalibration(page).start()

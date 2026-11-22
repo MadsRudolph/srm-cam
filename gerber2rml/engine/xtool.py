@@ -370,6 +370,84 @@ def trace_job(outline, laps=15, power=6.0, speed=100.0):
     return "\r\n".join(lines)
 
 
+# Showing chosen pads with the blue diode, to line a job up by eye when the
+# camera will not (2026-11-22, the analog synth under mask ink): as XCS frames,
+# outlines only, over and over, sent as a frame (the lid may be open; through
+# the closed lid's tint the blue hardly shows). Measured at the machine: in
+# frame mode every segment costs about 1.3 ms whatever its length, and a jump
+# more, so steadiness is the number of corners. Each outline is cut to a few
+# corners (a round pad an octagon) and the outlines are joined by moves at
+# zero power instead of jumps. 5 % round an 80 mm square was plainly visible
+# and 3 % round five 2 mm pads visible with the lid open.
+SHOW_SPEED = 6000.0         # mm/s
+SHOW_SECONDS = 20.0         # long enough to look, then nudge and look again
+SHOW_SEGMENT_S = 1.3e-3     # what a segment really takes in frame mode
+SHOW_CORNERS = 8            # at most, per outline
+SHOW_REF = (5.0, 80.0)      # % and mm of outline seen well at the machine
+SHOW_POWER_RANGE = (3.0, 10.0)
+SHOW_MAX_LINES = 400_000    # the file kept to a size the machine takes
+
+
+def show_power(length):
+    """Blue % for ``length`` mm of outline, as bright as the reference."""
+    lo, hi = SHOW_POWER_RANGE
+    return max(lo, min(hi, SHOW_REF[0] * length / SHOW_REF[1]))
+
+
+def few_corners(poly, corners=SHOW_CORNERS):
+    """``poly``'s outline with at most ``corners`` corners, closed: its own
+    when it has few, else the polygon of that many round its middle that
+    fits its size (a round pad comes out an octagon)."""
+    ring = list(poly.exterior.coords)
+    if len(ring) - 1 <= corners:
+        return ring
+    simple = list(poly.simplify(0.05).exterior.coords)
+    if len(simple) - 1 <= corners:
+        return simple
+    c = poly.centroid
+    x0, y0, x1, y1 = poly.bounds
+    rx, ry = (x1 - x0) / 2, (y1 - y0) / 2
+    pts = [(c.x + rx * math.cos(2 * math.pi * (k + 0.5) / corners),
+            c.y + ry * math.sin(2 * math.pi * (k + 0.5) / corners))
+           for k in range(corners)]
+    return pts + [pts[0]]
+
+
+def show_job(shapes, *, seconds=SHOW_SECONDS, speed=SHOW_SPEED, power=None):
+    """The blue diode round each of ``shapes`` (shapely Polygons, bed mm),
+    nearest next, over and over for about ``seconds``: where the fiber will
+    fire. Returns (gcode, seconds, power %, laps a second). Send it with
+    :meth:`F1Ultra.frame`."""
+    rings = []
+    for s in shapes:
+        for g in getattr(s, "geoms", [s]):
+            if not g.is_empty:
+                rings.append(few_corners(g))
+    if not rings:
+        raise ValueError("Nothing to show: choose some shapes first.")
+    check_on_bed(rings)
+    ordered, at = [], rings[0][0]
+    while rings:
+        k = min(range(len(rings)), key=lambda i: math.dist(at, rings[i][0]))
+        r = rings.pop(k)
+        ordered.append(r)
+        at = r[-1]
+    length = sum(math.dist(a, b) for r in ordered for a, b in zip(r, r[1:]))
+    power = show_power(length) if power is None else power
+    s_val, feed = round(power * 10), round(speed * 60)
+    lap = []
+    for r in ordered:
+        lap.append(f"G1X{r[0][0]:.3f}Y{r[0][1]:.3f}S0F{feed}")      # dark link
+        for i, (x, y) in enumerate(r[1:]):
+            lap.append(f"G1X{x:.3f}Y{y:.3f}" + (f"S{s_val}" if i == 0 else ""))
+    once = len(lap) * SHOW_SEGMENT_S + length / speed
+    laps = max(1, min(int(round(seconds / once)), SHOW_MAX_LINES // len(lap)))
+    first = ordered[0][0]
+    lines = (_head("blue", 30, power / 100)
+             + [f"G0X{first[0]:.3f}Y{first[1]:.3f}"] + lap * laps + _TAIL)
+    return "\r\n".join(lines), once * laps, power, 1 / once
+
+
 # ---------------------------------------------------------------------------
 # The laser
 # ---------------------------------------------------------------------------
@@ -458,6 +536,12 @@ class F1Ultra:
                 progress(time.time() - t0)
             time.sleep(poll)
         raise LaserError(f"The job did not finish within {timeout:.0f} s.")
+
+    def frame(self, gcode):
+        """``gcode`` as a frame, the way XCS frames: the blue diode only, and
+        the machine lets the lid open while it runs."""
+        q = "/processing/upload?gcodeType=frame&fileType=txt&autoStart=1"
+        self._json("POST", q, gcode, ctype="text/plain", timeout=60)
 
     def stop(self):
         self._req("POST", "/processing/stop", "")
@@ -637,7 +721,12 @@ def drill_features(folder, mirror, outline_raw):
 class FillRecipe:
     """How to fill. ``lines_per_cm`` as XCS calls it (its "density");
     ``cross_hatch`` turns each pass 90 degrees from the last; ``one_way``
-    draws every line the same way, as XCS's uni-directional scan."""
+    draws every line the same way, as XCS's uni-directional scan.
+
+    ``pattern`` "hatch" sweeps lines across the whole job; "concentric" draws
+    rings inside each shape, outside in, one shape after the other, the way
+    the traces are cut: far fewer starts and jumps. Every other pass sets its
+    rings half a step in, so the passes interleave as cross hatching does."""
     power: float = 40.0
     speed: float = 800.0
     frequency: float = 30.0
@@ -647,6 +736,7 @@ class FillRecipe:
     one_way: bool = True
     mark_outline: bool = False
     mark_power: float = 10.0
+    pattern: str = "hatch"
 
     @property
     def interval(self):
@@ -656,6 +746,18 @@ class FillRecipe:
 # sphawes/fiber-laser-pcb-fab settings.json, the presets the lab imports into XCS
 SPHAWES_REMOVE_MASK = FillRecipe(power=40, speed=800, frequency=30, passes=6,
                                  lines_per_cm=300)
+# Rings pad by pad (2026-11-22, the analog synth's boards): 4 passes go
+# through the ink to clean copper, where the hatch took 6.
+CONCENTRIC_REMOVE_MASK = FillRecipe(power=40, speed=800, frequency=30, passes=4,
+                                    lines_per_cm=300, pattern="concentric")
+# Silkscreen marked on cured mask ink: light, to lighten the ink, not to take
+# it off. 2026-11-22 on vcf: one pass readable, two (a hatch, then rings) the
+# contrast wanted. Rings, as the mask: vcf's top in a fraction of the hatch's
+# time. A big filled shape (a capacitor's minus) takes its rings back to back
+# and nearly scorched on the second pass: if it does, lower the power there.
+SILK_ON_MASK = FillRecipe(power=15, speed=1500, frequency=30, passes=2,
+                          lines_per_cm=300, cross_hatch=False, one_way=True,
+                          pattern="concentric")
 SPHAWES_TRACES = FillRecipe(power=100, speed=600, frequency=30, passes=10,
                             lines_per_cm=240)
 
@@ -706,6 +808,40 @@ def hatch(polys, interval, angle_deg=0.0, one_way=True):
     return [(back(a), back(b)) for a, b in segs]
 
 
+def concentric(polys, interval, phase=0.0):
+    """Rings filling shapely ``polys`` (bed mm), ``interval`` apart, as
+    closed paths: shape by shape, nearest next, each from its outline inwards.
+    The first ring is ``interval / 2 + phase`` inside the outline, so its
+    line's edge lies on it as a hatch line's does. Mitred, so a square pad
+    keeps its corners."""
+    from shapely.geometry import Polygon as _Poly
+    pieces = []
+    for p in polys:
+        pieces += [g for g in getattr(p, "geoms", [p])
+                   if isinstance(g, _Poly) and not g.is_empty]
+    out, at = [], (0.0, 0.0)
+    left = list(pieces)
+    while left:
+        i = min(range(len(left)), key=lambda k: math.dist(
+            at, left[k].exterior.coords[0]))
+        p = left.pop(i)
+        rings = []
+        d = interval / 2 + phase
+        while True:
+            g = p.buffer(-d, join_style=2, mitre_limit=4.0)
+            if g.is_empty:
+                break
+            for q in getattr(g, "geoms", [g]):
+                rings.append(list(q.exterior.coords))
+                rings += [list(r.coords) for r in q.interiors]
+            d += interval
+        if not rings:                   # thinner than a step: one line on it
+            rings.append(list(p.exterior.coords))
+        out += rings
+        at = rings[-1][-1]
+    return out
+
+
 def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0, *,
              write=True):
     """One GS002 file that fills every shape (shapely Polygons, bed mm) with
@@ -716,7 +852,20 @@ def fill_job(shapes, outline, recipe=SPHAWES_REMOVE_MASK, base_angle=0.0, *,
     s_val, feed = round(recipe.power * 10), round(recipe.speed * 60)
     body, secs, timeline = [], 0.0, []
     cached = {}
+    rings = getattr(recipe, "pattern", "hatch") == "concentric"
     for k in range(recipe.passes):
+        if rings:
+            phase = recipe.interval / 2 * (k % 2)
+            if phase not in cached:
+                paths = concentric(shapes, recipe.interval, phase)
+                cached[phase] = (_passes(paths, recipe.power, recipe.speed, 1)
+                                 if write else [],
+                                 _draw_seconds(paths, recipe.speed))
+            lines_k, dt = cached[phase]
+            body += lines_k
+            timeline.append((secs, secs + dt, 0, k))
+            secs += dt
+            continue
         ang = base_angle + (90.0 * (k % 2) if recipe.cross_hatch else 0.0)
         if ang not in cached:
             segs = hatch(shapes, recipe.interval, ang, recipe.one_way)

@@ -5886,9 +5886,12 @@ class MainWindow(QMainWindow):
                 raise xtool.TracesError(notes[0] if notes else "No copper on this board.")
             return arts[0]
         if kind == "mask":
-            mirror = bool(st.mirror) or self._double
-            art = soldermask.build_mask(m.gerber_dir, shrink=self._mask_shrink,
-                                        mirror=mirror)
+            # Either face: the top one (F.Mask) as drawn, turned over on the
+            # bed like its copper; the bottom one mirrored like the mill's.
+            side = side or "bottom"
+            mirror = (bool(st.mirror) or self._double) if side == "bottom" else False
+            art = soldermask.build_mask(m.gerber_dir, side=side,
+                                        shrink=self._mask_shrink, mirror=mirror)
             try:
                 feats = xtool.drill_features(m.gerber_dir, mirror,
                                              self._raw_outline(m.gerber_dir))
@@ -5897,7 +5900,7 @@ class MainWindow(QMainWindow):
             return xtool.LaserArt(
                 kind="mask", apertures=art.openings, outline=art.outline,
                 mirrored=art.mirrored, notes=art.warnings(), features=feats,
-                note=f"shrunk {art.shrink:g} mm a side")
+                side=side, note=f"shrunk {art.shrink:g} mm a side")
         if kind == "silk":
             art = silkscreen.build_silk(m.gerber_dir)
             try:
