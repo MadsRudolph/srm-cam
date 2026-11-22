@@ -1,0 +1,76 @@
+# Announce a new release on the SRM-CAM Discord.
+#
+# When a release is published (a draft from build.yml, reviewed and published
+# by hand), this posts its name, its notes and the download links to the
+# Discord channel the webhook belongs to. Pre-releases are not announced.
+#
+# Set-up, once: in Discord, the channel's Edit Channel > Integrations >
+# Webhooks > New Webhook, copy its URL, then
+#   gh secret set DISCORD_RELEASE_WEBHOOK
+# and paste it. Without the secret this workflow does nothing.
+#
+# To post an announcement again (or for an older release): Actions >
+# announce release > Run workflow, with the tag.
+name: announce release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to announce (e.g. v0.23.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::notice::DISCORD_RELEASE_WEBHOOK is not set; nothing posted."
+            exit 0
+          fi
+          gh release view "$TAG" --repo "$REPO" --json name,body,url,tagName > rel.json
+          # Discord embeds: no "## " headings, at most 4096 characters.
+          python3 - <<'PY'
+          import json, re
+          r = json.load(open("rel.json"))
+          body = r["body"].replace("\r\n", "\n")
+          body = re.sub(r"\n*\*\*Full Changelog\*\*:.*$", "", body, flags=re.S).strip()
+          body = re.sub(r"^#{1,6}\s*(.+)$", r"**\1**", body, flags=re.M)
+          base = f"https://github.com/{__import__('os').environ['REPO']}/releases"
+          tag = r["tagName"]
+          dl = (f"[Windows]({base}/download/{tag}/SRM-CAM-Setup.exe) · "
+                f"[Linux]({base}/download/{tag}/SRM-CAM-x86_64.AppImage) · "
+                f"[macOS]({base}/download/{tag}/SRM-CAM-macOS-arm64.dmg)")
+          more = f"\n\n… [the rest on GitHub]({r['url']})"
+          limit = 4096 - len(more) - 2
+          if len(body) > limit:
+              body = body[:limit].rsplit("\n", 1)[0] + more
+          payload = {
+              "username": "SRM-CAM",
+              "content": f"A new SRM-CAM release is out 🟢",
+              "embeds": [{
+                  "title": r["name"] or tag,
+                  "url": r["url"],
+                  "description": body,
+                  "color": 0xC8733A,
+                  "fields": [{"name": "Download", "value": dl}],
+              }],
+              "allowed_mentions": {"parse": []},
+          }
+          json.dump(payload, open("payload.json", "w"))
+          PY
+          curl -sf -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"
+          echo "Announced $TAG."
