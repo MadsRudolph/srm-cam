@@ -15,7 +15,7 @@
 <script defer src="js/anim/lz-field.js?v=20261120a"></script>
 <script defer src="js/anim/lz-proof.js?v=20261120a"></script>
 <script defer src="js/anim/lz-rings.js?v=20261120a"></script>
-<script defer src="js/anim/lz-faces.js?v=20261120b"></script>
+<script defer src="js/anim/lz-faces.js?v=20261122a"></script>
 <script defer src="js/anim/lz-autofocus.js?v=20261120a"></script>
 <script defer src="js/anim/lz-focus.js?v=20261120a"></script>
 <script defer src="js/ask.js?v=20261120a"></script>
@@ -152,13 +152,13 @@
 <p>The tabs at the top of the right panel switch the job. A rail row opens its own job, and the tabs follow the rail.</p>
 <figure class="fig">
   <img src="img/lz_tabs.png" alt="Four crops of the laser page's right panel: the Traces tab with its step Etch the copper traces and the buttons Calibrate, Etch the traces, STOP; the Mask tab with Open the solder mask and Open the mask; the Silk tab with Mark the silkscreen; the Stencil tab with Cut the stencil" loading="lazy">
-  <figcaption>The same page, four jobs. Each has its own step, its own run button, and its own recipe. Only Traces has <span class="ui">Calibrate</span>.</figcaption>
+  <figcaption>The same page, four jobs. Each has its own step, its own run button, and its own recipe. Traces and Mask have <span class="ui">Calibrate</span>.</figcaption>
 </figure>
 <div class="tbl-wrap"><table>
 <tr><th>Job</th><th>Rail row</th><th>What the laser does</th><th>Run button</th><th>Lines up by</th><th>More</th></tr>
 <tr><td><strong>Traces</strong></td><td><span class="ui">Etch the traces</span></td><td>Clears rings round every net on the copper face</td><td><span class="ui">Etch the traces</span></td><td><span class="ui">Calibrate</span>: the drilled holes</td><td>Below</td></tr>
-<tr><td><strong>Mask</strong></td><td><span class="ui">Solder mask</span></td><td>Ablates cured ink off the pads (B.Mask)</td><td><span class="ui">Open the mask</span></td><td><span class="ui">Autofocus</span>, <span class="ui">Align</span>: the drilled holes</td><td><a href="solder-mask.html">Solder mask</a></td></tr>
-<tr><td><strong>Silk</strong></td><td><span class="ui">Silkscreen</span></td><td>Marks F.Silkscreen on the laminate side</td><td><span class="ui">Mark the silkscreen</span></td><td><span class="ui">Autofocus</span>, <span class="ui">Align</span>: the drilled holes</td><td><a href="silkscreen.html">Silkscreen</a></td></tr>
+<tr><td><strong>Mask</strong></td><td><span class="ui">Solder mask</span></td><td>Ablates cured ink off the pads (B.Mask or F.Mask)</td><td><span class="ui">Open the mask</span></td><td><span class="ui">Calibrate</span>: the drilled holes, then five test pads</td><td><a href="solder-mask.html">Solder mask</a></td></tr>
+<tr><td><strong>Silk</strong></td><td><span class="ui">Silkscreen</span></td><td>Marks F.Silkscreen, on the top face's mask ink or the laminate</td><td><span class="ui">Mark the silkscreen</span></td><td><span class="ui">Autofocus</span>, <span class="ui">Align</span>: the drilled holes</td><td><a href="silkscreen.html">Silkscreen</a></td></tr>
 <tr><td><strong>Stencil</strong></td><td><span class="ui">Paste stencil</span></td><td>Cuts paste holes in 0.1&nbsp;mm steel foil</td><td><span class="ui">Cut the stencil</span></td><td><span class="ui">Align</span>: the holes it cut</td><td><a href="smd.html#stencil">Paste stencil</a></td></tr>
 </table></div>
 <p>Switching the job keeps where the job sits on the bed and the camera's correction. It does not line the new job up: run <span class="ui">Align</span> for each new job. For the silkscreen the sheet is turned over, so the old place is wrong anyway.</p>
@@ -337,8 +337,8 @@
   <li><span class="ui">Photo</span> takes the camera's picture, straightened into the laser's millimetres, under the drawing.</li>
   <li><strong>Drag</strong> the job in <span class="ui">Move</span> mode. Arrow keys nudge it 0.1&nbsp;mm; with <kbd>Shift</kbd> 1&nbsp;mm, with <kbd>Ctrl</kbd> 10&nbsp;mm. <span class="ui">Turn left</span> and <span class="ui">Turn right</span> turn it a quarter. <span class="ui">Position in numbers</span> types it: X and Y are the outline's top-left corner.</li>
   <li><span class="ui">Mirror left–right</span> follows the copper face by itself (B.Cu mirrored, F.Cu as drawn). <span class="ui">Flip top–bottom</span> with the quarter turns gives every way round.</li>
-  <li><span class="ui">Align</span> takes a photo and moves the job onto the drilled holes it finds, within about 25&nbsp;mm and 6° of where you put it, in any quarter turn. It moves nothing unless it finds 75&nbsp;% of the holes (85&nbsp;% of a stencil's own).</li>
-  <li><span class="ui">Show where</span> runs the blue diode, at a glow, round the job's outline 15 times without marking: check it sits on the board.</li>
+  <li><span class="ui">Align</span> takes a photo and moves the job onto the drilled holes it finds, within about 25&nbsp;mm and 6° of where you put it, in any quarter turn. It moves nothing unless it finds 55&nbsp;% of the holes (85&nbsp;% of a stencil's own): under mask ink many holes are part filled and read pale.</li>
+  <li><span class="ui">Show where</span> runs the blue diode, at a glow, round the job's outline 15 times without marking: check it sits on the board. With shapes selected it reads <span class="ui">Show 3 in blue</span> and runs round just those, fast, for about 20&nbsp;s, as xTool Creative Space frames: the lid may be open to see it.</li>
   <li><span class="ui">Calibrate and lock onto the holes</span>, under <span class="ui">Alignment</span> (<span class="ui">Calibrate the camera</span> on a job with no drilled holes), fires the camera marks and locks onto the holes near where the job already sits, without finding the board or autofocusing first.</li>
   <li><span class="ui">Undo</span> (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) takes back a move, a turn, a rework box, a skipped trench or the mirror; <span class="ui">Redo</span> is <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>.</li>
 </ul>

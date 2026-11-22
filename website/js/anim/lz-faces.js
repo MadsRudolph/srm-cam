@@ -19,8 +19,8 @@
   var JOBS = {
     bcu: { face: "B", label: "Etch the traces", sub: "B.Cu — bottom copper", mirror: true, how: "Calibrate",
       say: "Copper face up, as it came off the mill. KiCad draws B.Cu as seen through the board; here you look straight at it, so it is etched mirrored. Calibrate finds the drilled holes." },
-    mask: { face: "B", label: "Open the mask", sub: "B.Mask, inked copper face up", mirror: true, how: "Autofocus, then Align",
-      say: "The same face, now inked: the openings are mirrored like the copper. No Calibrate here: Autofocus on the ink, then Align on the drilled holes." },
+    mask: { face: "B", label: "Open the mask", sub: "B.Mask, inked copper face up", mirror: true, how: "Calibrate: five test pads",
+      say: "The same face, now inked: the openings are mirrored like the copper. Calibrate finds the drilled holes through the ink, opens five test pads and lines the job up on their copper." },
     silk: { face: "F", label: "Mark the silkscreen", sub: "F.Silkscreen, laminate up", mirror: false, how: "Autofocus, then Align",
       say: "Turned over left to right: the laminate (the component side) is up and the drawing is as KiCad shows it, not mirrored. Autofocus on the laminate, then Align on the same holes." },
     fcu: { face: "F", label: "Etch the traces", sub: "F.Cu — top copper", mirror: false, how: "Calibrate again",

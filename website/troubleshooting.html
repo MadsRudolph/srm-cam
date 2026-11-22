@@ -326,17 +326,17 @@ details.ts-item > summary:focus-visible { outline: 2px solid var(--live); outlin
 
 <h2 id="laser-masksilk" data-cat-title="masksilk" data-short="Mask &amp; silk">On the laser: mask and silkscreen</h2>
 
-<details class="ts-item" id="laser-mask" data-cat="masksilk" data-q="mask misaligned openings off the pads rims could not match the references align hazy pads">
+<details class="ts-item" id="laser-mask" data-cat="masksilk" data-q="mask misaligned openings off the pads rims could not match the references align calibrate test pads hazy pads">
 <summary>The mask openings are off the pads, or Align will not line it up</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span><span class="ui">Align</span> was not run for the Mask job (switching jobs keeps the old place but does not line up), the drawing was more than about 25&nbsp;mm off when Align ran (<span class="say">Could not match the references</span>), or the board moved.</p>
-<p><span class="k">Fix</span><span class="ui">Autofocus</span> on the ink, drag the drawing close, <span class="ui">Align</span> again, then open three pads first and read the rims: <a href="solder-mask.html#check">Check on a few pads</a>. Pads still hazy after the run: if the board has not moved, select them and open just those again.</p>
+<p><span class="k">Cause</span>The Mask job was not lined up (switching jobs keeps the old place but does not line up), the board moved after the test pads, or the wrong face's mask is loaded (<span class="ui">Copper face</span> picks B.Mask or F.Mask). Holes so full of ink that the camera can't see them leave Calibrate nothing to find.</p>
+<p><span class="k">Fix</span>Press <span class="ui">Calibrate</span>: it finds the board, focuses and opens five test pads, and moves the job onto their copper. Read the rims: <a href="solder-mask.html#check">Reading the test pads</a>. To line up again on pads of your own, tick <span class="ui">Line up on this test fire</span>, select a few pads with holes and open them. Or by eye: select some pads, <span class="ui">Show 3 in blue</span> with the lid open, and nudge. Pads still hazy after the run: if the board has not moved, select them and open just those again; with the tick off the job stays put.</p>
 </div></details>
 <details class="ts-item" id="laser-silk" data-cat="masksilk" data-q="silkscreen mirrored backwards off the board wrong place laminate turned over">
 <summary>The silkscreen is off the board, or reads backwards</summary>
 <div class="ts-body">
-<p><span class="k">Cause</span><span class="ui">Align</span> was not run after the sheet was turned over: the job kept the traces' place, which is wrong for the other face. Text that reads backwards: <span class="ui">Mirror left–right</span> was ticked by hand; the Silk job is drawn as KiCad shows it, not mirrored.</p>
-<p><span class="k">Fix</span>Check the laminate is up, <span class="ui">Autofocus</span>, drag the drawing close, <span class="ui">Align</span>, then <span class="ui">Show where</span> before <span class="ui">Mark the silkscreen</span>. See <a href="silkscreen.html">Silkscreen</a>.</p>
+<p><span class="k">Cause</span><span class="ui">Align</span> was not run for the Silk job, or not after the sheet was turned over: the job kept the old place. Text that reads backwards: <span class="ui">Mirror left–right</span> was ticked by hand; the Silk job is drawn as KiCad shows it, not mirrored.</p>
+<p><span class="k">Fix</span>Check the component side is up (the top face's mask, or the laminate), <span class="ui">Autofocus</span>, drag the drawing close, <span class="ui">Align</span>, then <span class="ui">Show where</span> before <span class="ui">Mark the silkscreen</span>. See <a href="silkscreen.html">Silkscreen</a>.</p>
 </div></details>
 <details class="ts-item" id="laser-rows" data-cat="masksilk" data-q="no solder mask silkscreen stencil row laser rail missing layers">
 <summary>No Solder mask, Silkscreen or Paste stencil row on the rail</summary>

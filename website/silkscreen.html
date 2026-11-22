@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Silkscreen — SRM-CAM guide</title>
-<meta name="description" content="The silkscreen on the xTool fiber laser: turn the sheet over, Autofocus and Align on the drilled holes, and mark F.Silkscreen on the component side.">
+<meta name="description" content="The silkscreen on the xTool fiber laser: marked light on the cured solder mask of a top face (proven), or on the laminate of a bottom-copper board, lined up by Autofocus and Align on the drilled holes.">
 <link rel="icon" type="image/png" href="img/srm-cam-256.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,7 +12,7 @@
 <link rel="stylesheet" href="css/site.css?v=20261120a">
 <script defer src="js/anim/core.js?v=20260930a"></script>
 <script defer src="js/anim/sk-flip.js?v=20261120a"></script>
-<script defer src="js/anim/lz-faces.js?v=20261120b"></script>
+<script defer src="js/anim/lz-faces.js?v=20261122a"></script>
 <script defer src="js/ask.js?v=20261120a"></script>
 </head>
 <body>
@@ -83,14 +83,16 @@
 <main>
 <div class="content">
 <h1>Silkscreen</h1>
-<p class="lead">The laser can mark the board's <strong>component side</strong>: part outlines, references and text from KiCad's <strong>F.Silkscreen</strong>. On the usual laser board the copper is on the bottom (B.Cu), so the component side is the <strong>laminate</strong>: the sheet is turned over, and the job is lined up on the same drilled holes by <span class="ui">Autofocus</span> and <span class="ui">Align</span>.</p>
-<div class="warn"><span class="t">Experimental</span>
-<p>The steps below work, but there is no proven silkscreen recipe yet (<a href="#recipe">The recipe</a>). Try it on the waste of the sheet first. The board works without a silkscreen.</p></div>
+<p class="lead">The laser can mark the board's <strong>component side</strong>: part outlines, references and text from KiCad's <strong>F.Silkscreen</strong>. Where it goes depends on the board. On a board with copper on top and a <a href="solder-mask.html">solder mask</a> there, it is marked <strong>on the cured mask ink</strong>: a light recipe lightens the ink without taking it off. That is proven. On the usual laser board, copper on the bottom only, the component side is the bare <strong>laminate</strong>: still experimental.</p>
+
+<figure class="fig mid">
+  <img src="img/sm-finished-vcf.jpg" alt="The analog synth's VCF and VCA board: the silkscreen marked pale on the green mask ink, the knob names NOISE, RESONANCE, CUTOFF, ENV AMT and LFO AMT, the part references and VCF + VCA in the corner; every pad opened to copper; two pots fitted" loading="lazy">
+  <figcaption>On the mask: the analog synth's VCF + VCA board, 22 November 2026. Pale text on the green ink, the pads opened.</figcaption>
+</figure>
 
 <div class="pill-flow">
-  <span class="pf">Traces (and mask)</span><span class="arr">→</span>
-  <span class="pf">Peel the Kapton</span><span class="arr">→</span>
-  <span class="pf">Turn the sheet over</span><span class="arr">→</span>
+  <span class="pf">Traces</span><span class="arr">→</span>
+  <span class="pf">Mask on the top face</span><span class="arr">→</span>
   <span class="pf">Autofocus</span><span class="arr">→</span>
   <span class="pf">Align</span><span class="arr">→</span>
   <span class="pf">Mark the silkscreen</span><span class="arr">→</span>
@@ -99,41 +101,60 @@
 
 <h2 id="when">When</h2>
 <ul>
-  <li><strong>After</strong> the traces are etched and checked, and after the <a href="solder-mask.html">solder mask</a> if the board gets one.</li>
+  <li><strong>After</strong> the traces are etched and checked, and after the <a href="solder-mask.html">solder mask</a> if the board gets one: on the mask, the ink has to be cured and the pads opened first.</li>
   <li><strong>Before</strong> you break the tabs: the board is still in its sheet, so it lies flat and square, and its holes are where they were.</li>
   <li>The rail shows a <span class="ui">Silkscreen</span> <span class="tag laser">LASER</span> row when the board's folder has a silkscreen layer; the job marks F.Silkscreen. <span class="ui">Send to SRM-CAM</span> plots it.</li>
 </ul>
 
 <div class="note"><span class="t">What the drawing looks like</span>
-<p>The Silk job is drawn as KiCad shows it, <strong>not mirrored</strong>: you look at the component side from above, as KiCad does. The traces and the mask are mirrored: KiCad draws B.Cu as seen through the board from the top, and on the bed you look straight at that face. The page sets this itself.</p></div>
+<p>The Silk job is drawn as KiCad shows it, <strong>not mirrored</strong>: you look at the top from above, as KiCad does. The page sets this itself. Outlined text from KiCad comes with very finely drawn curves; the page simplifies them to 0.01&nbsp;mm, far finer than the beam, so a board full of text opens in a moment.</p></div>
 
+<h2 id="on-mask">On the mask: the top face</h2>
+<p>A board with copper on top (two-sided, or F.Cu only) whose top face has been masked. The sheet is already top face up from opening F.Mask: leave it there.</p>
+<ol class="steps">
+  <li><span class="st">Open the job</span>Click <span class="ui">Silkscreen</span> on the rail. The laser page opens on the Silk job, on the preset <strong>Silkscreen on mask · 15 % × 2, rings</strong>; its step reads <span class="say">Mark the silkscreen</span>.</li>
+  <li><span class="st">Autofocus</span>Press <span class="ui">Autofocus</span>, on the ink. It takes a new photo at that height.</li>
+  <li><span class="st">Align</span>Drag the drawing within about 25&nbsp;mm of the board in the photo and press <span class="ui">Align</span>. The opened pads and the holes in them are easy to see now; it moves the drawing onto the holes when 55&nbsp;% of them match.</li>
+  <li><span class="st">Show where</span>The blue diode traces the outline on the board, without marking. Or select a few shapes near the corners and press <span class="ui">Show 4 in blue</span>, lid open: they should sit where KiCad puts them, beside their pads.</li>
+  <li><span class="st">Mark the silkscreen</span>Press <span class="ui">Mark the silkscreen</span>. Then switch to <span class="ui">Outlines</span> to check it on the photo. A faint part: <span class="ui">Select</span> it and mark it again (<span class="ui">Mark 2 selected</span>).</li>
+</ol>
+
+<h2 id="recipe">The recipe on the mask</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Preset</th><th>Numbers</th></tr>
+<tr><td><strong>Silkscreen on mask · 15 % × 2, rings</strong> (the Silk job's default)</td><td>Fiber, 15&nbsp;%, 1500&nbsp;mm/s, 30&nbsp;kHz, 300&nbsp;lines/cm, 2 passes, concentric rings shape by shape, one way</td></tr>
+</table></div>
+<ul>
+  <li><strong>Light on purpose.</strong> It lightens the cured ink; it does not burn through it. The mask's own recipe (40&nbsp;%) goes to copper, so the Silk job has its own list and never opens on that.</li>
+  <li><strong>Two passes.</strong> One pass is readable; the second gives the contrast in the photo above.</li>
+  <li><strong>Big filled shapes.</strong> A capacitor's filled minus side gets its rings back to back and nearly scorched on the second pass. If one does, select the big shapes and mark them on their own at a lower power.</li>
+  <li><span class="ui">Adjust the numbers</span> shows and changes the recipe. Its <span class="ui">Fill</span> list also has the hatch, lines across the whole board; the rings marked the VCF board's top in a fraction of the hatch's time.</li>
+</ul>
+
+<h2 id="laminate">On the laminate: a bottom-copper board</h2>
+<div class="warn"><span class="t">Experimental</span>
+<p>The steps work, but no recipe has been proven on bare laminate. The recipe above was made to lighten mask ink, not to mark FR-4. Try it on the waste of the sheet first, and ask in the lab (or Mads) for what works. The board works without a silkscreen.</p></div>
+<p>On the usual laser board the copper is on the bottom (B.Cu), so the component side is the laminate: the sheet is turned over, and the job is lined up on the same drilled holes.</p>
 <figure class="anim" data-anim="sk-flip">
   <figcaption><span class="k">Turning the sheet over</span>Step through: the tape off, the sheet turned over left to right, then Autofocus and Align on the same drilled holes, seen now from the other side. Schematic.</figcaption>
 </figure>
-
-<h2 id="steps">Mark it</h2>
 <ol class="steps">
   <li><span class="st">Peel the Kapton</span>If the board has a mask, take the tape off the laminate side first. Wipe it clean.</li>
   <li><span class="st">Turn the sheet over</span>Left to right, like the page of a book. The laminate is up now. Lay it square to the bed's edges, the board near the middle (<a href="laser.html#field">where on the bed</a>). Close the lid.</li>
-  <li><span class="st">Open the job</span>Click <span class="ui">Silkscreen</span> on the rail. The laser page opens on the Silk job; its step reads <span class="say">Mark the silkscreen</span>.</li>
-  <li><span class="st">Autofocus</span>Press <span class="ui">Autofocus</span>, on the laminate. It takes a new photo at that height.</li>
+  <li><span class="st">Open the job</span>Click <span class="ui">Silkscreen</span> on the rail.</li>
+  <li><span class="st">Autofocus</span>Press <span class="ui">Autofocus</span>, on the laminate.</li>
   <li><span class="st">Drag it close</span>The job is still where the traces were, but the sheet has been turned over: drag the drawing roughly onto the board in the photo, within about 25&nbsp;mm.</li>
-  <li><span class="st">Align</span>Press <span class="ui">Align</span>. It finds the drilled holes, seen from this side, in any quarter turn, and moves the drawing onto them. It moves nothing unless it finds 75&nbsp;% of the holes.</li>
-  <li><span class="st">Show where</span>The blue diode traces the outline on the board, without marking.</li>
-  <li><span class="st">Mark the silkscreen</span>Press <span class="ui">Mark the silkscreen</span>. Then switch to <span class="ui">Outlines</span> to check it on the photo. A faint part: <span class="ui">Select</span> it and mark it again (<span class="ui">Mark 2 selected</span>).</li>
+  <li><span class="st">Align</span>Press <span class="ui">Align</span>. It finds the drilled holes, seen from this side, in any quarter turn, and moves the drawing onto them.</li>
+  <li><span class="st">Show where, then mark</span>As on the mask, above. Try the recipe on the waste first.</li>
 </ol>
 <figure class="fig">
-  <img src="img/lz_silk.png" alt="The laser page on the Silk job: the boost_v2 silkscreen drawn white on the bed, part outlines and references reading normally, not mirrored; on the right the step Mark the silkscreen, the size line 61 shapes, not mirrored, and the recipe RemoveSolderMask (sphawes); the bottom bar reads Mark the silkscreen" loading="lazy">
-  <figcaption>The Silk job, rendered from the app with no laser attached. The references read the right way round: the drawing is not mirrored. No Calibrate here: <span class="ui">Autofocus</span> and <span class="ui">Align</span> are at the top.</figcaption>
+  <img src="img/lz_silk.png" alt="The laser page on the Silk job: the boost_v2 silkscreen drawn white on the bed, part outlines and references reading normally, not mirrored; on the right the step Mark the silkscreen and the size line 61 shapes, not mirrored; the bottom bar reads Mark the silkscreen" loading="lazy">
+  <figcaption>The Silk job, rendered from the app with no laser attached. The references read the right way round: the drawing is not mirrored. <span class="ui">Autofocus</span> and <span class="ui">Align</span> are at the top.</figcaption>
 </figure>
-
-<h2 id="recipe">The recipe</h2>
-<div class="warn"><span class="t">There is no silkscreen recipe yet</span>
-<p>The Silk job has no preset of its own: it opens on the mask's, <strong>RemoveSolderMask (sphawes)</strong> (40&nbsp;%, 800&nbsp;mm/s, 30&nbsp;kHz, 6 passes, cross-hatched). That recipe was made to ablate mask ink, not to mark laminate, and it has not been proven for the silkscreen. Try it on the waste of the sheet or a scrap first, and ask in the lab (or Mads) for the settings that work. <span class="ui">Adjust the numbers</span> shows and changes them.</p></div>
 
 <h2 id="faces">Which face is up, job by job</h2>
 <figure class="anim" data-anim="lz-faces">
-  <figcaption><span class="k">One sheet, the jobs</span>The board as KiCad draws it, beside the sheet on the bed for each job: copper face up for the traces and the mask (mirrored), laminate up for the silkscreen (as drawn). Schematic.</figcaption>
+  <figcaption><span class="k">One sheet, the jobs</span>The board as KiCad draws it, beside the sheet on the bed for each job of a bottom-copper board: copper face up for the traces and the mask (mirrored), laminate up for the silkscreen (as drawn). On a top face, the copper, F.Mask and the silkscreen are all as drawn, the same face up. Schematic.</figcaption>
 </figure>
 
 <h2 id="then">Then</h2>

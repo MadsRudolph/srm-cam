@@ -170,11 +170,12 @@
 <h2 id="laser">The laser</h2>
 <p>How to use it: <a href="laser.html">The laser page</a>. What it keeps and reads:</p>
 
-<h3 id="laser-recipes">The three proven or default recipes</h3>
+<h3 id="laser-recipes">The proven or default recipes</h3>
 <div class="tbl-wrap"><table>
 <tr><th>Job</th><th>Preset</th><th>Numbers</th></tr>
 <tr><td>Traces</td><td><strong>FR4 1.6 mm · proven (100 %, 1000 mm/s × 20)</strong></td><td>Fiber, 100&nbsp;%, 1000&nbsp;mm/s, 30&nbsp;kHz, 20 passes; 6 concentric rings, a 0.22&nbsp;mm gap; +10 passes beyond 45&nbsp;mm from the bed's middle</td></tr>
-<tr><td>Mask (and Silk, until it has its own)</td><td><strong>RemoveSolderMask (sphawes)</strong></td><td>40&nbsp;%, 800&nbsp;mm/s, 30&nbsp;kHz, 6 passes, 300&nbsp;lines/cm, cross-hatched, one way; openings 0.10&nbsp;mm smaller per side</td></tr>
+<tr><td>Mask</td><td><strong>RemoveSolderMask · concentric rings</strong></td><td>40&nbsp;%, 800&nbsp;mm/s, 30&nbsp;kHz, 4 passes, 300&nbsp;lines/cm, rings pad by pad, every other pass half a step in; openings 0.10&nbsp;mm smaller per side. The old hatch, <em>RemoveSolderMask (sphawes, hatch)</em>, is 6 cross-hatched passes.</td></tr>
+<tr><td>Silk on the mask</td><td><strong>Silkscreen on mask · 15 % × 2, rings</strong></td><td>15&nbsp;%, 1500&nbsp;mm/s, 30&nbsp;kHz, 2 passes, 300&nbsp;lines/cm, rings, one way: lightens the ink, does not go through it</td></tr>
 <tr><td>Stencil</td><td><strong>0.1 mm 304 stainless</strong></td><td>100&nbsp;%, 550&nbsp;mm/s, 30&nbsp;kHz, 30 passes in bursts of 5, 6&nbsp;s rest, 4 zones; holes 0.04&nbsp;mm smaller per side (0.08&nbsp;mm kerf); outline marked once at 50&nbsp;%</td></tr>
 </table></div>
 <p>The other traces presets (<em>FlatCAM isolation</em>, <em>Wide isolation</em>, <em>Moat hatch</em>, <em>Full rubout</em>) say <em>uncalibrated</em>: starting points only.</p>
