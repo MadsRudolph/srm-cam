@@ -535,3 +535,57 @@ def test_traces_line_up_measures_each_mark_against_its_own_hole():
                                               job_err[1] - cam_err[1]), abs=0.06)
     assert fit.camera == pytest.approx(cam_err, abs=0.06)
     assert abs(fit.turn) < 0.1
+
+
+class _LidLaser(xtool.F1Ultra):
+    """The laser's own class, its HTTP faked: a lid that opens on cue."""
+
+    def __init__(self, open_after=None):
+        super().__init__()
+        self.sent, self.polls, self.open_after = [], 0, open_after
+
+    def _req(self, method, path, body=None, ctype="application/json", timeout=None):
+        import json as _j
+        if path == "/peripheral/gap":
+            self.polls += 1
+            is_open = self.open_after is not None and self.polls > self.open_after
+            return _j.dumps({"code": 0, "data": {"state": "on" if is_open else "off"}})
+        self.sent.append(path)
+        if path.startswith("/device/runningStatus") or "mode" in path:
+            return _j.dumps({"code": 0, "data": {"curMode": {"mode": "Work"}}, "mode": "Work"})
+        return _j.dumps({"code": 0, "msg": "Success", "result": "ok"})
+
+    def _raw(self, port, path, *a, **k):
+        self.sent.append(path)          # never the real machine
+        return b""
+
+    def mode(self):
+        return "Work"
+
+
+def test_a_job_is_refused_with_the_lid_open():
+    """2026-11-23: the lid opened during a test fire and the fiber kept
+    firing. Shut: it runs. Open: refused, nothing sent."""
+    shut = _LidLaser()
+    shut.run("G1X1Y1")
+    assert any("processing/upload" in s for s in shut.sent)
+    open_ = _LidLaser(open_after=0)
+    with pytest.raises(xtool.LaserError, match="lid is open"):
+        open_.run("G1X1Y1")
+    assert not any("processing/upload" in s for s in open_.sent)
+    assert open_.lid_open() is True and shut.lid_open() is False
+
+
+def test_opening_the_lid_stops_a_running_job(monkeypatch):
+    monkeypatch.setattr(xtool.time, "sleep", lambda s: None)
+    l = _LidLaser(open_after=3)
+    with pytest.raises(xtool.LaserError, match="lid was opened"):
+        l.wait(60)
+    assert any("processing/stop" in s for s in l.sent)
+    assert any("M5" in s for s in l.sent)
+
+
+def test_a_frame_may_run_with_the_lid_open():
+    l = _LidLaser(open_after=0)
+    l.frame("G1X1Y1")                   # blue, watched with the lid open
+    assert any("gcodeType=frame" in s for s in l.sent)

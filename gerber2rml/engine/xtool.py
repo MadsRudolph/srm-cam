@@ -517,7 +517,36 @@ class F1Ultra:
         finally:
             self._json("POST", "/device/modeSwitch", {"state": "P_IDLE"})
 
+    # -- the lid ------------------------------------------------------------
+    # 2026-11-23: the lid opened during a test fire and the fiber kept firing.
+    # /peripheral/gap is the lid's sensor ("on" open, "off" shut; read at the
+    # machine). Every job and every blue-dot measure checks it first, and a
+    # job is stopped as soon as it reads open. A frame (blue only, the way
+    # XCS frames) is meant to be watched with the lid open, and is not.
+    def lid_open(self):
+        """True open, False shut, None when the machine does not say."""
+        try:
+            d = json.loads(self._req("GET", "/peripheral/gap", timeout=3))
+            state = (d.get("data") or {}).get("state")
+        except (LaserError, ValueError, AttributeError):
+            return None
+        return {"on": True, "off": False}.get(state)
+
+    def _lid_shut_or_refuse(self, what):
+        if self.lid_open():
+            raise LaserError(f"The lid is open: close it before {what}. The "
+                             f"fiber beam is invisible.")
+
+    def _lid_stop(self):
+        """Everything off, now."""
+        for f in (self.stop, lambda: self.gcode("M3S0"), lambda: self.gcode("M5")):
+            try:
+                f()
+            except LaserError:
+                pass
+
     def run(self, gcode, *, autostart=True):
+        self._lid_shut_or_refuse("the laser runs")
         q = "/processing/upload?gcodeType=processing&fileType=txt"
         self._json("POST", q + ("&autoStart=1" if autostart else ""), gcode,
                    ctype="text/plain", timeout=60)
@@ -526,6 +555,10 @@ class F1Ultra:
         """Until the job is done. ``progress(elapsed_s)`` is called while it runs."""
         t0, started = time.time(), False
         while time.time() - t0 < timeout:
+            if self.lid_open():
+                self._lid_stop()
+                raise LaserError("Stopped: the lid was opened while the laser "
+                                 "was running. Close it and run the job again.")
             m = self.mode()
             if m not in ("P_IDLE", "P_WORK_DONE"):
                 started = True
@@ -627,6 +660,7 @@ class F1Ultra:
         try:
             self.gcode(f"G0X{at[0]:g}Y{at[1]:g}F60000")
             time.sleep(0.3)
+            self._lid_shut_or_refuse("the blue dot measures")
             self.gcode("M3S30")             # the blue diode at a glow
             time.sleep(0.5)
             photo = self._raw(self.CAMERA_PORT,
