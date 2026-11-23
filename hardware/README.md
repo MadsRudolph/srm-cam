@@ -93,7 +93,7 @@ request to MadsRudolph/srm-cam is approved. Compiled for the Uno (51 % flash,
 | STOP during `Y` | `Y ok` | `E Y ABORT` |
 | A descent's last step | Could pass the floor by up to one step | Lands on the floor |
 | Spindle deadman after a long `M`/`N` | Tripped as the move returned, the host having waited on the board | Fed again when each command ends, and by every byte that arrives mid-move |
-| The first touch after `D` | Stepped 150 µm at a time to the floor (nothing known, so "coarse above the copper" was all the way down) - a still bit pressed up to 0.15 mm into the copper | Fine steps (25 µm) all the way, as the header always said; also after copper is found above the approach plane |
+| The first touch after `D` | Stepped 150 µm at a time to the floor (nothing known, so "coarse above the copper" was all the way down) - a still bit pressed up to 0.15 mm into the copper | Fast (150 µm steps) down to the highest the copper could be, which SRM-CAM now sends as `D <top>` (also `T <top>`, `W <top>`): the measured copper + 1 mm with the same bit, else the lab's copper + the 10 mm a bit can sit further out of the collet. The gentle 25 µm steps start 0.1 mm above that. Without `<top>` (an older host) it is gentle all the way. After copper is found above the approach plane, gentle from safe Z |
 | `K` mid-move | Eaten like any other byte | Cancels the job (`K ok`) and stops the sequence, like `%` |
 | A pause held past 5 minutes | Aborted, but left the machine suspended - so the lift after it was held too | The hold is released first |
 | `C`, `W` origin read | One read; `W` wrote its X/Y back with `setOrigin` | Two reads must agree; `E C UNSTABLE` / `E W UNSTABLE` otherwise, origin unchanged |

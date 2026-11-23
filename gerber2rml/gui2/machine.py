@@ -507,6 +507,7 @@ class MachineLink(QObject):
         fresh = self.surface_z is not None
 
         def op(ser):
+            top = stockfind.copper_top_um(hint, fresh)
             if fresh:
                 if not stockfind.drop_to_hint(ser, hint, self.should_abort,
                                               fresh=True):
@@ -516,14 +517,18 @@ class MachineLink(QObject):
                 # short (or is not made at all), and Zero Z's own touch only
                 # reaches 6 mm. So the copper is found first, gently, and
                 # the zero is taken from just above it.
-                if stockfind.touch_from_anywhere(ser, hint,
-                                                 self.should_abort) is None:
+                found = stockfind.touch_from_anywhere(ser, hint,
+                                                      self.should_abort)
+                if found is None:
                     return None
+                # Just touched, same bit: the copper is right there.
+                top = stockfind.copper_top_um(int(found[2] * 1000), True)
                 if spi_probe.timed_move(
                         ser, dz_um=stockfind.TOUCH_BACK_UM,
                         should_abort=self.should_abort) is None:
                     return None
-            return spi_probe.zero_z(ser, should_abort=self.should_abort)
+            return spi_probe.zero_z(ser, should_abort=self.should_abort,
+                                    copper_top_um=top)
         self.clear_abort()
         self.submit("zero_z", op)
 

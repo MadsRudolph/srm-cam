@@ -374,12 +374,17 @@ def firmware_version(ser, timeout=1.5):
     return (1, set())
 
 
-def zero_z(ser, timeout=60.0, should_abort=None):
+def zero_z(ser, timeout=60.0, should_abort=None, copper_top_um=None):
     """Send ``W`` (verified touch-off, then set the work-origin Z to the copper
     surface). Returns the new origin ``(ox_mm, oy_mm, oz_mm)`` or None on
     error/abort. NOTE: writes the origin VPanel displays (User CS); verify
-    VPanel's G54 Z once before trusting it for NC jobs."""
-    ser.write(b"W\n")
+    VPanel's G54 Z once before trusting it for NC jobs.
+
+    ``copper_top_um``: the highest machine Z the copper could be at
+    (``stockfind.copper_top_um``). Firmware v5 steps fast down to it and
+    gently only below; older firmware ignores it."""
+    cmd = "W" if copper_top_um is None else "W %d" % int(copper_top_um)
+    ser.write((cmd + "\n").encode())
     line = _read_line(ser, time.monotonic() + timeout, should_abort)
     if should_abort is not None and should_abort():
         send_abort(ser)

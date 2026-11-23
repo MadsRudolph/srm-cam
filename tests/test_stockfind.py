@@ -256,3 +256,15 @@ def test_older_firmware_with_no_known_height_drops_to_the_same_spot(
                         lambda s, timeout=1.5: (4, {"timedmove"}))
     assert stockfind.drop_to_hint(ser, None)
     assert m.pos[2] == surface + stockfind.STALE_ABOVE_UM
+
+
+def test_copper_top_same_bit_and_stale():
+    """The first touch steps fast down to the highest the copper could be:
+    1 mm over a height measured with this bit, else the lab's copper plus
+    the 10 mm a bit can sit further out of the collet."""
+    from gerber2rml.engine import stockfind as sf
+    assert sf.copper_top_um(-50000, fresh=True) == -49000
+    assert sf.copper_top_um(None) == sf.LAB_COPPER_UM + sf.BIT_SPREAD_UM
+    assert sf.copper_top_um(-40000) == -30000          # saved, higher than the lab's
+    assert sf.copper_top_um(-60000) == sf.LAB_COPPER_UM + sf.BIT_SPREAD_UM
+    assert sf.copper_top_um(-500, fresh=True) == 0     # never above Z home

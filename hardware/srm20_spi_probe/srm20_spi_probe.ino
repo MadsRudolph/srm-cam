@@ -66,7 +66,12 @@
  *
  * SERIAL PROTOCOL (115200 baud, newline-terminated, all distances in MICRONS):
  *   host -> board:
- *     D                 set datum = current X,Y and safe Z = current Z
+ *     D [top]           set datum = current X,Y and safe Z = current Z.
+ *                       v5: <top> is the highest machine Z the copper could be
+ *                       at (the host's estimate, with the bit's seating in the
+ *                       collet allowed for). The first touch steps fast down
+ *                       to it and feels its way only below. Without it, the
+ *                       first touch feels its way from the start.
  *     U <z>             v5: fast straight down to machine Z, stopping at the
  *                       first touch -> 'U T x y z' touched, 'U K x y z' got there
  *     P <id> <x> <y>    probe local (x,y) -> 'R id x y z'
@@ -74,8 +79,9 @@
  *     Z <z>             set safe Z manually (machine um)
  *     L                 lift to safe Z at current X,Y
  *     J <x> <y>         jog to absolute machine (x,y) um (lifts ~5 mm first)
- *     T                 touch-off from HERE, stop on the surface -> 'T x y z'
- *     W                 zero the work origin Z on the copper -> 'W ox oy oz'
+ *     T [top]           touch-off from HERE, stop on the surface -> 'T x y z'
+ *     W [top]           zero the work origin Z on the copper -> 'W ox oy oz'
+ *                       (v5: <top> as for D, for this one touch)
  *     !                 ABORT: stop any descent, lift to safe Z, spindle OFF
  *     C                 begin a streaming session -> 'C ox oy oz'
  *     M <x> <y> <z> <s> stream one move to work-frame (x,y,z) um -> 'M x y z'
@@ -179,6 +185,10 @@ bool haveDatum = false;
 // every new datum ('D'), i.e. at the start of each grid run.
 long refSurfaceZ = 0;
 bool haveRef = false;
+// v5: the highest the copper could be, from the host ('D <top>'). Above it a
+// descent steps fast; the gentle step starts COARSE_KEEP_UM above it.
+bool haveCopperTop = false;
+long copperTopZ = 0;
 // Highest (least-negative) copper Z touched this run — the fast-approach planes
 // its rapid descent / between-point lift just above this.
 long maxSurfaceZ = 0;
@@ -544,14 +554,27 @@ int descendUntilTouch(long mx, long my, long &z, long step, long floorZ) {
 //
 // Returns 1 on contact, 0 if the floor is reached, -1 on abort - the same
 // contract as descendUntilTouch.
+int descendCoarseThenFine(long mx, long my, long &z, long handover,
+                          long floorZ, long fineStep);
+
 int descendFast(long mx, long my, long &z, long floorZ, long expectZ,
                 long fineStep) {
-  // No surface known yet (the first touch after a 'D'): the copper could be
-  // anywhere below, so there is no "above any copper" to step coarsely
-  // through - fine steps from the start. This used to be floorZ, which made
-  // the first touch of every run the COARSE one: 150 um steps, pressing a
-  // still bit up to 0.15 mm into the copper before it read contact.
-  long handover = (haveRef ? expectZ + COARSE_KEEP_UM : z);
+  // No surface measured yet (the first touch after a 'D'): fast down to the
+  // highest the host says the copper could be, gentle below it. With no such
+  // word the copper could be anywhere below, so gentle from the start. (This
+  // used to be floorZ, which made the first touch the COARSE one all the way:
+  // 150 um steps, pressing a still bit up to 0.15 mm into the copper.)
+  long handover = haveRef ? expectZ + COARSE_KEEP_UM
+                : haveCopperTop ? copperTopZ + COARSE_KEEP_UM : z;
+  return descendCoarseThenFine(mx, my, z, handover, floorZ, fineStep);
+}
+
+// Coarse steps down to *handover*, the fine step below it, stopping at the
+// first touch either way. The coarse stage stops on touch too: if the copper
+// is higher than the estimate, the bit meets it at most one coarse step in.
+int descendCoarseThenFine(long mx, long my, long &z, long handover,
+                          long floorZ, long fineStep) {
+  if (handover > z) handover = z;
   if (handover < floorZ) handover = floorZ;
   while (z > handover) {
     if (checkAbort()) return -1;
@@ -641,12 +664,15 @@ int probeAt(long mx, long my, long &touchZ) {
 // Touch-off from the CURRENT position (no datum needed): coarse descent, then
 // the same two-stage verification, ending ON the surface. Returns 1 + touch
 // position, 0 no contact, -1 abort, -3 unstable. Used by 'T' and 'W'.
-int touchOffHere(long &tx, long &ty, long &tz) {
+// *haveTop*/*copperTop*: the host's highest-the-copper-could-be ('T <top>',
+// 'W <top>'): fast down to it, gentle below. Without it, gentle all the way.
+int touchOffHere(long &tx, long &ty, long &tz, bool haveTop, long copperTop) {
   long x, y, z;
   if (!readPos(x, y, z)) return -3;
   long topZ = z;                               // where the descent started
   long floorZ = z - PROBE_MAX_DROP_UM;
-  int r = descendUntilTouch(x, y, z, PROBE_STEP_UM, floorZ);
+  long handover = haveTop ? copperTop + COARSE_KEEP_UM : z;
+  int r = descendCoarseThenFine(x, y, z, handover, floorZ, PROBE_STEP_UM);
   if (r != 1) return r;                        // 0 no-touch / -1 abort
   long coarseZ = z;
   { long ax, ay, az; if (readPos(ax, ay, az)) coarseZ = az; }
@@ -687,16 +713,34 @@ bool readLongs(const char *s, long *out, int n) {
   return *p == 0;
 }
 
+// Nothing but spaces: a command given without its optional number.
+bool blankArgs(const char *s) {
+  while (*s == ' ' || *s == '\t') s++;
+  return *s == 0;
+}
+
+// One optional number: true and *out* set if exactly one is there. False if
+// there is none (out[0] = 0) - or if what is there is not one number, which
+// the caller tells apart with blankArgs.
+bool optionalLong(const char *s, long *out) {
+  out[0] = 0;
+  return readLongs(s, out, 1);
+}
+
 void argsError(char cmd) {
   Serial.print(F("E ")); Serial.print(cmd); Serial.println(F(" ARGS"));
 }
 
 void handleLine(char *s) {
   if (s[0] == 'D') {
+    long top[1];
+    bool withTop = optionalLong(s + 1, top);
+    if (!withTop && !blankArgs(s + 1)) { argsError('D'); return; }
     long x, y, z;
     if (!readPos(x, y, z)) { Serial.println(F("# datum read UNSTABLE")); return; }
     datX = x; datY = y; safeZ = z; haveDatum = true;
     haveRef = false;                         // new run -> forget the surface reference
+    haveCopperTop = withTop; copperTopZ = top[0];
     Serial.print(F("D ")); Serial.print(datX); Serial.print(' ');
     Serial.print(datY); Serial.print(' '); Serial.println(safeZ);
   } else if (s[0] == 'Z') {
@@ -735,10 +779,13 @@ void handleLine(char *s) {
       Serial.print(F("J ")); Serial.print(x); Serial.print(' '); Serial.println(y);
     }
   } else if (s[0] == 'T') {        // touch-off: descend from HERE, STOP at surface
+    long top[1];
+    bool withTop = optionalLong(s + 1, top);
+    if (!withTop && !blankArgs(s + 1)) { argsError('T'); return; }
     if (probeTouched()) { Serial.println(F("E T LOW")); return; }
     clearHold();                          // fresh touch-off — clear any stale abort
     long tx, ty, tz;
-    int r = touchOffHere(tx, ty, tz);
+    int r = touchOffHere(tx, ty, tz, withTop, top[0]);
     if (r == 1) {
       Serial.print(F("T ")); Serial.print(tx); Serial.print(' ');
       Serial.print(ty); Serial.print(' '); Serial.println(tz);
@@ -752,10 +799,13 @@ void handleLine(char *s) {
       Serial.println(F("E T NOTOUCH"));
     }
   } else if (s[0] == 'W') {        // zero the work-origin Z on the copper
+    long top[1];
+    bool withTop = optionalLong(s + 1, top);
+    if (!withTop && !blankArgs(s + 1)) { argsError('W'); return; }
     if (probeTouched()) { Serial.println(F("E W LOW")); return; }
     clearHold();
     long tx, ty, tz;
-    int r = touchOffHere(tx, ty, tz);
+    int r = touchOffHere(tx, ty, tz, withTop, top[0]);
     if (r != 1) {
       if (r == -1) { long x, y, z; if (readPos(x, y, z)) liftSafe(x, y); }
       if (r == -1)      Serial.println(F("E W ABORT"));
@@ -994,10 +1044,10 @@ void handleLine(char *s) {
   } else if (s[0] == 'V') {        // version + feature flags for the host
 #ifdef SRM20SPIREMOTE_LOCAL_PATCH
     Serial.println(F("V 5 probe,refine,verify,retouch,zeroz,touchbit,stream,"
-                     "holetest,status,spindle,jobctl,view,timedmove,guard,info,frame,origin,liftfix,touchstop"));
+                     "holetest,status,spindle,jobctl,view,timedmove,guard,info,frame,origin,liftfix,touchstop,coppertop"));
 #else
     Serial.println(F("V 5 probe,refine,verify,retouch,zeroz,touchbit,stream,"
-                     "holetest,status,spindle,jobctl,view,timedmove,guard,origin,liftfix,touchstop"));
+                     "holetest,status,spindle,jobctl,view,timedmove,guard,origin,liftfix,touchstop,coppertop"));
 #endif
   } else if (s[0] == '?') {
     long x, y, z; bool ok = readPos(x, y, z);
