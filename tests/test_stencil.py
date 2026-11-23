@@ -455,6 +455,27 @@ def test_the_stencil_can_be_outlined_or_hidden(qt_app, monkeypatch, art):
     d.close()
 
 
+def test_r_turns_the_artwork_like_the_buttons(qt_app, monkeypatch, art):
+    """R is Turn right, Shift+R is Turn left, and neither does anything while
+    the buttons are off, as they are during a job."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from gerber2rml.gui2 import stencil_laser as sl
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "stencil-laser"))
+    d = sl.StencilLaserDialog(art, laser=xtool.F1Ultra("127.0.0.1", 1, timeout=1))
+    start = d.turns
+    QTest.keyClick(d.view, Qt.Key_R)
+    assert d.turns == (start + 1) % 4
+    QTest.keyClick(d.view, Qt.Key_R, Qt.ShiftModifier)
+    QTest.keyClick(d.view, Qt.Key_R, Qt.ShiftModifier)
+    assert d.turns == (start - 1) % 4
+    d.rot_l.setEnabled(False)
+    d.rot_r.setEnabled(False)
+    QTest.keyClick(d.view, Qt.Key_R)
+    assert d.turns == (start - 1) % 4
+    d.close()
+
+
 # ---------------------------------------------------------------- mask and silkscreen
 
 BUCK = Path(__file__).parent / "fixtures" / "mosfet_test"

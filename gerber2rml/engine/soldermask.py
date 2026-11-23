@@ -137,6 +137,32 @@ def _missing_message(folder, side):
               f"plot into this same folder, and try again.")
 
 
+def _stroked_arc(p):
+    """An arc drawn with a round pen: its centre line, buffered to the pen.
+
+    Built here rather than with gerbonara's ``Arc.to_arc_poly``, whose inner
+    edge has radius zero when the pen is as wide as the arc, and which then
+    divides by it (gerbonara 1.6.3). KiCad draws a filled dot exactly that way,
+    a 0.1 mm circle with a 0.2 mm pen, and a pin 1 mark is such a dot.
+    """
+    half = p.width / 2
+    r = math.dist((p.x1, p.y1), (p.cx, p.cy))
+    if r < 1e-9:
+        return Point(p.x1, p.y1).buffer(half)
+    a1 = math.atan2(p.y1 - p.cy, p.x1 - p.cx)
+    a2 = math.atan2(p.y2 - p.cy, p.x2 - p.cx)
+    sweep = (a1 - a2 if p.clockwise else a2 - a1) % (2 * math.pi)
+    if sweep < 1e-9:
+        sweep = 2 * math.pi         # start and end together: a whole circle
+    step = 2 * math.acos(max(0.0, 1 - ARC_ERROR_MM / r))
+    n = max(2, math.ceil(sweep / step))
+    turn = -sweep / n if p.clockwise else sweep / n
+    pts = [(p.cx + r * math.cos(a1 + i * turn), p.cy + r * math.sin(a1 + i * turn))
+           for i in range(n)]
+    pts.append((p.x2, p.y2))
+    return LineString(pts).buffer(half)
+
+
 def _primitive_to_shapely(p):
     """One gerbonara primitive, in mm, as shapely geometry."""
     if isinstance(p, gp.Circle):
@@ -149,7 +175,7 @@ def _primitive_to_shapely(p):
     if isinstance(p, gp.Line):
         return LineString([(p.x1, p.y1), (p.x2, p.y2)]).buffer(p.width / 2)
     if isinstance(p, gp.Arc):
-        p = p.to_arc_poly()
+        return _stroked_arc(p)
     pts = p.approximate_arcs(max_error=ARC_ERROR_MM).outline
     if len(pts) < 3:
         return Polygon()
