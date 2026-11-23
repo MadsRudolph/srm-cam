@@ -474,6 +474,22 @@ tr:hover td { background: var(--panel); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-light); }
 .btn.primary:hover { background: var(--primary-hi); border-color: var(--primary-hi); }
 
+/* ---------- Discord banner (front page) ---------- */
+
+.discord-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin: 0 0 28px; padding: 14px 18px;
+  border: 1px solid var(--copper-dim); border-left: 3px solid var(--copper);
+  border-radius: var(--radius); background: var(--panel);
+  color: var(--text-2); text-decoration: none;
+}
+.discord-banner:hover { text-decoration: none; border-color: var(--copper); }
+.discord-banner strong { color: var(--text); }
+.discord-banner .btn { flex: none; }
+@media (max-width: 640px) {
+  .discord-banner { flex-direction: column; align-items: flex-start; }
+}
+
 /* ---------- page footer nav ---------- */
 
 .page-nav {
