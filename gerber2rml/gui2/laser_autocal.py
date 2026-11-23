@@ -167,6 +167,9 @@ class AutoCalibration:
             ("Find the board", lambda: find_board(page), self._found),
             ("Autofocus", lambda: page.autofocus(), self._ok),
             ("Camera and holes", page.proof, self._proof),
+            # Then as the mask: marks beside five holes, each measured
+            # against its own hole, the job moved onto them.
+            ("Line up at the holes", page.line_up_at_holes, self._lined_up),
         ]
         # No focus map: on stock lying flat, +-0.3 mm from the middle's
         # focus made no difference in the field test (2026-11-19), and the
@@ -180,6 +183,9 @@ class AutoCalibration:
         return not warn
 
     def _lined_up(self, msg, warn):
+        if getattr(self.page, "kind", None) == "traces" and \
+                len(self.page.base_art.drills or []) < 2:
+            return True                 # a blank: nothing to line up on
         return not warn and getattr(self.page, "_last_lineup", None) is not None
 
     def _found(self, msg, warn):

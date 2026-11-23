@@ -505,3 +505,33 @@ def test_drilled_holes_need_over_half_found_stencils_more():
     assert inked.ok
     inked.found = 71                                 # its best wrong place: 35 %
     assert not inked.ok
+
+
+def test_traces_line_up_measures_each_mark_against_its_own_hole():
+    """As the mask's test fire (2026-11-23): marks the camera shows 0.3 mm
+    off and holes really 0.4 mm off the job - the fit moves the job by the
+    holes' error only, and gives the camera's own."""
+    import numpy as np
+    from shapely.geometry import Point
+    px, size = 16, 60
+    yy, xx = np.mgrid[0:size * px, 0:size * px] / px
+    before = np.zeros((size * px, size * px, 3), np.uint8)
+    before[...] = (200, 140, 100)                       # bare copper
+    cam_err, job_err = (0.3, -0.2), (0.4, 0.1)
+    tests = []
+    for hx, hy in ((10, 10), (50, 12), (30, 45), (12, 48)):
+        tx, ty = hx + job_err[0], hy + job_err[1]           # where it really is
+        before[(xx - tx) ** 2 + (yy - ty) ** 2 <= 0.4 ** 2] = (15, 15, 15)
+        mark = Point(hx + 1.6, hy).buffer(0.6)              # isolation beside it
+        tests.append((mark, (hx, hy, 0.8)))
+    after = before.copy()
+    for mark, _h in tests:
+        c = mark.centroid
+        m = (xx - c.x - cam_err[0]) ** 2 + (yy - c.y - cam_err[1]) ** 2 <= 0.6 ** 2
+        after[m] = (90, 70, 60)
+    fit = cam.fit_marks_to_holes(before, after, px, tests)
+    assert fit is not None and fit.used == 4
+    assert (fit.dx, fit.dy) == pytest.approx((job_err[0] - cam_err[0],
+                                              job_err[1] - cam_err[1]), abs=0.06)
+    assert fit.camera == pytest.approx(cam_err, abs=0.06)
+    assert abs(fit.turn) < 0.1

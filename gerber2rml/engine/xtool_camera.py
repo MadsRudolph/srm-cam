@@ -409,7 +409,8 @@ def _fill_holes(mask):
     return ~out
 
 
-def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM):
+def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM,
+                ring=True):
     """Where the pad of ``opening`` (drawn, bed mm) is in ``gray`` (a photo
     from before the burn), within ``search_mm`` of ``near``: the middle of
     the best fit of its outline ring and its hole (dx, dy, d from the
@@ -420,7 +421,7 @@ def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM
     c = opening.centroid
     shape = _tr(opening, -c.x, -c.y)
     padp = shape.buffer(PAD_SHRINK_MM)
-    ring = padp.buffer(PAD_RING_MM[1]).difference(padp.buffer(PAD_RING_MM[0]))
+    ring_shape = padp.buffer(PAD_RING_MM[1]).difference(padp.buffer(PAD_RING_MM[0]))
     hx, hy, hd = hole
     disc = Point(hx, hy).buffer(max(hd, 0.3) / 2)
     x0, y0, x1, y1 = padp.buffer(PAD_RING_MM[1]).bounds
@@ -436,7 +437,9 @@ def _pad_centre(gray, px_per_mm, opening, hole, near, *, search_mm=PAD_SEARCH_MM
                 m &= ~_MPath(np.asarray(r.coords)).contains_points(pts)
             out |= m
         return out.reshape(kx.shape)
-    T = raster(ring).astype(np.float32) + raster(disc).astype(np.float32)
+    T = raster(disc).astype(np.float32)
+    if ring:                    # under mask ink the trench shows; on bare copper not
+        T = T + raster(ring_shape).astype(np.float32)
     T -= T.mean()
     H, W = gray.shape
     s = int(np.ceil(search_mm * px_per_mm)) + kr + 2
@@ -477,6 +480,7 @@ class OpeningFit:
     offsets: list           # per opening: (drawn centre, hole minus opening)
     total: int
     used: int = 0           # measured and agreeing with the rest
+    camera: tuple = None    # a traces line-up: where the marks showed, median
 
     @property
     def worst(self):
@@ -552,6 +556,13 @@ def fit_test_openings(before, after, px_per_mm, tests, *, search_mm=3.0,
         drawn.append((c.x, c.y))
         moved.append((c.x + off[0], c.y + off[1]))
         offsets.append(((c.x, c.y), off))
+    return _rigid_fit(drawn, moved, offsets, len(tests), min_spread_mm, outlier_mm)
+
+
+def _rigid_fit(drawn, moved, offsets, total, min_spread_mm, outlier_mm):
+    """The turn and shift taking ``drawn`` points onto ``moved`` (bed mm),
+    as an :class:`OpeningFit`, leaving out with three or more the points
+    further than ``outlier_mm`` from the fit of them all."""
     if not drawn:
         return None
     # A hole the mill put a little off its pad says the job is off when it
@@ -580,7 +591,43 @@ def fit_test_openings(before, after, px_per_mm, tests, *, search_mm=3.0,
     turn = math.degrees(th)
     return OpeningFit(dx=float(qm[0] - pm[0]), dy=float(qm[1] - pm[1]), turn=turn,
                       centre=(float(pm[0]), float(pm[1])), offsets=offsets,
-                      total=len(tests), used=len(P))
+                      total=total, used=len(P))
+
+
+def fit_marks_to_holes(before, after, px_per_mm, tests, *, search_mm=1.5,
+                       min_spread_mm=15.0, max_off_mm=2.0, outlier_mm=0.3):
+    """A traces job's own line-up, as the mask's test fire: ``tests`` are
+    (mark, (hx, hy, d)): faint marks the laser made on isolation the job
+    removes anyway, each beside a drilled hole, as drawn on the bed. Where
+    each mark shows (``after`` against ``before``) and where its hole is (in
+    ``before``, a dark disc on bare copper) are measured in the same photos,
+    so the camera's own error cancels, at every hole on its own: the camera
+    is out by different amounts across the bed. Returns an
+    :class:`OpeningFit` moving the job onto the holes, with ``camera`` the
+    marks' median shift; or None."""
+    from shapely.geometry import Point
+    g0 = before.astype(np.float32).mean(axis=2)
+    drawn, moved, offsets, shifts = [], [], [], []
+    for mark, (hx, hy, hd) in tests:
+        m = locate_change(before, after, px_per_mm, [mark], search_mm=search_mm)
+        if not m.ok:
+            continue
+        hole = _pad_centre(g0, px_per_mm, Point(hx, hy).buffer(max(hd, 0.3) / 2),
+                           (0.0, 0.0, hd), (hx + m.dx, hy + m.dy),
+                           search_mm=1.0, ring=False)
+        if hole is None:
+            continue
+        off = ((hole[0] - hx) - m.dx, (hole[1] - hy) - m.dy)
+        if math.hypot(*off) > max_off_mm:
+            continue
+        drawn.append((hx, hy))
+        moved.append((hx + off[0], hy + off[1]))
+        offsets.append(((hx, hy), off))
+        shifts.append((m.dx, m.dy))
+    fit = _rigid_fit(drawn, moved, offsets, len(tests), min_spread_mm, outlier_mm)
+    if fit is not None:
+        fit.camera = tuple(float(v) for v in np.median(np.array(shifts), axis=0))
+    return fit
 
 
 # ---------------------------------------------------------------------------

@@ -3732,6 +3732,89 @@ class StencilLaserDialog(QDialog):
                   "off, so a check or rework of selected pads stays put "
                   "(Ctrl+Z undoes the move).")
 
+    def line_up_at_holes(self, n=5):
+        """A traces job's line-up as the mask's: faint marks on the isolation
+        beside ``n`` holes spread over the board, each measured against its
+        own hole in the same photos, and the job moved and turned onto the
+        holes (2026-11-23: the mask lined up spot on this way; the traces'
+        one correction from marks beside the board could not follow the
+        camera's error across it)."""
+        self._settle()
+        if self.kind != "traces" or len(self.art.drills or []) < 2:
+            return self._say("Lining up at the holes needs a traces job with "
+                             "drilled holes.", warn=True)
+        try:
+            plan = xtool.proof_on_isolation(self.art, self.origin(), self.recipe(), n=n)
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        _, h = self.art.size
+        holes = [(xtool.to_bed([(x, y)], self.origin(), h)[0], d)
+                 for x, y, d in self.art.drills]
+        tests = []
+        for mark in plan.marks:
+            c = mark.centroid
+            (hx, hy), d = min(holes, key=lambda q: (q[0][0] - c.x) ** 2
+                              + (q[0][1] - c.y) ** 2)
+            if (hx - c.x) ** 2 + (hy - c.y) ** 2 <= (xtool.PROOF_RADIUS + 0.5) ** 2:
+                tests.append((mark, (hx, hy, d)))
+        if len(tests) < 2:
+            return self._say("Fewer than two holes have isolation beside them "
+                             "to mark.", warn=True)
+        recipe, passes = self.recipe(), self.proof_passes.value()
+        text, secs = xtool.proof_job(plan, recipe, passes)
+        hi = TEST_FIRE_PX_PER_MM
+        self._last_lineup = None
+
+        def work(_p):
+            from gerber2rml.engine import xtool_camera as cam
+            raw_a = self._raw_photo()
+            self.laser.run(text)
+            self.laser.wait(secs * 2 + 60)
+            raw_b = self._raw_photo(like=raw_a)
+            fit = cam.fit_marks_to_holes(self._photo(hi, raw_a),
+                                         self._photo(hi, raw_b), hi, tests)
+            return self._photo(_PX_PER_MM, raw_b), fit
+
+        def done(res):
+            rgb, fit = res
+            self.show_bed(rgb)
+            if fit is None:
+                return ("Marked beside the holes, but no mark could be measured "
+                        "against its hole, so the job was not moved.")
+            self._move_by_fit(fit)
+            if fit.camera is not None:
+                self._set_offset((self.cam_offset[0] + fit.camera[0],
+                                  self.cam_offset[1] + fit.camera[1]))
+            self._last_lineup = fit
+            _laserlog.write("traces line-up", job=self.name_lbl.text(),
+                            measured=[[round(c[0], 2), round(c[1], 2),
+                                       round(o[0], 3), round(o[1], 3)]
+                                      for c, o in fit.offsets],
+                            used=fit.used, dx=round(fit.dx, 3),
+                            dy=round(fit.dy, 3), turn=round(fit.turn, 3),
+                            camera=fit.camera)
+            off = math.hypot(fit.dx, fit.dy)
+            return (f"Lined up at {fit.used} of {len(tests)} holes, worst "
+                    f"{fit.worst:.2f} mm off: the job moved {off:.2f} mm"
+                    + (f" and turned {fit.turn:+.2f}°" if abs(fit.turn) > 0.02 else "")
+                    + ". Ready to etch (Ctrl+Z undoes the move).")
+        self._start(work, f"Marking beside {len(tests)} holes and lining up…", done)
+
+    def _move_by_fit(self, fit):
+        """Turn and move the job as ``fit`` says: its measured points' middle
+        where the fit puts it."""
+        target = (fit.centre[0] + fit.dx, fit.centre[1] + fit.dy)
+        mx, my = fit.centre
+        if abs(fit.turn) > 0.02:
+            pivot = self.centre()
+            self._turn_to(self.turns, self.fine + fit.turn, preserve_selection=True)
+            mx, my = self._turned_about(fit.centre, pivot, fit.turn)
+        else:
+            self._remember_place()
+        self.x.setValue(round(self.x.value() + target[0] - mx, 3))
+        self.y.setValue(round(self.y.value() + target[1] - my, 3))
+        self._remember()
+
     @staticmethod
     def _turned_about(point, pivot, deg):
         """``point`` turned ``deg`` clockwise on the bed (Y down) about

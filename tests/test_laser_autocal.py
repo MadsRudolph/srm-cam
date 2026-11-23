@@ -71,7 +71,7 @@ def test_calibrate_runs_every_step_and_says_ready(qt_app, page, monkeypatch):
     r = _wait(qt_app, page)
     assert r["ok"] and r["complete"]
     assert r["verdict"].startswith("Ready to cut")
-    assert [l[:3] for l in r["lines"]] == ["✓ F", "✓ A", "✓ C"]
+    assert [l[:3] for l in r["lines"]] == ["✓ F", "✓ A", "✓ C", "✓ L"]
     assert "Ready to cut" in page.proof_note.text()
     assert page.cut_btn.isEnabled()
 
