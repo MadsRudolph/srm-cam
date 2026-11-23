@@ -3711,6 +3711,18 @@ class StencilLaserDialog(QDialog):
             return (f"Opened {n} test pads, but none could be measured in the "
                     "photo, so the job was not moved. Check them under the "
                     "loupe and nudge by hand.")
+        if not fit.agrees:
+            self._last_lineup = None
+            _laserlog.write("test fire refused", job=self.name_lbl.text(),
+                            measured=[[round(c[0], 2), round(c[1], 2),
+                                       round(o[0], 3), round(o[1], 3)]
+                                      for c, o in fit.offsets],
+                            residual=round(fit.residual, 3))
+            return (f"The {len(fit.offsets)} test pads disagree with each other "
+                    f"(by up to {fit.residual:.2f} mm after the best fit), so the "
+                    "measures cannot be trusted and the job was NOT moved. Look "
+                    "at the test pads under the loupe, nudge by hand, or select "
+                    "a few other pads and test again.")
         # Rotate about the openings the fit used, then put their middle
         # where it says.
         target = (fit.centre[0] + fit.dx, fit.centre[1] + fit.dy)
@@ -3799,6 +3811,10 @@ class StencilLaserDialog(QDialog):
             if fit is None:
                 return ("Marked beside the holes, but no mark could be measured "
                         "against its hole, so the job was not moved.")
+            if not fit.agrees:
+                return (f"The marks disagree with each other (by up to "
+                        f"{fit.residual:.2f} mm after the best fit), so the job "
+                        "was NOT moved: check it on the photo before etching.")
             self._move_by_fit(fit)
             if fit.camera is not None:
                 self._set_offset((self.cam_offset[0] + fit.camera[0],

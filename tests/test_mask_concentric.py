@@ -198,7 +198,7 @@ def test_the_page_moves_the_job_onto_the_holes_after_a_test_fire(qt_app, monkeyp
         assert tests                           # these pads have holes
         shapes = sl._bed_shapes(d.art, d.origin(), {0, 3, 6})
         c = (sum(p.centroid.x for p in shapes) / 3, sum(p.centroid.y for p in shapes) / 3)
-        fit = SimpleNamespace(dx=0.3, dy=-0.5, turn=0.4, centre=c, used=3,
+        fit = SimpleNamespace(dx=0.3, dy=-0.5, turn=0.4, centre=c, used=3, agrees=True,
                               offsets=[((0, 0), (0.3, -0.5))] * 3, worst=0.6)
         msg = d._line_up_on(fit, 3)
         now = sl._bed_shapes(d.art, d.origin(), {0, 3, 6})
@@ -286,3 +286,19 @@ def test_the_page_leaves_mounting_holes_out_of_the_mask(qt_app, monkeypatch):
         assert all(o.intersection(drilled).area < 0.85 * o.area for o in art.apertures)
     finally:
         w.close()
+
+
+def test_test_pads_that_disagree_do_not_move_the_job():
+    """The output board (2026-11-23): five pads saying left and right at
+    once moved the job on measures that could not be right."""
+    from gerber2rml.engine import xtool_camera as cam
+    pts = [(150.07, 86.12), (143.88, 127.83), (110.87, 110.03),
+           (90.56, 94.9), (90.54, 125.26)]
+    offs = [(1.028, -0.774), (0.607, -0.783), (0.727, 0.393),
+            (-0.586, -0.451), (-0.474, -0.31)]
+    fit = cam._rigid_fit(pts, [(x + a, y + b) for (x, y), (a, b) in zip(pts, offs)],
+                         list(zip(pts, offs)), 5, 15.0, 0.3)
+    assert not fit.agrees
+    good = cam._rigid_fit(pts, [(x + 0.2, y - 0.5) for x, y in pts],
+                          [(p, (0.2, -0.5)) for p in pts], 5, 15.0, 0.3)
+    assert good.agrees and good.dx == pytest.approx(0.2)

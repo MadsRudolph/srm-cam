@@ -481,6 +481,13 @@ class OpeningFit:
     total: int
     used: int = 0           # measured and agreeing with the rest
     camera: tuple = None    # a traces line-up: where the marks showed, median
+    residual: float = 0.0   # mm, the worst of those used off the fit
+    tolerance: float = 0.3
+
+    @property
+    def agrees(self):
+        """The points used agree on one move (three or more needed to know)."""
+        return self.residual <= self.tolerance
 
     @property
     def worst(self):
@@ -588,10 +595,17 @@ def _rigid_fit(drawn, moved, offsets, total, min_spread_mm, outlier_mm):
         if 2 <= keep.sum() < len(P):
             P, Q = P[keep], Q[keep]
             pm, qm, th = rigid(P, Q)
+    # How far the points it used still sit from the fit: when they do not
+    # agree on one move, the measures are not to be trusted (the output
+    # board, 2026-11-23: five pads saying left and right at once).
+    c_, s_ = math.cos(th), math.sin(th)
+    rest = np.hypot(*(((P - pm) @ np.array([[c_, s_], [-s_, c_]]) + qm) - Q).T)
     turn = math.degrees(th)
     return OpeningFit(dx=float(qm[0] - pm[0]), dy=float(qm[1] - pm[1]), turn=turn,
                       centre=(float(pm[0]), float(pm[1])), offsets=offsets,
-                      total=total, used=len(P))
+                      total=total, used=len(P),
+                      residual=float(rest.max()) if len(rest) >= 3 else 0.0,
+                      tolerance=outlier_mm)
 
 
 def fit_marks_to_holes(before, after, px_per_mm, tests, *, search_mm=1.5,
