@@ -1158,6 +1158,8 @@ class MainWindow(QMainWindow):
                                   "show the build area, set the design rules "
                                   "for how the board is made, and send it "
                                   "here.")
+        self.discord_act = self._act(h, "Join the Discord…",
+                                     self.action_join_discord)
         self._act(h, "Give feedback…",
                   lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
         h.addSeparator()
@@ -6736,12 +6738,22 @@ class MainWindow(QMainWindow):
         kicadsetup.setup(self)
 
     def maybe_offer_kicad_plugin(self):
-        """Launch-time offer, once per plugin version. Called by app.py."""
-        from gerber2rml.gui2 import kicadsetup
+        """Launch-time offers, one after the other: the Discord invite (once
+        per invite round), then the KiCad buttons (once per plugin version,
+        when KiCad is here). Called by app.py."""
+        from gerber2rml.gui2 import community, kicadsetup
+        try:
+            community.maybe_invite(self)
+        except Exception:                       # noqa: BLE001 - a nicety
+            pass
         try:
             kicadsetup.maybe_offer(self)
         except Exception:                       # noqa: BLE001 - a nicety
             pass
+
+    def action_join_discord(self):
+        from gerber2rml.gui2 import community
+        community.open_discord(self)
 
     # ------------------------------------------------------------ updates
     def action_check_updates(self):

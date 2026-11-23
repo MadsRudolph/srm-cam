@@ -14,7 +14,8 @@ machine and the plugin is missing or stale.
 from gerber2rml.engine import kicadplugin
 from gerber2rml.gui2 import dialogs, tier
 
-DECLINED_KEY = "kicad/declined_plugin_version"
+# "_2" from 0.23.1: everyone who said "Not now" before is asked once more.
+DECLINED_KEY = "kicad/declined_plugin_version_2"
 MENU_LOCATION = "Tools → External Plugins → Show SRM-20 build area"
 SEND_LOCATION = "Tools → External Plugins → Send to SRM-CAM"
 RULES_LOCATION = "Tools → External Plugins → Set design rules for SRM-CAM"
