@@ -75,6 +75,47 @@ fixes.
 it, so it still compiles against a pristine upstream copy — the `I` and `F`
 commands just answer `E ... NOPATCH`.
 
+## Firmware v5 safety fixes (2026-11-20) — not on the lab board until Mads approves
+
+Same commands and replies as before, except where noted. **Not flashed**: per
+the lab's rule, new firmware goes on the SRM-20's Arduino only after a pull
+request to MadsRudolph/srm-cam is approved. Compiled for the Uno (51 % flash,
+299 bytes RAM); not yet run on the machine.
+
+| What | Before | Now |
+|---|---|---|
+| Retract (`!`, `L`, every "lift to safe Z") | Went to safe Z at the commanded XY - DOWN when safe Z (the last `D`) was below the head, and sideways when a halted move had left the head short of its target | Straight up from where the head really is, to the higher of safe Z and its own height; Z 0 if the position cannot be read |
+| `P`, `B`, `H` travel | One straight 3D move - from a head left on the copper (after `T`) it dragged the bit over it | Up first, across, down last |
+| `P`/`B` with the probe reading contact even at safe Z | `E <id> NOTOUCH` - "no copper", on which a host may go lower | `E <id> LOW` / `E B LOW` |
+| Missing or garbled numbers (`P J M N O H U Z`) | Read as 0: `O` alone set the origin to machine 0,0,0; `M 12000` moved to work Z 0, the copper | Refused: `E <cmd> ARGS`, nothing moves |
+| A line longer than 47 characters | First 47 run, the rest dropped | Refused: `E <cmd> LONG` |
+| STOP during `J` | Travel sent anyway, then `J x y` | `E J ABORT` (and lifted) |
+| STOP during `Y` | `Y ok` | `E Y ABORT` |
+| A descent's last step | Could pass the floor by up to one step | Lands on the floor |
+| Spindle deadman after a long `M`/`N` | Tripped as the move returned, the host having waited on the board | Fed again when each command ends, and by every byte that arrives mid-move |
+| The first touch after `D` | Stepped 150 µm at a time to the floor (nothing known, so "coarse above the copper" was all the way down) - a still bit pressed up to 0.15 mm into the copper | Fast (150 µm steps) down to the highest the copper could be, which SRM-CAM now sends as `D <top>` (also `T <top>`, `W <top>`): the measured copper + 1 mm with the same bit, else the lab's copper + the 10 mm a bit can sit further out of the collet. The gentle 25 µm steps start 0.1 mm above that. Without `<top>` (an older host) it is gentle all the way. After copper is found above the approach plane, gentle from safe Z |
+| `K` mid-move | Eaten like any other byte | Cancels the job (`K ok`) and stops the sequence, like `%` |
+| A pause held past 5 minutes | Aborted, but left the machine suspended - so the lift after it was held too | The hold is released first |
+| `C`, `W` origin read | One read; `W` wrote its X/Y back with `setOrigin` | Two reads must agree; `E C UNSTABLE` / `E W UNSTABLE` otherwise, origin unchanged |
+| `F` | `F 0` accepted (corruption near 50 µs), `F 70000` wrapped to 4464 | Clamped to 200-16000 µs |
+| A letter the firmware does not know | No reply (the host waited for its timeout) | `E <c> UNKNOWN` |
+
+Nothing in the host has to change for these: every command SRM-CAM sends
+carries the numbers they now require, and the one new reply it can meet
+(`E <id> LOW` from `P`/`B`) is one it already stops on. (The fork this comes from also
+makes `firmware_version` drop stale input and wait for a `V` line - a host
+change, not in this pull request.)
+
+Still open, for the machine and Mads - not changed here:
+
+- `waitForMotorStop` returns "done" when `isReady()` is false, and decides a
+  move is over on one status read without the moving bit. What the ready pin
+  means on the SRM-20 needs measuring before that is tightened.
+- `U`, `M` and `N` have no depth limit of their own; `U` relies on its
+  stop-on-touch, whose reaction time depends on the frame delay (`F`).
+- The PAUSE bit is still out of the status guard (its meaning unproven).
+- Probing is not refused while a VPanel-started spindle turns.
+
 ## Firmware v3 (2026-08) — the "retire VPanel" command set
 
 An audit found the project was calling 5 of the library's 17 SPI commands. v3

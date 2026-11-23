@@ -58,6 +58,10 @@ BIT_SPREAD_UM = 10000        # how far that is from usual, either way (Mads:
 STALE_ABOVE_UM = BIT_SPREAD_UM + 2000   # a first drop stops this far above
                              # the lab's copper: 2 mm short of it with the
                              # longest bit there is
+SAME_BIT_TOP_UM = 1000       # with the bit that measured the copper still in,
+                             # the copper is at most this far above that
+                             # measurement (thicker stock, the bit giving in
+                             # the collet): the firmware steps fast down to it
 HINT_ABOVE_UM = 5000         # a remembered surface: drop fast to this far above it,
                              # inside the probe's 6 mm reach, so one probe finds it
 
@@ -123,7 +127,8 @@ def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
     travel(ser, x_um, y_um, should_abort)
     drop_to_hint(ser, hint_um, should_abort, note, fresh=hint_fresh)
     while True:
-        r = _cmd(ser, "D", should_abort, 5.0)
+        r = _cmd(ser, "D %d" % copper_top_um(hint_um, hint_fresh),
+                 should_abort, 5.0)
         if not r or not r.startswith("D "):
             raise ProbeError("the machine did not latch a datum (%r)" % (r,))
         z = int(r.split()[3])
@@ -141,6 +146,21 @@ def seek_surface(ser, x_um, y_um, should_abort=None, note=None,
                 "the stock, and check the clip is on its copper.")
         spi_probe.timed_move(ser, dz_um=-DROP_STEP_UM,
                              should_abort=should_abort)
+
+
+def copper_top_um(hint_um=None, fresh=False):
+    """The highest machine Z the copper could be at, for 'D/T/W <top>'.
+
+    The firmware's first touch steps fast (150 um) down to this and feels its
+    way (25 um) only below it. Same rules as ``drop_to_hint``: a height this
+    session measured, with the same bit, plus ``SAME_BIT_TOP_UM``; otherwise
+    the lab's copper (or the saved height, if higher) plus ``BIT_SPREAD_UM``,
+    the furthest a bit can sit further out of the collet than usual."""
+    if fresh and hint_um is not None:
+        return min(0, int(hint_um) + SAME_BIT_TOP_UM)
+    base = LAB_COPPER_UM if hint_um is None else max(LAB_COPPER_UM,
+                                                     int(hint_um))
+    return min(0, base + BIT_SPREAD_UM)
 
 
 def drop_to_hint(ser, hint_um, should_abort=None, note=None, fresh=False):
@@ -217,7 +237,8 @@ def touch_from_anywhere(ser, hint_um=None, should_abort=None, fresh=False):
             return None
         start = int(pos[2] * 1000)
         while True:
-            r = _cmd(ser, "T", should_abort, 40.0)
+            r = _cmd(ser, "T %d" % copper_top_um(hint_um, fresh),
+                     should_abort, 40.0)
             if r and r.startswith("T "):
                 x, y, z = r.split()[1:4]
                 return int(x) / 1000.0, int(y) / 1000.0, int(z) / 1000.0
@@ -251,7 +272,9 @@ def reference_at(ser, x_um, y_um, should_abort=None, surface_um=None):
             spi_probe.timed_move(ser, dz_um=int(surface_um + 3000
                                                 - pos[2] * 1000),
                                  should_abort=should_abort)
-    r = _cmd(ser, "D", should_abort, 5.0)
+    top = "" if surface_um is None else " %d" % copper_top_um(surface_um,
+                                                              fresh=True)
+    r = _cmd(ser, "D" + top, should_abort, 5.0)
     if not r or not r.startswith("D "):
         raise ProbeError("the machine did not latch a datum (%r)" % (r,))
     r = _cmd(ser, "P 901 0 0", should_abort)
