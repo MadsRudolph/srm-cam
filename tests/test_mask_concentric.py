@@ -260,3 +260,29 @@ def test_calibrate_on_a_mask_picks_spread_pads_with_holes(qt_app, monkeypatch):
         d.close()
     finally:
         w.close()
+
+
+def test_a_mounting_holes_opening_is_left_out():
+    """The synth's M3 holes (2026-11-23): a 3.0 mm opening inside a 3.2 mm
+    hole only fires the beam through the board. A pad's opening round a
+    small hole stays."""
+    from shapely.geometry import Point
+    mount = Point(5, 5).buffer(1.6)
+    pad_hole = Point(20, 5).buffer(0.4)
+    openings = [Point(5, 5).buffer(1.5), box(19.1, 4.1, 20.9, 5.9)]
+    kept, out = xtool.drop_hole_only(openings, [mount, pad_hole])
+    assert out == 1 and kept == [openings[1]]
+
+
+def test_the_page_leaves_mounting_holes_out_of_the_mask(qt_app, monkeypatch):
+    from gerber2rml.gui2 import stencil_laser as sl
+    from gerber2rml.gui2.window import MainWindow
+    monkeypatch.setattr(sl, "_SETTINGS", ("SRM-CAM-tests", "mask-mounting"))
+    w = MainWindow()
+    try:
+        w.load_folder(str(FIX / "mosfet_test"))
+        art = w._laser_art_for("mask", side="bottom")
+        drilled = __import__("shapely.ops", fromlist=["x"]).unary_union(art.features)
+        assert all(o.intersection(drilled).area < 0.85 * o.area for o in art.apertures)
+    finally:
+        w.close()

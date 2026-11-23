@@ -728,6 +728,25 @@ class LaserArt:
         return list(self.notes or [])
 
 
+# A mask opening that is all hole - a mounting hole's, with no pad round it -
+# only fires the beam down through the board (2026-11-23: the synth's M3
+# holes asked for a 3.0 mm opening inside a 3.2 mm hole).
+HOLE_ONLY_SHARE = 0.85
+
+
+def drop_hole_only(openings, holes, share=HOLE_ONLY_SHARE):
+    """``openings`` without those lying ``share`` or more inside a drilled
+    hole (``holes``: shapely shapes in the same frame). Returns (kept,
+    left out)."""
+    from shapely.ops import unary_union
+    if not holes:
+        return list(openings), 0
+    drilled = unary_union(holes)
+    kept = [o for o in openings
+            if o.area <= 0 or o.intersection(drilled).area < share * o.area]
+    return kept, len(openings) - len(kept)
+
+
 def drill_features(folder, mirror, outline_raw):
     """The board's drilled holes as circles in the artwork frame: mirrored and
     shifted exactly as the mask and silkscreen are (see engine/soldermask.py),

@@ -58,9 +58,11 @@ def job_builder(folder):
             side = side or "bottom"
             bottom = side == "bottom"
             art = soldermask.build_mask(folder, side=side, mirror=bottom)
-            return xtool.LaserArt(kind="mask", apertures=art.openings,
+            feats = features(bottom)
+            openings, _n = xtool.drop_hole_only(art.openings, feats)
+            return xtool.LaserArt(kind="mask", apertures=openings,
                                   outline=art.outline, mirrored=art.mirrored,
-                                  notes=art.warnings(), features=features(bottom),
+                                  notes=art.warnings(), features=feats,
                                   side=side, note=f"shrunk {art.shrink:g} mm a side")
         if kind == "silk":
             art = silkscreen.build_silk(folder)

@@ -5899,9 +5899,14 @@ class MainWindow(QMainWindow):
                                              self._raw_outline(m.gerber_dir))
             except Exception:                       # noqa: BLE001 - Align only
                 feats = []
+            openings, holes_only = xtool.drop_hole_only(art.openings, feats)
+            notes = art.warnings() + ([
+                f"{holes_only} opening{'s' if holes_only != 1 else ''} over a bare "
+                f"hole (a mounting hole) left out: the beam would only go "
+                f"through it."] if holes_only else [])
             return xtool.LaserArt(
-                kind="mask", apertures=art.openings, outline=art.outline,
-                mirrored=art.mirrored, notes=art.warnings(), features=feats,
+                kind="mask", apertures=openings, outline=art.outline,
+                mirrored=art.mirrored, notes=notes, features=feats,
                 side=side, note=f"shrunk {art.shrink:g} mm a side")
         if kind == "silk":
             art = silkscreen.build_silk(m.gerber_dir)
