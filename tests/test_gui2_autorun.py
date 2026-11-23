@@ -52,6 +52,7 @@ def test_run_it_all_cuts_a_single_sided_board_on_the_simulator(win, qt_app):
     win.select_step("autorun")
     page = win.autorun_page
     assert win.inspector.stack.currentWidget() is page
+    page.level_chk.setChecked(True)         # levelling is off by default
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.on_stock_click(110.0, 80.0)
@@ -101,6 +102,7 @@ def test_run_it_all_flips_and_fits_a_double_sided_board(win, qt_app):
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
     page = win.autorun_page
+    page.level_chk.setChecked(True)         # levelling is off by default
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.on_stock_click(110.0, 80.0)
@@ -366,6 +368,7 @@ def test_ticked_a_run_leaves_the_laser_file_in_its_folder(win, qt_app):
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
     page = win.autorun_page
+    page.level_chk.setChecked(True)         # levelling is off by default
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.on_stock_click(110.0, 80.0)
@@ -384,6 +387,7 @@ def test_ticked_a_run_leaves_the_silkscreen_file_in_its_folder(win, qt_app):
     assert _wait(qt_app, win.link.is_connected, 10)
     win.select_step("autorun")
     page = win.autorun_page
+    page.level_chk.setChecked(True)         # levelling is off by default
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.on_stock_click(110.0, 80.0)
@@ -715,6 +719,7 @@ def test_the_boards_own_holes_are_the_reference_holes_through_a_flip(
     page = win.autorun_page
     page._sync_outline()               # what showing the page does
     assert page.ref_box.currentData() == "mounting"
+    page.level_chk.setChecked(True)         # levelling is off by default
     page.w_spin.setValue(150)
     page.h_spin.setValue(120)
     page.on_stock_click(110.0, 80.0)
@@ -1076,3 +1081,10 @@ def test_the_simulators_stock_leaves_the_bed_with_the_simulator(win, qt_app):
     page._draw_sim()
     assert not win.stage._sim_view
     assert not page._sim_timer.isActive()
+
+
+def test_levelling_is_off_until_ticked(win):
+    """The normal run zeroes on the copper and goes (2026-11-23): probing
+    the surface is a choice, never the default."""
+    page = win.autorun_page
+    assert not page.level_chk.isChecked()

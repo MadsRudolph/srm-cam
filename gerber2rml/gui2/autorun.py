@@ -578,7 +578,9 @@ class AutoRunPage(inspector.Page):
         stock.add(self.ref_row)
 
         self.level_chk = QCheckBox("Probe the surface first (bed levelling)")
-        self.level_chk.setChecked(True)
+        # Off unless asked for (2026-11-23): the normal run zeroes on the
+        # copper and goes; levelling is a choice for a board that needs it.
+        self.level_chk.setChecked(False)
         self.level_chk.setToolTip(
             "A grid of touches over the board, so every cut follows the "
             "copper's real height. Off: Z zero is the copper at the clicked "
@@ -612,6 +614,7 @@ class AutoRunPage(inspector.Page):
         mh.addStretch(1)
         stock.add(mrow)
         self.level_chk.toggled.connect(mrow.setEnabled)
+        mrow.setEnabled(self.level_chk.isChecked())   # off by default: greyed
         self.level_chk.toggled.connect(lambda _on: self._show_touches())
         self._points_before = None
         self.check_chk = QCheckBox("Stop before the cut-out, so I can check "

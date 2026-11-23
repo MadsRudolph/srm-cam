@@ -126,6 +126,7 @@ def _load_with_a_margin(w):
     board.copper_top = None
     board.holes = [(o[0] + 8, o[1] + 8, 0.8)]
     w._paths_cache = {}
+    w.autorun_page.level_chk.setChecked(True)   # levelling is off by default
     w.autorun_page.w_spin.setValue(150)
     w.autorun_page.h_spin.setValue(130)
     w.select_step("autorun")
