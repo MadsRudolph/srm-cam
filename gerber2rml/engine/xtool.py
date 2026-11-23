@@ -767,45 +767,64 @@ def hatch(polys, interval, angle_deg=0.0, one_way=True):
     ``angle_deg``, as (start, end) segments in drawing order: line by line
     across the whole job, so the beam sweeps instead of jumping shape to shape.
     ``one_way`` keeps every line in the same direction."""
+    import math as _m
+    import numpy as np
     from shapely.affinity import rotate as _rotate
-    from shapely.geometry import LineString, MultiLineString
     from shapely.ops import unary_union
     shape = unary_union([p for p in polys if not p.is_empty])
     if shape.is_empty:
         return []
     c = shape.centroid
     flat = _rotate(shape, -angle_deg, origin=c)          # hatch horizontally
-    x0, y0, x1, y1 = flat.bounds
-    segs = []
-    y = y0 + interval / 2
-    flip = False
-    while y < y1:
-        cut = flat.intersection(LineString([(x0 - 1, y), (x1 + 1, y)]))
-        parts = list(cut.geoms) if isinstance(cut, MultiLineString) else (
-            [cut] if isinstance(cut, LineString) and not cut.is_empty else [])
-        row = []
-        for ln in parts:
-            (ax, ay), (bx, by) = ln.coords[0], ln.coords[-1]
-            if ax > bx:
-                (ax, ay), (bx, by) = (bx, by), (ax, ay)
-            row.append(((ax, ay), (bx, by)))
-        row.sort(key=lambda sg: sg[0][0])
-        if not one_way and flip:
-            row = [(b, a) for a, b in reversed(row)]
-        segs += row
-        flip = not flip
-        y += interval
-    if not segs:
-        return []
-    from shapely.geometry import MultiPoint
-    import math as _m
-    t = _m.radians(angle_deg)
-    cs, sn = _m.cos(t), _m.sin(t)
+    _, y0, _, y1 = flat.bounds
+    first = y0 + interval / 2
+    n = max(0, _m.ceil((y1 - first) / interval))         # the rows below y1
 
-    def back(p):                                     # undo the flattening turn
-        dx, dy = p[0] - c.x, p[1] - c.y
-        return (c.x + dx * cs - dy * sn, c.y + dx * sn + dy * cs)
-    return [(back(a), back(b)) for a, b in segs]
+    # Every row against every edge at once, as a scanline fill does it. Asking
+    # shapely for one row at a time walks the whole shape per row: a silkscreen
+    # of 50 000 points under 7 000 rows took most of a minute, and the window
+    # stood still for it.
+    edges = []
+    for poly in getattr(flat, "geoms", [flat]):
+        for ring in (poly.exterior, *poly.interiors) if hasattr(
+                poly, "exterior") else ():
+            pts = np.asarray(ring.coords)[:, :2]
+            edges.append(np.hstack([pts[:-1], pts[1:]]))
+    if not edges or not n:
+        return []
+    xa, ya, xb, yb = np.vstack(edges).T
+    # An edge is crossed by the rows from its lower end up to, not including,
+    # its upper end, so a corner lying on a row counts once and every row
+    # enters and leaves the shape in pairs. A level edge crosses nothing.
+    k0 = np.clip(np.ceil((np.minimum(ya, yb) - first) / interval), 0, n).astype(int)
+    k1 = np.clip(np.ceil((np.maximum(ya, yb) - first) / interval), 0, n).astype(int)
+    count = k1 - k0
+    edge = np.repeat(np.arange(len(count)), count)
+    if not len(edge):
+        return []
+    row = np.arange(len(edge)) - np.repeat(np.cumsum(count) - count, count) + k0[edge]
+    y = first + row * interval
+    x = xa[edge] + (y - ya[edge]) * (xb[edge] - xa[edge]) / (yb[edge] - ya[edge])
+    order = np.lexsort((x, row))
+    row, x, y = row[order], x[order], y[order]
+    ax, bx, ay, k = x[0::2], x[1::2], y[0::2], row[0::2]
+    keep = (k == row[1::2]) & (bx - ax > 1e-9)
+    ax, bx, ay, k = ax[keep], bx[keep], ay[keep], k[keep]
+    if not one_way:                  # every other row drawn back the other way
+        back_row = k % 2 == 1
+        order = np.lexsort((np.where(back_row, -ax, ax), k))
+        ax, bx, ay, back_row = ax[order], bx[order], ay[order], back_row[order]
+        ax, bx = np.where(back_row, bx, ax), np.where(back_row, ax, bx)
+
+    t = _m.radians(angle_deg)                        # undo the flattening turn
+    cs, sn = _m.cos(t), _m.sin(t)
+    dy = ay - c.y
+    out = np.empty((len(ax), 2, 2))
+    for i, xs in enumerate((ax, bx)):
+        dx = xs - c.x
+        out[:, i, 0] = c.x + dx * cs - dy * sn
+        out[:, i, 1] = c.y + dx * sn + dy * cs
+    return [(tuple(a), tuple(b)) for a, b in out.tolist()]
 
 
 def concentric(polys, interval, phase=0.0):

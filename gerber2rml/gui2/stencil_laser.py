@@ -461,8 +461,8 @@ class _BedView(QGraphicsView):
         if d:
             self.nudge.emit(*d)
             return
-        if e.key() == Qt.Key_H:
-            e.ignore()                  # the page's: show or hide the stencil
+        if e.key() in (Qt.Key_H, Qt.Key_R):
+            e.ignore()                  # the page's: show or hide, or turn
             return
         super().keyPressEvent(e)
 
@@ -811,9 +811,9 @@ class StencilLaserDialog(QDialog):
             tip="Take a photo and find the enabled automatic references. "
                 "Use Alignment in the side panel to choose references or match points.")
         self.rot_l = widgets.button("Turn left", on=lambda: self.rotate(-1),
-                                    tip="A quarter turn anticlockwise")
+                                    tip="A quarter turn anticlockwise (Shift+R)")
         self.rot_r = widgets.button("Turn right", on=lambda: self.rotate(1),
-                                    tip="A quarter turn clockwise")
+                                    tip="A quarter turn clockwise (R)")
         self.undo_btn = widgets.button(
             "Undo", kind="ghost", on=self.undo_place,
             tip="Take back the last change on the bed: a move or turn, a rework "
@@ -2451,6 +2451,13 @@ class StencilLaserDialog(QDialog):
             return
         if e.key() == Qt.Key_H and not e.modifiers():
             self.set_look("filled" if self.look == "hidden" else "hidden")
+            return
+        # R is Turn right and Shift+R Turn left, when the buttons would work.
+        if e.key() == Qt.Key_R and e.modifiers() in (Qt.NoModifier,
+                                                     Qt.ShiftModifier):
+            btn = self.rot_l if e.modifiers() else self.rot_r
+            if btn.isEnabled() and self.item is not None:
+                self.rotate(-1 if e.modifiers() else 1)
             return
         if e.key() == Qt.Key_Escape and self.embedded:
             e.ignore()                  # the main window's: it may stop the laser

@@ -229,6 +229,57 @@ M02*
     assert len(loops(path, ss.LAYER_SILK)) == 2
 
 
+def test_a_pin_one_dot_is_a_dot_and_not_a_crash(tmp_path):
+    """KiCad's filled dot: a 0.1 mm circle drawn with a 0.2 mm pen, as two half
+    arcs. The pen reaches the centre, so the stroke has no inner edge, and
+    gerbonara's own arc outline divides by that zero radius."""
+    (tmp_path / "d-Edge_Cuts.gbr").write_text(EDGE)
+    (tmp_path / "d-F_Silkscreen.gbr").write_text("""%FSLAX46Y46*%
+%MOMM*%
+%ADD13C,0.2*%
+D13*
+X10100000Y10000000D02*
+G75*
+G02*
+X9900000Y10000000I-100000J0D01*
+G01*
+X9900000Y10000000D02*
+G75*
+G02*
+X10100000Y10000000I100000J0D01*
+G01*
+M02*
+""")
+    art = ss.build_silk(tmp_path)
+    assert len(art.shapes) == 1 and not art.shapes[0].interiors
+    dot = art.shapes[0]
+    near = ss.SIMPLIFY_MM + 0.002       # the shapes are simplified that far
+    assert dot.bounds == pytest.approx((9.8, 9.8, 10.2, 10.2), abs=near)
+    assert dot.area == pytest.approx(math.pi * 0.2 ** 2, rel=0.05)
+
+
+def test_a_drawn_arc_goes_the_way_it_was_drawn(tmp_path):
+    """A quarter arc, clockwise from the top of a 5 mm circle to its right: the
+    short way round, in the quadrant it was drawn in, and as wide as its pen."""
+    (tmp_path / "a-Edge_Cuts.gbr").write_text(EDGE)
+    (tmp_path / "a-F_Silkscreen.gbr").write_text("""%FSLAX46Y46*%
+%MOMM*%
+%ADD10C,0.5*%
+D10*
+X10000000Y15000000D02*
+G75*
+G02*
+X15000000Y10000000I0J-5000000D01*
+G01*
+M02*
+""")
+    arc = ss.build_silk(tmp_path).shapes[0]
+    assert arc.bounds == pytest.approx((9.75, 9.75, 15.25, 15.25),
+                                       abs=ss.SIMPLIFY_MM + 0.002)
+    assert arc.area == pytest.approx(
+        math.pi / 2 * 5 * 0.5 + math.pi * 0.25 ** 2, rel=0.01)
+
+
 # ------------------------------------------------------------------- the app
 
 @pytest.fixture
