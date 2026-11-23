@@ -3528,23 +3528,34 @@ class StencilLaserDialog(QDialog):
         if self._empty:
             return self._say("Nothing loaded to etch: open a Gerber folder or a "
                              "DXF first.", warn=True)
+        # The job's file is built on the worker, not here: brain's top mask in
+        # rings took seconds and froze the window as a job started
+        # (2026-11-23). What it is built from is taken now, as it stands.
+        art0, origin0, recipe0 = self.art, self.origin(), self._run_recipe()
         try:
             if self.kind == "traces":
-                only = self._traces_only()
-                job = xtool.traces_job(
-                    self.art, self.origin(), self._run_recipe(), only=only)
+                only0 = self._traces_only()
+
+                def make_job():
+                    return xtool.traces_job(art0, origin0, recipe0, only=only0)
             else:
-                _, outline = xtool.stencil_paths(self.art, self.origin())
-                job = xtool.fill_job(self._shapes(), outline, self._run_recipe())
+                _, outline0 = xtool.stencil_paths(art0, origin0)
+                shapes0 = self._shapes()
+                if not shapes0:
+                    raise ValueError("Nothing to run: no shapes are chosen.")
+
+                def make_job():
+                    return xtool.fill_job(shapes0, outline0, recipe0)
         except ValueError as e:
             return self._say(str(e), warn=True)
         self._remember()
-        self._job = job
+        self._job = None
+        job = None
         picked = self.selected or set(range(len(self.art.apertures)))
         if self.kind == "traces":
             picked = set(picked) - self._skipped_now()
         self._zone_holes = [picked]
-        self.bar.setRange(0, max(1, int(job.seconds)))
+        self.bar.setRange(0, 0)             # busy until the file is ready
         self.bar.setValue(0)
         self.bar.setVisible(True)
         take_photo = self.photo_after.isChecked()
@@ -3595,12 +3606,16 @@ class StencilLaserDialog(QDialog):
             job = xtool.traces_job(self.art, origin, recipe, only=every)
             self._job = job
             picked = set(every)
+            make_job = (lambda j=job: j)
 
             def build(idx):
                 return xtool.traces_job(self.art, origin, recipe,
                                         only=sorted(idx))
 
         def work(progress):
+            job = make_job()
+            self._job = job
+            progress(-job.seconds)              # the bar's length, now known
             z = self.laser.z()
             # The test fire's measure: at 8 px/mm a pixel is 0.125 mm, and on
             # brain (2026-11-22) the job was still about that far off after.
@@ -3649,8 +3664,10 @@ class StencilLaserDialog(QDialog):
             if tests:
                 return self._line_up_on(fit, len(tests))
             n = len(picked)
+            passes = self._job.passes if self._job is not None else recipe0.passes \
+                if hasattr(recipe0, "passes") else "the"
             return (f"Done at Z {z:.2f}: {n} {self._noun(n)}, "
-                    f"{job.passes} passes. Switch to Outlines to check them on the "
+                    f"{passes} passes. Switch to Outlines to check them on the "
                     f"photo; select any that need more and run those again.")
         what = (f"{len(self.selected)} selected" if self.selected
                 else f"{len(picked)} {self._noun(len(picked))}")
@@ -3659,12 +3676,13 @@ class StencilLaserDialog(QDialog):
             field_test=field, origin=self.origin(),
             turns=self.turns, fine=self.fine,
             recipe=self.recipe_lbl.text() if hasattr(self, "recipe_lbl") else None,
-            preset=self.preset.currentText(), passes=job.passes,
-            seconds=round(job.seconds), pieces=len(picked),
+            preset=self.preset.currentText(),
+            passes=getattr(recipe0, "passes", getattr(recipe0, "total_passes", None)),
+            pieces=len(picked),
             focus_map_z=getattr(fmap, "z", None),
             focus_map=_laserlog.points(fmap),
             bands=[[round(dz, 3), len(b)] for dz, b in (zones or [])])
-        self._start(work, f"{self.k['busy']}: {what}, {job.passes} passes…", done)
+        self._start(work, f"{self.k['busy']}: {what}…", done)
 
     def _test_openings(self):
         """A few selected openings of a mask job, each with its drilled hole:
@@ -3840,6 +3858,10 @@ class StencilLaserDialog(QDialog):
 
     # -- plumbing ----------------------------------------------------------
     def _progress(self, t):
+        if t < 0:                           # the job's length, once it is built
+            self.bar.setRange(0, max(1, int(-t)))
+            self.bar.setValue(0)
+            return
         self.bar.setValue(int(t))
         job = self._job
         if job is None:

@@ -861,6 +861,9 @@ def hatch(polys, interval, angle_deg=0.0, one_way=True):
     return [(tuple(a), tuple(b)) for a, b in out.tolist()]
 
 
+RING_SIMPLIFY_MM = 0.005
+
+
 def concentric(polys, interval, phase=0.0):
     """Rings filling shapely ``polys`` (bed mm), ``interval`` apart, as
     closed paths: shape by shape, nearest next, each from its outline inwards.
@@ -872,6 +875,14 @@ def concentric(polys, interval, phase=0.0):
     for p in polys:
         pieces += [g for g in getattr(p, "geoms", [p])
                    if isinstance(g, _Poly) and not g.is_empty]
+    # A round pad from the Gerber is a 64-sided circle, and every ring of it
+    # kept them all: brain's top mask came to 440 000 points and a 32 MB
+    # file, built while the window froze (2026-11-23). Drawn to RING_SIMPLIFY_MM
+    # first - far finer than the beam - each ring is a fraction of that.
+    pieces = [q for p in pieces
+              for q in getattr(p.simplify(RING_SIMPLIFY_MM).buffer(0), "geoms",
+                               [p.simplify(RING_SIMPLIFY_MM).buffer(0)])
+              if isinstance(q, _Poly) and not q.is_empty]
     out, at = [], (0.0, 0.0)
     left = list(pieces)
     while left:
