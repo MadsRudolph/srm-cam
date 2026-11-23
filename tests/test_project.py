@@ -152,3 +152,30 @@ def test_opening_another_board_by_hand_lets_go(win, tmp_path):
     ctl.open_board(a)
     win.load_folder(str(FIX / "curtain_drive"))
     assert ctl.current is None
+
+
+def test_the_chosen_board_is_drawn_beside_the_list(win, tmp_path, qt_app):
+    """Which board is which (2026-11-23): its picture, top or bottom."""
+    import time
+    from PySide6.QtCore import QCoreApplication
+    from gerber2rml.gui2 import board_preview as bp
+    ctl = win.project_ctl
+    ctl.new(tmp_path / "p.srmproj")
+    (a,) = ctl.add_folders([FIX / "mosfet_test"])
+    page = ctl.page
+    page.refresh()
+    page.tree.setCurrentItem(page.tree.topLevelItem(0))
+    pv = page.preview
+    t0 = time.time()
+    while not pv.canvas.has_picture() and time.time() - t0 < 20:
+        QCoreApplication.processEvents()
+    assert pv.canvas.has_picture() and pv.name.text() == a.name
+    pv.show_side("bottom")
+    t0 = time.time()
+    while not pv.canvas.has_picture() and time.time() - t0 < 20:
+        QCoreApplication.processEvents()
+    assert pv.canvas.has_picture() and pv.bottom_btn.isChecked()
+    assert bp.render_svg(FIX / "mosfet_test", "top") is bp.render_svg(
+        FIX / "mosfet_test", "top")                     # kept, not drawn again
+    with pytest.raises(ValueError):
+        bp.render_svg(tmp_path / "nothing here")

@@ -273,7 +273,16 @@ class ProjectPage(QWidget):
         self.tree.itemChanged.connect(self._item_changed)
         self.tree.itemDoubleClicked.connect(self._double_clicked)
         self.tree.itemSelectionChanged.connect(self._sync_buttons)
-        v.addWidget(self.tree, 1)
+        self.tree.itemSelectionChanged.connect(self._sync_preview)
+        # The chosen board as it looks, beside the list: which is which on
+        # the bench (2026-11-23).
+        from gerber2rml.gui2.board_preview import BoardPreview
+        self.preview = BoardPreview()
+        body = QHBoxLayout()
+        body.setSpacing(theme.GAP_L)
+        body.addWidget(self.tree, 3)
+        body.addWidget(self.preview, 2)
+        v.addLayout(body, 1)
         self.note = widgets.hint(
             "Open a board to start it: it comes back as it was left, and its "
             "steps tick themselves as they finish on the mill or the laser.")
@@ -346,6 +355,15 @@ class ProjectPage(QWidget):
 
     def _selected_board(self):
         return self._board_of(self.tree.currentItem())
+
+    def _sync_preview(self):
+        b = self._selected_board()
+        if b is None:
+            return self.preview.show_board("", None)
+        if getattr(self, "_previewed", None) == (b.name, b.gerber_dir):
+            return                              # a step of the same board
+        self._previewed = (b.name, b.gerber_dir)
+        self.preview.show_board(b.name, b.gerber_dir)
 
     def _sync_buttons(self):
         has = self.ctl.project is not None
