@@ -221,3 +221,31 @@ def test_the_plan_survives_a_board_that_is_not_loaded_yet():
     plan = runplan.build(ProjectState())
     assert plan.by_key("setup") is not None
     assert plan.run_steps
+
+
+def _ball_profile(state):
+    """The ball mill profile as it ships: traces at the 0.44 mm channel, the
+    holes and the outline at the bit's full 0.8 mm."""
+    from gerber2rml.app import presets
+    name = next(n for n in presets.BUILTIN_PRESETS if "ball mill" in n)
+    presets.apply_preset(state, presets.BUILTIN_PRESETS[name])
+    return state
+
+
+def test_the_ball_mill_is_one_bit_for_the_whole_job(state):
+    """2026-11-24: a double-sided ball-mill run would not start - 'this tool
+    profile needs 2 different bits' - for one ball mill in the collet."""
+    _ball_profile(state)
+    for double in (False, True):
+        plan = runplan.build(state, double_sided=double, registration="fiducial",
+                             method="mill_ball")
+        assert plan.tools == [runplan.BALL_MILL], plan.tools
+        assert plan.single_tool
+        assert plan.tool_label == "0.80 mm ball mill"
+
+
+def test_the_flat_mill_still_counts_two_bits_when_there_are_two(state):
+    state.trace.bit_diameter = 0.8
+    state.drill.bit_diameter = 1.0
+    plan = runplan.build(state, method="mill_flat")
+    assert len(plan.tools) == 2 and not plan.single_tool

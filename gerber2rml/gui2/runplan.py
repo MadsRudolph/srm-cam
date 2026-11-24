@@ -144,10 +144,17 @@ def tool_id(job, *, trace=False):
     return ("flat", round(job.bit_diameter, 3))
 
 
+# The lab's ball mill: one 0.8 mm bit isolates (0.44 mm channel at 0.08 mm
+# deep), drills and cuts out.
+BALL_MILL = ("ball", 0.8)
+
+
 def tool_label(tool):
     """The tool, in the words someone standing at the machine would use."""
     if tool is None:
         return "no tool"
+    if tool[0] == "ball":
+        return f"{tool[1]:.2f} mm ball mill"
     if tool[0] == "vbit":
         _kind, angle, tip = tool
         return f"{angle:g}° V-bit ({tip:g} mm tip)"
@@ -341,6 +348,23 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     trace_tool = tool_id(trace, trace=True)
     drill_tool = tool_id(drill)
     cutout_tool = tool_id(cutout)
+    # The ball mill is one bit for everything: its traces are set to the
+    # 0.44 mm channel it cuts at their depth, its holes and outline to its
+    # full 0.8 mm, and by diameter those looked like two bits - so a ball
+    # mill run would not start (2026-11-24, a double-sided synth board).
+    if method == "mill_ball" or (getattr(trace, "cut_pinches", False)
+                                 and getattr(trace, "tool_type", "flat") == "flat"
+                                 and trace.bit_diameter < 0.6):
+        trace_tool = BALL_MILL
+        if round(drill.bit_diameter, 3) == BALL_MILL[1]:
+            drill_tool = BALL_MILL
+        if round(cutout.bit_diameter, 3) == BALL_MILL[1]:
+            cutout_tool = BALL_MILL
+
+    def hole_tool(dia):
+        """The bit for one drill file: the drill's own when it is that size
+        (the ball mill drills too), else a flat bit of that size."""
+        return drill_tool if round(dia, 3) == drill_tool[1] else ("flat", round(dia, 3))
 
     boards = len(getattr(state, "boards", None) or [])
     seq = _Sequence()
@@ -387,7 +411,7 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                 seq.run(f"drill_run{i}" if i else "drill_run",
                         "Drill" if len(dfiles) == 1 else f"Drill {dia:.2f} mm holes",
                         ordinal=d_no if i == 0 else None, op="drill", file=fn,
-                        tool=("flat", round(dia, 3)), bit=dia,
+                        tool=hole_tool(dia), bit=dia,
                         detail=_drill_detail(drill, dfiles) if i == 0
                                else f"{dia:.2f} mm bit",
                         note=("The lab drills first when one bit does both: "
@@ -462,7 +486,7 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
                     "Drill the board" if len(dfiles) == 1
                     else f"Drill {dia:.2f} mm holes",
                     ordinal=2 if i == 0 else None, op="drill", file=fn,
-                    tool=("flat", round(dia, 3)), bit=dia,
+                    tool=hole_tool(dia), bit=dia,
                     detail=_drill_detail(drill, dfiles) if i == 0
                            else f"{dia:.2f} mm bit")
 
