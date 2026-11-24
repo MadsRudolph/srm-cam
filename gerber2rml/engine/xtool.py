@@ -456,6 +456,23 @@ class LaserError(RuntimeError):
     pass
 
 
+def _no_answer(host, e, plug_hint=True):
+    """The words for a request that never reached the laser."""
+    if getattr(e, "winerror", None) == 10013 or getattr(e, "errno", None) == 13:
+        # WSAEACCES: Windows itself refused the connection before it left the
+        # PC - a firewall rule, a VPN's kill switch or "block local network",
+        # or security software (2026-11-24, a student's laptop).
+        return LaserError(
+            f"Windows blocked SRM-CAM from reaching the laser at {host} ({e}). "
+            f"Something on this PC forbids the connection: usually a VPN "
+            f"(switch it off, or allow local network access in it), or a "
+            f"firewall or antivirus blocking SRM-CAM. Allow SRM-CAM in Windows "
+            f"Security > Firewall > Allow an app, then try again.")
+    return LaserError(f"No answer from the laser at {host} ({e})."
+                      + (" Is it switched on and plugged into this PC by USB?"
+                         if plug_hint else ""))
+
+
 class F1Ultra:
     """The laser over its USB network link. Every call is one short HTTP request."""
 
@@ -474,8 +491,7 @@ class F1Ultra:
             r = c.getresponse()
             text = r.read().decode("utf-8", "replace")
         except OSError as e:
-            raise LaserError(f"No answer from the laser at {self.host} ({e}). Is it "
-                             f"switched on and plugged into this PC by USB?") from e
+            raise _no_answer(self.host, e) from e
         finally:
             c.close()
         if r.status != 200:
@@ -593,7 +609,7 @@ class F1Ultra:
             r = c.getresponse()
             out = r.read()
         except OSError as e:
-            raise LaserError(f"No answer from the laser at {self.host} ({e}).") from e
+            raise _no_answer(self.host, e, plug_hint=False) from e
         finally:
             c.close()
         if r.status != 200:

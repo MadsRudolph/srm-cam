@@ -589,3 +589,24 @@ def test_a_frame_may_run_with_the_lid_open():
     l = _LidLaser(open_after=0)
     l.frame("G1X1Y1")                   # blue, watched with the lid open
     assert any("gcodeType=frame" in s for s in l.sent)
+
+
+def test_a_connection_windows_refuses_is_said_in_words(monkeypatch):
+    """WinError 10013: the PC blocked it, not a laser that is off."""
+    import http.client
+    from gerber2rml.engine import xtool
+
+    class _Refused(http.client.HTTPConnection):
+        def request(self, *a, **kw):
+            e = PermissionError(13, "An attempt was made to access a socket "
+                                    "in a way forbidden by its access permissions")
+            e.winerror = 10013
+            raise e
+    monkeypatch.setattr(xtool.http.client, "HTTPConnection", _Refused)
+    import pytest
+    with pytest.raises(xtool.LaserError) as got:
+        xtool.F1Ultra()._req("GET", "/device/machineInfo")
+    assert "Windows blocked" in str(got.value) and "VPN" in str(got.value)
+    with pytest.raises(xtool.LaserError) as got:
+        xtool.F1Ultra()._raw(8329, "/camera/snap")
+    assert "Windows blocked" in str(got.value)
