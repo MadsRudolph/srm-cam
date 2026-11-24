@@ -352,9 +352,10 @@ def build(state, *, double_sided=False, registration="dowel", holes=None,
     # 0.44 mm channel it cuts at their depth, its holes and outline to its
     # full 0.8 mm, and by diameter those looked like two bits - so a ball
     # mill run would not start (2026-11-24, a double-sided synth board).
-    if method == "mill_ball" or (getattr(trace, "cut_pinches", False)
-                                 and getattr(trace, "tool_type", "flat") == "flat"
-                                 and trace.bit_diameter < 0.6):
+    # A V-bit put in for the traces is a second bit, whatever the method.
+    flat = getattr(trace, "tool_type", "flat") == "flat"
+    if flat and (method == "mill_ball" or (getattr(trace, "cut_pinches", False)
+                                           and trace.bit_diameter < 0.6)):
         trace_tool = BALL_MILL
         if round(drill.bit_diameter, 3) == BALL_MILL[1]:
             drill_tool = BALL_MILL
