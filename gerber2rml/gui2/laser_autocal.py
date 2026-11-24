@@ -36,6 +36,23 @@ CAMERA_SHIFT_WARN_MM = 1.5    # a correction this big is worth a look
 FOCUS_SPREAD_WARN_MM = 1.0    # a sheet this far out of flat: re-seat it
 
 
+CLEAR_NEED = 0.75             # of more than four clear holes
+
+
+def _opaque(page):
+    """A mask that hides the pads: only the ticked holes show."""
+    fn = getattr(page, "_opaque", None)
+    return bool(fn()) if callable(fn) else False
+
+
+def _holes(page, art=None, origin=None):
+    """The holes to find the board by: all of them, or under a mask that
+    hides the pads only those ticked as clear."""
+    if _opaque(page):
+        return page._features(art or page.art, origin or page.origin())
+    return page._hole_paths(art, origin)
+
+
 def find_board(page):
     """Photo, then the board's holes anywhere on the bed; the job is put on
     them. Sets ``page._autocal_found``."""
@@ -49,19 +66,32 @@ def find_board(page):
         art = xtool.rotated(page.base_art, page.turns + k, page.fine)
         w, h = art.size
         origin = (BED_MIDDLE[0] - w / 2.0, BED_MIDDLE[1] - h / 2.0)
-        candidates.append((k, art, origin, page._hole_paths(art, origin)))
+        candidates.append((k, art, origin, _holes(page, art, origin)))
     hi = WIDE_PX_PER_MM
+    opaque = _opaque(page)
+    if opaque and not 2 <= len(candidates[0][3]) <= page.MAX_RING_HOLES:
+        page._autocal_found = False
+        return page._say(f"Tick 2 to {page.MAX_RING_HOLES} holes the mask "
+                         "leaves clear, under Automatic alignment references.",
+                         warn=True)
+    # A few clear holes: every one must be found, and they may read either
+    # way against a black mask. Mounting holes look the same turned half
+    # round, so the way the drawing is turned now wins a tie.
+    need = ((1.0 if len(candidates[0][3]) <= 4 else CLEAR_NEED) if opaque
+            else cam.DRILLED_NEED)
+    ways = ("dark", "bright") if opaque else ("dark",)
 
     def work(_p):
         rgb = page._photo(hi)
         tried = []
-        for k, _art, _o, holes in candidates:
-            a = cam.align(rgb, hi, holes, search_mm=WIDE_SEARCH_MM,
-                          max_turn=WIDE_MAX_TURN, need=cam.DRILLED_NEED)
-            tried.append((k, holes, a))
+        for way in ways:
+            for k, _art, _o, holes in candidates:
+                a = cam.align(rgb, hi, holes, search_mm=WIDE_SEARCH_MM,
+                              max_turn=WIDE_MAX_TURN, need=need, polarity=way)
+                tried.append((k, holes, a))
         good = [t for t in tried if t[2].ok]
         pick = max(good or tried, key=lambda t: (
-            t[2].found / max(t[2].total, 1), t[2].score))
+            t[2].found / max(t[2].total, 1), opaque and t[0] == 0, t[2].score))
         return page._photo(), pick, bool(good)
 
     def done(res):
@@ -69,6 +99,11 @@ def find_board(page):
         page.show_bed(rgb)
         if not good:
             page._autocal_found = False
+            if opaque:
+                return (f"The board was not found on its mounting holes: at best "
+                        f"{a.found} of {a.total} matched. Do they stand out "
+                        "from the mask in the photo? Drag the drawing onto "
+                        "the board, then press Line up at the holes now.")
             return (f"The board was not found on the bed: at best {a.found} of "
                     f"{a.total} holes matched. Check it lies under the camera, "
                     "drilled face up, or drag the drawing onto it and press "
@@ -76,7 +111,7 @@ def find_board(page):
         target = page._middle(holes) + (a.dx, a.dy)
         page._turn_to(page.turns + k, page.fine + a.turn,
                       preserve_selection=True)
-        now = page._hole_paths()
+        now = _holes(page)
         dx, dy = target - page._middle(now)
         page.x.setValue(round(page.x.value() + dx, 3))
         page.y.setValue(round(page.y.value() + dy, 3))
@@ -154,11 +189,15 @@ class AutoCalibration:
         if page.kind == "mask":
             # Find the board, focus, burn a few pads and line up on them.
             # Opening the mask stays the person's to press; any pad that
-            # needs more is rework.
+            # needs more is rework. A mask that hides the pads: rings round
+            # the holes it leaves clear instead of pads.
+            last = (("Rings at the mounting holes", page.line_up_at_clear_holes,
+                     self._lined_up) if _opaque(page) else
+                    ("Test pads", lambda: test_fire(page), self._lined_up))
             self.steps = [
                 ("Find the board", lambda: find_board(page), self._found),
                 ("Autofocus", lambda: page.autofocus(), self._ok),
-                ("Test pads", lambda: test_fire(page), self._lined_up),
+                last,
             ]
             self.results = []
             self.i = -1
@@ -268,8 +307,11 @@ def build_report(page, results, total):
     elif warnings:
         verdict = "Calibrated, with things to check before you press Cut."
     elif getattr(page, "kind", None) == "mask":
-        verdict = ("Lined up on the test pads: look at them, then press Open "
-                   "the mask. Rework any pad that needs more.")
+        verdict = (("Lined up on the rings round the mounting holes: open two "
+                    "pads far apart to check, then press Open the mask."
+                    if _opaque(page) else
+                    "Lined up on the test pads: look at them, then press Open "
+                    "the mask.") + " Rework any pad that needs more.")
     else:
         verdict = "Ready to cut: look at the photo, then press Cut."
     return {"ok": not failed and len(results) == total and not warnings,

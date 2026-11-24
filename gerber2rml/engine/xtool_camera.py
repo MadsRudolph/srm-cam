@@ -608,8 +608,50 @@ def _rigid_fit(drawn, moved, offsets, total, min_spread_mm, outlier_mm):
                       tolerance=outlier_mm)
 
 
+HOLE_RIM_MM = 0.6        # the band round a hole it is compared with
+HOLE_CONTRAST = 10.0     # grey levels a hole must differ from that band by
+
+
+def hole_centre(gray, px_per_mm, d, near, *, search_mm=1.5):
+    """The middle of a drilled hole ``d`` mm wide within ``search_mm`` of
+    ``near`` (bed mm) in ``gray``, whichever way it reads: darker than what
+    is round it (the bed under a pale board) or brighter (a bright bed or
+    paper under a black solder mask). The spot where a disc of the hole's
+    size differs most from the band round it. Bed mm, or None when no spot
+    stands out by ``HOLE_CONTRAST``."""
+    r = max(d, 0.3) / 2
+    kr = int(np.ceil((r + HOLE_RIM_MM) * px_per_mm)) + 1
+    ky, kx = np.mgrid[-kr:kr + 1, -kr:kr + 1]
+    rr = np.hypot(kx, ky) / px_per_mm
+    inside, rim = rr <= r, (rr > r) & (rr <= r + HOLE_RIM_MM)
+    if not inside.any() or not rim.any():
+        return None
+    T = inside / inside.sum() - rim / rim.sum()      # mean inside less the rim's
+    H, W = gray.shape
+    m = int(np.ceil(search_mm * px_per_mm))
+    s = m + kr + 2
+    ci, cj = int(round(near[0] * px_per_mm)), int(round(near[1] * px_per_mm))
+    if ci - s < 0 or cj - s < 0 or ci + s >= W or cj + s >= H:
+        return None
+    win = gray[cj - s:cj + s + 1, ci - s:ci + s + 1].astype(np.float32)
+    score = np.abs(_correlate_same(win - win.mean(), T.astype(np.float32)))
+    yy, xx = np.mgrid[-s:s + 1, -s:s + 1]
+    score[(xx * xx + yy * yy) > m * m] = -np.inf
+    j, i = np.unravel_index(np.argmax(score), score.shape)
+    if not np.isfinite(score[j, i]) or score[j, i] < HOLE_CONTRAST:
+        return None
+
+    def vertex(a_, b_, c_):
+        q = a_ - 2 * b_ + c_
+        return 0.0 if not np.isfinite(q) or q >= 0 else 0.5 * (a_ - c_) / q
+    fx = vertex(score[j, i - 1], score[j, i], score[j, i + 1])
+    fy = vertex(score[j - 1, i], score[j, i], score[j + 1, i])
+    return ((ci - s + i + fx) / px_per_mm, (cj - s + j + fy) / px_per_mm)
+
+
 def fit_marks_to_holes(before, after, px_per_mm, tests, *, search_mm=1.5,
-                       min_spread_mm=15.0, max_off_mm=2.0, outlier_mm=0.3):
+                       min_spread_mm=15.0, max_off_mm=2.0, outlier_mm=0.3,
+                       either=False):
     """A traces job's own line-up, as the mask's test fire: ``tests`` are
     (mark, (hx, hy, d)): faint marks the laser made on isolation the job
     removes anyway, each beside a drilled hole, as drawn on the bed. Where
@@ -618,7 +660,11 @@ def fit_marks_to_holes(before, after, px_per_mm, tests, *, search_mm=1.5,
     so the camera's own error cancels, at every hole on its own: the camera
     is out by different amounts across the bed. Returns an
     :class:`OpeningFit` moving the job onto the holes, with ``camera`` the
-    marks' median shift; or None."""
+    marks' median shift; or None.
+
+    ``either``: the holes are found whichever way they read
+    (:func:`hole_centre`) - a board under a solder mask that hides its
+    pads, lined up on rings burnt round the holes left clear."""
     from shapely.geometry import Point
     g0 = before.astype(np.float32).mean(axis=2)
     drawn, moved, offsets, shifts = [], [], [], []
@@ -626,9 +672,12 @@ def fit_marks_to_holes(before, after, px_per_mm, tests, *, search_mm=1.5,
         m = locate_change(before, after, px_per_mm, [mark], search_mm=search_mm)
         if not m.ok:
             continue
-        hole = _pad_centre(g0, px_per_mm, Point(hx, hy).buffer(max(hd, 0.3) / 2),
-                           (0.0, 0.0, hd), (hx + m.dx, hy + m.dy),
-                           search_mm=1.0, ring=False)
+        if either:
+            hole = hole_centre(g0, px_per_mm, hd, (hx + m.dx, hy + m.dy))
+        else:
+            hole = _pad_centre(g0, px_per_mm, Point(hx, hy).buffer(max(hd, 0.3) / 2),
+                               (0.0, 0.0, hd), (hx + m.dx, hy + m.dy),
+                               search_mm=1.0, ring=False)
         if hole is None:
             continue
         off = ((hole[0] - hx) - m.dx, (hole[1] - hy) - m.dy)

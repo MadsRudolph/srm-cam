@@ -1051,10 +1051,32 @@ class StencilLaserDialog(QDialog):
         self.auto_reference_list = QListWidget()
         self.auto_reference_list.setMaximumHeight(140)
         self.auto_reference_list.itemSelectionChanged.connect(self._draw_references)
+        self.auto_reference_list.itemChanged.connect(
+            lambda *_a: self._draw_references() if hasattr(self, "opaque") else None)
         auto.body.addWidget(self.auto_reference_list)
         self.auto_all_btn = widgets.button("All", kind="ghost", on=lambda: self._check_auto_references(True))
         self.auto_none_btn = widgets.button("None", kind="ghost", on=lambda: self._check_auto_references(False))
         auto.body.addWidget(_row(self.auto_all_btn, self.auto_none_btn, None))
+        # A solder mask lined up on its mounting holes: a ring burnt round
+        # each, measured against the hole in its middle. The only way under
+        # a mask that hides the pads (black); as good under any other.
+        self.opaque = QCheckBox("Line up on the mounting holes")
+        self.opaque.setToolTip(
+            "For any solder mask, and the only way under one that hides the "
+            "pads (black). Calibrate finds the board on its mounting holes "
+            "and burns a thin ring through the mask round each; the hole in "
+            "the ring's middle says how far the job is off. A screw's head "
+            "covers the ring. The holes 2 mm or wider are used; in Pro, "
+            "tick others under Automatic alignment references. Off: "
+            "Calibrate opens five test pads and lines up on those.")
+        self.opaque.toggled.connect(self._opaque_toggled)
+        self.ring_btn = widgets.button(
+            "Line up at the holes now", on=self.line_up_at_clear_holes,
+            tip="Burns a thin ring through the mask round each mounting hole "
+                "and moves the job by what the rings show. Put the job on "
+                "the board first: Calibrate, or Align.")
+        s.add(self.opaque)
+        s.add(self.ring_btn)
         s.add(auto)
         pv.addWidget(s)
         self._populate_auto_references()
@@ -1622,6 +1644,8 @@ class StencilLaserDialog(QDialog):
         self._sync_spot_drills()
         filled = self.kind in ("mask", "silk")
         self.line_up.setVisible(self.kind == "mask")
+        self.opaque.setVisible(self.kind == "mask")
+        self.ring_btn.setVisible(self.kind == "mask" and self.opaque.isChecked())
         lines = filled and self.fill_pattern.currentData() != "concentric"
         self.fill_pattern_field.setVisible(filled)
         self.cross.setVisible(lines or is_hatch)
@@ -2832,7 +2856,10 @@ class StencilLaserDialog(QDialog):
         self.auto_reference_list.clear()
         for i, poly in enumerate(self._auto_polys(self.base_art)):
             c = poly.centroid
-            item = QListWidgetItem(f"{i + 1} · X {c.x:.2f}  Y {c.y:.2f} mm")
+            x0, _y0, x1, _y1 = poly.bounds
+            wide = (f"  ø {x1 - x0:.1f}" if self.auto_reference_source.currentData()
+                    == "holes" else "")
+            item = QListWidgetItem(f"{i + 1} · X {c.x:.2f}  Y {c.y:.2f} mm{wide}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             self.auto_reference_list.addItem(item)
@@ -2841,6 +2868,54 @@ class StencilLaserDialog(QDialog):
     def _check_auto_references(self, checked):
         for i in range(self.auto_reference_list.count()):
             self.auto_reference_list.item(i).setCheckState(Qt.Checked if checked else Qt.Unchecked)
+
+    CLEAR_HOLE_MM = 2.0     # a hole this wide is not filled by the ink
+    MAX_RING_HOLES = 8      # rings are for a few holes, never every pad
+
+    def _opaque(self):
+        """A mask job lined up on chosen holes, not on test pads."""
+        return self.kind == "mask" and self.opaque.isChecked()
+
+    def _opaque_toggled(self, on):
+        self.ring_btn.setVisible(on and self.kind == "mask")
+        if on:
+            self._tick_widest_holes()
+            n = len(self._clear_holes())
+            if not 2 <= n <= self.MAX_RING_HOLES:
+                self._say("This board has no two holes 2 mm or wider to line "
+                          "up on. In Pro, tick 2 to "
+                          f"{self.MAX_RING_HOLES} holes far apart under "
+                          "Automatic alignment references.", warn=True)
+        else:
+            self._check_auto_references(True)
+        self._draw_references()
+
+    def _tick_widest_holes(self):
+        """Tick the holes a black mask leaves clear: those ``CLEAR_HOLE_MM``
+        wide or more, when there are two. Fewer: the ticks stay as they are,
+        for the person to choose."""
+        if self.auto_reference_source.currentData() != "holes":
+            self.auto_reference_source.setCurrentIndex(
+                self.auto_reference_source.findData("holes"))
+        polys = self.base_art.features or []
+        wide = [i for i, p in enumerate(polys)
+                if p.bounds[2] - p.bounds[0] >= self.CLEAR_HOLE_MM - 1e-6]
+        if len(wide) < 2:
+            return
+        for i in range(self.auto_reference_list.count()):
+            self.auto_reference_list.item(i).setCheckState(
+                Qt.Checked if i in wide else Qt.Unchecked)
+
+    def _clear_holes(self):
+        """The ticked holes as (x, y, d) on the bed, where the job is now."""
+        if self.auto_reference_source.currentData() != "holes":
+            return []
+        out = []
+        for path in self._features(self.art, self.origin()):
+            xs, ys = [q[0] for q in path], [q[1] for q in path]
+            out.append(((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2,
+                        max(max(xs) - min(xs), max(ys) - min(ys))))
+        return out
 
     def _features(self, art, origin):
         """Only the explicitly enabled automatic alignment references."""
@@ -2978,6 +3053,19 @@ class StencilLaserDialog(QDialog):
                 marker.setZValue(24)
                 marker.setAcceptedMouseButtons(Qt.NoButton)
                 self._reference_markers.append(marker)
+        if hasattr(self, "opaque") and self._opaque():
+            # The holes the mask is lined up on and the ring that will be
+            # burnt round each, so the drawing can be put on them.
+            holes = self._clear_holes()
+            for x, y, d in (holes if len(holes) <= self.MAX_RING_HOLES else []):
+                r0 = d / 2 + xtool.RING_GAP_MM
+                for r, width in ((d / 2, 2.0), (r0 + xtool.RING_WIDTH_MM / 2, 1.0)):
+                    path = QPainterPath()
+                    path.addEllipse(QPointF(x, y), r, r)
+                    marker = self.scene.addPath(path, _pen(theme.PROBE, width))
+                    marker.setZValue(24)
+                    marker.setAcceptedMouseButtons(Qt.NoButton)
+                    self._reference_markers.append(marker)
         pairs = list(self._reference_pairs)
         if self._pending_reference is not None:
             pairs.append((self._pending_reference, None))
@@ -3833,6 +3921,83 @@ class StencilLaserDialog(QDialog):
                     + (f" and turned {fit.turn:+.2f}°" if abs(fit.turn) > 0.02 else "")
                     + ". Ready to etch (Ctrl+Z undoes the move).")
         self._start(work, f"Marking beside {len(tests)} holes and lining up…", done)
+
+    def line_up_at_clear_holes(self):
+        """A mask that hides the pads, lined up on the holes it leaves clear:
+        a thin ring burnt through the mask round each ticked hole, each ring
+        measured against the hole in its middle in the same photos, and the
+        job moved and turned onto the holes. As the traces' line-up, with
+        rings for marks: a black mask shows no pad to measure a test opening
+        against (2026-11-24)."""
+        self._settle()
+        if self.kind != "mask":
+            return self._say("Lining up at clear holes is for a solder mask "
+                             "job.", warn=True)
+        holes = self._clear_holes()
+        if not 2 <= len(holes) <= self.MAX_RING_HOLES:
+            return self._say(f"Tick 2 to {self.MAX_RING_HOLES} holes the mask "
+                             "leaves clear, far apart, under Automatic "
+                             "alignment references (Drilled holes): "
+                             f"{len(holes)} are ticked.", warn=True)
+        rings = xtool.rings_round_holes(holes)
+        recipe = replace(self.recipe(), mark_outline=False)
+        try:
+            job = xtool.fill_job([p for _r, ps in rings for p in ps], [], recipe)
+        except ValueError as e:
+            return self._say(str(e), warn=True)
+        tests = [(ring, h) for (ring, _ps), h in zip(rings, holes)]
+        hi = TEST_FIRE_PX_PER_MM
+        self._last_lineup = None
+
+        def work(_p):
+            from gerber2rml.engine import xtool_camera as cam
+            raw_a = self._raw_photo()
+            self.laser.run(job.text)
+            self.laser.wait(job.seconds * 2 + 60)
+            raw_b = self._raw_photo(like=raw_a)
+            fit = cam.fit_marks_to_holes(self._photo(hi, raw_a),
+                                         self._photo(hi, raw_b), hi, tests,
+                                         either=True)
+            return self._photo(_PX_PER_MM, raw_b), fit
+
+        def done(res):
+            rgb, fit = res
+            self.show_bed(rgb)
+            n = len(tests)
+            if fit is None or fit.used < 2:
+                return (f"Burnt a ring round {n} holes, but "
+                        + ("none" if fit is None else "only one")
+                        + " could be measured against its hole, so the job "
+                          "was NOT moved. Is each ring round its hole in the "
+                          "photo? If the holes do not stand out from the "
+                          "mask, nudge by hand.")
+            if not fit.agrees:
+                _laserlog.write("ring line-up refused", job=self.name_lbl.text(),
+                                measured=[[round(c[0], 2), round(c[1], 2),
+                                           round(o[0], 3), round(o[1], 3)]
+                                          for c, o in fit.offsets],
+                                residual=round(fit.residual, 3))
+                return (f"The rings disagree with each other (by up to "
+                        f"{fit.residual:.2f} mm after the best fit), so the "
+                        "job was NOT moved: check them on the photo.")
+            self._move_by_fit(fit)
+            self.line_up.setChecked(False)      # lined up: rework stays put
+            self._last_lineup = fit
+            _laserlog.write("ring line-up", job=self.name_lbl.text(), holes=n,
+                            measured=[[round(c[0], 2), round(c[1], 2),
+                                       round(o[0], 3), round(o[1], 3)]
+                                      for c, o in fit.offsets],
+                            used=fit.used, dx=round(fit.dx, 3),
+                            dy=round(fit.dy, 3), turn=round(fit.turn, 3),
+                            camera=fit.camera)
+            off = math.hypot(fit.dx, fit.dy)
+            return (f"Lined up at {fit.used} of {n} holes, worst "
+                    f"{fit.worst:.2f} mm off: the job moved {off:.2f} mm"
+                    + (f" and turned {fit.turn:+.2f}°" if abs(fit.turn) > 0.02 else "")
+                    + ". Open two pads far apart to check, then open the "
+                      "mask (Ctrl+Z undoes the move).")
+        self._start(work, f"Burning a ring round {len(tests)} holes and "
+                          "lining up…", done)
 
     def _move_by_fit(self, fit):
         """Turn and move the job as ``fit`` says: its measured points' middle

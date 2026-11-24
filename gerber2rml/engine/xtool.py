@@ -1601,6 +1601,30 @@ def _isolation_anchors(art, origin, recipe, step=2.0):
     return out
 
 
+RING_GAP_MM = 0.8        # from a hole's edge to its ring: room for the find's error
+RING_WIDTH_MM = 0.4
+
+
+def rings_round_holes(holes, *, gap=RING_GAP_MM, width=RING_WIDTH_MM):
+    """A thin ring round each of ``holes`` ((x, y, d), bed mm), clear of its
+    edge: what a solder mask that hides the pads is lined up on. The laser
+    burns the ring through the mask, the camera sees where it landed, and the
+    hole in its middle says where it should have. Returns [(ring, pieces)]:
+    the ring whole, for the camera, and as two halves without a hole in them,
+    for the fill."""
+    from shapely.geometry import Point, box
+    out = []
+    for x, y, d in holes:
+        r0 = d / 2 + gap
+        ring = Point(x, y).buffer(r0 + width, quad_segs=24).difference(
+            Point(x, y).buffer(r0, quad_segs=24))
+        big = r0 + width + 1
+        halves = [ring.intersection(box(x - big, y - big, x, y + big)),
+                  ring.intersection(box(x, y - big, x + big, y + big))]
+        out.append((ring, [h for h in halves if not h.is_empty]))
+    return out
+
+
 def proof_on_isolation(art, origin, recipe=None, *, radius=PROOF_RADIUS, n=3):
     """Marks on copper the traces job removes anyway: the isolation rings
     within ``radius`` of up to ``n`` drilled holes that lie far apart, or on
