@@ -114,3 +114,30 @@ def pick_any(holes, box, bit_mm=0.8, max_d=MAX_D, count=4):
     spread = max(math.hypot(a[0] - b[0], a[1] - b[1])
                  for a in picked for b in picked)
     return picked if spread >= need else []
+
+
+SPARE_APART_MM = 5.0     # a spare this far at least from every hole chosen
+
+
+def with_spares(picked, holes, box, bit_mm=0.8, max_d=MAX_D, n=3):
+    """``picked`` and up to ``n`` more usable holes, each the one furthest
+    from those already chosen: a re-seated board is found by any three of
+    them (2026-11-24: a board with no mounting holes had three picked, one
+    barely wider than the bit was not found, and the run stopped at two)."""
+    if not picked:
+        return picked
+    lo = bit_mm + ANY_ROOM_FOR_BIT
+    usable = [h[:3] for h in holes if lo - 1e-6 <= h[2] <= max_d + 1e-6
+              and not _in_slot(h, holes)]
+    out = [tuple(h[:3]) for h in picked]
+    for _ in range(n):
+        best, far = None, SPARE_APART_MM
+        for h in usable:
+            d = min(math.hypot(h[0] - q[0], h[1] - q[1]) for q in out)
+            score = d + WIDTH_BONUS_MM * 0.1 * (h[2] - bit_mm)
+            if d >= SPARE_APART_MM and score > far:
+                best, far = h, score
+        if best is None:
+            break
+        out.append(tuple(best))
+    return out

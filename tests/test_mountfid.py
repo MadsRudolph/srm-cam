@@ -59,3 +59,19 @@ def test_pick_any_needs_two_holes_far_apart():
     assert mountfid.pick_any([(5, 5, 1.0), (45, 25, 1.0)], box) == []
     assert mountfid.pick_any([(5, 5, 0.8), (95, 55, 0.8)], box) == []
     assert len(mountfid.pick_any([(5, 5, 1.0), (95, 55, 1.0)], box)) == 2
+
+
+def test_a_board_without_mounting_holes_gets_spares_to_be_found_by():
+    """2026-11-24: three holes picked, one barely wider than the bit not
+    found, the run stopped at two. Spares spread out, so any three do."""
+    box = (0, 0, 60, 60)
+    row = [(50.4, 8.4 + 5.08 * i, 1.3) for i in range(10)]
+    holes = row + [(21.0, 8.6, 1.2), (30, 30, 0.8), (10, 50, 0.8)]
+    got = mountfid.pick_any(holes, box, bit_mm=0.8)
+    more = mountfid.with_spares(got, holes, box, bit_mm=0.8)
+    assert more[:len(got)] == [tuple(h[:3]) for h in got]
+    assert len(more) > len(got)
+    assert all(h[2] > 0.9 for h in more)                 # never a too-tight hole
+    for i, a in enumerate(more):
+        for b in more[i + 1:]:
+            assert ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 5.0

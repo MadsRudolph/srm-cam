@@ -319,6 +319,10 @@ class WindowSource(ar.JobSource):
                                      % (len(got), got[0][2]))
             else:
                 got = mountfid.pick_any(st.board.holes, box, bit_mm=bit)
+                # Spares: any three of them will do, so one hole that will
+                # not be found (barely wider than the bit, full of chips)
+                # no longer stops the run.
+                got = mountfid.with_spares(got, st.board.holes, box, bit_mm=bit)
                 ds = sorted({round(h[2], 2) for h in got})
                 self.realign_kind = (
                     "%d drill holes (%s mm)" % (len(got), " / ".join(
