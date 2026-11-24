@@ -117,3 +117,63 @@ def test_loading_another_board_forgets_the_pads(win):
     assert win._board_fit is not None
     win.load_folder(str(FIXT))
     assert win.boardfit_page.pads() == [] and win._board_fit is None
+
+
+def _fitted(win):
+    """A fit measured on Drill only: turned, moved."""
+    win.select_step("fitdrill")
+    win.boardfit_page.suggest()
+    t = Transform(math.radians(-1.5), 1.0, 12.0, -4.0)
+    _measure(win.boardfit_page, t)
+    return t
+
+
+def _near(a, b, tol=1e-2):
+    return all(math.dist(p[:2], q[:2]) <= tol for p, q in zip(a, b))
+
+
+def test_the_fit_follows_onto_every_page(win):
+    """Measured once on Drill only, the board stays where it was measured
+    on every page, and the cuts drawn there sit on it."""
+    t = _fitted(win)
+    fitted = [(*t.apply(x, y), d) for x, y, d in win.state.board.holes]
+    for op in ("drill", "cutout", "autorun", "rework"):
+        step = next(s for s in win.plan.steps if s.op == op or s.key == op)
+        win.select_step(step.key)
+        assert _near(win.stage._holes, fitted), step.key
+    drill = next(s for s in win.plan.steps if s.op == "drill")
+    cuts = [(m.x, m.y) for path in win._toolpaths_for(drill)[0]
+            for m in path if m.z < 0]
+    bit = win.cutting_drill().bit_diameter
+    for x, y, d in fitted:
+        reach = max(0.0, (d - bit) / 2) + 5e-3
+        assert any(math.dist(c, (x, y)) <= reach for c in cuts)
+    # Gone with the pads: the design again.
+    win.select_step("fitdrill")
+    win.boardfit_page.set_pads([])
+    win.select_step(drill.key)
+    assert _near(win.stage._holes, win.state.board.holes)
+
+
+def test_export_follows_the_fit(win, tmp_path):
+    t = _fitted(win)
+    written = win.export_to(tmp_path)
+    drill = next(p for p in written if "_drill" in p.name)
+    cuts = [(m.x, m.y) for path in parse_nc(drill.read_text())
+            for m in path if m.z < 0]
+    bit = win.cutting_drill().bit_diameter
+    for x, y, d in win.state.board.holes:
+        mx, my = t.apply(x, y)
+        reach = max(0.0, (d - bit) / 2) + 5e-3
+        assert any(math.dist(c, (mx, my)) <= reach for c in cuts)
+
+
+def test_the_run_will_not_move_a_fitted_board(win, monkeypatch):
+    _fitted(win)
+    page = win.autorun_page
+    monkeypatch.setattr(page, "_port", lambda: "SIM")
+    said = []
+    monkeypatch.setattr(win, "say", lambda lvl, msg: said.append(msg))
+    page.start()
+    assert page._thread is None
+    assert any("made elsewhere" in m for m in said)

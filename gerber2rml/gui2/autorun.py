@@ -1588,7 +1588,17 @@ class AutoRunPage(inspector.Page):
         if ctl.state.board is None:
             ctl.say("warn", "Load a board first.")
             return
-        slots_only = self.slots_chk.isChecked() and not self.slots_chk.isHidden()
+        if getattr(ctl, "_board_fit", None) is not None and not ctl._double:
+            # The run finds the stock and moves and turns the job onto it:
+            # on top of the measured fit, it would cut beside the board.
+            ctl.say("warn", "This board is fitted to a board made elsewhere, "
+                            "and the run would move it off that fit. Export "
+                            "the files (they follow the fit) and send them in "
+                            "VPanel, "
+                            "or remove the measured pads on Drill a board "
+                            "made elsewhere to run from the design again.")
+            return
+        slots_only =self.slots_chk.isChecked() and not self.slots_chk.isHidden()
         if slots_only and only is None and ctl.plan is not None:
             # The oval holes alone: the drill step, nothing after it.
             drill = next((st for st in ctl.plan.steps

@@ -2188,7 +2188,7 @@ class MainWindow(QMainWindow):
             if self._iso_worker is None:
                 self.stage.set_busy("")
             if (self._stock_turn is not None and step.side != "top"
-                    and step.op != "fitdrill"):
+                    and step.op != "fitdrill" and not self._board_fitted(step)):
                 from gerber2rml.engine.fiducial import apply_to_toolpaths
                 paths = apply_to_toolpaths(paths, self._stock_turn)
             cuts, rapids = toolpath_segments(paths)
@@ -2225,8 +2225,27 @@ class MainWindow(QMainWindow):
         if self.inspector.stack.currentWidget() is self.inspector.step:
             self.inspector.step.est.set("~" + format_duration(secs))
 
+    # The steps that cut the board itself: on a board made elsewhere they
+    # follow its measured fit, like the holes of Drill only.
+    FITTED_OPS = ("traces", "drill", "cutout")
+
+    def _board_fitted(self, step):
+        """Is ``step`` cut through the fit of a board made elsewhere?"""
+        return (self._board_fit is not None and not self._double
+                and step is not None and step.op in self.FITTED_OPS)
+
     def _toolpaths_for(self, step):
-        """(paths, far_side_paths, cut_width) for one step, in the machine frame."""
+        """(paths, far_side_paths, cut_width) for one step, in the machine
+        frame: on a board made elsewhere, where its pads were measured."""
+        paths, far, width = self._toolpaths_design(step)
+        if self._board_fitted(step):
+            from gerber2rml.engine.fiducial import apply_to_toolpaths
+            paths = apply_to_toolpaths(paths, self._board_fit)
+        return paths, far, width
+
+    def _toolpaths_design(self, step):
+        """(paths, far_side_paths, cut_width) for one step, as the design
+        places the board."""
         from gerber2rml.engine.drill import drill_single_bit, drill_holes
         from gerber2rml.engine.cutout import cut_outline
         st = self.state
@@ -2571,11 +2590,11 @@ class MainWindow(QMainWindow):
                     self.stage.set_board(lay.bottom_copper, lay.outline,
                                          lay.holes, align_holes=lay.align_holes)
                     self.stage.set_pin_drag(self._pins_draggable())
-        elif (step is not None and step.op == "fitdrill"
-              and self._board_fit is not None):
+        elif self._board_fit is not None:
             # The board where its pads were measured, not where the design
-            # put it: the holes drawn, the drill path and a click-to-jog all
-            # have to agree with the copper on the bed.
+            # put it, on every page while the fit stands: the holes drawn,
+            # every cut (``_toolpaths_for``) and a click-to-jog all have to
+            # agree with the copper on the bed.
             from gerber2rml.engine.boardfit import warp_holes
             t = self._board_fit
             self.stage.set_pin_drag(False)
@@ -4778,8 +4797,18 @@ class MainWindow(QMainWindow):
         if transform == self._board_fit:
             return
         self._board_fit = transform
-        self._paths_cache.pop("fitdrill", None)
+        self._paths_cache = {}          # every cut follows the fit
         self.refresh_preview()
+
+    def _fitted_board(self):
+        """The board moved onto the fit of a board made elsewhere."""
+        from dataclasses import replace
+        from gerber2rml.engine.boardfit import warp_holes
+        b, t = self.state.board, self._board_fit
+        return replace(b, copper=self._warp_geom(b.copper, t),
+                       outline=self._warp_geom(b.outline, t),
+                       copper_top=self._warp_geom(b.copper_top, t),
+                       holes=warp_holes(b.holes, t))
 
     @staticmethod
     def _warp_geom(g, t):
@@ -5257,9 +5286,20 @@ class MainWindow(QMainWindow):
                 st.drill = self.cutting_drill()
                 st.cutout = self.cutting_cutout()
                 try:
-                    written = st.export(out_dir, level=level,
-                                        stock=self.declared_stock(),
-                                        traces=not self.laser_method())
+                    if self._board_fit is not None:
+                        # A board made elsewhere: every file is cut where
+                        # its pads were measured, as the stage shows it.
+                        from gerber2rml.cli import write_jobs
+                        written = write_jobs(
+                            self._fitted_board(), out_dir, st.name,
+                            trace=st.trace, drill=st.drill, cutout=st.cutout,
+                            mirror=st.mirror, machine=st.machine, level=level,
+                            stock=self.declared_stock(),
+                            traces=not self.laser_method())
+                    else:
+                        written = st.export(out_dir, level=level,
+                                            stock=self.declared_stock(),
+                                            traces=not self.laser_method())
                 finally:
                     st.trace, st.drill, st.cutout = keep
         except Exception as e:
